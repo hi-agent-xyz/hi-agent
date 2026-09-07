@@ -274,6 +274,18 @@ state is ordinary durable data and lives in `drive/` with everything else the pe
 upset to lose. The line is not *what the tool needs in order to run* — it is *what a note can
 put back*.
 
+**One thing a note cannot put back still does not belong in `drive/`, and it is worth naming
+because the rule above reads like it would.** The `phone` tool's access is an adb key the
+person authorized by tapping *Allow* on the handset — irreproducible by prose, exactly the
+class this section is about. It stays where adb puts it (`$HOME/.android/`) all the same,
+because the two cases differ in what carrying the state elsewhere *does*. A browser profile is
+a login, and a login only ever helps the machine holding it; `drive/` syncs, and syncing a
+login moves a convenience. This key is a **grant the device made to one computer**, so syncing
+it would quietly extend that grant to every machine the drive reaches — the person authorized
+one thing and would have authorized several. The test is therefore not *can a note rebuild it*
+alone;
+it is that, **and** whether a copy of it somewhere else is the same permission or a larger one.
+
 ### It nests, because `skills/` nests
 
 `skills/` is path-scoped, so `skills/factory/browser.md` and `skills/browser.md` are two names

@@ -85,6 +85,16 @@ const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
 /// as far as the agent is concerned.
 const MCP_SERVICE: &str = include_str!("mcp-service.md");
 
+/// Seeded **tool**: an Android handset under a stable name. Carries `purpose:` and
+/// `use: phone`, bound by the shim [`install_tool_bin`] writes.
+///
+/// The note is Android-only and says so in its third paragraph, because the *name* is
+/// the part that would otherwise lie — nothing about the word `phone` says "not an
+/// iPhone", and a confident wrong answer about reach is the failure this repo keeps
+/// paying for. What it points at instead for an iPhone is the shipped Action Button
+/// handoff, not an apology.
+const PHONE: &str = include_str!("phone.md");
+
 /// What a note's front matter says about it.
 ///
 /// **One key that matters and one convenience** (`docs/arch/tools.md`). `purpose` is
@@ -389,6 +399,7 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     std::fs::write(dir.join("browser.md"), BROWSER)?;
     std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;
     std::fs::write(dir.join("mcp-service.md"), MCP_SERVICE)?;
+    std::fs::write(dir.join("phone.md"), PHONE)?;
     tracing::info!(dir = %dir.display(), "installed bundled skills");
     Ok(())
 }
@@ -432,8 +443,8 @@ pub fn path_entries(data_dir: &Path) -> [PathBuf; 2] {
 /// Create `<data_dir>/bin` and write the shims that bind a seeded tool note's `use:`
 /// name to this machine.
 ///
-/// **One shim today — `browser` — and it exists because the note cannot name its
-/// target any other way.** [`crate::runtime::browser::ensure`] picks a system
+/// **Two of the three shims exist because a note cannot name its target any other
+/// way** (`browser`, `phone`); the third (`hi`) is this binary under a short name. [`crate::runtime::browser::ensure`] picks a system
 /// Chrome, a canonical install location, or a pinned download, so the winning path
 /// differs per machine (on macOS it is usually inside an `.app` bundle, on no PATH
 /// at all), *and* a full Chrome must be told `--headless` while
@@ -457,6 +468,7 @@ pub fn install_tool_bin(data_dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let exe = std::env::current_exe()?;
     write_browser_shim(&dir, &exe)?;
+    write_phone_shim(&dir, &exe)?;
     write_hi_shim(&dir, &exe)?;
     tracing::info!(dir = %dir.display(), "installed tool shims");
     Ok(())
@@ -553,6 +565,53 @@ fn write_browser_shim(dir: &Path, exe: &Path) -> io::Result<()> {
         exe = exe.display()
     );
     std::fs::write(dir.join("browser.cmd"), script)
+}
+
+/// The POSIX `phone` shim — the same argv-prefix contract as `browser` beside it, with
+/// nothing to eat.
+///
+/// **It reads no argument of its own, and that is a decision rather than an omission.**
+/// `browser` intercepts `--headed` because a window is something the *caller* wants and
+/// the resolver cannot infer. adb has no such split: every flag it takes, including
+/// `-s <serial>` for choosing between two attached handsets, is already adb's own and
+/// means the same thing here. Adding a word of ours would put a second vocabulary in
+/// front of a tool that documents itself, and `phone --help` would never mention it —
+/// which is exactly the trap the browser shim's `--headed` has to be careful about.
+#[cfg(not(windows))]
+fn write_phone_shim(dir: &Path, exe: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let script = format!(
+        "#!/bin/sh\n\
+         # Written by hi-agent at every start — see skills/factory/phone.md.\n\
+         # Binds the name `phone` to whatever adb this machine has. Everything goes\n\
+         # straight through: `phone devices`, `phone shell input tap 500 900`.\n\
+         set -ef\n\
+         IFS='\n'\n\
+         set -- $({exe} --resolve-phone) \"$@\"\n\
+         exec \"$@\"\n",
+        exe = sh_quote(exe)
+    );
+    let path = dir.join("phone");
+    std::fs::write(&path, script)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+}
+
+/// The Windows shim. **Never exercised**, same standing as the browser one above it.
+#[cfg(windows)]
+fn write_phone_shim(dir: &Path, exe: &Path) -> io::Result<()> {
+    let script = format!(
+        "@echo off\r\n\
+         setlocal enabledelayedexpansion\r\n\
+         set \"HIEXE=\"\r\n\
+         set \"HIPRE=\"\r\n\
+         for /f \"usebackq delims=\" %%i in (`\"\"{exe}\" --resolve-phone\"`) do (\r\n\
+         \x20 if not defined HIEXE (set \"HIEXE=%%i\") else (set \"HIPRE=!HIPRE! %%i\")\r\n\
+         )\r\n\
+         \"!HIEXE!\" !HIPRE! %*\r\n",
+        exe = exe.display()
+    );
+    std::fs::write(dir.join("phone.cmd"), script)
 }
 
 #[cfg(test)]
@@ -689,11 +748,21 @@ mod tests {
         assert!(!cold.contains("more in the workshop"), "a complete set says nothing: {cold}");
 
         // Nothing stored: a note written now appears at the next build, no bookkeeping.
-        std::fs::write(
-            skills_dir(dir.path()).join("just-learnt.md"),
-            "---\npurpose: something the agent worked out today\n---\n\nbody\n",
-        )
-        .unwrap();
+        let learnt = skills_dir(dir.path()).join("just-learnt.md");
+        std::fs::write(&learnt, "---\npurpose: something the agent worked out today\n---\n\nbody\n")
+            .unwrap();
+        // **Say "newer" rather than assume it.** Freshness is read off mtime, and a
+        // filesystem is free to stamp a whole burst of writes with one timestamp — this
+        // box does, so every seed and this note tied and the ranking fell through to the
+        // id, which is alphabetical and put the seeds first. The test was a coin flip
+        // that happened to land right when it was written. What it means to assert is
+        // that a *newer* note leads, so make it newer instead of hoping the clock does.
+        std::fs::File::options()
+            .write(true)
+            .open(&learnt)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+            .unwrap();
         let fresh = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
         assert!(fresh.contains("just-learnt"), "{fresh}");
         assert!(
@@ -779,6 +848,83 @@ mod tests {
         // Order is preserved through the rotation, which is the easy thing to break.
         assert_eq!(run(&["a", "--headed", "b", "c"]), "a b c");
         assert_eq!(run(&[]), "--headless");
+    }
+
+    /// The `phone` shim forwards **everything**, and the case that matters is
+    /// `--headed`: it is the one word its neighbour intercepts, so if this shim were
+    /// ever written by copying that one, this is where it would show. adb owns its
+    /// whole argument surface here, `-s <serial>` included.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_phone_shim_intercepts_nothing_including_its_neighbours_flag() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Stands in for the agent's own binary answering `--resolve-phone`.
+        let stub = dir.path().join("stub-exe");
+        std::fs::write(&stub, "#!/bin/sh\nprintf '/bin/echo\\n'\n").unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_phone_shim(dir.path(), &stub).unwrap();
+        let shim = dir.path().join("phone");
+
+        let run = |args: &[&str]| -> String {
+            let out = std::process::Command::new(&shim).args(args).output().unwrap();
+            assert!(out.status.success(), "shim failed: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+
+        assert_eq!(run(&["devices"]), "devices");
+        assert_eq!(run(&["shell", "input", "tap", "500", "900"]), "shell input tap 500 900");
+        // Selecting between two attached handsets is adb's own flag, not ours.
+        assert_eq!(run(&["-s", "R5CT10", "shell", "screencap"]), "-s R5CT10 shell screencap");
+        // The neighbour's flag is just an argument here.
+        assert_eq!(run(&["--headed", "devices"]), "--headed devices");
+        assert_eq!(run(&[]), "");
+    }
+
+    /// A path with a space in it stays one argument — on a packaged install the agent's
+    /// own binary lives inside `Hi Agent.app`.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_phone_shim_survives_a_space_in_the_binary_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let spaced = dir.path().join("Hi Agent");
+        std::fs::create_dir_all(&spaced).unwrap();
+        let stub = spaced.join("stub-exe");
+        std::fs::write(&stub, "#!/bin/sh\nprintf '/bin/echo\\n'\n").unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_phone_shim(dir.path(), &stub).unwrap();
+
+        let out =
+            std::process::Command::new(dir.path().join("phone")).arg("devices").output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "devices");
+    }
+
+    /// Boot writes a shim for every seeded note that names a command, so a note saying
+    /// `use: phone` cannot ship without the name existing.
+    #[test]
+    fn every_seeded_use_line_has_a_shim_behind_it() {
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_skills(dir.path()).unwrap();
+        install_tool_bin(dir.path()).unwrap();
+
+        let factory = skills_dir(dir.path()).join("factory");
+        for entry in std::fs::read_dir(&factory).unwrap() {
+            let path = entry.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            let (fm, _) = split_front_matter(&text);
+            // `use:` may name a command with arguments (`hi mcp …`); the shim is the
+            // first word.
+            let Some(name) = fm.run.as_deref().and_then(|r| r.split_whitespace().next()) else {
+                continue;
+            };
+            let bin = factory_bin_dir(dir.path())
+                .join(if cfg!(windows) { format!("{name}.cmd") } else { name.to_string() });
+            assert!(bin.exists(), "{path:?} says `use: {name}` but {bin:?} was never written");
+        }
     }
 
     #[test]

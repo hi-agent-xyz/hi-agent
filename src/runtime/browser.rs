@@ -423,7 +423,7 @@ async fn install(target: &Path) -> anyhow::Result<PathBuf> {
 /// everywhere: GNU `tar` (Linux) cannot read zip, while macOS/Windows ship bsdtar
 /// as `tar` and *can*. So try the extractors in order and report all of them if
 /// none is available.
-async fn unzip(archive: &Path, dir: &Path) -> anyhow::Result<()> {
+pub(super) async fn unzip(archive: &Path, dir: &Path) -> anyhow::Result<()> {
     let attempts: [(&str, Vec<&std::ffi::OsStr>); 3] = [
         ("unzip", vec!["-q".as_ref(), "-o".as_ref(), archive.as_ref(), "-d".as_ref(), dir.as_ref()]),
         ("bsdtar", vec!["-xf".as_ref(), archive.as_ref(), "-C".as_ref(), dir.as_ref()]),
@@ -451,7 +451,7 @@ async fn unzip(archive: &Path, dir: &Path) -> anyhow::Result<()> {
 /// the mode from the archive, but a restrictive umask or an extractor that drops
 /// permissions would otherwise leave a browser we can't spawn.
 #[cfg(unix)]
-fn make_executable(p: &Path) {
+pub(super) fn make_executable(p: &Path) {
     use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::metadata(p) {
         let mut perms = meta.permissions();
@@ -461,7 +461,7 @@ fn make_executable(p: &Path) {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_p: &Path) {}
+pub(super) fn make_executable(_p: &Path) {}
 
 /// Recursively copy `src` to `dst` via the system `cp -Rp`, preserving symlinks
 /// and execute bits — the same helper shape [`super::provision_into`] uses to

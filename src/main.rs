@@ -102,6 +102,19 @@ struct Cli {
     #[arg(long, hide = true)]
     resolve_browser: bool,
 
+    /// Resolve this machine's `adb` and print its argv prefix — one element per line,
+    /// then exit.
+    ///
+    /// Hidden, and called by `<data_dir>/bin/phone` at *call* time for the same reason
+    /// `--resolve-browser` is: it keeps a download off the startup path while letting a
+    /// portable note say `use: phone`. The archive is ~9 MB rather than ~100, so the
+    /// saving is smaller and the reason is unchanged — an install that never touches a
+    /// handset should not carry an SDK.
+    ///
+    /// Because the shim parses stdout, logging is redirected to stderr in this mode.
+    #[arg(long, hide = true)]
+    resolve_phone: bool,
+
     /// With `--resolve-browser`: leave `--headless` out, because someone is going to
     /// look at this window. The shim passes it through when a caller says `browser
     /// --headed`, and it is how a person signs the agent's browser into a site.
@@ -115,18 +128,14 @@ struct Cli {
     no_tray: bool,
 }
 
-/// Where the app listens on a desktop install. Adjacent to the core's port so
-/// the pair reads as one install, and distinct because they are two roles that
-/// will one day be two processes. Only the desktop entry has a default to apply.
-#[cfg(target_os = "macos")]
-
 /// Version line including the pinned runtime component versions.
 fn version_string() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
         " (codex ", env!("HI_AGENT_CODEX_VERSION"),
         "; esbuild ", env!("HI_AGENT_ESBUILD_VERSION"),
-        "; chrome ", env!("HI_AGENT_CHROME_VERSION"), ")"
+        "; chrome ", env!("HI_AGENT_CHROME_VERSION"),
+        "; platform-tools ", env!("HI_AGENT_PLATFORM_TOOLS_VERSION"), ")"
     )
 }
 
@@ -324,7 +333,7 @@ fn main() -> anyhow::Result<()> {
     // `--resolve-browser`'s stdout is parsed by a shell script, so its logs — which
     // include the managed browser's download progress, worth seeing — go to stderr
     // instead. Every other mode keeps stdout, which is what `server.log` captures.
-    if cli.resolve_browser || cli.command.is_some() {
+    if cli.resolve_browser || cli.resolve_phone || cli.command.is_some() {
         tracing_subscriber::fmt()
             .with_env_filter(env_filter)
             .with_target(false)
@@ -411,6 +420,20 @@ fn main() -> anyhow::Result<()> {
         return rt.block_on(async move {
             let browser = hi_agent::runtime::browser::ensure().await?;
             for arg in hi_agent::runtime::browser::argv_prefix(&browser, headed)? {
+                println!("{arg}");
+            }
+            Ok(())
+        });
+    }
+
+    // The `bin/phone` shim asking what to run. One element per line, like the browser
+    // above it — the shim splits on newlines rather than taking a path, so a prefix
+    // element added later needs no change to a shim already written into every install.
+    if cli.resolve_phone {
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(async move {
+            let adb = hi_agent::runtime::phone::ensure().await?;
+            for arg in hi_agent::runtime::phone::argv_prefix(&adb) {
                 println!("{arg}");
             }
             Ok(())

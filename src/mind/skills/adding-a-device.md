@@ -28,15 +28,19 @@ screen, something must already be running *inside* the desktop session there.
 
 ## A phone, over adb
 
-For an Android handset: `adb shell screencap`, `adb shell input tap/text/swipe`,
-`adb pull` for files. Enough to see and act, one step at a time. [perishable — command
-details and what each Android version allows]
+**Already a tool — see `skills/factory/phone.md`.** `phone` is this machine's adb under
+a stable name, and that note carries the connection steps to ask the person for, how to
+read a screen, and the traps. Don't rebuild any of it here.
 
-The costs are honest ones: developer mode has to be turned on by the person, it wants
-USB or a pairing dance on the same network, and it isn't reachable from elsewhere.
-Fine for a phone on the desk; poor for a phone in a drawer across town.
+What belongs in *this* note is the shape of the reach, because it decides whether adb is
+the right answer at all: developer mode has to be turned on by the person, it wants USB
+or a pairing dance on the same network, and it isn't reachable from elsewhere. **Fine for
+a phone on the desk; poor for a phone in a drawer across town.** When the job needs the
+second one, adb is not the tool and the next two sections are the question.
 
-## abacad — https://abacad.ai [perishable — everything in this section]
+An iPhone is not behind that command and the honest reasons are in the same note.
+
+## abacad — https://abacad.ai [perishable — everything in this section, checked 2026-07-27 and *not* re-verified since]
 
 Purpose-built for exactly this: *"connect a phone, laptop, or browser as a device —
 then point your coding agent at one endpoint and let it drive, with you approving
@@ -61,6 +65,11 @@ makes it work from anywhere and also what makes it a party to trust. Their own a
 is not to leave a permanently connected device signed into sensitive accounts —
 banking, email. I'd take that seriously. No pricing was stated on the site; ask them
 or check before promising anything about cost.
+
+**Read the whole section above as a lead, not a finding.** Everything in it comes from
+one reading of their site, and that was a while ago — clients, capabilities and price
+all move. Load the page before repeating any of it to the person, and if it doesn't
+load, say that rather than quoting this.
 
 ## Where there's no API, the logged-in session *is* the credential
 

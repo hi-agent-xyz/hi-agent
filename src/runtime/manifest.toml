@@ -20,3 +20,10 @@ esbuild_version = "0.28.1"
 # storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/. Only
 # used when the host has no system Chrome/Chromium/Edge.
 chrome_version  = "151.0.7922.47"
+# Android platform-tools, which is where `adb` comes from — the binary behind the
+# `phone` tool (see src/runtime/phone.rs). Downloaded per-host from
+# dl.google.com/android/repository/platform-tools_r<version>-<platform>.zip, and only
+# when the machine has no adb of its own. Two things the name does not tell you: the
+# Windows platform token is `win` while the others are spelled in full, and Google
+# publishes no arm64 Linux build at all, so that host has no managed tier.
+platform_tools_version = "37.0.1"

@@ -50,6 +50,11 @@ use tokio::process::Command;
 /// managed-fallback shape as the tools here; provisioned lazily on first render.
 pub mod browser;
 
+/// The `adb` behind the `phone` tool. Same system-first, managed-fallback shape as
+/// the browser beside it, and lazy for the same reason — an install that never
+/// touches a handset never downloads platform-tools.
+pub mod phone;
+
 /// Pinned `@openai/codex` version, stamped from `src/runtime/manifest.toml`. Also used
 /// to reject a *different* `codex` found on `PATH`: a stray global install silently
 /// shadowing the pin is exactly the failure mode that wedged turns for minutes in the

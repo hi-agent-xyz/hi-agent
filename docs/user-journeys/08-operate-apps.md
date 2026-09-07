@@ -9,6 +9,8 @@
 > worker 曾持有 `hi_look` / `hi_act`:看主屏截图,再合成鼠标键盘事件。实测判断不够稳,而代价落在用户正在用的那块屏上 —— 光标被抢走、字打进别人聚焦的窗口;`hi_act` 前面又没有任何确认环节,"老板没授权"根本不是这个工具能处的状态。已从 worker 的工具面移除;实现原样留在 `foundation/mcp` 的 `do_look` / `do_act`(按名可调,不对任何 role 广播),放回来就是加回两个 `tool(…)` 条目。
 >
 > 放回来之前要先补两样:`do_act` 前面的授权环节,以及一条"看错了自己能发现"的回路。在那之前,本 journey 只剩下表里 AppleScript / ADB / Shortcuts 这类**指名目标 app** 的句柄,不是"看屏幕点像素"。[29](29-test-and-post.md) 第 4 步同受影响。
+>
+> **手机那一格与此不冲突,原因要写清楚,否则读起来像走回头路。** `hi_act` 被收回的两条理由,adb 都不占:代价不落在人正在打字的那块屏上,而"开发者选项 + USB 调试 + 在机上点允许"本身**就是那个缺席的授权环节** —— 由人执行、在设备上执行、一次性授权这台机器的密钥。缺的仍是第二样(自查回路),那条限制写在 `phone.md` 里,不由本次关闭。
 
 ## Steps & expected UX
 
@@ -22,8 +24,8 @@
 |---|---|---|
 | **Mac 应用** | AppleScript / Accessibility / Shortcuts(Mac mini 在场) | 较可行,逐 app 不一 |
 | **Linux / Windows 应用** | 需有可驱动的 GUI 会话 | 服务器无头则不行;需受控桌面 |
-| **Android** | ADB / uiautomator(需设备 / 模拟器) | 较可行 |
-| **iOS** | 沙盒;需 Mac+Xcode 设备自动化或 Shortcuts/URL scheme | 难、受限 |
+| **Android** | **`phone`(= adb),已是 factory tool** — `skills/factory/phone.md` | **句柄已在**:读 `uiautomator dump` 的元素树、`input tap/text/swipe`、`push/pull`。要人开一次 USB 调试并在机上点"允许" |
+| **iOS** | 沙盒;需 Mac+Xcode 签 WebDriverAgent,或本机 root 跑 `pymobiledevice3` 的 tunnel | 难、受限,**且两条路都要拴着线** —— 够不到口袋里那台。反方向已通:[36](36-show-your-screen-from-a-button.md) 的操作按钮 |
 
 ## Expected outcome
 
