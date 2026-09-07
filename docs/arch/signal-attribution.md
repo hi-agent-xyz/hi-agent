@@ -143,9 +143,24 @@ verbs, and the write is asked for deliberately.
 **A single match is soft evidence and is not a sender.** Spontaneous speech scores a
 genuine match not far above where a stranger sits, so `cluster` now takes three things
 together: a score clearing the modality's floor, a margin over the runner-up — two
-subjects that close is one ambiguous answer, not a winner — and, on the live
-microphone, agreement across more than one of that speaker's turns. Anything short of
-all three is `unknown`, which this document already holds to be a complete answer.
+subjects that close is one ambiguous answer, not a winner — and agreement across more
+than one of that speaker's turns. Anything short of all three is `unknown`, which this
+document already holds to be a complete answer.
+
+**Evidence that stands alone has to be strong; evidence that repeats may be weak.**
+That is the whole of the turns rule, and it settles the posted clip too — amended
+September 7, 2026, when the clip path was found naming people off a single match at
+the floor while the live microphone next to it demanded two. A clip is not a weaker
+kind of evidence than a live turn; it is the **one-turn case**, and it always will be,
+because the sender is decided at delivery and is never revised. So it answers to the
+one-turn bar the live path already had: a lone turn names somebody only at the
+threshold for *keeping* a sample, not the one for mentioning a resemblance.
+
+The resemblance is still said out loud. The `⟨voice: 老王 ~0.47⟩` note is prose the
+mind reads and may weigh however it likes; the sender is a field nothing downstream
+re-decides. **The two carry different bars on purpose**, and a match between them is
+exactly the case where the agent may wonder aloud who it heard while the record says
+nobody.
 
 **An observation the store cannot place is written nowhere.** Between "confidently this
 person" and "nobody we hold" there is a band, and the only two things to do with a
@@ -238,6 +253,15 @@ Three limits make it safe, and they are not optional:
 - **The owner default will sometimes be wrong** — someone else types on the machine, a
   window is left open. It is labelled `owner`, so it is correctable, and a wrong labelled
   default is strictly better than the unlabelled inference it replaces.
+- **A speaker's first line is unattributed, every time they start.** The turns rule
+  needs a second turn, and the sender is decided when the line is delivered — so the
+  evidence that would name them arrives after the line carrying it has gone. Nothing
+  goes back. This is the same trade the marker takes (*it is partial, and stays
+  partial*) and it is paid again on every reconnection, because the diarizer's speaker
+  labels and the evidence accumulated under them do not survive one. **The alternative
+  is revising a sender after delivery**, and a record whose fields change under a
+  reader is worse than one with a hole in it: every later pass would have to know which
+  version it read.
 - **Signals already in the log have no sender** and read as unattributed, **except where a
   carrier's own marker is still there to be read** (above). There is no backfill beyond
   that: who sent the rest is not recoverable, and inventing it is the thing this document

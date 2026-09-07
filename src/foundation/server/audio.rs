@@ -323,6 +323,21 @@ impl SpeakerVoices {
 /// talking. `None` for the subject means the voice was heard and not
 /// placed, which is a complete answer.
 ///
+/// **The note and the sender do not use the same bar, and that is the point.** The
+/// note is prose the mind reads and may weigh however it likes — soft evidence, at
+/// whatever strength the match had. The sender is a field nothing downstream
+/// re-decides, so it takes [`Modality::append_min`] rather than the weaker
+/// [`Modality::recognize_min`] a match needs to be worth mentioning.
+///
+/// The reason is that a clip only ever gets **one** look. The live mic can afford the
+/// lower bar because it accumulates: two turns naming the same subject settle it, and
+/// a lone turn there already has to clear `append_min` on its own
+/// ([`SpeakerVoices::subject`]). A clip has no second turn and never will — the
+/// sender is decided when the signal is delivered and is not revised afterwards — so
+/// it is exactly the one-turn case, and it answers to the one-turn bar. One rule for
+/// both paths: **evidence that stands alone has to be strong; evidence that repeats
+/// may be weak.**
+///
 /// The audio twin of the vision channel's `face_note`. Returns `None` outright when
 /// voiceprint is unconfigured, the clip can't be decoded/embedded, or the clip is
 /// diarized into multiple speakers (a single blended embedding would be misleading —
@@ -352,7 +367,10 @@ async fn voice_note(
     };
     let seen = people_vectors::recognize(data_dir, Modality::Voice, &embedding).await.ok()?;
     let (who, subject) = match seen.named() {
-        Some(c) => (format!("{} ~{:.2}", c.subject, c.similarity), Some(c.subject.clone())),
+        Some(c) => (
+            format!("{} ~{:.2}", c.subject, c.similarity),
+            (c.similarity >= Modality::Voice.append_min()).then(|| c.subject.clone()),
+        ),
         None => ("unfamiliar".to_string(), None),
     };
     Some((format!(" ⟨voice: {who}⟩"), subject))
