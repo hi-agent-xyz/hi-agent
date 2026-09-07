@@ -97,6 +97,33 @@ const VP_ENROLL_MIN_SAMPLES: u64 = SAMPLES_PER_MS * 2_500;
 /// stream calls them that. See [`SpeakerVoices::subject`].
 const VOICE_TURNS_MIN: usize = 2;
 
+/// What share of a turn somebody else may be talking across before the recording stops
+/// being that speaker's voice at all — past this, it is not embedded, not matched, and
+/// casts no vote.
+///
+/// **Overlap is a quantity and the two uses of it want different amounts.** A single
+/// microphone hands back one waveform, so a turn another speaker crossed is a mix; but
+/// three hundred milliseconds inside a four-second remark is a mix that is
+/// overwhelmingly one person, and the vector it yields is *degraded*, not *somebody
+/// else's*. The store already handles degraded evidence — a poorer match scores lower,
+/// misses [`Modality::recognize_min`] or its margin, and comes back unplaced on its own
+/// merits. Refusing to look at all would throw away the turns that still clear the bar,
+/// and in a room where people talk over each other that is most of them.
+///
+/// What the score cannot handle is a genuine blend, which does not merely score lower —
+/// **it can score nearest a third person**, and the margin rule is only a partial
+/// defence. So heavy contamination is refused outright while light contamination is
+/// left to the score.
+///
+/// **A guess.** Half is the point where "somebody talked across this" stops being an
+/// interjection and starts being two people saying different things at once, but
+/// nothing has measured where a `CAM++` embedding actually stops belonging to the
+/// louder speaker. It fails in the tolerable direction: too high and some blends vote,
+/// which the margin rule still has to survive; too low and a lively room recognizes
+/// nobody, which is the failure that has no floor under it. See
+/// [`acoustics::OVERLAP_JITTER_MS`] — the same recording measures both.
+const OVERLAP_BLEND_SHARE: f32 = 0.5;
+
 /// Seconds of **actual speech** a turn must hold before it is worth keeping as a
 /// sample of somebody's voice — not seconds of recording, which is what
 /// [`VP_ENROLL_MIN_SAMPLES`] bounds.
@@ -243,12 +270,12 @@ fn worth_keeping(
     said: &str,
     reading: &acoustics::Reading,
 ) -> bool {
-    // Two people talking at once is one waveform holding two voices, and the embedding
-    // of it is a blend belonging to neither. Diarization separates speakers *in time* —
-    // what the per-span slicing already uses — and nothing here separates them when
-    // they overlap. Pulling them apart would be a source-separation model and a new
-    // dependency; declining to keep the turn costs one sample.
-    !reading.crosstalk
+    // **Any** overlap at all disqualifies a sample, where recognizing from one
+    // tolerates a little ([`resolve_speaker`]). The asymmetry is this function's whole
+    // subject: a judgment made off a slightly-blended turn is one sentence the agent
+    // can revise, while a slightly-blended sample is graded against forever. Keeping
+    // nothing costs one clip out of a gallery of two hundred.
+    !reading.crosstalk()
         && samples as u64 >= VP_ENROLL_MIN_SAMPLES
         && sound.voiced_secs(samples) >= ENROLL_MIN_VOICED_SECS
         && speech_units(said) >= ENROLL_MIN_UNITS
@@ -967,8 +994,11 @@ async fn deliver_transcript(
 /// store that can place it confidently or not at all. `said` is what the transcriber
 /// made of this turn, and `None` means the utterance it came from held more than one
 /// speaker, which is never kept and never has text that belongs to one person.
-/// `reading` is the room this turn landed in — whether anybody talked across it, and
-/// how it stood against how loudly the room has lately been talking.
+/// `reading` is the room this turn landed in — how much of it anybody talked across,
+/// and how it stood against how loudly the room has lately been talking. A turn more
+/// than [`OVERLAP_BLEND_SHARE`] spoken over returns here without being embedded at
+/// all: identifying somebody from a blend of two voices is not weak evidence, it is
+/// evidence about nobody.
 ///
 /// Detached and best-effort: a failure leaves the speaker unplaced, which is an
 /// ordinary state rather than an error. Unlike clips and stills, the live mic persists
@@ -984,6 +1014,23 @@ fn resolve_speaker(
     reading: acoustics::Reading,
 ) {
     if pcm.is_empty() {
+        return;
+    }
+    // The measurement behind [`OVERLAP_BLEND_SHARE`] and
+    // [`acoustics::OVERLAP_JITTER_MS`]: what the overlaps in a real multi-party
+    // recording actually look like. Both numbers are guesses until this has been read
+    // off one, and nothing else in the process records it.
+    tracing::debug!(
+        speaker = %speaker_id,
+        overlap_ms = reading.overlap_ms,
+        dur_ms = reading.dur_ms,
+        share = reading.overlap_share(),
+        "diarized turn overlap"
+    );
+    if reading.overlap_share() >= OVERLAP_BLEND_SHARE {
+        // Half this turn is somebody else. The embedding would be a blend belonging to
+        // neither speaker, and a blend does not just score badly — it can score nearest
+        // a third person. Heard, and deliberately not measured.
         return;
     }
     let data_dir = state.data_dir.clone();
@@ -1313,7 +1360,8 @@ mod tests {
             voices: 1,
             distance: acoustics::Distance::Unplaced,
             clarity: acoustics::Clarity::Clear,
-            crosstalk: false,
+            overlap_ms: 0,
+            dur_ms: 4_000,
             level_vs_room: None,
         }
     }
@@ -1366,9 +1414,12 @@ mod tests {
         // its embedding belongs to neither of them.
         let (n, sound) = turn(4.0, 0.6);
         assert!(worth_keeping(n, &sound, SENTENCE, &quiet_room()));
+        // Any overlap at all keeps a sample out, however small a share of the turn it
+        // was — the bar for keeping does not forgive what the bar for recognizing does.
         let mut over = quiet_room();
-        over.crosstalk = true;
-        assert!(!worth_keeping(n, &sound, SENTENCE, &over));
+        over.overlap_ms = acoustics::OVERLAP_JITTER_MS;
+        assert!(over.overlap_share() < OVERLAP_BLEND_SHARE, "still recognizable from");
+        assert!(!worth_keeping(n, &sound, SENTENCE, &over), "but never kept");
     }
 
     #[test]

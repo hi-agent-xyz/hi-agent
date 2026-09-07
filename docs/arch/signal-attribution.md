@@ -162,6 +162,28 @@ re-decides. **The two carry different bars on purpose**, and a match between the
 exactly the case where the agent may wonder aloud who it heard while the record says
 nobody.
 
+**Two people at once is a quantity, not a flag** — amended September 7, 2026. A single
+microphone hands back one waveform, so a turn somebody talked across is a mix; but the
+gate built on that was a strict boundary comparison feeding one boolean, and it only
+kept the turn out of a gallery. The turn still got embedded, still got matched, and
+still voted on who was speaking — a blended vector deciding an identity, which is the
+one thing it cannot do, because a blend does not merely score lower than a clean match:
+it can score nearest a *third* person, and the margin rule is only a partial defence.
+
+So the overlap is now measured, and the two uses of it take different amounts. **Any**
+overlap disqualifies the turn as a stored sample: a sample is graded against forever and
+one clip costs nothing. Only a **large share** of the turn stops it being recognized
+from at all, because three hundred milliseconds inside a four-second remark leaves a
+recording that is overwhelmingly one person, and a vector that is merely degraded is
+exactly what the score, the floor and the margin already handle — it comes back
+unplaced on its own merits, or it clears the bar honestly. Refusing to look would throw
+away most of what a room with people in it produces.
+
+Both numbers — the overlap below which the diarizer's boundaries are simply approximate,
+and the share above which the recording stops being one voice — are **guesses that have
+not been measured**, and one real multi-party recording measures both. The turn overlaps
+are logged for that reason and no other.
+
 **An observation the store cannot place is written nowhere.** Between "confidently this
 person" and "nobody we hold" there is a band, and the only two things to do with a
 sample in it are a wrong append and an invented person. Both were happening: one

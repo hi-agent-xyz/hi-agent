@@ -65,6 +65,25 @@ const NEAR_DB: f32 = 6.0;
 /// Guesses, like the two above.
 const FAR_DB: f32 = 12.0;
 
+/// The shortest overlap between two speakers' turns that counts as one of them
+/// talking across the other. Below it, the two turns are treated as touching.
+///
+/// **The diarizer's turn boundaries are approximate**, and the overlap test is a
+/// strict comparison of them: without a floor, two back-to-back turns whose edges
+/// disagree by a few milliseconds read as an interruption. That cost nothing while
+/// crosstalk only kept a sample out of a gallery; it costs an identity now that a
+/// heavily-overlapped turn also stops being recognized
+/// ([`crate::foundation::server::audio`]).
+///
+/// **A guess, and the one number here most worth measuring.** It has to sit above the
+/// vendor's boundary jitter and below a real short interjection — "嗯", "对", a name
+/// called across a room — and nothing has measured either end on this install. Too
+/// low and a lively room stops recognizing anybody; too high and a genuine
+/// interruption is filed as one person's clean speech. The measurement is the overlap
+/// distribution over one real multi-party recording, which `resolve_speaker` logs at
+/// debug for exactly this reason.
+pub(crate) const OVERLAP_JITTER_MS: u64 = 150;
+
 /// How far back the room is remembered. Long enough that a second person who spoke a
 /// few sentences ago still counts as being here; short enough that a room empties.
 const WINDOW_MS: u64 = 60_000;
@@ -199,13 +218,46 @@ pub struct Reading {
     /// says something when one person is talking alone. `None` on the first turn of a
     /// stream, where there is nothing to be quieter than.
     pub level_vs_room: Option<f32>,
-    /// This turn's span overlapped another speaker's. Someone talking over someone
-    /// else is not, in that moment, addressing either of them — but that is the
-    /// mind's inference to draw, not this module's.
-    pub crosstalk: bool,
+    /// How many milliseconds of this turn another speaker was talking across, summed
+    /// over everyone who did. **A quantity, not a flag** — someone who put one word
+    /// in and someone who talked over half the sentence are not the same event, and
+    /// the callers that act on this need different amounts of it (`server::audio`:
+    /// any overlap disqualifies the turn as a stored sample, but only a large share
+    /// of it makes the recording stop being that speaker's voice).
+    ///
+    /// Overlaps shorter than [`OVERLAP_JITTER_MS`] count as zero: the vendor's turn
+    /// boundaries are approximate, and a two-millisecond touch between back-to-back
+    /// turns is the diarizer's arithmetic rather than anybody interrupting.
+    pub overlap_ms: u64,
+    /// This turn's own length, so a share can be taken without the caller having to
+    /// have kept the turn. See [`Reading::overlap_share`].
+    pub dur_ms: u64,
 }
 
 impl Reading {
+    /// Whether anybody talked across this turn at all. Someone talking over someone
+    /// else is not, in that moment, addressing either of them — but that is the
+    /// mind's inference to draw, not this module's.
+    pub fn crosstalk(&self) -> bool {
+        self.overlap_ms > 0
+    }
+
+    /// What share of this turn somebody else was talking across, in `[0, 1]`. `0.0`
+    /// for a turn with no length to speak of.
+    ///
+    /// **The share, not the milliseconds, is what says whether the recording is still
+    /// one person's.** Three hundred milliseconds inside a four-second remark leaves a
+    /// waveform that is overwhelmingly the speaker; the same three hundred inside a
+    /// half-second one leaves a blend of two people. A caller weighing an embedding
+    /// wants this; a caller deciding whether to keep a sample wants
+    /// [`Self::crosstalk`], which does not forgive any of it.
+    pub fn overlap_share(&self) -> f32 {
+        if self.dur_ms == 0 {
+            return 0.0;
+        }
+        (self.overlap_ms as f32 / self.dur_ms as f32).clamp(0.0, 1.0)
+    }
+
     /// The compact evidence note for the agent-facing transcript, e.g.
     /// ` ⟨room: 3 voices, this one far off and faint⟩` — the audio twin of
     /// `⟨voice: …⟩` and `⟨faces: …⟩`. `None` when there is nothing worth saying: one
@@ -231,7 +283,7 @@ impl Reading {
                 format!("this one {this}")
             });
         }
-        if self.crosstalk {
+        if self.crosstalk() {
             parts.push("over someone else".to_string());
         }
         (!parts.is_empty()).then(|| format!(" ⟨room: {}⟩", parts.join(", ")))
@@ -256,15 +308,29 @@ impl Room {
     /// newcomer's own clock — the diarized timeline, so nothing here depends on when
     /// the second pass got around to delivering it.
     pub fn note(&mut self, turn: Turn) -> Reading {
+        let dur_ms = turn.end_ms.saturating_sub(turn.start_ms);
         let horizon = turn.end_ms.saturating_sub(WINDOW_MS);
         while self.turns.front().is_some_and(|t| t.end_ms < horizon) {
             self.turns.pop_front();
         }
 
-        let crosstalk = self
+        // How much of this turn somebody else was talking across, summed over
+        // everyone who was. Measured rather than flagged, so a caller can tell one
+        // interjected word from a sentence spoken over the top of another
+        // ([`Reading::overlap_share`]).
+        let overlap_ms: u64 = self
             .turns
             .iter()
-            .any(|t| t.speaker != turn.speaker && t.end_ms > turn.start_ms && t.start_ms < turn.end_ms);
+            .filter(|t| t.speaker != turn.speaker)
+            .map(|t| {
+                let lo = t.start_ms.max(turn.start_ms);
+                let hi = t.end_ms.min(turn.end_ms);
+                let ms = hi.saturating_sub(lo);
+                // Below the floor this is the diarizer's boundary arithmetic, not
+                // somebody interrupting.
+                if ms >= OVERLAP_JITTER_MS { ms } else { 0 }
+            })
+            .sum();
 
         // The loudest speaker in the window, by their own best turn — a speaker is
         // placed against the room's near voice, not against one shouted syllable.
@@ -309,7 +375,14 @@ impl Room {
         voices.sort_unstable();
         voices.dedup();
 
-        Reading { voices: voices.len(), distance, clarity, crosstalk, level_vs_room }
+        Reading {
+            voices: voices.len(),
+            distance,
+            clarity,
+            overlap_ms,
+            dur_ms,
+            level_vs_room,
+        }
     }
 }
 
@@ -427,7 +500,7 @@ mod tests {
         let r = room.note(turn("0", 0, 2_000, sound(-40.0, -70.0)));
         assert_eq!(r.voices, 1);
         assert_eq!(r.distance, Distance::Unplaced, "nothing to be far from");
-        assert!(!r.crosstalk);
+        assert!(!r.crosstalk());
         assert_eq!(r.note(), None, "one clear voice is the ordinary case, and says nothing");
     }
 
@@ -456,11 +529,55 @@ mod tests {
     fn overlapping_spans_are_crosstalk_and_touching_ones_are_not() {
         let mut room = Room::default();
         room.note(turn("0", 0, 3_000, sound(-30.0, -60.0)));
-        assert!(room.note(turn("1", 2_000, 4_000, sound(-32.0, -62.0))).crosstalk);
+        let r = room.note(turn("1", 2_000, 4_000, sound(-32.0, -62.0)));
+        assert!(r.crosstalk());
+        assert_eq!(r.overlap_ms, 1_000, "a second of the two-second turn was spoken over");
+        assert_eq!(r.overlap_share(), 0.5);
 
         let mut room = Room::default();
         room.note(turn("0", 0, 3_000, sound(-30.0, -60.0)));
-        assert!(!room.note(turn("1", 3_000, 4_000, sound(-32.0, -62.0))).crosstalk, "back to back");
+        assert!(!room.note(turn("1", 3_000, 4_000, sound(-32.0, -62.0))).crosstalk(), "back to back");
+    }
+
+    /// The floor exists because the vendor's turn boundaries are approximate. Without
+    /// it, two turns whose edges disagree by a few milliseconds read as an
+    /// interruption — and since a heavily-overlapped turn is no longer recognized
+    /// from, that arithmetic would cost people their identity in a busy room.
+    #[test]
+    fn a_boundary_that_disagrees_by_a_hair_is_not_an_interruption() {
+        let mut room = Room::default();
+        room.note(turn("0", 0, 3_000, sound(-30.0, -60.0)));
+        let r = room.note(turn("1", 3_000 - (OVERLAP_JITTER_MS - 1), 5_000, sound(-32.0, -62.0)));
+        assert_eq!(r.overlap_ms, 0);
+        assert!(!r.crosstalk());
+    }
+
+    /// One word put in over a long remark is not the same event as a sentence spoken
+    /// across it, and the share is what tells them apart.
+    #[test]
+    fn an_interjection_and_a_talk_over_are_told_apart_by_share() {
+        let mut room = Room::default();
+        room.note(turn("0", 0, 4_300, sound(-30.0, -60.0)));
+        let brief = room.note(turn("1", 4_000, 8_000, sound(-32.0, -62.0)));
+        assert_eq!(brief.overlap_ms, 300);
+        assert!(brief.overlap_share() < 0.1, "300ms inside a four-second turn");
+
+        let mut room = Room::default();
+        room.note(turn("0", 0, 4_000, sound(-30.0, -60.0)));
+        let over = room.note(turn("1", 1_000, 5_000, sound(-32.0, -62.0)));
+        assert_eq!(over.overlap_ms, 3_000);
+        assert!(over.overlap_share() > 0.5, "three of its four seconds");
+    }
+
+    /// Overlaps with different people add up: two speakers each crossing a third of a
+    /// turn leave a third of it clean.
+    #[test]
+    fn overlaps_with_two_people_are_summed() {
+        let mut room = Room::default();
+        room.note(turn("0", 0, 1_000, sound(-30.0, -60.0)));
+        room.note(turn("1", 2_000, 3_000, sound(-30.0, -60.0)));
+        let r = room.note(turn("2", 0, 3_000, sound(-30.0, -60.0)));
+        assert_eq!(r.overlap_ms, 2_000);
     }
 
     #[test]
@@ -468,7 +585,7 @@ mod tests {
         let mut room = Room::default();
         room.note(turn("0", 0, 3_000, sound(-30.0, -60.0)));
         // The same label re-sent across an overlapping span is one person, not two.
-        assert!(!room.note(turn("0", 2_000, 4_000, sound(-30.0, -60.0))).crosstalk);
+        assert!(!room.note(turn("0", 2_000, 4_000, sound(-30.0, -60.0))).crosstalk());
     }
 
     #[test]
