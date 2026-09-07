@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { fileURLToPath } from "node:url";
+import { cpSync, createReadStream, existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 // Resolve a filesystem path relative to this config file. URL pathnames keep
 // percent-encoding (notably spaces), while Vite needs the decoded OS path.
@@ -34,10 +36,25 @@ const SHARED_SPECIFIERS: Record<string, string> = {
 // view boundary — and folding a convenience into it would make the two
 // indistinguishable, so the next reader could not tell which entries may be dropped.
 //
-// The cost is real and is the bar for adding one: every entry ships in the host
-// bundle to every surface on every load, whether any view imports it or not.
+// The cost is real and is the bar for adding one, though it is not quite what this
+// paragraph used to say. An entry is built as its own chunk and ships in the host
+// bundle unconditionally — that weight is in the `.dmg`, the `.deb` and the Docker
+// image whether or not any view ever imports it. What it does *not* do is load on
+// every page: entry chunks named only by the import map are absent from the
+// `modulepreload` list `index.html` carries, so the browser fetches one the first
+// time something imports it and not before. Measured, on this build.
+//
+// So the bar is disk, and latency only for whoever actually reaches the feature —
+// which is worth knowing before deciding how hard to fight for a smaller entry.
+//
+// `@open-file-viewer/core` maps to `src/shared/ofv.ts`, not to the package: that
+// shim shadows `pdfPlugin` so a view cannot accidentally fetch the PDF worker and
+// CMaps from jsDelivr, which is upstream's default. The specifier stays the real
+// package name so a view the agent writes from prior knowledge of the library
+// resolves — see the shim's header for why shadowing beat renaming.
 const LIBRARY_SPECIFIERS: Record<string, string> = {
   "src/shared/d3-hierarchy.ts": "d3-hierarchy",
+  "src/shared/ofv.ts": "@open-file-viewer/core",
 };
 
 const SHADCN_SPECIFIERS: Record<string, string> = Object.fromEntries(
@@ -126,6 +143,49 @@ function devImportMap(): Plugin {
   };
 }
 
+// The two pdfjs asset trees that are not JavaScript, served same-origin under
+// `/pdfjs/`. `src/shared/ofv.ts` points pdfjs at them so that opening a PDF the
+// core is already holding needs no network — upstream's default is a jsDelivr URL.
+//
+// CMaps are what make a CJK PDF render at all when it references a predefined
+// character collection instead of embedding one, so on this product they are not
+// the optional half: ~1.7 MB for 169 files, against a scanned Chinese contract
+// showing blank glyphs. `standard_fonts` (~800 KB) covers PDFs that name a base-14
+// font without embedding it. Both are only ever fetched once a PDF is opened.
+//
+// Not `public/`: that would vendor 185 binaries into git to be re-synced by hand
+// on every pdfjs bump. Copying from node_modules at build time keeps the version
+// in package.json, where the worker import already reads it.
+function pdfjsAssets(): Plugin {
+  const trees = ["cmaps", "standard_fonts"];
+  const from = (tree: string) => r(`./node_modules/pdfjs-dist/${tree}`);
+  return {
+    name: "hi-pdfjs-assets",
+    // Prod: land them in dist/ so RustEmbed picks them up with everything else.
+    writeBundle(options) {
+      const outDir = options.dir ?? r("./dist");
+      for (const tree of trees) {
+        cpSync(from(tree), join(outDir, "pdfjs", tree), { recursive: true });
+      }
+    },
+    // Dev: Vite only serves `public/`, so mirror the prod path by hand or every
+    // PDF opened in dev silently falls back to... nothing, since the shim removed
+    // the CDN default. Same seam the import map needs mirroring for, same reason.
+    configureServer(server) {
+      server.middlewares.use("/pdfjs", (req, res, next) => {
+        const rel = decodeURIComponent((req.url ?? "").split("?")[0] ?? "").replace(/^\/+/, "");
+        const tree = trees.find((t) => rel === t || rel.startsWith(t + "/"));
+        // No traversal out of the two trees, and no path that is not one of them.
+        if (!tree || rel.includes("..")) return next();
+        const file = join(from(tree), rel.slice(tree.length + 1));
+        if (!existsSync(file) || !statSync(file).isFile()) return next();
+        res.setHeader("content-type", "application/octet-stream");
+        createReadStream(file).pipe(res);
+      });
+    },
+  };
+}
+
 // During dev, the browser only talks to Vite (:12359). Vite proxies every
 // human-interface channel route — all under `/api/*` — to the Rust server on
 // :12358.
@@ -197,7 +257,7 @@ const proxy: Record<string, ProxyOptions> = Object.fromEntries(
 );
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), basicSsl(), emitImportMap(), devImportMap()],
+  plugins: [react(), tailwindcss(), basicSsl(), emitImportMap(), devImportMap(), pdfjsAssets()],
   // @hi/core is the live-session surface. UI imports use the standard shadcn
   // paths mapped above directly to generated component source files.
   resolve: {
@@ -240,6 +300,7 @@ export default defineConfig({
         "share-motion": r("src/shared/motion.ts"),
         "share-core": r("src/shared/core.ts"),
         "lib-d3-hierarchy": r("src/shared/d3-hierarchy.ts"),
+        "lib-ofv": r("src/shared/ofv.ts"),
         ...Object.fromEntries(
           Object.keys(SHADCN_SPECIFIERS).map((file) => {
             const name = file.split("/").at(-1)!.replace(/\.tsx$/, "");

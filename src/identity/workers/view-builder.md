@@ -491,6 +491,15 @@ what you need as bare modules:
   `useChannels()`, `useSendText()`. Read or drive the conversation from inside a view
   with these. Also `url()`, for a path you put in a `src` or an `href` — see below.
 - `motion/react` — Motion, when (and only when) a moment earns movement.
+- `@open-file-viewer/core` — show a file *as itself*: `createViewer({ container, files,
+  plugins: [imagePlugin(), pdfPlugin(), officePlugin(), textPlugin(), fallbackPlugin()] })`
+  renders a PDF, a Word or Excel document, an image, a note or a scan into a `<div>` you
+  own. Pass `locale` and `theme` so it matches the page, and keep `fallbackPlugin()` last
+  — it accepts everything, so anything after it is unreachable. Reach for it whenever a
+  view would otherwise link *at* a file and hope: a link opens nothing in the popover or
+  on a phone. `factory/drive.jsx` is the worked example — import it with `await import()`
+  inside the effect rather than at the top of the file, and tear the viewer down with
+  `destroy()` in the cleanup.
 - `react` itself.
 
 ## Available shadcn components

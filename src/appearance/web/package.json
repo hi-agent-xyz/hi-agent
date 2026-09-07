@@ -10,12 +10,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@open-file-viewer/core": "0.1.44",
     "@shadcn/react": "^0.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "d3-hierarchy": "^3.1.2",
     "lucide-react": "^1.31.0",
     "motion": "^12.42.2",
+    "pdfjs-dist": "4.10.38",
     "radix-ui": "^1.6.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
