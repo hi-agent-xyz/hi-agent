@@ -9,7 +9,7 @@
 //! and when a correction *doesn't* stick, there is no way to see that it didn't, or to
 //! put the file right while the underlying bug is fixed. These routes close both:
 //!
-//! - `GET /api/facets` — every dimension on disk with its subjects.
+//! - `GET /api/facets` — every dimension on disk with its subjects and their mtimes.
 //! - `GET /api/facets/{dimension}/{subject}` — one facet's raw markdown.
 //! - `PUT /api/facets/{dimension}/{subject}` — replace it wholesale.
 //! - `GET /api/episodes?limit=N` — the recent episode gists, newest first, as the
@@ -85,13 +85,30 @@ fn normalize_ts(s: &str) -> Option<String> {
 
 // ── list dimensions ───────────────────────────────────────────────────────────
 
+/// One subject in the index, with the file's mtime beside its name.
+///
+/// **The timestamp is why this is an object rather than a string.** The listing used to
+/// hand back names alone, so a surface that wanted to know *when* the mind last wrote
+/// about a project had to read every facet in full to find out — `factory/home` read one
+/// request per project and, because that cost is proportional to nothing a clock should
+/// pay, it read on attention instead of on a clock and quietly showed a mount-time
+/// answer for as long as the window stayed up. The mtime is one `stat` per subject on
+/// this side of the wire, which is what a listing is for.
+#[derive(Serialize)]
+struct SubjectDto {
+    subject: String,
+    /// Same spelling as [`FacetDto::modified`] — the facet file's mtime, or empty when
+    /// the platform has none.
+    modified: String,
+}
+
 #[derive(Serialize)]
 struct DimensionDto {
     dimension: String,
     /// `subjects.len()`, carried explicitly so the view can show a count without
     /// walking the list.
     count: usize,
-    subjects: Vec<String>,
+    subjects: Vec<SubjectDto>,
 }
 
 /// Group the store's `<dim>/<subject>` refs by dimension. Reuses
@@ -109,12 +126,16 @@ async fn list_dimensions(data_dir: &Path) -> anyhow::Result<Vec<DimensionDto>> {
         let Some((dim, subj)) = r.split_once('/') else {
             continue;
         };
+        let path = facets::subject_dir(data_dir, dim, subj).join(facets::FACET_FILE);
+        let modified =
+            stamp(tokio::fs::metadata(&path).await.ok().and_then(|m| m.modified().ok()));
+        let entry = SubjectDto { subject: subj.to_owned(), modified };
         match out.last_mut() {
-            Some(d) if d.dimension == dim => d.subjects.push(subj.to_owned()),
+            Some(d) if d.dimension == dim => d.subjects.push(entry),
             _ => out.push(DimensionDto {
                 dimension: dim.to_owned(),
                 count: 0,
-                subjects: vec![subj.to_owned()],
+                subjects: vec![entry],
             }),
         }
     }
@@ -124,7 +145,8 @@ async fn list_dimensions(data_dir: &Path) -> anyhow::Result<Vec<DimensionDto>> {
     Ok(out)
 }
 
-/// `GET /api/facets` — every dimension on disk with its subjects, both sorted.
+/// `GET /api/facets` — every dimension on disk with its subjects, both sorted, each
+/// subject carrying the mtime of the file its prose lives in.
 pub async fn get_facets(State(state): State<Arc<AppState>>) -> Response {
     match list_dimensions(&state.data_dir).await {
         Ok(dimensions) => Json(serde_json::json!({ "dimensions": dimensions })).into_response(),
@@ -389,9 +411,19 @@ mod tests {
             ["people", "tasks", "topics"]
         );
         assert_eq!(dims.iter().map(|x| x.count).collect::<Vec<_>>(), [2, 1, 1]);
-        assert_eq!(dims[0].subjects, vec!["alice".to_string(), "bob".to_string()]);
-        assert_eq!(dims[1].subjects, vec!["daily-digest".to_string()]);
-        assert_eq!(dims[2].subjects, vec!["kyoto-trip".to_string()]);
+        let names = |d: &DimensionDto| {
+            d.subjects.iter().map(|s| s.subject.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(names(&dims[0]), ["alice", "bob"]);
+        assert_eq!(names(&dims[1]), ["daily-digest"]);
+        assert_eq!(names(&dims[2]), ["kyoto-trip"]);
+        // The mtime is the point of the listing: a surface reads recency from here
+        // rather than by fetching every facet in full.
+        for d in &dims {
+            for s in &d.subjects {
+                assert!(s.modified.ends_with('Z'), "modified was {:?}", s.modified);
+            }
+        }
     }
 
     #[tokio::test]

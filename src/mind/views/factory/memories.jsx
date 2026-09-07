@@ -147,7 +147,7 @@ export default function Memories() {
         if (first) {
           picked.current = true;
           setDim(first.dimension);
-          setSubject(first.subjects?.[0] ?? null);
+          setSubject(first.subjects?.[0]?.subject ?? null);
         }
       }
     } else {
@@ -214,7 +214,7 @@ export default function Memories() {
         {dims.map((d) => (
           <button key={d.dimension} type="button" aria-pressed={d.dimension === dim}
             style={{ ...S.reset, ...S.dimChip, ...(d.dimension === dim ? S.dimOn : {}) }}
-            onClick={() => { setDim(d.dimension); setSubject(d.subjects?.[0] ?? null); }}>
+            onClick={() => { setDim(d.dimension); setSubject(d.subjects?.[0]?.subject ?? null); }}>
             {L.dim[d.dimension] || d.dimension}
             <span style={S.dimN}>{d.count}</span>
           </button>
@@ -223,7 +223,7 @@ export default function Memories() {
 
       <div style={S.split}>
         <div style={S.side}>
-          {(current?.subjects || []).map((s) => (
+          {(current?.subjects || []).map(({ subject: s }) => (
             <button key={s} type="button" aria-pressed={s === subject}
               style={{ ...S.reset, ...S.subj, ...(s === subject ? S.subjOn : {}) }}
               onClick={() => setSubject(s)}>

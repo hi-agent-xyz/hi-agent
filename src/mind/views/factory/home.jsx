@@ -54,8 +54,8 @@
 // **Depth is read out of the tags, not fixed at two.** A row can be a lone errand under
 // nothing, or a task under a part of a project under the project, and a chart that always
 // draws exactly two ranks is asserting a shape the work does not have. The containment is
-// already in the data: **B is inside A when every open row carrying B also carries A, and A
-// holds strictly more rows.** `Tencent COS` appears only on rows that are also `KUT`, so it
+// already in the data: **B is inside A when every row on the chart carrying B also carries A,
+// and A holds strictly more rows.** `Tencent COS` appears only on rows that are also `KUT`, so it
 // is part of KUT; `wecom` and `songguo` share no rows, so they are peers.
 //
 // **A topic has to be worth a rank: three rows, or a project the agent keeps a facet on.**
@@ -182,6 +182,16 @@
 // `tasks.jsx` already learned the expensive version of this when five equal columns spent 40%
 // of the width on the 93% of rows that had closed.
 //
+// **But a row does not leave at the instant it closes, and that is not a softening of the
+// number above.** The moment a thing is finished is the moment it is most worth looking at:
+// the work is done, the deliverable exists, and nobody has seen it yet. Dropping the row on
+// the status change spent that moment saying nothing — on the live store the sports-AI
+// research closed at 20:05 and by 22:45 this surface held its name nowhere, its picture
+// nowhere, and `+1` inside `6 today`, which reads as *it did not happen*. So a `done` row
+// that left a view keeps its place for a while: same tags, same `forest`, same topic, one
+// rank cooler. `stillStanding` in the model section is the whole of it — what leaves is
+// decided by displacement first and a clock second, and none of it is a branch of its own.
+//
 // **What this cannot do yet, in the file rather than after the fact:**
 //   - The project trunk costs one request per project, because `GET /api/facets` returns
 //     sorted names and no timestamps. It reads on attention rather than on a clock for
@@ -239,7 +249,14 @@ const T = {
     trunk: { loose: "no project", minds: "also on its mind", closed: "closed" },
     // One word per row, in the row's own tone. It replaces the four places the old surface
     // said the same thing (red title, red badge, red rule, red trunk name).
-    state: { wait: "you", warn: "nobody", live: "running", serving: "on duty", todo: "parked" },
+    state: {
+      wait: "you",
+      warn: "nobody",
+      live: "running",
+      serving: "on duty",
+      todo: "parked",
+      done: "done",
+    },
     open: "open",
     you: "you",
     nobody: "nobody on it",
@@ -265,7 +282,7 @@ const T = {
     nothingOpen: "没有开着的事。",
     deaf: "听不见",
     trunk: { loose: "没有项目", minds: "还想着", closed: "已结束" },
-    state: { wait: "等你", warn: "没人管", live: "在跑", serving: "值守", todo: "停着" },
+    state: { wait: "等你", warn: "没人管", live: "在跑", serving: "值守", todo: "停着", done: "完成" },
     open: "打开",
     you: "等你",
     nobody: "没人在上面",
@@ -304,8 +321,16 @@ const ZH = L === T.zh;
 
 const OPEN = new Set(["todo", "doing", "serving"]);
 const MINDS_SHOWN = 8;
-// A ceiling on the per-project reads, so a store that grows a hundred projects does not turn
-// one attention into a hundred requests.
+// **How a finished row leaves: pushed, or aged out — never the instant it closes.** Two
+// forces, because either alone is wrong. A cap alone would keep the last delivery up for a
+// week on a quiet stretch; a clock alone would hold four cards through a busy afternoon and
+// bury the open work under what is already done. So the standing set is the newest
+// `STANDING_SHOWN` deliveries inside `STANDING_HOURS`, and a fourth delivery displaces the
+// oldest of the three the moment it lands.
+const STANDING_SHOWN = 3;
+const STANDING_HOURS = 24;
+// A ceiling on how far down the project list the row will look. It used to bound the number
+// of *requests* — one per project — and now bounds only how much of one response is read.
 const MINDS_READ = 60;
 // A topic earns a rank at this many rows, or by being a project the agent keeps a facet on.
 const EARNS = 3;
@@ -326,7 +351,7 @@ const TONE = {
 };
 // A topic is as hot as the hottest thing under it: that is how a chart organised by subject
 // still answers *what needs me* at a glance, which organising by state answered for free.
-const HEAT = ["wait", "warn", "live", "serving", "todo", "minds", "closed"];
+const HEAT = ["wait", "warn", "live", "serving", "todo", "done", "minds", "closed"];
 const hotter = (a, b) => (HEAT.indexOf(a) <= HEAT.indexOf(b) ? a : b);
 
 // ── reading ───────────────────────────────────────────────────────────────────
@@ -340,9 +365,9 @@ const api = {
   // casualties are not in the roster at all, so cut-off work reads "nobody on it" rather
   // than naming the restart.
   workers: () => fetch("/api/workers").then((r) => r.json()),
+  // Names *and* mtimes, so what a project was last thought about is one request rather
+  // than one per project. That is the whole reason this row can be on a clock.
   facets: () => fetch("/api/facets").then((r) => r.json()),
-  facet: (subject) =>
-    fetch(`/api/facets/projects/${encodeURIComponent(subject)}`).then((r) => r.json()),
   // Names every view that exists, with the picture already taken for the ones that have one.
   views: () => fetch("/api/views").then((r) => r.json()),
 };
@@ -441,6 +466,27 @@ function crewBySubject(workers) {
 // this need me* — and not the record's shape. Derived here and nowhere else, so the colour
 // of a leaf and the sentence on it cannot disagree.
 function read(task, crew) {
+  // **A finished row's one fact is when**, and the card's picture is the rest of it.
+  //
+  // The summary sentence this line ought to carry has a place in the record already, and the
+  // instruction for it is right: a `delivered` entry is "the person has something now, or it
+  // went out" (`identity/workers/general.md`), with `digest posts at 09:00; today's is in the
+  // group as om_xxx` as the shape. On the live store neither standing row had written one.
+  // Both had put the audit there instead — *Reaction 已 exact show stable ref … Show 后读取
+  // /api/out/view version 4041* — prose addressed to whoever would later check that the show
+  // really happened, which is true, and is not a thing to hand a person under a picture.
+  //
+  // So this line does not gamble on it. Nothing in a view can tell a sentence from a receipt,
+  // and the failure is not symmetric: a missing summary costs a line the picture mostly
+  // covers, while a receipt printed in the card's one sentence reads as the surface being
+  // broken. If that entry becomes reliably a sentence, this is where it goes — that is a
+  // question about what cognition writes when it delivers, and it is measured in the record,
+  // not repaired here.
+  if (task.status === "done") {
+    const age = ago(task.completedAt || task.statusSince);
+    return { tone: "done", text: age ? L.since(age) : "" };
+  }
+
   const wait = waitsOnPerson(task) ? latestSpoken(task) : null;
   if (wait) return { tone: "wait", text: oneLine(wait.text) };
 
@@ -504,6 +550,13 @@ function viewRefOf(task, known) {
   return null;
 }
 
+/** How much has closed, over a day and over a week.
+ *
+ *  **The rows [`stillStanding`] kept are counted here too**, so a chart showing two finished
+ *  cards still says `6 today` rather than `4 more today`. The count is a count of what closed,
+ *  which is a fact about the ledger and not about this chart's spare width — subtracting what
+ *  happens to be drawn would make the same day read as a different number depending on how
+ *  tall the window is. */
 function closedCounts(tasks) {
   const now = Date.now();
   let day = 0;
@@ -517,6 +570,41 @@ function closedCounts(tasks) {
     if (hours <= 24 * 7) week += 1;
   }
   return { day, week };
+}
+
+/** **What has just been delivered, still standing where it was done.**
+ *
+ *  A row used to leave the chart at the instant its status changed, which is the one moment
+ *  it is most worth looking at: the work is finished, the thing exists, and nobody has seen
+ *  it yet. On the live store the sports-AI research closed at 20:05, was delivered as a view
+ *  whose picture had already been taken, and by 22:45 the surface built to answer *where is
+ *  everything* held its name nowhere and its picture nowhere — `+1` inside `6 today`. The
+ *  reading that produces is that the work did not happen.
+ *
+ *  **`done`, and a deliverable.** Cancelled is not finished, and a card headed 完成 over a row
+ *  that was abandoned is a lie the chart would be telling in its largest type. And the shape a
+ *  finished row gets is the picture card, so a row with nothing to open has nothing to put in
+ *  it — the picture *is* what keeps it here — and it goes to the count as before. What stands
+ *  is what a person would ask about by name.
+ *
+ *  **It stands where it was done, not in an archive.** The row keeps its tags, so it hangs off
+ *  its own topic through the same `forest` every other row goes through; a finished KNQ map
+ *  files under `ktv` because that is what its record says, and a row that carried no tag lands
+ *  under `no project` for the same reason it would have while open. Nothing here places
+ *  anything — that is the point of not building a separate branch for it. */
+function stillStanding(tasks, known, now) {
+  const out = [];
+  for (const task of tasks) {
+    if (task.status !== "done") continue;
+    const at = stamp(task.completedAt || task.statusSince);
+    if (!at) continue;
+    if ((now - at.getTime()) / 3600000 > STANDING_HOURS) continue;
+    const view = viewRefOf(task, known);
+    if (!view) continue;
+    out.push({ at, task, view });
+  }
+  out.sort((a, b) => b.at.getTime() - a.at.getTime());
+  return out.slice(0, STANDING_SHOWN);
 }
 
 // ── topics ────────────────────────────────────────────────────────────────────
@@ -535,14 +623,20 @@ function tags(task) {
     .filter(Boolean);
 }
 
-/** Fold every open row's tags into a forest of topics and say which node each row hangs off.
- *  Returns plain data; nothing here knows the chart exists. */
-function forest(open, projectNames) {
+/** Fold the tags of every row *on the chart* into a forest of topics and say which node each
+ *  row hangs off. Returns plain data; nothing here knows the chart exists.
+ *
+ *  "On the chart" is the open ledger plus what [`standing`] kept, and the containment rule
+ *  reads over the same set: a topic that exists only because of a delivery that finished this
+ *  morning is a topic the work really has, and the alternative — computing the shape from the
+ *  open rows and then hanging finished ones off it — would file a row under a node derived
+ *  from a set that row is not in. */
+function forest(shown, projectNames) {
   const rows = new Map(); // folded tag -> { label, ids:Set }
   const carried = new Map(); // task subject -> folded[]
   let tagged = 0;
 
-  for (const { task } of open) {
+  for (const { task } of shown) {
     const list = tags(task);
     if (list.length === 0) continue;
     tagged += 1;
@@ -623,12 +717,11 @@ function forest(open, projectNames) {
  *  each, then the rows that belong to nothing, then memory and the archive. */
 function model(tasks, workers, minds, views) {
   const crew = crewBySubject(workers);
-  const open = [];
-  for (const task of tasks) {
-    if (!OPEN.has(task.status)) continue;
+  const shown = [];
+  const put = (task, view) => {
     const on = crew.get(task.subject) || [];
     const one = read(task, on);
-    open.push({
+    shown.push({
       task,
       leaf: {
         id: task.subject,
@@ -637,13 +730,16 @@ function model(tasks, workers, minds, views) {
         tone: one.tone,
         sessions: on,
         age: ago(task.statusSince || task.createdAt),
-        view: viewRefOf(task, views),
+        view: view === undefined ? viewRefOf(task, views) : view,
       },
     });
-  }
+  };
+  for (const task of tasks) if (OPEN.has(task.status)) put(task);
+  // Its view is already resolved, so it is handed over rather than looked up twice.
+  for (const row of stillStanding(tasks, views, Date.now())) put(row.task, row.view);
 
   const projectNames = new Set(minds.map((m) => m.subject));
-  const { rows, parent, home } = forest(open, projectNames);
+  const { rows, parent, home } = forest(shown, projectNames);
 
   let roots = [];
   const nodes = new Map();
@@ -656,7 +752,7 @@ function model(tasks, workers, minds, views) {
     else roots.push(node);
   }
   const loose = [];
-  for (const row of open) {
+  for (const row of shown) {
     const key = home.get(row.task.subject);
     if (key && nodes.has(key)) nodes.get(key).leaves.push(row.leaf);
     else loose.push(row.leaf);
@@ -799,8 +895,20 @@ const HUB_H = 118;
 // rather than out from under it.
 const HUB_R = 13;
 
+// **A finished row is a picture card, and never anything else.** `standing` only keeps rows
+// that left a view, so the `P` here has no fallback by construction — the picture *is* the
+// reason the row is still on the chart. It is the same shape a row waiting on a person gets,
+// which is right: both are rows whose whole content is *there is a thing here, look at it*.
 const shapeOf = (leaf) =>
-  leaf.tone === "todo" ? "XS" : leaf.tone === "wait" ? (leaf.view ? "P" : "T") : "R";
+  leaf.tone === "todo"
+    ? "XS"
+    : leaf.tone === "done"
+      ? "P"
+      : leaf.tone === "wait"
+        ? leaf.view
+          ? "P"
+          : "T"
+        : "R";
 
 // **How wide a chip will be, measured rather than counted.** It was `title.length * 7.4`, which
 // is wrong by a whole row the moment a title is CJK — one em a character, not half — and it
@@ -1093,22 +1201,30 @@ export default function Home() {
     if (roster) setWorkers(roster.workers || []);
   }, []);
 
-  // The chart is something you watch happen. These two are not. The project trunk costs one
-  // request per project and the view index is a whole listing, so both read when someone looks
-  // at the page rather than on a clock.
+  // **The chart is something you watch happen, and so are these.** Both used to read on
+  // attention alone — the minds row because it cost one request per project, the view index
+  // because it is a whole listing — and on the one surface built to *stay up*, "on attention"
+  // means "once". The failure was worse than a stale number, because the ages on those chips
+  // are recomputed from `Date.now()` every render: the labels kept ticking over a set frozen
+  // at mount, so nothing on the screen said it had stopped reading. The minds row now costs
+  // one request (`/api/facets` carries `modified`), and the view index is the same listing
+  // the bookmarks band already re-reads every few seconds.
+  //
+  // **What that read costs on the far side, since this page holds it open all day.** Reading
+  // the inventory queues up to three first pictures, which is a headless render each. The
+  // queue is `system || bookmarked || in the trail` and never the whole tree, and a picture
+  // that lands stops being wanted — on the live store all ten system views already had one
+  // and nothing was bookmarked, so the steady state is an empty queue. What is *not* bounded
+  // is a warm that keeps failing: `wants_shot` stays true, so a view that will never render
+  // is retried for as long as this page is up. That was always true of the band and is now
+  // true for longer.
   const loadMinds = useCallback(async () => {
     const index = await api.facets().catch(() => null);
     if (!index) return;
     const dimension = (index.dimensions || []).find((d) => d.dimension === "projects");
-    const subjects = (dimension?.subjects || []).slice(0, MINDS_READ);
-    const seen = await Promise.all(
-      subjects.map((subject) =>
-        api
-          .facet(subject)
-          .then((f) => ({ subject, at: stamp(f?.modified) }))
-          .catch(() => ({ subject, at: null })),
-      ),
-    );
+    const seen = (dimension?.subjects || [])
+      .slice(0, MINDS_READ)
+      .map((s) => ({ subject: s.subject, at: stamp(s.modified) }));
     seen.sort((a, b) => (b.at?.getTime() || 0) - (a.at?.getTime() || 0));
     setMinds(seen);
   }, []);
@@ -1124,8 +1240,8 @@ export default function Home() {
   }, []);
 
   useLive(load, { period: TEMPO.watching });
-  useLive(loadMinds, { period: TEMPO.onAttention });
-  useLive(loadViews, { period: TEMPO.onAttention });
+  useLive(loadMinds, { period: TEMPO.ledger });
+  useLive(loadViews, { period: TEMPO.ledger });
 
   // The canvas is drawn to the frame it is handed, and the frame is the window — both ways.
   // Measured rather than assumed: this view is mounted at four widths that matter (a maximised
@@ -1314,7 +1430,21 @@ function Card({ block, onOpen }) {
         {k === "T" && leaf.fact && <p className="hi-home__ask">{leaf.fact}</p>}
         <p className="hi-home__ln">
           <b className="hi-home__st">{L.state[leaf.tone]}</b>
-          <span>{k === "P" ? `${L.open} ${view.label || view.ref}` : k === "T" ? leaf.age : leaf.fact}</span>
+          {/* **A finished card says what landed; an open one says how to get there.** On a row
+              still in flight the picture is a door and the line is the sign on it, because
+              nothing has happened yet that a sentence could report. On a finished row the
+              picture is the thing itself, sitting right above the line, so spending that line
+              on `open ‹label›` describes the click a reader is already looking at and drops
+              the one fact only the record has. */}
+          <span>
+            {k === "P"
+              ? leaf.tone === "done"
+                ? leaf.fact || leaf.age
+                : `${L.open} ${view.label || view.ref}`
+              : k === "T"
+                ? leaf.age
+                : leaf.fact}
+          </span>
           {kind && k === "R" && <em className="hi-home__kind">{kind}</em>}
         </p>
       </div>
