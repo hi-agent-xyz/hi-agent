@@ -1,6 +1,6 @@
 // purpose: 现在 — the agent's open work drawn as one chart: what it owes, grouped by what
-// the work is about, with who is on each thing and what it has had its head in, hanging off
-// a single hub. The surface for when nothing more specific is up, which is most of the time.
+// the work is about, with who is on each thing and what it has had its head in, laid out
+// around a single hub. The surface for when nothing more specific is up, which is most of the time.
 //
 // **Why it exists.** A show puts up an artifact and an artifact exists at the *end*, so the
 // interval in which the person most wants something on the screen — the agent is working,
@@ -22,10 +22,11 @@
 // rows are not peers. A chart draws that as **shape**: where a branch sits and how far it
 // reaches say what a sentence would otherwise have to.
 //
-//     ⟨gz⟩ deploy KUT to production ─┐                ┌─ 制作 20 周健康训练打卡 view ⟨YOU⟩
-//              KUT COS storage backend ├─ KUT 4 ─┐    ├─ hi-agent 3 ─ 研究 Agent 相关性分类器
-//            转码回归 — KUT 上传后掉帧 2● ─┘         ●        └─ 2026 中秋国庆返川行程 view
-//                          生词本自动收录 ─┘  hub    └─ feishu 1 ─ Feishu weekly digest ●
+//                  ┌──────────────┐   ⟨没有项目 5⟩ ─┐        ┌─ ⟨songguo⟩ manage auto-deployer
+//     ⟨hi-agent 3⟩ ─┤ [缩略图]      │        │        │             值守 · 2 小时前确认还活着
+//                  │ 制作 20 周…   │   ▪ 生词本 ▪周报  │        │
+//                  │ 等你 · 打开 → │        │        ●        └─ ⟨KUT 3⟩ deploy KUT ⟨gz⟩
+//                  └──────────────┘   ⟨还想着⟩ ──────┘  hub          没人管 · 已经放了 3 天
 //
 // **It is organised by subject, not by state.** An earlier draft made the trunks `on you` /
 // `nobody on it` / `running` / `queued`, which reads well and is the wrong axis: it answers
@@ -69,16 +70,21 @@
 //
 // **Nothing is bridged, only folded.** Case and `-`/`_`/space are notation and code may
 // settle them; `wechat` and `wecom` are two systems and this never joins them
-// (`docs/arch/data.md`). And a row tagged with nothing hangs off the hub — not filed under
-// "misc", which would claim a kinship the store does not record.
+// (`docs/arch/data.md`). And a row tagged with nothing is still not filed under "misc",
+// which would claim a kinship the store does not record — it goes under **no project**,
+// which claims the opposite and is what the record actually says. That branch is not a
+// subject; it is the chart's word for the absence of one, in the family of `closed` and
+// `also on its mind`. It used to have no branch at all and hang straight off the hub, and
+// the cost was the chart's whole point: five rows arriving in the same leaf column as the
+// filed ones, from the same point, with nothing on the screen saying which was which.
 //
 // ── what is drawn ───────────────────────────────────────────────────────────
 //
 // **Three edges, and every one is stored.** `task ← session` is the worker's `subject`,
 // which `CreateWorker` requires and refuses when nothing is filed under it. `session ←
-// session` is `owner`, an id. `task → artifact` is the record's own inline-code tokens
-// resolved against its folder. Nothing here is inferred and nothing is drawn that a field
-// does not say.
+// session` is `owner`, an id. `task → view` is the record's own inline-code tokens, checked
+// against `/api/views` so a token is a view only when that view exists. Nothing here is
+// inferred and nothing is drawn that a field does not say.
 //
 // **The centre carries nothing, on purpose.** It has been three things and each was worse
 // than the last for the same reason: whatever went into the largest type on the surface was
@@ -91,12 +97,36 @@
 // anything at all is moving is on no branch; and the one failure no row can show — with no
 // Reaction registered the agent cannot hear you, however busy the chart looks.
 //
-// **One fact per leaf**, in the order `tasks.jsx` arrived at for its cards: a `waiting` line
-// verbatim if a human is the blocker; else what the session on it is doing and how long
+// **One fact per leaf**, in the order `tasks.jsx` arrived at for its cards: the `waiting` line
+// if a human is the blocker; else what the session on it says it is doing and how long
 // since; else **nobody on it** and how long it has stood there; else last-confirmed-alive for
 // a duty; else age. The third is the reason to build this — nothing on any current surface
 // says it, and a restart's casualties are not in the roster at all, so a row whose worker
 // died reads as work in progress on the board and as nothing anywhere else.
+//
+// Both of the first two are prose written for somewhere else, so both are cut to one line by
+// `oneLine` before they land: a `waiting` note is a record entry carrying its refs and its
+// caveats, and a session's title is a sentence from the roster. The cut only ever removes.
+//
+// **A card is a control when the row names a view**, which on the live store is more than half
+// of the open ledger. The ref is already written into the record — `zhao-li-checkin/…` sits in
+// the very sentence asking for the review — `/api/views` already says which refs exist and
+// hands back the picture the host already took, and `useViews().openRef` already puts the
+// screen on one. Nothing was added to the wire for this. What this file used to say could not
+// be done is a different thing that still cannot: opening `factory/tasks` *at a given row*,
+// which needs one optional field on `POST /api/views/open`.
+//
+// **Four shapes, told apart by what goes in them and not by what state the row is in.** A
+// picture card, a text card, a row, a chip; every member of a class is the same size, which is
+// what makes a wall of them read as tidy. Classing them by state instead put a row that wants a
+// person but has no picture into the picture card's height — a box of mostly nothing with the
+// title pressed against the bottom edge, which reads as a view that failed to render. A size
+// class is only tidy when its members hold the same kind of thing.
+//
+// **The picture is never cropped, and the shapes are not uniform.** The same view re-shot in a
+// narrow window comes back portrait: 393×852 against the usual 479×271. The card is a fixed
+// size, so a tall picture has to leave room at its sides; that room is a mat and the picture
+// carries its own edge and shadow, which is what makes it read as a page rather than a fault.
 //
 // **Who is on a row is a mark on the row**, not a rank of its own. It was a fourth rank of
 // pills once: a column of chips floating in the right of the window, wired back to their
@@ -104,30 +134,40 @@
 // that already read `pytest -k live · 1m`. What the pills alone knew was *how many* and
 // *what kind* — a numeral and a word, both of which fit on the row.
 //
-// **Nothing on it is a control.** A leaf cannot open the board on its own row, because
-// `POST /api/views/open` carries a ref and no argument; the fix is one optional field on that
-// request, general to every pair of factory views, and it is not here.
-//
 // ── the frame ───────────────────────────────────────────────────────────────
 //
-// **Two arms, because one was a chart pinned to the left edge of a wide screen.** A mind
-// map's centre is in the middle and its branches go both ways; that is not decoration, it is
-// what makes the width work. Below 1200px it keeps one arm, and below 960px it stops being a
-// chart at all — a dendrogram needs width per rank and a phone has one rank's worth, so the
-// same model renders as an indented flow there. Desktop is the case this page was designed
-// for and the narrow one is correct rather than considered.
+// **Lanes, because a canvas that is only relaxed is a canvas nobody can read.** Two earlier
+// cuts placed the topics by physics — seed them on an ellipse, push overlapping boxes apart,
+// stop. Both looked scattered, and the reason is not that the solver was weak: it had no
+// objective at all. It halts the moment nothing overlaps, so every cluster ends up at whatever
+// coordinate one particular iteration produced and no two gaps are the same. The canvases that
+// read as deliberate are not better simulated; **their contents share edges**. So the placement
+// is a small number of equal-width lanes with the hub at the centre of the middle one, and each
+// topic goes whole into the lane where it costs least.
 //
-// **And it is laid out to the frame, in two levers.** Air first: the layout runs once at its
-// natural spacing, and if that leaves the frame mostly empty the leftover height is divided
-// between the rows and it runs again — air between rows, never taller rows, so nothing
-// written on the map changes size. Then scale: air alone cannot help a four-row map on a
-// tall screen, so the map reports how much of the frame it occupies and is scaled up to fill
-// the rest, capped. A scale rather than a bigger type scale, because every proportion here
-// was decided against the others and a sparse map should be the same drawing seen larger.
+// **The hub is not special-cased**: it is a fixed box that takes part in the packing, so the
+// clearing in the middle is space it occupies rather than space reserved for it.
+//
+// **What is optimised is how big everything ends up.** The lane count is chosen by running the
+// packing at 3, 5 and 7 and keeping whichever yields the largest final scale — odd only, since
+// an even count puts the centre line between two lanes and leaves the hub without one. An
+// earlier cut optimised for a canvas whose proportions matched the frame, which is a proxy and
+// pointed the wrong way: it chose five lanes, five lanes exactly filled the width, the scale was
+// pinned at 1 and a third of the height went empty. Once the count is settled, the width still
+// spare goes into the gutters — into air, never into bigger cards, because a card's size is
+// decided by what it holds and must not drift with the window.
+//
+// **The canvas is whatever the content grew to, and the frame then scales it to fit.** That
+// order is the whole idea; sizing the layout to the frame first is what produced a sparse ring
+// with a hole in it.
+//
+// Below 960px wide (or 520px tall) it stops being a canvas — lanes need width and a phone has
+// one lane's worth — and the same model renders as sections down the page, same four shapes,
+// same thumbnails, same controls, no geometry.
 //
 // **Twelve branches, not a hundred and forty-nine.** The store this was designed against
 // carries 149 rows — 3 todo, 5 doing, 4 serving, 108 done, 25 cancelled — so 8% of the ledger
-// is open. That number is the layout. Closed work is one leaf carrying two counts;
+// is open. That number is the layout. Closed work is one chip carrying two counts;
 // `tasks.jsx` already learned the expensive version of this when five equal columns spent 40%
 // of the width on the 93% of rows that had closed.
 //
@@ -135,15 +175,20 @@
 //   - The project trunk costs one request per project, because `GET /api/facets` returns
 //     sorted names and no timestamps. It reads on attention rather than on a clock for
 //     exactly that reason. A `modified` on the list endpoint removes it.
+//   - A card opens the view a row is *about*; nothing opens the row itself. That needs the
+//     optional field on `POST /api/views/open` described above, and it is general to every
+//     pair of factory views rather than anything this page should carry alone.
 //   - Its tile in the band is a picture of this file's loading state. `settle()` in the
 //     render page waits two frames, fonts and images, and not for a fetch, so the shot is
 //     taken before the first read comes back. That is every data-driven surface here
 //     (`_shots/ref/factory/tasks.png` is an empty board reading "0 active"), and it lands
 //     hardest on this one, which is the surface a person is most likely to reach for cold.
 //   - It is not walkable on a television. Spatial navigation runs in the host's cover plane;
-//     a view's own arrows are its own and this view binds none. The rank geometry is chosen
-//     for the day that lands — ranks walk under a D-pad — but nothing has been read from
-//     across a room.
+//     a view's own arrows are its own and this view binds none. The cards are now real buttons,
+//     so a D-pad has something to land on the day that plane reaches a view — but nothing has
+//     been read from across a room.
+//   - The four corners still carry air, and the lane count is coarse: 3, 5, 7 and nothing
+//     between. Both are quantities to tune, not structure to redo.
 //   - **Nothing in the host decides when it goes up**, and nothing should: `stage.md` refuses
 //     a host gate on what is on the screen. It is a view like any other — reachable from the
 //     bookmarks row, shown by `hi_show`. When Reaction reaches for it is guidance, and it
@@ -155,7 +200,7 @@
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLive, TEMPO } from "@hi/core";
+import { useLive, useViews, TEMPO } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. Task is 任务 and Sessions is 会话 — plain words,
@@ -171,7 +216,11 @@ const T = {
     reading: "Reading the ledger...",
     nothingOpen: "Nothing is open. The ledger is clear.",
     deaf: "not listening",
-    trunk: { minds: "also on its mind", closed: "closed" },
+    trunk: { loose: "no project", minds: "also on its mind", closed: "closed" },
+    // One word per row, in the row's own tone. It replaces the four places the old surface
+    // said the same thing (red title, red badge, red rule, red trunk name).
+    state: { wait: "you", warn: "nobody", live: "running", serving: "on duty", todo: "parked" },
+    open: "open",
     you: "you",
     nobody: "nobody on it",
     stood: (age) => `standing ${age}`,
@@ -195,7 +244,9 @@ const T = {
     reading: "正在读账...",
     nothingOpen: "没有开着的事。",
     deaf: "听不见",
-    trunk: { minds: "还想着", closed: "已结束" },
+    trunk: { loose: "没有项目", minds: "还想着", closed: "已结束" },
+    state: { wait: "等你", warn: "没人管", live: "在跑", serving: "值守", todo: "停着" },
+    open: "打开",
     you: "等你",
     nobody: "没人在上面",
     stood: (age) => `已经放了 ${age}`,
@@ -272,6 +323,8 @@ const api = {
   facets: () => fetch("/api/facets").then((r) => r.json()),
   facet: (subject) =>
     fetch(`/api/facets/projects/${encodeURIComponent(subject)}`).then((r) => r.json()),
+  // Names every view that exists, with the picture already taken for the ones that have one.
+  views: () => fetch("/api/views").then((r) => r.json()),
 };
 
 // ── derivations ───────────────────────────────────────────────────────────────
@@ -313,37 +366,33 @@ function ago(value) {
   return ZH ? `${days} 天` : `${days}d`;
 }
 
-// **What a session is doing, in the part of it that is the fact.** `doing` is the last thing
-// the session was seen doing, and for a shell call that is the whole invocation as the harness
-// spelt it: `$ /bin/zsh -lc "…"`, often with a script and newlines inside the quotes. Rendered
-// raw on a clamped line, the wrapper is all that fits — on the live store it produced rows
-// reading `$ /bin/zsh -lc "printf '%s\n' '-- KNQ worktrees…`, where every visible character
-// is the shell and none of it is the work. Worse, a call that ended in failure carries
-// ` (failed)` at the *end*, so the one word worth reading is the first thing off the edge.
+// **A leaf holds one line; the record holds the paragraph.** Both strings that reach a leaf
+// arrive written for somewhere else. A `waiting` line is a note the mind wrote into an
+// append-only record, so it carries the whole ask with its refs and its caveats — on the live
+// store, `请当前 unknown sender 在 hi-agent 已显示的 screen slot ...（stable ref ...）审阅当前纯展示
+// 候选，并回复 **ACCEPT**、**REJECT** 或具体修改；独立 PASS、...` in one leaf. A session `title`
+// is short already but is still prose from another surface.
 //
-// So: keep the failure, drop the shell, take the first line of what it actually ran. Nothing
-// is invented and nothing is looked up — this is the same string with its packaging removed.
-const SHELL = /^\S*\b(?:ba|z|d)?sh\s+-[a-z]*c\s+/;
-function plainly(text) {
+// So the same reduction runs on both, and it only ever *removes*: markdown emphasis, the
+// backticks around a ref (the ref itself is the fact and stays), parenthetical asides, opaque
+// ids, and everything after the first sentence. An aside is by construction the part the
+// sentence works without; an id is the part nobody can read and nobody can act on from across
+// a room. Both are in these strings because the record is addressed to whoever opens the row
+// next, and this line is addressed to whoever is looking at the wall — and neither is lost,
+// because the row still holds the whole thing. What survives is the first thing the record
+// says, which is what the row is about; the rest is a paragraph, and a paragraph on a leaf
+// ellipsises mid-clause and says nothing at all.
+const ASIDE = /\s*[（(][^）)]*[）)]/g;
+const OPAQUE = /\s*\b[0-9a-f]{8}-[0-9a-f-]{8,}\b/gi;
+function oneLine(text) {
   let out = String(text || "").trim();
-  const failed = / \(failed\)$/.test(out);
-  if (failed) out = out.replace(/ \(failed\)$/, "");
-  out = out.replace(/^\$\s+/, "");
-  const bare = out.replace(SHELL, "");
-  if (bare !== out) {
-    out = bare.trim();
-    const quote = out[0];
-    if (quote === '"' || quote === "'") {
-      // The closing quote may not be there at all: `doing` is the last thing seen and a long
-      // script arrives clipped, so the opening quote outlives its partner. Drop the opener
-      // either way — a line starting with a stray quote is the packaging again.
-      const end = out.lastIndexOf(quote);
-      out = end > 0 ? out.slice(1, end) : out.slice(1);
-    }
-  }
-  // A script is many lines and a leaf is one. The first line is what it set out to do.
-  out = out.split("\n").map((line) => line.trim()).filter(Boolean)[0] || out.trim();
-  return failed ? `${out} (failed)` : out;
+  out = out.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
+  out = out.replace(ASIDE, "").replace(OPAQUE, "");
+  // The first sentence, by the punctuation either language ends one with. A string that never
+  // terminates is taken whole and left to the row to clip.
+  const cut = out.search(/[。！？；;!?]|\. /);
+  if (cut > 0) out = out.slice(0, cut);
+  return out.trim();
 }
 
 // Every live session on a row, running first, then by how recently it moved. `tasks.jsx`
@@ -373,16 +422,23 @@ function crewBySubject(workers) {
 // of a leaf and the sentence on it cannot disagree.
 function read(task, crew) {
   const wait = waitsOnPerson(task) ? latestSpoken(task) : null;
-  if (wait) return { tone: "wait", text: wait.text };
+  if (wait) return { tone: "wait", text: oneLine(wait.text) };
 
   const live = (crew || []).find((w) => w.state === "running");
   if (live) {
-    // `doing` is only meaningful while the session is running — nothing clears it when a turn
-    // ends, and drawing it beside a finished session is what made one read `idle` and
-    // `thinking` at once.
+    // **The session's `title`, not its `doing`.** `doing` is the harness's word for the turn
+    // it is in the middle of, and on the live store it is one of two useless things: a state
+    // with no content (`thinking`, on four of the nine sessions at once) or the shell call
+    // verbatim (`$ /bin/zsh -lc "shasum -a 256 \\…`). A pass that stripped the wrapper and
+    // took the first line still left `control_pid=$$; printf ...` on the row — the packaging
+    // was never the problem, a tool call is simply not what the work is.
+    //
+    // `title` is: one line the session wrote about what it is doing on this row, which is the
+    // fact this leaf was always supposed to carry. It does not tick, and nothing is lost by
+    // that — the age beside it does, and the dot on the row is already what says *moving*.
     const age = ago(live.doing_at || live.state_since);
-    const doing = plainly(live.doing || live.tail);
-    return { tone: "live", text: doing ? `${doing}${age ? ` · ${age}` : ""}` : "" };
+    const said = oneLine(live.title);
+    return { tone: "live", text: said ? `${said}${age ? ` · ${age}` : ""}` : "" };
   }
 
   if (task.status === "serving") {
@@ -393,11 +449,39 @@ function read(task, crew) {
 
   if (task.status === "doing") {
     const age = ago(task.statusSince);
-    return { tone: "warn", text: age ? `${L.nobody} · ${L.stood(age)}` : L.nobody };
+    // The row already carries **nobody** as its state word, so the fact is only how long.
+    return { tone: "warn", text: age ? L.stood(age) : L.nobody };
   }
 
   const age = ago(task.statusSince || task.createdAt);
   return { tone: "todo", text: age ? L.since(age) : "" };
+}
+
+// **The view a row is about, which the record already names.** A deliverable is written into
+// the record as an inline-code ref the moment it exists — `zhao-li-checkin/zhao-li-20-week-checkin`
+// in the very sentence that asks for the review — so nothing here is inferred: a token is a view
+// only when `/api/views` says that view exists, and the picture beside it is the one the host
+// already took. Newest entry first, because a row that has been through three deliverables is
+// about the last one.
+//
+// `factory/*` is excluded. Those are this system's own boards; a record names them as evidence
+// ("checked it against the tasks board"), never as the thing the row is about, and on the live
+// store that is exactly how a review row picked up `factory/tasks` instead of its own candidate.
+const REF = /`([a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*)`/g;
+function viewRefOf(task, known) {
+  if (known.size === 0) return null;
+  const said = [];
+  const timeline = task.timeline || [];
+  for (let i = timeline.length - 1; i >= 0; i -= 1) if (timeline[i].text) said.push(timeline[i].text);
+  if (task.body) said.push(task.body);
+  for (const text of said) {
+    for (const hit of String(text).matchAll(REF)) {
+      if (hit[1].startsWith("factory/")) continue;
+      const view = known.get(hit[1]);
+      if (view) return view;
+    }
+  }
+  return null;
 }
 
 function closedCounts(tasks) {
@@ -517,7 +601,7 @@ function forest(open, projectNames) {
 
 /** The chart's content, before it has any geometry: a forest of topics with the rows under
  *  each, then the rows that belong to nothing, then memory and the archive. */
-function model(tasks, workers, minds) {
+function model(tasks, workers, minds, views) {
   const crew = crewBySubject(workers);
   const open = [];
   for (const task of tasks) {
@@ -532,6 +616,8 @@ function model(tasks, workers, minds) {
         fact: one.text,
         tone: one.tone,
         sessions: on,
+        age: ago(task.statusSince || task.createdAt),
+        view: viewRefOf(task, views),
       },
     });
   }
@@ -613,8 +699,24 @@ function model(tasks, workers, minds) {
 
   if (loose.length > 0) {
     loose.sort((a, b) => HEAT.indexOf(a.tone) - HEAT.indexOf(b.tone));
-    // No label and no node: these hang straight off the hub.
-    roots.push({ key: "__loose", label: null, count: null, tone: "todo", children: [], leaves: loose });
+    // **These used to hang straight off the hub, unlabelled, and that was the chart's worst
+    // reading.** The refusal behind it is still right — filing them under "misc" would claim a
+    // kinship the store does not record — but what it produced was five rows arriving in the
+    // same leaf column as the filed ones, from the same point, down wires nobody can trace. On
+    // the live store you could not tell which row was songguo's and which was under nothing,
+    // which is the one question a chart organised by subject exists to answer.
+    //
+    // A junction of their own fixes it and invents nothing, because the label is not a subject:
+    // it is the chart's own word for the absence, in the same family as `closed` and `also on
+    // its mind`. It says these rows carry no topic, which is exactly what the record says.
+    roots.push({
+      key: "__loose",
+      label: L.trunk.loose,
+      count: loose.length,
+      tone: loose.map((l) => l.tone).reduce(hotter, "closed"),
+      children: [],
+      leaves: loose,
+    });
   }
 
   const idle = minds.filter((m) => !nodes.has(fold(m.subject)));
@@ -644,28 +746,44 @@ function model(tasks, workers, minds) {
   return roots;
 }
 
-// ── geometry ──────────────────────────────────────────────────────────────────
-// Nothing but numbers. Every node position and every edge endpoint on the chart is read off
-// what this returns, so a label and the line reaching it cannot drift apart.
+// ── the canvas ────────────────────────────────────────────────────────────────
+// Nothing here but numbers. Every cluster position, every wire endpoint and every card height
+// is read off what this returns, so a label and the line reaching it cannot drift apart.
 
-const ROW = 44; // a leaf with a fact under it
-const ROW_TIGHT = 30; // a note leaf, which is one line
-const CHIP_ROW = 27; // one row of project chips
-const TRUNK_GAP = 26;
-const PAD_TOP = 26;
+const W = 320;
+// **Four shapes, and they are told apart by what goes in them, not by what state the row is in.**
+// An earlier cut classed them by state, so a row that wants a person but has no picture got the
+// picture card's height — a 320x232 box holding three lines of grey text with the title pressed
+// against the bottom edge, which reads as a view that failed to render. A size class is only
+// tidy when its members hold the same kind of thing; otherwise uniform size is uniform emptiness.
+const BOX = { P: 232, T: 128, R: 60 }; // picture card / text card / one row
+const LABEL_H = 30;
+const SUB_H = 24;
+// **Two gaps, because they say different things.** Between the cards inside a cluster, and
+// between two clusters sharing a lane. One constant doing both jobs makes them the same width,
+// and since a card has no outer frame, that space is the only thing on the surface saying
+// *these are two separate things* — so the grouping stops reading at all.
+const GAP = 9;
+const LANE_GAP = 46;
+const CHIP_ROW = 28;
+const GUT = 34;
+const PAD = 34;
+// The hub is not special-cased in the packing: it is a fixed box that takes part in it, so the
+// clearing in the middle is space it *occupies* rather than space left for it.
+const HUB_W = 210;
+const HUB_H = 118;
 
-// Chips wrap, so the chips leaf is the one node whose height is not a constant. Estimated
-// from the text rather than measured: a leaf that claimed one row and drew three overlapped
-// the trunk under it, and a layout pass that has to wait for a DOM measurement to know where
-// anything goes is a pass that draws the chart wrong once on every mount.
-const CHIP_CHAR = 7.2;
-const CHIP_PAD = 62;
-function chipRows(chips, width) {
+const shapeOf = (leaf) =>
+  leaf.tone === "todo" ? "XS" : leaf.tone === "wait" ? (leaf.view ? "P" : "T") : "R";
+
+const CHIP_CHAR = 7.4;
+const CHIP_PAD = 26;
+function chipRows(list) {
   let rows = 1;
   let x = 0;
-  for (const chip of chips) {
-    const w = chip.subject.length * CHIP_CHAR + CHIP_PAD;
-    if (x > 0 && x + w > width) {
+  for (const chip of list) {
+    const w = chip.title.length * CHIP_CHAR + (chip.view ? 34 : 0) + CHIP_PAD;
+    if (x > 0 && x + w > W) {
       rows += 1;
       x = 0;
     }
@@ -674,183 +792,183 @@ function chipRows(chips, width) {
   return rows;
 }
 
-/** Roughly how wide a string draws, in the same spirit as the chip rows: estimated, for the
- *  same reason. CJK is close to square at a given size; latin is a bit over half. */
-function estWidth(text, px) {
-  let w = 0;
-  for (const ch of String(text || "")) w += ch.codePointAt(0) > 0x2e80 ? px : px * 0.56;
-  return w;
-}
-
-/** The widest a leaf actually needs, so a map of short rows does not claim the frame's full
- *  measure and then sit in the middle of it. */
-function needed(nodes) {
-  let widest = 0;
-  for (const node of nodes) {
-    for (const leaf of node.leaves) {
-      const marks = (leaf.marks || []).reduce((n, m) => n + estWidth(m, 10.5) + 20, 0);
-      const dot = leaf.sessions?.length ? 22 : 0;
-      widest = Math.max(
-        widest,
-        estWidth(leaf.title, 14) + marks + dot,
-        estWidth(leaf.fact, 11.5) + (leaf.tone === "wait" ? 34 : 0),
-        leaf.kind === "chips" ? 420 : 0,
-      );
+/** A topic, flattened into the blocks that draw it: its cards top to bottom, a small heading
+ *  wherever a sub-topic earned a rank, and everything parked collected into one run of chips at
+ *  the foot. **A cluster is one column of fixed width**, which is what makes the packing a
+ *  one-dimensional problem and what lets anything line up at all. */
+function cluster(node) {
+  const blocks = [];
+  const chips = [];
+  const walk = (n, sub) => {
+    if (sub) blocks.push({ t: "sub", id: `sub-${n.key}`, label: n.label, count: n.count, h: SUB_H });
+    for (const leaf of n.leaves) {
+      if (leaf.kind === "chips") {
+        for (const mind of leaf.chips) {
+          chips.push({ id: mind.subject, title: mind.subject, fact: mind.at ? L.since(ago(mind.at)) : null });
+        }
+        continue;
+      }
+      if (leaf.kind === "note") {
+        chips.push({ id: leaf.id, title: leaf.title });
+        continue;
+      }
+      const k = shapeOf(leaf);
+      if (k === "XS") chips.push({ id: leaf.id, title: leaf.title, view: leaf.view, leaf });
+      else blocks.push({ t: "card", id: leaf.id, leaf, k, h: BOX[k] });
     }
-    widest = Math.max(widest, needed(node.children));
-  }
-  return widest;
+    for (const child of n.children) walk(child, true);
+  };
+  walk(node, false);
+
+  let h = LABEL_H + blocks.reduce((n, b) => n + b.h + GAP, 0);
+  if (chips.length > 0) h += chipRows(chips) * CHIP_ROW;
+  else h -= GAP;
+  return { key: node.key, label: node.label, tone: node.tone, count: node.count, blocks, chips, w: W, h: Math.max(h, LABEL_H + 20) };
 }
 
-/** Depth of the deepest topic node, so the leaf column clears every rank above it. */
-function ranks(nodes, at = 1) {
-  let deepest = at;
-  for (const node of nodes) {
-    if (node.children.length > 0) deepest = Math.max(deepest, ranks(node.children, at + 1));
-  }
-  return deepest;
-}
-
-/** Every leaf, so the spread below has something to divide by. */
-function leafCount(nodes) {
-  return nodes.reduce((n, node) => n + node.leaves.length + leafCount(node.children), 0);
-}
-
-/** How tall a trunk will draw, before anything is placed. Only needed to decide which arm it
- *  goes on, which has to happen before the placing. */
-function extent(node) {
-  const own = node.leaves.reduce(
-    (n, leaf) =>
-      n + (leaf.kind === "chips" ? chipRows(leaf.chips, 420) * CHIP_ROW + 6 : leaf.kind ? ROW_TIGHT : ROW),
-    0,
-  );
-  return own + node.children.reduce((n, child) => n + extent(child), 0);
-}
-
-/** Deal the trunks onto two arms, in order, each going to whichever arm is shorter.
+/** Deal the clusters onto lanes. Each one goes whole into the lane where it costs least:
+ *  **the extent it adds beyond the centre line**, plus a small premium for sitting further out
+ *  so the hot ones land near the hub.
  *
- *  Order is preserved rather than optimised: the trunks arrive sorted by heat and that is the
- *  one thing about their sequence a reader can use, so the hottest still lands at the top of
- *  an arm. Balancing only decides *which* arm. */
-function deal(trunks) {
-  const left = [];
-  const right = [];
-  let lh = 0;
-  let rh = 0;
-  for (const trunk of trunks) {
-    const h = extent(trunk);
-    if (rh <= lh) {
-      right.push(trunk);
-      rh += h;
-    } else {
-      left.push(trunk);
-      lh += h;
+ *  The extent is the point. A lane that is not the hub's is centred as a whole, so a cluster
+ *  there reaches half its height either way; the hub's lane grows from the middle block outward,
+ *  so a cluster there reaches its full height. Comparing a whole stack against a one-way reach
+ *  makes the hub lane look half as tall as it is, and it becomes a magnet — on the live store
+ *  five of seven clusters fell into it, the canvas grew to 974px, and the scorer had to retreat
+ *  to more lanes and spread everything into one flat band. */
+function assign(cs, C) {
+  const m = (C - 1) / 2;
+  const lanes = Array.from({ length: C }, (_, i) => ({ i, up: [], down: [], hub: i === m }));
+  const reach = (lane, dir) => {
+    let n = lane.hub ? HUB_H / 2 : 0;
+    for (const c of lane[dir]) n += c.h + LANE_GAP;
+    return n;
+  };
+  for (const c of cs) {
+    let pick = null;
+    for (const lane of lanes) {
+      // Only the hub's lane has two directions. Treating an ordinary lane as two stacks here and
+      // one stack when drawing makes its second cluster look free, so a tall cluster always ends
+      // up with a passenger while other lanes stand empty.
+      for (const dir of lane.hub ? ["up", "down"] : ["down"]) {
+        const after = reach(lane, dir) + c.h + (lane[dir].length || lane.hub ? LANE_GAP : 0);
+        const cost = (lane.hub ? after : after / 2) + Math.abs(lane.i - m) * 30;
+        if (!pick || cost < pick.cost) pick = { lane, dir, cost };
+      }
     }
+    pick.lane[pick.dir].push(c);
   }
-  return { left, right };
+  return { C, m, lanes };
 }
 
-function shift(nodes, dy) {
-  for (const node of nodes) {
-    node.y += dy;
-    for (const leaf of node.leaves) {
-      leaf.y += dy;
-      leaf.titleY += dy;
-    }
-    shift(node.children, dy);
-  }
-}
-
-function chart(trunks, width, avail, spread = 0) {
-  const twoArmed = width >= 1200;
-  const hubX = twoArmed ? Math.round(width * 0.5) : 58;
-  const arm = Math.round(Math.min(132, Math.max(86, width * 0.062)));
-  const step = Math.round(Math.min(150, Math.max(100, width * 0.078)));
-  const { left, right } = twoArmed ? deal(trunks) : { left: [], right: trunks };
-
-  const lay = (nodes, dir) => {
-    const depth = ranks(nodes);
-    const leafX = hubX + dir * (arm + depth * step);
-    const room = (dir > 0 ? width - leafX : leafX) - 34;
-    const leafW = Math.round(Math.min(760, Math.max(210, Math.min(room, needed(nodes) + 12))));
-    let y = PAD_TOP;
-    const place = (ns, rank) =>
-      ns.map((node) => {
-        const leaves = node.leaves.map((leaf) => {
-          const base =
-            leaf.kind === "chips"
-              ? chipRows(leaf.chips, leafW) * CHIP_ROW + 6
-              : leaf.kind
-                ? ROW_TIGHT
-                : ROW;
-          // The row keeps its own height and gets the spread as air around it, so opening the
-          // map out fills the frame without stretching anything written on it.
-          const h = base + spread;
-          // Where the leaf's *first line* sits, which is what a mark on the row hangs off.
-          const laid = { ...leaf, y: y + h / 2, titleY: y + spread / 2 + 11, h };
-          y += h;
-          return laid;
-        });
-        const children = place(node.children, rank + 1);
-        const own = [...leaves, ...children];
-        const top = own[0]?.y ?? y;
-        const bottom = own[own.length - 1]?.y ?? y;
-        if (rank === 1) y += TRUNK_GAP + spread;
-        return {
-          ...node,
-          x: hubX + dir * (arm + (rank - 1) * step),
-          y: (top + bottom) / 2,
-          leaves,
-          children,
-        };
+/** Lay one lane plan out in coordinates whose origin is the hub. */
+function put({ m, lanes }, gut) {
+  for (const lane of lanes) {
+    const cx = (lane.i - m) * (W + gut);
+    if (lane.hub) {
+      let y = -HUB_H / 2;
+      lane.up.forEach((c, i) => {
+        y -= LANE_GAP + c.h;
+        c.cx = cx;
+        c.cy = y + c.h / 2;
+        c.hubLane = true;
+        c.slot = i;
       });
-    const laid = place(nodes, 1);
-    return { dir, leafX, leafW, trunks: laid, height: Math.max(y - TRUNK_GAP - spread, PAD_TOP) };
-  };
-
-  const arms = [lay(right, 1)];
-  if (left.length > 0) arms.push(lay(left, -1));
-
-  // Both arms hang from the same hub, so the shorter one is centred against the taller rather
-  // than starting at the top and trailing off.
-  const height = Math.max(...arms.map((a) => a.height));
-  for (const a of arms) shift(a.trunks, (height - a.height) / 2);
-
-  // How much of the frame the map actually occupies, so it can be opened out to fill the
-  // rest. A four-row map on a tall screen is a cluster adrift in a field otherwise: the
-  // spread can only add air between rows, and four rows cannot spend a thousand pixels of it
-  // without looking abandoned.
-  const usedW =
-    Math.max(...arms.map((a) => Math.abs(a.leafX - hubX) + a.leafW)) * (arms.length > 1 ? 2 : 1) +
-    (arms.length > 1 ? 0 : hubX);
-  const geo = {
-    hubX,
-    hubY: (height + PAD_TOP) / 2,
-    width,
-    height: height + PAD_TOP,
-    arms,
-    scale: Math.max(
-      1,
-      Math.min(1.5, (width - 24) / Math.max(usedW, 1), avail / Math.max(height + PAD_TOP, 1)),
-    ),
-  };
-
-  // A second pass, once, to fill the frame. Air is the better of the two levers while there
-  // is a sensible amount to add, so it goes first; bounded to one retry, because the second
-  // pass changes the height it was computed from and chasing that is a loop.
-  if (spread === 0 && avail > geo.height + 24) {
-    const n = Math.max(leafCount(trunks), 1);
-    const room = Math.min(46, Math.floor((avail - geo.height) / n));
-    if (room >= 3) return chart(trunks, width, avail, room);
+      y = HUB_H / 2;
+      lane.down.forEach((c, i) => {
+        c.cx = cx;
+        c.cy = y + LANE_GAP + c.h / 2;
+        y += LANE_GAP + c.h;
+        c.hubLane = true;
+        c.slot = i;
+      });
+    } else {
+      const all = [...lane.up.slice().reverse(), ...lane.down];
+      const h = all.reduce((n, c) => n + c.h + LANE_GAP, -LANE_GAP);
+      let y = -h / 2;
+      for (const c of all) {
+        c.cx = cx;
+        c.cy = y + c.h / 2;
+        y += c.h + LANE_GAP;
+        c.hubLane = false;
+        c.slot = 0;
+      }
+    }
   }
-  return geo;
 }
 
-/** A branch: out of `x1,y1` horizontally, into `x2,y2` horizontally. The control points sit
- *  at the midpoint so every curve in the chart has the same tension whatever it spans. */
-function branch(x1, y1, x2, y2) {
-  const mid = (x1 + x2) / 2;
-  return `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
+/** Choose the lane count, then spend what is left over on air.
+ *
+ *  **The thing being optimised is how big everything ends up**, so that is what is measured. An
+ *  earlier cut optimised for a canvas whose proportions matched the frame, which is a proxy, and
+ *  it pointed the wrong way: it chose five lanes, five lanes exactly filled the width, the scale
+ *  was pinned at 1 by the width and a third of the height went empty.
+ *
+ *  Once the count is settled and the scale is held by the height, whatever width is still spare
+ *  goes into the gutters — into air, not into bigger cards, because a card's size is decided by
+ *  what it holds and must not drift with the window. */
+function place(cs, fw, fh) {
+  let best = null;
+  for (const C of [3, 5, 7]) {
+    // Odd only: with an even count the centre line falls between two lanes and the hub has none.
+    const plan = assign(cs, C);
+    put(plan, GUT);
+    let top = 0;
+    let bottom = 0;
+    for (const c of cs) {
+      top = Math.min(top, c.cy - c.h / 2);
+      bottom = Math.max(bottom, c.cy + c.h / 2);
+    }
+    const ch = bottom - top + PAD * 2;
+    const scale = Math.min(fw / (C * W + (C - 1) * GUT + PAD * 2), fh / ch);
+    if (!best || scale > best.scale) best = { scale, plan };
+  }
+  const { plan, scale } = best;
+  const want = (fw / scale - PAD * 2 - plan.C * W) / Math.max(plan.C - 1, 1);
+  put(plan, Math.min(Math.max(GUT, want), 250));
+  return cs;
+}
+
+/** Which edge of a cluster the wire lands on — **and the label moves to that edge**, so the line
+ *  always arrives at the name rather than at the corner furthest from it.
+ *
+ *  The edge follows from which lane the cluster is in, not from the shape of its box. Reading it
+ *  off the box's proportions is what sent a short wide cluster in the left lane a wire "through
+ *  the top", which then crossed the card above it and came out the other side. The wire always
+ *  arrives from the hub's direction: off the hub's lane that is sideways, on it that is vertical.
+ *
+ *  The one exception is a cluster that is not first in its stack: its own sibling stands between
+ *  it and the hub, so a vertical arrival is guaranteed to be hidden. Those come in from the side
+ *  and leave the hub angled outward, which is what makes the wire visibly go around. */
+function anchorOf(c) {
+  if (!c.hubLane) return c.cx < 0 ? "right" : "left";
+  if (!c.slot) return c.cy < 0 ? "bottom" : "top";
+  return c.slot % 2 ? "right" : "left";
+}
+
+/** Which way a wire leaves the hub: radially, except for the ones routing around a sibling. */
+function departure(c, anchor) {
+  if (c.hubLane && c.slot) {
+    const side = anchor === "right" ? 1 : -1;
+    const n = Math.hypot(1.5, 1);
+    return [(side * 1.5) / n, Math.sign(c.cy) / n];
+  }
+  const n = Math.hypot(c.cx, c.cy) || 1;
+  return [c.cx / n, c.cy / n];
+}
+
+/** One branch: out of the hub along `u`, into the cluster along the entry edge's outward normal
+ *  `n`. Both ends carry a direction, so the curve is right at any angle.
+ *
+ *  This went wrong in a way worth keeping written down: the departure vector was computed as
+ *  `c.cx - hub.x + x0`, and `hub.x` is itself `-x0`, so it reduced to `c.cx + 2 * x0` — always
+ *  negative, since `x0` is the canvas's left edge. Every wire left the hub heading left, the ones
+ *  going right included, and they read as lines grazing past the hub rather than growing out of
+ *  it. The hub is the origin of the layout's own coordinates, so the direction is the cluster's
+ *  centre and nothing else. */
+function branch(sx, sy, ux, uy, ex, ey, nx, ny) {
+  const d = Math.hypot(ex - sx, ey - sy) * 0.45;
+  return `M ${sx} ${sy} C ${sx + ux * d} ${sy + uy * d}, ${ex + nx * d} ${ey + ny * d}, ${ex} ${ey}`;
 }
 
 // ── the surface ───────────────────────────────────────────────────────────────
@@ -859,8 +977,10 @@ export default function Home() {
   const [tasks, setTasks] = useState(null);
   const [workers, setWorkers] = useState([]);
   const [minds, setMinds] = useState([]);
+  const [views, setViews] = useState(() => new Map());
   const frame = useRef(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  const { openRef } = useViews();
 
   const load = useCallback(async () => {
     const [ledger, roster] = await Promise.all([
@@ -874,8 +994,9 @@ export default function Home() {
     if (roster) setWorkers(roster.workers || []);
   }, []);
 
-  // The chart is something you watch happen. The project trunk is not, and it costs one
-  // request per project, so it reads when someone looks at the page rather than on a clock.
+  // The chart is something you watch happen. These two are not. The project trunk costs one
+  // request per project and the view index is a whole listing, so both read when someone looks
+  // at the page rather than on a clock.
   const loadMinds = useCallback(async () => {
     const index = await api.facets().catch(() => null);
     if (!index) return;
@@ -893,13 +1014,24 @@ export default function Home() {
     setMinds(seen);
   }, []);
 
+  const loadViews = useCallback(async () => {
+    const list = await api.views().catch(() => null);
+    if (!Array.isArray(list)) return;
+    const known = new Map();
+    for (const v of list) {
+      if (v?.view_ref) known.set(v.view_ref, { ref: v.view_ref, label: v.label, shot: v.shot_url || null });
+    }
+    setViews(known);
+  }, []);
+
   useLive(load, { period: TEMPO.watching });
   useLive(loadMinds, { period: TEMPO.onAttention });
+  useLive(loadViews, { period: TEMPO.onAttention });
 
-  // The chart is drawn to the frame it is handed, and the frame is the window — both ways.
+  // The canvas is drawn to the frame it is handed, and the frame is the window — both ways.
   // Measured rather than assumed: this view is mounted at four widths that matter (a maximised
   // Mac, a half-width column, the headless renderer, a phone), a media query cannot hand
-  // JavaScript a number to lay out with, and the height is what decides how far it opens out.
+  // JavaScript a number to lay out with, and the height is half of what decides the scale.
   useEffect(() => {
     const el = frame.current;
     if (!el || typeof ResizeObserver === "undefined") {
@@ -914,16 +1046,13 @@ export default function Home() {
   }, []);
 
   const running = workers.filter((w) => w.state === "running").length;
-  const trunks = tasks === null ? [] : model(tasks, workers, minds);
+  const trunks = tasks === null ? [] : model(tasks, workers, minds, views);
   // The three rungs were three pills in the corner once, reading `mouth · brain · memory`.
   // They were this architecture's words for itself, parked where nothing explained them, and
   // they answered a question nobody asks. One of the states they carried is worth a person's
   // attention, and only when it is true — with no Reaction registered the agent cannot hear
-  // you, however busy the chart looks.
+  // you, however busy the canvas looks.
   const deaf = tasks !== null && !workers.some((w) => w.role === "reaction");
-
-  const wide = box.w >= 960;
-  const geo = wide && trunks.length > 0 ? chart(trunks, box.w, box.h) : null;
 
   const root = (
     <div className="hi-home__root">
@@ -936,97 +1065,113 @@ export default function Home() {
     </div>
   );
 
+  const wide = box.w >= 960 && box.h >= 520;
+  const clusters = trunks.length > 0 ? trunks.map(cluster) : [];
+  if (wide && clusters.length > 0) place(clusters, box.w, box.h);
+
   return (
     <div className="hi-home" ref={frame}>
       <style>{CSS}</style>
-      {geo ? (
-        <Chart geo={geo} root={root} />
+      {wide && clusters.length > 0 ? (
+        <Canvas clusters={clusters} box={box} root={root} onOpen={openRef} />
       ) : (
         <>
           {root}
-          {trunks.length === 0
-            ? tasks !== null && <p className="hi-home__empty">{L.nothingOpen}</p>
-            : <Flow trunks={trunks} />}
+          {trunks.length === 0 ? (
+            tasks !== null && <p className="hi-home__empty">{L.nothingOpen}</p>
+          ) : (
+            <Flow trunks={trunks} onOpen={openRef} />
+          )}
         </>
       )}
     </div>
   );
 }
 
-// ── the chart ─────────────────────────────────────────────────────────────────
+// ── the canvas, drawn ─────────────────────────────────────────────────────────
 
-function Chart({ geo, root }) {
-  const { hubX, hubY, width, height, arms } = geo;
+function Canvas({ clusters, box, root, onOpen }) {
+  // The canvas is whatever the content grew to; the frame then scales it to fit. That order is
+  // the whole idea — sizing the layout to the frame first is what produced a sparse ring with a
+  // hole in the middle, twice.
+  const x0 = Math.min(...clusters.map((c) => c.cx - c.w / 2)) - PAD;
+  const x1 = Math.max(...clusters.map((c) => c.cx + c.w / 2)) + PAD;
+  const y0 = Math.min(...clusters.map((c) => c.cy - c.h / 2)) - PAD;
+  const y1 = Math.max(...clusters.map((c) => c.cy + c.h / 2)) + PAD;
+  const cw = x1 - x0;
+  const ch = y1 - y0;
+  const scale = Math.min(box.w / cw, box.h / ch, 1.6);
+  const hub = { x: -x0, y: -y0 };
 
-  // One walk of an arm draws its wires, another its nodes. Both read the same laid-out
-  // objects, so a label and the line reaching it cannot drift apart. `dir` is the only thing
-  // that differs between the two arms.
-  const wires = (nodes, arm, fromX, fromY) =>
-    nodes.flatMap((node) => {
-      const anonymous = node.label === null;
-      const inX = anonymous ? fromX : node.x - arm.dir * 8;
-      const outX = anonymous ? fromX : node.x + arm.dir * 8;
-      const outY = anonymous ? fromY : node.y;
-      return [
-        anonymous ? null : (
-          <path key={`${node.key}-in`} className="hi-home__wire" style={{ "--tone": TONE[node.tone] }}
-            d={branch(fromX, fromY, inX, node.y)} />
-        ),
-        ...node.leaves.map((leaf) => (
-          <path key={leaf.id} className="hi-home__wire hi-home__wire--leaf"
-            style={{ "--tone": TONE[node.tone] }}
-            d={branch(outX, outY, arm.leafX - arm.dir * 10, leaf.y)} />
-        )),
-        ...wires(node.children, arm, outX, outY),
-      ];
-    });
-
-  const marks = (nodes, arm) =>
-    nodes.flatMap((node) => [
-      node.label === null ? null : (
-        <div key={node.key} className="hi-home__trunk" data-dir={arm.dir > 0 ? "r" : "l"}
-          data-rank={node.children.length ? "1" : "2"}
-          style={{
-            [arm.dir > 0 ? "left" : "right"]: arm.dir > 0 ? node.x : width - node.x,
-            top: node.y,
-            "--tone": TONE[node.tone],
-          }}>
-          <span className="hi-home__trunk-name">{node.label}</span>
-          {node.count !== null && <span className="hi-home__trunk-n">{node.count}</span>}
-        </div>
-      ),
-      ...node.leaves.map((leaf) => (
-        <div key={leaf.id} className="hi-home__leaf" data-dir={arm.dir > 0 ? "r" : "l"}
-          data-kind={leaf.kind || "task"} data-tone={leaf.tone}
-          style={{
-            [arm.dir > 0 ? "left" : "right"]: arm.dir > 0 ? arm.leafX : width - arm.leafX,
-            top: leaf.y,
-            maxWidth: arm.leafW,
-            "--tone": TONE[leaf.tone],
-          }}>
-          <Leaf leaf={leaf} />
-        </div>
-      )),
-      ...marks(node.children, arm),
-    ]);
+  const edge = (c) => {
+    const left = c.cx - c.w / 2 - x0;
+    const top = c.cy - c.h / 2 - y0;
+    const a = anchorOf(c);
+    const labelY = a === "bottom" ? top + c.h - LABEL_H / 2 : top + LABEL_H / 2;
+    if (a === "left") return [left, labelY, -1, 0];
+    if (a === "right") return [left + c.w, labelY, 1, 0];
+    if (a === "bottom") return [left + c.w / 2, top + c.h, 0, 1];
+    return [left + c.w / 2, top, 0, -1];
+  };
 
   return (
-    <div className="hi-home__chart" style={{ height, "--scale": geo.scale }}>
-      <div className="hi-home__rootnode" style={{ top: hubY, left: hubX }}>{root}</div>
-      <svg className="hi-home__wires" width="100%" height={height} aria-hidden>
-        {arms.map((arm) => (
-          <g key={arm.dir}>{wires(arm.trunks, arm, hubX + arm.dir * 13, hubY)}</g>
-        ))}
+    <div className="hi-home__canvas" style={{ width: cw, height: ch, transform: `scale(${scale})` }}>
+      <svg className="hi-home__wires" width={cw} height={ch} aria-hidden>
+        {clusters.map((c) => {
+          const [ex, ey, nx, ny] = edge(c);
+          const [ux, uy] = departure(c, anchorOf(c));
+          return (
+            <path key={c.key} className="hi-home__wire" style={{ "--tone": TONE[c.tone] }}
+              d={branch(hub.x + ux * 13, hub.y + uy * 13, ux, uy, ex, ey, nx, ny)} />
+          );
+        })}
       </svg>
-      {arms.flatMap((arm) => marks(arm.trunks, arm))}
+      <div className="hi-home__rootnode" style={{ left: hub.x, top: hub.y }}>{root}</div>
+      {clusters.map((c) => {
+        const a = anchorOf(c);
+        const head = (
+          <h2 className="hi-home__trunk">
+            <span className="hi-home__trunk-name">{c.label}</span>
+            {c.count !== null && c.count > 1 && <span className="hi-home__trunk-n">{c.count}</span>}
+          </h2>
+        );
+        return (
+          <section key={c.key} className="hi-home__cluster" data-anchor={a}
+            style={{
+              left: c.cx - c.w / 2 - x0,
+              top: c.cy - c.h / 2 - y0,
+              width: c.w,
+              "--tone": TONE[c.tone],
+            }}>
+            {a !== "bottom" && head}
+            {c.blocks.map((b) =>
+              b.t === "sub" ? (
+                <h3 key={b.id} className="hi-home__sub">
+                  <span>{b.label}</span>
+                  {b.count > 1 && <i>{b.count}</i>}
+                </h3>
+              ) : (
+                <Card key={b.id} block={b} onOpen={onOpen} />
+              ),
+            )}
+            {c.chips.length > 0 && (
+              <div className="hi-home__chips">
+                {c.chips.map((chip) => (
+                  <Chip key={chip.id} chip={chip} onOpen={onOpen} />
+                ))}
+              </div>
+            )}
+            {a === "bottom" && head}
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-/** Who is on the row, as a mark on the row rather than a rank of its own. Filled and
- *  breathing while a session is running, hollow while one is parked, absent when nobody is on
- *  it — and a numeral only when there is more than one, because "1" beside a dot is the dot
- *  said twice. */
+/** Who is on the row, as a mark on the row rather than a rank of its own. Filled and breathing
+ *  while a session is running, hollow while one is parked, absent when nobody is on it — and a
+ *  numeral only when there is more than one, because "1" beside a dot is the dot said twice. */
 function OnIt({ sessions }) {
   if (!sessions?.length) return null;
   const live = sessions.filter((worker) => worker.state === "running").length;
@@ -1040,81 +1185,100 @@ function OnIt({ sessions }) {
 }
 
 /** The kind of session, when it is one that says something. `general` is the default type, so
- *  naming it tells a reader nothing; a builder or a reviewer being on the row is the half of
- *  the old pill worth keeping, and it belongs in the sentence rather than beside it. */
+ *  naming it tells a reader nothing; a builder or a reviewer being on the row is worth the word. */
 function kindOf(sessions) {
   const live = (sessions || []).find((worker) => worker.state === "running");
   const kind = live && (live.type || live.role);
   return kind && kind !== "general" ? L.doing[kind] || null : null;
 }
 
-function Leaf({ leaf }) {
-  if (leaf.kind === "chips") {
-    return (
-      <div className="hi-home__chips">
-        {leaf.chips.length === 0 ? (
-          <span className="hi-home__note">{L.noMinds}</span>
-        ) : (
-          leaf.chips.map((mind) => (
-            <span key={mind.subject} className="hi-home__chip">
-              {mind.subject}
-              {mind.at && <i>{L.since(ago(mind.at))}</i>}
-            </span>
-          ))
-        )}
-      </div>
-    );
-  }
-  if (leaf.kind === "note") return <span className="hi-home__note">{leaf.title}</span>;
+/** **A card is a control when the row names a view**, which is the case for more than half of
+ *  the open ledger: the ref is already written in the record and `POST /api/views/open` already
+ *  takes it. Nothing had to be added to the wire for this — the file used to say a leaf could not
+ *  open anything, and what that was really about was deep-linking `factory/tasks` at a given row,
+ *  which is a different and still-missing thing. */
+function Card({ block, onOpen }) {
+  const { leaf, k } = block;
+  const view = leaf.view;
   const kind = kindOf(leaf.sessions);
-  return (
+  const body = (
     <>
-      <span className="hi-home__head">
-        <span className="hi-home__title" title={leaf.title}>{leaf.title}</span>
-        {/* Topics this row is under that did not earn a rank of their own. */}
-        {(leaf.marks || []).map((mark) => (
-          <span key={mark} className="hi-home__mark">{mark}</span>
-        ))}
-        <OnIt sessions={leaf.sessions} />
-      </span>
-      {leaf.fact && (
-        <span className="hi-home__fact">
-          {/* Organised by state, the trunk said this. Organised by subject, nothing does —
-              and a row whose blocker is the reader is the one thing that must not be found by
-              reading every sentence on the page. */}
-          {leaf.tone === "wait" && <b className="hi-home__you">{L.you}</b>}
-          {kind && <em className="hi-home__kind">{kind}</em>}
-          {leaf.fact}
-        </span>
+      {k === "P" && (
+        <div className="hi-home__fig">
+          <img src={view.shot} alt="" loading="lazy" />
+        </div>
       )}
+      <div className="hi-home__hd">
+        <span className="hi-home__title">
+          {k === "R" && view?.shot && <img className="hi-home__tiny" src={view.shot} alt="" loading="lazy" />}
+          <span>{leaf.title}</span>
+          {(leaf.marks || []).map((mark) => (
+            <em key={mark} className="hi-home__mark">{mark}</em>
+          ))}
+          <OnIt sessions={leaf.sessions} />
+        </span>
+        {k === "T" && leaf.fact && <p className="hi-home__ask">{leaf.fact}</p>}
+        <p className="hi-home__ln">
+          <b className="hi-home__st">{L.state[leaf.tone]}</b>
+          {k === "P" ? `${L.open} ${view.label || view.ref}` : k === "T" ? leaf.age : leaf.fact}
+          {kind && k === "R" && <em className="hi-home__kind">{kind}</em>}
+        </p>
+      </div>
     </>
+  );
+  if (!view) return <article className="hi-home__bx" data-k={k} style={{ height: block.h }}>{body}</article>;
+  return (
+    <article className="hi-home__bx" data-k={k} data-open="true" style={{ height: block.h }}>
+      <button type="button" onClick={() => onOpen(view.ref)} title={view.ref}>{body}</button>
+    </article>
+  );
+}
+
+function Chip({ chip, onOpen }) {
+  const inner = (
+    <>
+      {chip.view?.shot && <img src={chip.view.shot} alt="" loading="lazy" />}
+      <span className="hi-home__chip-t">{chip.title}</span>
+      {chip.fact && <i>{chip.fact}</i>}
+    </>
+  );
+  if (!chip.view) return <span className="hi-home__chip">{inner}</span>;
+  return (
+    <button type="button" className="hi-home__chip" data-open="true"
+      onClick={() => onOpen(chip.view.ref)} title={chip.view.ref}>{inner}</button>
   );
 }
 
 // ── the narrow one ────────────────────────────────────────────────────────────
-// A dendrogram needs width per rank and a phone has one rank's worth. Same model, same one
-// fact, no geometry — the ranks become indentation.
+// A canvas needs width per lane and a phone has one lane's worth. Same model, same shapes, no
+// geometry — the topics become sections down the page.
 
-function Flow({ trunks, rank = 1 }) {
+function Flow({ trunks, onOpen, rank = 1 }) {
   return (
     <div className="hi-home__flow" data-rank={rank}>
-      {trunks.map((trunk) => (
-        <section key={trunk.key} style={{ "--tone": TONE[trunk.tone] }}>
-          {trunk.label !== null && (
-            <h2>
+      {trunks.map((trunk) => {
+        const c = cluster(trunk);
+        return (
+          <section key={trunk.key} style={{ "--tone": TONE[trunk.tone] }}>
+            <h2 className="hi-home__trunk">
               <span className="hi-home__trunk-name">{trunk.label}</span>
-              {trunk.count !== null && <span className="hi-home__trunk-n">{trunk.count}</span>}
+              {c.count !== null && c.count > 1 && <span className="hi-home__trunk-n">{c.count}</span>}
             </h2>
-          )}
-          {trunk.leaves.map((leaf) => (
-            <div key={leaf.id} className="hi-home__leaf" data-kind={leaf.kind || "task"}
-              data-tone={leaf.tone} style={{ "--tone": TONE[leaf.tone] }}>
-              <Leaf leaf={leaf} />
-            </div>
-          ))}
-          {trunk.children.length > 0 && <Flow trunks={trunk.children} rank={rank + 1} />}
-        </section>
-      ))}
+            {c.blocks.map((b) =>
+              b.t === "sub" ? (
+                <h3 key={b.id} className="hi-home__sub"><span>{b.label}</span></h3>
+              ) : (
+                <Card key={b.id} block={{ ...b, h: undefined }} onOpen={onOpen} />
+              ),
+            )}
+            {c.chips.length > 0 && (
+              <div className="hi-home__chips">
+                {c.chips.map((chip) => <Chip key={chip.id} chip={chip} onOpen={onOpen} />)}
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -1122,7 +1286,7 @@ function Flow({ trunks, rank = 1 }) {
 // The only stylesheet in the file. A style prop cannot express a breakpoint, a pseudo-class
 // or a descendant rule, and this surface wants all three; everything a prop *can* say that
 // the geometry decides — a left, a top, a width — is still a prop, because it comes out of
-// chart() and belongs to the node it positions.
+// place() and belongs to the node it positions.
 //
 // NOTE: no backticks anywhere below, not even inside a comment. One ends the template early
 // and the file stops being JavaScript — see no_bundled_view_has_a_backtick_inside_its_css.
@@ -1131,175 +1295,191 @@ const CSS = `
   position: relative;
   box-sizing: border-box;
   min-height: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  padding: max(30px, var(--hi-safe-top)) clamp(18px, 3vw, 52px) 128px;
+  padding: max(24px, var(--hi-safe-top)) clamp(18px, 3vw, 52px) 118px;
   color: var(--fg);
   font-family: var(--font-display);
 }
+.hi-home:has(.hi-home__canvas) { align-items: center; justify-content: center; overflow: hidden; }
 
-/* ── the root ── */
-/* On the chart it is a hub: a dot the branches come out of, parked on the vertical middle of
-   everything hanging off it. In the flow it is the same dot at the top of the page. */
-.hi-home__rootnode { position: absolute; transform: translate(-50%, -50%); }
-.hi-home__root { display: flex; align-items: center; gap: 11px; }
-.hi-home__chart .hi-home__root { flex-direction: column; gap: 7px; }
+/* ── the hub ── */
+/* It carries nothing but absences, on purpose: whatever went into the largest type on the
+   surface was already drawn on the branches. Two things still speak here and both are things
+   no branch can show — whether anything at all is moving, and the one failure that makes the
+   rest of the canvas a lie. */
+.hi-home__rootnode { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
+.hi-home__root { display: flex; flex-direction: column; align-items: center; gap: 7px; }
 .hi-home__pip {
   flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--fg-mute);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--fg-mute) 9%, transparent);
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--fg-mute) 9%, transparent);
 }
 .hi-home__pip[data-live] {
   background: var(--accent);
   animation: hi-home-pulse 2.6s var(--ease) infinite;
 }
 @keyframes hi-home-pulse {
-  0%, 100% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 12%, transparent); }
-  50% { box-shadow: 0 0 0 13px color-mix(in srgb, var(--accent) 3%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent); }
+  50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent) 3%, transparent); }
 }
-/* Only ever an absence: reading, or unreachable. Never a summary of the branches. */
-.hi-home__meta { white-space: nowrap; font-size: 12.5px; font-weight: 600; color: var(--fg-mute); }
+.hi-home__meta { white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--fg-mute); }
 .hi-home__deaf { color: var(--danger); font-weight: 700; }
-
 .hi-home__empty { font-size: 14px; color: var(--fg-mute); margin: 26px 0 0; }
 
-/* ── the chart ── */
-/* Centred in whatever vertical room is left over, so a short map on a tall screen sits in the
-   middle of it rather than in the top with the rest of the frame empty. A tall map fills the
-   frame, the auto margins collapse, and it simply scrolls.
-   The scale is the second lever: the map is laid out once and then opened out to whatever
-   frame it was handed. A scale rather than a bigger type scale, because every proportion here
-   was decided against the others. */
-.hi-home__chart {
-  position: relative;
-  width: 100%;
-  margin-block: auto;
-  transform: scale(var(--scale, 1));
-  transform-origin: center center;
-}
+/* ── the canvas ── */
+.hi-home__canvas { position: relative; flex: 0 0 auto; transform-origin: center center; }
 .hi-home__wires { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .hi-home__wire {
   fill: none;
   stroke: var(--tone);
   stroke-width: 1.5;
   stroke-linecap: round;
-  opacity: .34;
+  opacity: .42;
 }
-.hi-home__wire--leaf { stroke-width: 1.25; opacity: .22; }
 
-.hi-home__trunk {
-  position: absolute;
-  transform: translateY(-50%);
+.hi-home__cluster { position: absolute; box-sizing: border-box; display: flex;
+  flex-direction: column; align-items: stretch; gap: 9px; }
+.hi-home__trunk { margin: 0; height: 30px; display: flex; align-items: center; gap: 6px; }
+.hi-home__cluster[data-anchor="right"] .hi-home__trunk { flex-direction: row-reverse; }
+.hi-home__cluster[data-anchor="top"] .hi-home__trunk,
+.hi-home__cluster[data-anchor="bottom"] .hi-home__trunk { justify-content: center; }
+/* On its own ground, because a wire to another cluster passes behind this one and a curve
+   drawn through a word reads as a strikethrough. */
+.hi-home__trunk-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  color: var(--tone);
+  background: var(--paper);
+  padding: 1px 6px;
+  margin: 0 -6px;
+  border-radius: 5px;
+}
+.hi-home__trunk-n { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--tone); opacity: .55; }
+/* A rank below a topic is a part of it, so it is quieter than the thing it is part of. */
+.hi-home__sub { margin: 0; height: 24px; display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 700; color: var(--fg-dim); }
+.hi-home__sub i { font-style: normal; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-mute); }
+
+.hi-home__bx {
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.hi-home__bx[data-k="P"] { padding: 0 0 10px; }
+.hi-home__bx[data-k="T"] { padding: 11px 13px; }
+.hi-home__bx[data-k="R"] { padding: 9px 12px; justify-content: center; }
+/* The whole card is the control when the row names a view. A button, so it is reachable from a
+   keyboard and announced as one; everything else about it is the card. */
+.hi-home__bx[data-open] > button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.hi-home__bx[data-open]:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--surface-border)); }
+.hi-home__bx[data-open]:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The picture is never cropped, and the shapes are not uniform — the same view re-shot in a
+   narrow window comes back portrait. The card is a fixed size, so a tall picture must leave room
+   at its sides; making that room a mat, and giving the picture its own edge and shadow, is what
+   makes it read as a page rather than as a failed render. */
+.hi-home__fig {
+  height: 168px;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--fg) 6%, var(--paper));
+  border-bottom: 1px solid var(--surface-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 8px;
+}
+.hi-home__fig img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.hi-home__hd { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hi-home__bx[data-k="P"] .hi-home__hd { padding: 9px 12px 0; }
+.hi-home__bx[data-k="T"] .hi-home__hd { flex: 1; }
+.hi-home__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -.012em;
+  line-height: 1.3;
+}
+.hi-home__title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hi-home__tiny {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 19px;
+  object-fit: cover;
+  object-position: top left;
+  border-radius: 3px;
+  border: 1px solid var(--surface-border);
+}
+/* A text card has no picture, so its body fills the space one would have taken. */
+.hi-home__ask {
+  margin: 0;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.hi-home__ln {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-mute);
   display: flex;
   align-items: baseline;
   gap: 7px;
-  white-space: nowrap;
-  /* On its own ground, because the wires to every other trunk pass behind this one and a
-     branch drawn through a word reads as a strikethrough. */
-  background: var(--paper);
-  padding: 2px 7px;
-  margin-left: -7px;
-  border-radius: 5px;
-}
-/* The trunk label is not mirrored: reversed, KUT 4 reads 4 KUT. Only its anchor moves. */
-.hi-home__trunk[data-dir="l"] { margin-left: 0; margin-right: -7px; }
-.hi-home__trunk-name { font-size: 13px; font-weight: 800; letter-spacing: -.01em; color: var(--tone); }
-.hi-home__trunk-n {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--tone);
-  opacity: .6;
-}
-/* A rank below a topic is a part of it, so it is quieter than the thing it is part of. */
-.hi-home__trunk[data-rank="2"] .hi-home__trunk-name { font-size: 12px; font-weight: 700; opacity: .82; }
-
-/* A leaf is a label on a rule, the way a branch ends on a mind map — not a card. Boxes were
-   what made the first version of this page read as a board. It hugs its own content: stretched
-   to the column measure it drew a full-width rule under two words. */
-.hi-home__leaf {
-  position: absolute;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--tone) 22%, transparent);
-  width: max-content;
   min-width: 0;
-}
-/* A row that wants somebody carries it on its own rule, since the trunk is a subject now and
-   no longer says which pile a row is in. */
-.hi-home__leaf[data-tone="wait"],
-.hi-home__leaf[data-tone="warn"] {
-  border-bottom-color: color-mix(in srgb, var(--tone) 55%, transparent);
-}
-/* The left arm is the same row read the other way. Right-aligned, NOT end-aligned: a column
-   that shrink-wraps its children hands the title a content-sized box, and a title with no
-   width to overflow does not ellipsise — it runs off the left edge of the window instead. */
-.hi-home__leaf[data-dir="l"] { text-align: right; }
-.hi-home__leaf[data-dir="l"] .hi-home__head { justify-content: flex-end; flex-direction: row-reverse; }
-
-.hi-home__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.hi-home__title {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -.012em;
-  color: var(--fg);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.hi-home__fact {
-  font-size: 11.5px;
-  line-height: 1.35;
-  color: var(--fg-mute);
-  overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.hi-home__leaf[data-tone="wait"] .hi-home__fact { color: var(--danger); }
-.hi-home__you {
-  display: inline-block;
-  margin-right: 7px;
-  padding: 0 6px;
-  border-radius: 999px;
-  border: 1px solid var(--danger-line);
-  background: var(--danger-wash);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  vertical-align: 1px;
-}
-/* What kind of session, when the kind says something. Reads as the opening of the sentence it
-   is part of, which is why it is not a chip. */
-.hi-home__kind { font-style: normal; font-weight: 700; color: var(--accent); margin-right: 6px; }
+/* The one place a state is named, in the one colour it is worth spending. */
+.hi-home__st { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: var(--tone); }
+.hi-home__kind { font-style: normal; font-weight: 700; color: var(--accent); }
 /* A topic this row is under that did not earn a rank of its own. */
 .hi-home__mark {
   flex: 0 0 auto;
+  font-style: normal;
   font-size: 10.5px;
   font-weight: 700;
   color: var(--fg-mute);
   border: 1px solid var(--surface-border);
-  background: var(--surface);
+  background: var(--paper);
   border-radius: 4px;
   padding: 1px 6px;
 }
-/* Somebody is on this row. It follows the title rather than parking at the end of the rule:
-   the rule runs to the end of the row and the words often do not, so a dot out there was a
-   detail about the row sitting nowhere near it. */
 .hi-home__on { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
-.hi-home__on i {
-  font-style: normal;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--fg-mute);
-}
+.hi-home__on i { font-style: normal; font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--fg-mute); }
 .hi-home__on b {
   width: 7px;
   height: 7px;
@@ -1318,41 +1498,44 @@ const CSS = `
   60% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent); }
 }
 
-.hi-home__note { font-size: 12.5px; color: var(--fg-mute); }
-.hi-home__chips { display: flex; gap: 6px; flex-wrap: wrap; }
+/* A cluster is one column of fixed width, so its chips have to live inside it: one chip whose
+   title runs longer than the column would otherwise push the whole cluster out past its lane. */
+.hi-home__chips { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; min-width: 0; }
+.hi-home__cluster[data-anchor="right"] .hi-home__chips { justify-content: flex-end; }
+.hi-home__cluster[data-anchor="top"] .hi-home__chips,
+.hi-home__cluster[data-anchor="bottom"] .hi-home__chips { justify-content: center; }
 .hi-home__chip {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 5px;
-  padding: 2px 9px;
+  padding: 3px 9px;
   border-radius: 999px;
   border: 1px solid var(--surface-border);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 650;
   color: var(--fg-dim);
+  white-space: nowrap;
+  font-family: inherit;
+  max-width: 100%;
+  min-width: 0;
 }
-.hi-home__chip i {
-  font-style: normal;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--fg-mute);
+.hi-home__chip-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+button.hi-home__chip { cursor: pointer; }
+button.hi-home__chip:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--surface-border)); }
+button.hi-home__chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hi-home__chip img {
+  width: 24px;
+  height: 15px;
+  object-fit: cover;
+  object-position: top left;
+  border-radius: 3px;
 }
+.hi-home__chip i { font-style: normal; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-mute); }
 
 /* ── the narrow one ── */
-.hi-home__flow { margin-top: 22px; display: flex; flex-direction: column; gap: 20px; }
-.hi-home__flow[data-rank="2"] { margin-top: 12px; margin-left: 16px; gap: 14px; }
-.hi-home__flow[data-rank="2"] h2 .hi-home__trunk-name { font-size: 12px; }
-.hi-home__flow h2 { margin: 0 0 8px; display: flex; align-items: baseline; gap: 7px; }
-/* The chart hands each leaf a max-width out of the geometry; the flow has no geometry, so the
-   row that hugs its content there has to be told not to hug past the screen. */
-.hi-home__flow .hi-home__leaf {
-  position: relative;
-  transform: none;
-  width: auto;
-  max-width: 100%;
-  margin-left: 14px;
-  padding: 0 0 7px;
-  margin-bottom: 9px;
-}
+.hi-home__flow { margin-top: 22px; display: flex; flex-direction: column; gap: 26px; }
+.hi-home__flow section { display: flex; flex-direction: column; gap: 9px; }
+.hi-home__flow .hi-home__bx { height: auto; }
+.hi-home__flow .hi-home__fig { height: 150px; }
 `;
