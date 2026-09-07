@@ -848,6 +848,34 @@ recompiled board; two different inline views are two artifacts and both stay. Th
 same named/inline split `refresh_sources` turns on, and it decides what re-opening means:
 a named view comes back as what it *is now*, an inline one only ever as what it *was*.
 
+**A named view follows its source while it is up** — added September 7, 2026, on a live
+core. "A named view comes back as what it *is now*" was true only of coming back. The
+module URL is a content hash over the source *as it was when the view went up*, and both
+writers pin it: `apply` at the show, `go_to` at the open. Neither hears the next write of
+the file, and a view is saved by writing the file — there is no tool call to hang it off
+(`src/identity/workers/view-builder.md`: "no special tool, just write the file"). So a
+builder rewriting the view the person is parked on changed nothing on their screen: the
+board stayed up, compiled from a source that no longer existed, and the only way to see
+the rewrite was to leave the view and come back, which re-resolves the ref. Watched
+happening: `knq-project-architecture/editing-live-commentary-overview` written at 12:04
+with the screen still mounting the module compiled at 11:56.
+
+`refresh_sources` already states the rule for the one moment it could observe — the screen
+shows the view as it *is*, not as it compiled. `view_watch` is that rule at every other
+moment: the views tree is watched, and a write to a `.jsx` that the content slot holds or
+the cursor is parked on is recompiled and swapped **under the same id**, so the layer keeps
+its slot and a motion-tagged element animates rather than blinking. A view in the row that
+nobody is looking at is left alone — opening it re-resolves it, which is what opening a
+named view means.
+
+It is an event, not a tick: the watcher costs nothing until a file is written, and a write
+to a view nobody is on costs a string compare. It wakes no rung — the screen changes, and
+the next turn reads what is on it the way it always does. **It does not re-take the tile**,
+which is the one place it declines to follow `apply` and `go_to`: those capture at
+conversational cadence, a save happens at whatever cadence a builder types, and a Chromium
+per save is not worth a thumbnail. The picture is re-taken the next time anyone opens the
+view.
+
 **The person may go to a place; the agent decides what to show.** A dozen views ship with
 no way to reach any of them except asking, which is the interaction cost of a chatbot
 sitting on top of what is otherwise an app. `GET /api/views` is the inventory and

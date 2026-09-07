@@ -53,6 +53,7 @@ pub mod tools;
 pub mod view;
 pub mod view_bus;
 pub mod view_shots;
+pub mod view_watch;
 pub mod vision;
 pub mod wire;
 pub mod workers;

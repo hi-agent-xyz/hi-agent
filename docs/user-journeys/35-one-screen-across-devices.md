@@ -69,3 +69,34 @@ Mac mini,独立 `--data-dir /tmp/os-dd`,端口 12414;两个 `GET /api/out/view` 
 cursor 成立,对**行**不成立:在一个 agent 还没 show 过任何东西的 core 上,从来没有写过
 快照——重启拿走的不是一个近似的 cursor,而是**他去过的每一个地方**。读代码看不出来,跑
 一遍就看见了。现在**到达写、行内走动不写**。
+
+## 实测 2026-09-07 · view 被改写时,停在上面的那一屏跟不跟
+
+**先是在用户自己那台开发机上撞见的缺口。**人停在
+`knq-project-architecture/editing-live-commentary-overview`(cursor 就是它),builder 在
+12:03、12:04 两次改写它的 `.jsx`,屏幕却一直挂着 **11:56 编译出来的那份**
+(`ff8268e5a31feb52.mjs`)。12:03 那次连新产物都已经在盘上了(`01286aebc1d45cac.mjs`,
+`hi_review_view` 编的),屏幕没有去取。用户的原话是「要切到另一个 view 再切回来才看得到新的」
+—— 切回来走的正是 `POST /api/views/open`,它按 ref 重新 resolve + 编译,所以那是个绕法,
+不是设计。
+
+原因在这条线上是清楚的:module URL 是**上屏那一刻**源码的内容哈希,`apply`(show)和
+`go_to`(open)各自把它钉死;而 view 是**直接写文件**存的(`view-builder.md`:「no
+special tool, just write the file」),没有任何一个工具调用可以挂钩。`refresh_sources`
+只说了开机那一刻的规则。
+
+**修法与复测**(`view_watch.rs`;独立 `--data-dir`,端口 12401,release 二进制):
+
+- ✅ **改写就跟上**:`open {"ref":"factory/drive"}` 停住,一条 `?since=4` 的 long-poll 挂着;
+  往 `factory/drive.jsx` 追加一行 → poll **当场返回**,card 的 module 从
+  `fe8b448afbefe02f` 变成 `91d080e32e92706a`,cursor 不动、id 不变(所以是换模块不是重挂槽)。
+- ✅ **没人看的 view 改了不动屏**:同时改 `factory/tasks.jsx`,version 停在 5 —— 它在行里,
+  但下次被打开时自然会重新 resolve。
+- ✅ **存了个编不过的中间态**:往正在看的 `drive.jsx` 里塞坏语法 → version 不动,屏幕留着
+  上一份好的。这是 `refresh_sources` 同一句话:陈旧的 view 也好过空房间。
+- ✅ **改回来又跟上**:修好文件 → version 6,新 module。
+- ⚠️ **只测了「人停在上面」这一半**。agent 自己 content slot 里那一半(`apply` 写的)要一次
+  真的 `hi_show` 才能在活实例上摆出来,这次没跑;它只有单测
+  (`a_rewrite_reaches_the_view_the_agent_has_up`)。
+- ⚠️ **没在浏览器里看过**。看的是 wire 上的 module_url 变了;`ViewMount` 的 `[moduleUrl]`
+  依赖会重新 import,这一步是读代码推的,不是看见的。

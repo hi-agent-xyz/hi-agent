@@ -73,6 +73,12 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 
+# The views tree is watched, so a view rewritten while someone is looking at it
+# follows rather than staying pinned to the module it compiled to when it went up
+# (`foundation/server/view_watch.rs`). A view is saved by writing the file, so there
+# is no tool call to hang that off. FSEvents on macOS, inotify on Linux.
+notify = "8"
+
 directories = "6"
 
 # Browser login gate (optional; only active with HI_AGENT_AUTH=on). hi-agent is

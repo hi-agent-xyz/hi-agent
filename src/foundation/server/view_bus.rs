@@ -542,6 +542,69 @@ impl ViewBus {
         persist(&self.data_dir, entry).await;
     }
 
+    /// Whether this ref is what a window is mounting right now — the agent's content
+    /// slot, or the destination the cursor is parked on.
+    ///
+    /// Read by [`view_watch`](super::view_watch) before it spawns a compiler: a builder
+    /// saves its way through a workshop of views nobody is looking at, and the only ones
+    /// worth recompiling on a write are the two that are on a screen.
+    pub async fn shows_ref(&self, view_ref: &str) -> bool {
+        let map = self.inner.lock().await;
+        map.content.as_ref().and_then(|view| view.view_ref.as_deref()) == Some(view_ref)
+            || map.cursor.as_deref() == Some(view_ref)
+    }
+
+    /// Follow a rewrite of `view_ref`'s source: put `module_url` under every layer that
+    /// is showing that view, **keeping the id**, so the slot survives and a motion-tagged
+    /// element animates rather than blinking.
+    ///
+    /// This is [`refresh_sources`](Self::refresh_sources)'s rule at every moment other
+    /// than boot — the screen shows the view as it *is*, not as it compiled when it went
+    /// up — and it reaches both layers a named view can be mounted from: the content slot
+    /// the agent shows into, and the history entry the person is parked on. A view in the
+    /// history that nobody is looking at is left alone; opening it re-resolves it, which
+    /// is what opening a named view means.
+    ///
+    /// **It persists only when the content slot moved**, the same split
+    /// [`go_to`](Self::go_to) makes: what the agent has up is a durable fact about the
+    /// screen and rides in the snapshot, while the module a card in the row resolves to
+    /// is disposable — it is recompiled on the next open, and writing for it would put a
+    /// state in the archive that says nothing new about what was on screen.
+    ///
+    /// Returns whether anything changed.
+    pub async fn follow_source(&self, view_ref: &str, module_url: &str) -> bool {
+        let mut map = self.inner.lock().await;
+        let entry = &mut *map;
+        let mut content_moved = false;
+        if let Some(content) = entry.content.as_mut()
+            && content.view_ref.as_deref() == Some(view_ref)
+            && content.module_url != module_url
+        {
+            content.module_url = module_url.to_owned();
+            content_moved = true;
+        }
+        let mut parked_moved = false;
+        if entry.cursor.as_deref() == Some(view_ref)
+            && let Some(card) = entry
+                .history
+                .iter_mut()
+                .find(|card| destination_of(&card.view) == view_ref)
+            && card.view.module_url != module_url
+        {
+            card.view.module_url = module_url.to_owned();
+            parked_moved = true;
+        }
+        if !content_moved && !parked_moved {
+            return false;
+        }
+        entry.version += 1;
+        entry.notify.notify_waiters();
+        if content_moved {
+            persist(&self.data_dir, entry).await;
+        }
+        true
+    }
+
     /// Reconcile the host-owned **condition** layer against the desired level.
     ///
     /// This is the right write path for process conditions whose current level is
@@ -1143,6 +1206,67 @@ mod tests {
         let state = bus.wait_state(None).await;
         assert!(state.cursor.is_none());
         assert_eq!(ids(&state), vec!["tasks"]);
+    }
+
+    /// A view rewritten while the agent has it up follows, under the same id — the slot
+    /// is what keeps a motion-tagged element animating rather than blinking.
+    #[tokio::test]
+    async fn a_rewrite_reaches_the_view_the_agent_has_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+
+        assert!(bus.shows_ref("factory/tasks").await);
+        assert!(bus.follow_source("factory/tasks", "/m/tasks-v2.mjs").await);
+        let state = bus.wait_state(None).await;
+        assert_eq!(ids(&state), vec!["tasks"], "the same slot, so motion survives it");
+        assert_eq!(state.views[0].module_url, "/m/tasks-v2.mjs");
+    }
+
+    /// …and one rewritten while the *person* is parked on it, which is the case that sent
+    /// them out of the view and back to see their own edit.
+    #[tokio::test]
+    async fn a_rewrite_reaches_the_view_they_went_back_to() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("home", "/m/home.mjs", "factory/home")).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+
+        assert!(bus.shows_ref("factory/drive").await);
+        assert!(bus.follow_source("factory/drive", "/m/drive-v2.mjs").await);
+        let state = bus.wait_state(None).await;
+        let card = state.history.iter().find(|h| h.id == "drive").unwrap();
+        assert_eq!(card.module_url, "/m/drive-v2.mjs");
+        assert_eq!(state.cursor.as_deref(), Some("factory/drive"), "still parked, now current");
+    }
+
+    /// A write to a view nobody is looking at changes nothing: the card is re-resolved
+    /// when it is opened, which is what opening a named view means.
+    #[tokio::test]
+    async fn a_rewrite_of_a_view_nobody_is_on_changes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+        bus.apply(show_ref("home", "/m/home.mjs", "factory/home")).await;
+
+        assert!(!bus.shows_ref("factory/tasks").await);
+        assert!(!bus.follow_source("factory/tasks", "/m/tasks-v2.mjs").await);
+        let state = bus.wait_state(None).await;
+        let card = state.history.iter().find(|h| h.id == "tasks").unwrap();
+        assert_eq!(card.module_url, "/m/tasks.mjs");
+    }
+
+    /// Recompiling the same source is a no-op — the module is content-addressed, so a
+    /// save that changes nothing must not bump the version and wake every window.
+    #[tokio::test]
+    async fn a_save_that_compiles_to_the_same_module_is_not_a_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+        let before = bus.wait_state(None).await.version;
+
+        assert!(!bus.follow_source("factory/tasks", "/m/tasks.mjs").await);
+        assert_eq!(bus.wait_state(None).await.version, before);
     }
 
     /// A dismiss takes a window nowhere, so it leaves the cursor where it is: the person

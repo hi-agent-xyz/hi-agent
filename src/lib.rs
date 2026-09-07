@@ -375,6 +375,14 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // from source now — the first moment both the reseeded tree and a compiler exist —
     // so what's on screen is the view as it is today, not as it was when it was shown.
     seams.state.views.refresh_sources(&view_compiler).await;
+    // …and from now on, whenever the source is written again. A view is saved by
+    // writing the file, so nothing tells the screen; without this a rewrite reaches it
+    // only by the person leaving the view and coming back.
+    foundation::server::view_watch::spawn(
+        seams.state.views.clone(),
+        config.data_dir.clone(),
+        view_compiler.clone(),
+    );
     // The person's language, stamped onto `<html lang>` so a bundled view can pick which
     // of its copies to show. Captured once here for the same reason the setting says it
     // applies on restart. Unset reads as `system`, which the page resolves against the
