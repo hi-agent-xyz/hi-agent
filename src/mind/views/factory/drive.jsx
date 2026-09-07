@@ -8,6 +8,16 @@
 // notebook. So this is a window, not a file manager — it answers "what did I actually
 // hand it, and is it still there", which today nothing can.
 //
+// **One folder at a time.** It used to take the whole tree in one array and group it by
+// first path segment, which is the only shape a flat array has: every leaf, at every
+// depth, as its own row. That reads fine on the three shelves the layout doc names and
+// falls apart on the tree an agent actually grows — a message archive filed under
+// `wecom/<listener>/inbox/<yyyy>/<mm>/<dd>/<msg-id>/` put 876 rows of
+// `…/00000034-f2a599a925b0/manifest.json` on one page, and the shelf they were under
+// was invisible above them. So the listing endpoint now serves one directory
+// (`?under=`) and this walks into folders instead of unrolling them. A folder row
+// carries `items`, so it says what is behind it without going there.
+//
 // **And now it shows the file, not just its name.** A row used to be a link with
 // `target="_blank"`, which answered "is it still there" and nothing beyond it. That
 // worked in a browser tab and nowhere else this face is shown: the menu-bar popover is
@@ -22,11 +32,19 @@
 // **Watched, and how far.** A PDF, a PNG, a note and an unknown binary were each opened
 // in headless Chromium on the host's own `render.html` with the real import map — so the
 // bare specifiers, the chunk boundaries, the light/dark read and the same-origin pdf.js
-// assets are all observed, not argued. What that run did *not* have is a live core: the
-// listing came from a stub serving a `drive/` on disk, so nothing here has been seen
-// against a real `/api/drive`, and nothing at all has been seen on a phone — where the
-// subpath prefix is the ordinary case and `fileUrl()` above is what has to survive it.
-// This is the recall half of journey 19 ("呈现(投成 view)"); it has no 实测 yet.
+// assets are all observed, not argued.
+//
+// The **listing** half has since been watched too, and against the real router rather
+// than a stub: `server::build` over a temp data dir holding a drive shaped like the one
+// on the dev box (a 320-file message archive eight levels down, plus the small shelves),
+// rendered at 1100×820 light and 390×780 dark. That is where the three corrections after
+// the first render came from — a trail at heading size taking three lines of a phone
+// before the first row, `notes` capitalised into "Notes" beside `medical` and `family`,
+// and a folder date that wrapped every folder row onto two lines. The drive it read was
+// still planted rather than lived-in, and the **preview has not been opened against a
+// live core**; nothing at all has been seen on a phone, where the subpath prefix is the
+// ordinary case and `fileUrl()` above is what has to survive it. This is the recall half
+// of journey 19 ("呈现(投成 view)"); it has no 实测 yet.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useEffect, useRef, useState } from "react";
@@ -40,6 +58,13 @@ import { url, useLive, TEMPO } from "@hi/core";
 // files, so it reads as 文件 in Chinese — unlike Memory, which is this system's own
 // vocabulary and stays in English in both.
 //
+// Only the chrome is in here. **A directory's name is never translated**, at any depth:
+// it is a name the agent chose and the string a person sees in a terminal. The three the
+// layout doc happens to name used to be mapped (`notes` → Notes / 笔记), which was fine
+// while they were section headings and wrong as soon as they became rows — "Notes"
+// sitting between `medical` and `family` reads as a capitalisation bug, not as a
+// translation, and the mapping fires on three names this drive does not even have.
+//
 // TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
 // runtime — the agent reads the surface and writes the variant — rather than shipped
 // here. Until that exists, an unsupported language lands on English.
@@ -49,15 +74,19 @@ const T = {
     // by the library from this tag, so it has to move with the words around it.
     ofv: "en-US",
     title: "Drive",
-    top: { projects: "Projects", notes: "Notes", papers: "Papers" },
-    count: (n, size) => `${n === 1 ? "1 file" : `${n} files`} · ${size}`,
+    // What is in *this* folder, folders included — the tally moved down with the
+    // listing. A whole-drive total would now be a second read of the entire cabinet,
+    // which is the read this view was changed to stop making.
+    folders: (n) => (n === 1 ? "1 folder" : `${n} folders`),
+    files: (n, size) => `${n === 1 ? "1 file" : `${n} files`} · ${size}`,
+    // The count on a folder row: how much is directly inside it.
+    items: (n) => (n === 1 ? "1 item" : `${n} items`),
     emptyBig: "Nothing kept here yet.",
     emptySub: "Contracts, documents, drafts — anything worth keeping as the original file shows up here once you hand it over.",
-    // A shelf that exists and holds nothing is an answer, not a gap in the list.
-    shelfEmpty: "Empty.",
-    loose: "Loose",
+    // A folder that exists and holds nothing is an answer, not a gap in the list.
+    folderEmpty: "Empty.",
     close: "Close",
-    // Position within the shelf being previewed, so the arrows have a scale.
+    // Position within the folder being previewed, so the arrows have a scale.
     position: (i, n) => `${i} of ${n}`,
     // Shown only while the viewer chunk is in flight — on a local core that is a
     // flash, over the community relay it is a moment worth accounting for.
@@ -67,12 +96,12 @@ const T = {
   zh: {
     ofv: "zh-CN",
     title: "文件",
-    top: { projects: "项目", notes: "笔记", papers: "文稿" },
-    count: (n, size) => `${n} 份 · ${size}`,
+    folders: (n) => `${n} 个文件夹`,
+    files: (n, size) => `${n} 份 · ${size}`,
+    items: (n) => `${n} 项`,
     emptyBig: "还没存着什么。",
     emptySub: "合同、证件、稿子这类要留原件的东西，传给它以后会在这里。",
-    shelfEmpty: "空的。",
-    loose: "散着的",
+    folderEmpty: "空的。",
     close: "关闭",
     position: (i, n) => `第 ${i} / ${n}`,
     opening: "正在打开……",
@@ -93,10 +122,6 @@ function words() {
 }
 const L = words();
 
-// Not a folder name: the bucket for files handed over without a shelf. A real drive
-// directory can never collide with it — `/` cannot appear in one path segment.
-const LOOSE = "/loose";
-
 /** The bytes endpoint for one drive entry, prefix-correct on a phone. */
 function fileUrl(path) {
   return url(`/api/drive/file/${path.split("/").map(encodeURIComponent).join("/")}`);
@@ -112,8 +137,8 @@ function theme() {
 /**
  * The file itself, over the list.
  *
- * Takes the **whole shelf** and an index rather than one file, so the viewer's own
- * prev/next arrows walk the shelf you opened from. That costs nothing here — the
+ * Takes the **whole folder** and an index rather than one file, so the viewer's own
+ * prev/next arrows walk the folder you opened from. That costs nothing here — the
  * listing is already loaded — and it is how you actually read a drive: three scans of
  * one contract are a thing you page through, not three separate errands back to a list.
  *
@@ -136,7 +161,7 @@ function theme() {
  * Splitting further — a plugin per file type, chosen from the extension — was measured
  * and dropped. For most of them the case is clear: the viewer core is ~32 KB gzipped and
  * image + text + pdf + audio + video *together* add ~25 KB, so splitting those saves ~20 KB
- * against a floor paid regardless, and costs a chunk graph plus a round trip on any shelf
+ * against a floor paid regardless, and costs a chunk graph plus a round trip on any folder
  * of mixed types. `officePlugin` is the one that could argue back — it statically pulls
  * jszip and docx-preview, and adding it took this chunk from ~113 KB to ~173 KB gzipped,
  * which everyone opening a plain `.txt` now also pays. It stays in anyway: 60 KB, once,
@@ -201,7 +226,7 @@ function Preview({ files, index, onClose }) {
           theme: theme(),
           width: "100%",
           height: "100%",
-          // The toolbar is off unless asked for, and without it the shelf queue above has
+          // The toolbar is off unless asked for, and without it the folder queue above has
           // no arrows to walk it — the `‹ 1 / 1 ›` a PDF shows is pdf.js paging one
           // document, not this. Named field by field rather than `true`, because `true`
           // turns on all six and one of them is wrong here: `print` opens the platform
@@ -211,7 +236,7 @@ function Preview({ files, index, onClose }) {
           toolbar: { zoom: true, rotate: true, download: true, fullscreen: true, search: true, print: false },
           // Fires for every file the queue settles on, including the first — so this is
           // both the initial heading and every move after it. `getCurrentIndex()` rather
-          // than matching on the file: two shelves can hold the same name.
+          // than matching on the file: two folders can hold the same name.
           //
           // `viewer?.` because this can in principle fire from inside `createViewer`,
           // before the assignment above has happened. It does not today — the first
@@ -255,72 +280,103 @@ function Preview({ files, index, onClose }) {
   );
 }
 
+/**
+ * A folder glyph for the slot a file's extension badge sits in, so folder and file rows
+ * line up on the same left edge. Inline rather than an emoji: an emoji is a different
+ * font, a different baseline and a different colour on every platform this face runs on.
+ */
+function FolderMark() {
+  return (
+    <svg viewBox="0 0 20 16" width="17" height="14" aria-hidden="true" style={S.folderMark}>
+      <path
+        d="M1.6 3.2A1.6 1.6 0 0 1 3.2 1.6h3.4l1.8 1.9h7.4a1.6 1.6 0 0 1 1.6 1.6v7.7a1.6 1.6 0 0 1-1.6 1.6H3.2a1.6 1.6 0 0 1-1.6-1.6z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 export default function Drive() {
+  // Where we are, drive-relative; `""` is the root. Also the read's subject, so walking
+  // into a folder reads that folder at once rather than at the next tick.
+  const [at, setAt] = useState("");
   const [entries, setEntries] = useState(null);
-  // Which shelf is open and where in it. Held as the shelf's file array so the
-  // viewer's queue survives a poll that reorders nothing — see the `useLive` note.
+  // Which file in this folder is open. Held as the folder's file array plus an index so
+  // the viewer's queue survives a poll — see the `useLive` note.
   const [open, setOpen] = useState(null);
 
-  // It files things here itself — a carrier hands over an artifact and the shelf grows
+  // It files things here itself — a carrier hands over an artifact and the folder grows
   // while this is on screen. A read that does not come back leaves the last good listing
   // standing; only the very first one is allowed to settle on empty, because before it
   // there is nothing to keep and the skeleton has to end somewhere.
   useLive(
     () =>
-      fetch("/api/drive")
+      fetch(url(`/api/drive${at ? `?under=${encodeURIComponent(at)}` : ""}`))
         .then((r) => r.json())
         .then((d) => setEntries(d.entries || []))
         .catch(() => setEntries((prev) => (prev === null ? [] : prev))),
-    { period: TEMPO.ledger },
+    { period: TEMPO.ledger, subject: at },
   );
 
-  if (entries === null) return <div style={S.page}><div style={S.h1}>{L.title}</div></div>;
+  // Walking somewhere else throws the listing away rather than keeping it up while the
+  // new one loads: those rows name a folder you are no longer in, and one of them would
+  // open the wrong file if it were clicked in the gap.
+  const go = (path) => {
+    setOpen(null);
+    setEntries(null);
+    setAt(path);
+  };
 
+  // The trail, as somewhere to click back to. Renders at every depth including the root,
+  // where it is just the title — a heading that appears and disappears would move
+  // everything under it.
+  const segs = at ? at.split("/") : [];
+  const crumbs = (
+    <div style={S.h1}>
+      <span
+        style={segs.length ? S.crumbBack : S.crumbHere}
+        onClick={segs.length ? () => go("") : undefined}
+        role={segs.length ? "button" : undefined}
+        tabIndex={segs.length ? 0 : undefined}
+        onKeyDown={segs.length ? (e) => { if (e.key === "Enter" || e.key === " ") go(""); } : undefined}
+      >
+        {L.title}
+      </span>
+      {segs.map((seg, i) => {
+        const path = segs.slice(0, i + 1).join("/");
+        const last = i === segs.length - 1;
+        return (
+          <span key={path} style={S.crumbPart}>
+            <span style={S.crumbSep}>/</span>
+            <span
+              style={last ? S.crumbHere : S.crumbBack}
+              onClick={last ? undefined : () => go(path)}
+              role={last ? undefined : "button"}
+              tabIndex={last ? undefined : 0}
+              onKeyDown={last ? undefined : (e) => { if (e.key === "Enter" || e.key === " ") go(path); }}
+            >
+              {seg}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+
+  if (entries === null) {
+    return <div style={S.page}><div style={S.scroll}><div style={S.head}>{crumbs}</div></div></div>;
+  }
+
+  const dirs = entries.filter((e) => e.dir);
   const files = entries.filter((e) => !e.dir);
 
-  // With no file anywhere, the shelves are beside the point: "what have I handed it"
-  // is answered better by the sentence than by three empty rows.
-  if (files.length === 0) {
-    return (
-      <div style={S.page}>
-        <div style={S.h1}>{L.title}</div>
-        <div style={S.empty}>
-          <div style={S.emptyBig}>{L.emptyBig}</div>
-          <div style={S.emptySub}>{L.emptySub}</div>
-        </div>
-      </div>
-    );
-  }
-
-  // Group by the first path segment so the top folders read as the shelves they are,
-  // rather than as an undifferentiated file list. The endpoint sends directory entries
-  // too, on purpose — an empty `drive/papers/` is a real answer to "what am I holding",
-  // so a shelf with nothing on it gets a row of its own rather than vanishing. Files
-  // sitting at the root of the drive have no shelf; they collect under `loose`.
-  const groups = new Map();
-  for (const e of entries) {
-    if (e.dir && !e.path.includes("/")) {
-      if (!groups.has(e.path)) groups.set(e.path, []);
-      continue;
-    }
-    if (e.dir) continue;
-    const top = e.path.includes("/") ? e.path.split("/")[0] : LOOSE;
-    if (!groups.has(top)) groups.set(top, []);
-    groups.get(top).push(e);
-  }
-
-  // The three named shelves lead, in the order docs/data-dir-layout.md names them;
-  // anything else the agent made follows, alphabetically, and loose files land last.
-  const rank = (top) => {
-    const known = ["projects", "notes", "papers"].indexOf(top);
-    if (known >= 0) return [0, known, ""];
-    return top === LOOSE ? [2, 0, ""] : [1, 0, top];
-  };
-  const shelves = [...groups.entries()].sort(([a], [b]) => {
-    const [ga, ka, na] = rank(a);
-    const [gb, kb, nb] = rank(b);
-    return ga - gb || ka - kb || na.localeCompare(nb);
-  });
+  // With nothing anywhere in the drive, "what have I handed it" is answered better by the
+  // sentence than by an empty page. Deeper in, an empty folder is a smaller fact and gets
+  // the smaller line — the trail above it already says where the emptiness is.
+  const summary = [
+    dirs.length ? L.folders(dirs.length) : null,
+    files.length ? L.files(files.length, bytes(files.reduce((n, f) => n + (f.bytes || 0), 0))) : null,
+  ].filter(Boolean).join(" · ");
 
   // The frame stays put and the list scrolls inside it, so the preview can be absolutely
   // positioned against the frame. The scroller has to be the child and not the root:
@@ -328,42 +384,56 @@ export default function Drive() {
   return (
     <div style={S.page}>
       <div style={S.scroll}>
-      <div style={S.head}>
-        <div style={S.h1}>{L.title}</div>
-        <span style={S.count}>{L.count(files.length, bytes(files.reduce((n, f) => n + (f.bytes || 0), 0)))}</span>
-      </div>
-
-      {shelves.map(([top, list]) => (
-        <div key={top} style={S.group}>
-          <div style={S.sect}>
-            {top === LOOSE ? L.loose : L.top[top] || top}
-            <span style={S.sectN}>{list.length}</span>
-          </div>
-          {list.length === 0 ? (
-            <div style={S.shelfEmpty}>{L.shelfEmpty}</div>
-          ) : (
-            <div style={S.list}>
-              {list.map((f, i) => (
-                // Still an `<a>` at the bytes, and still the real href: the preview is
-                // the primary action, but middle-click, ⌘-click and "save link as" are
-                // how people get a file *out*, and a `<div onClick>` would take all
-                // three away. The click is intercepted only when it is a plain one.
-                <a key={f.path} style={S.row} href={fileUrl(f.path)}
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                    e.preventDefault();
-                    setOpen({ files: list, index: i });
-                  }}>
-                  <span style={S.ext}>{(f.ext || "·").slice(0, 4)}</span>
-                  <span style={S.name}>{top === LOOSE ? f.path : f.path.split("/").slice(1).join("/")}</span>
-                  <span style={S.size}>{bytes(f.bytes)}</span>
-                  <span style={S.when}>{short(f.modified)}</span>
-                </a>
-              ))}
-            </div>
-          )}
+        <div style={S.head}>
+          {crumbs}
+          <span style={S.count}>{summary}</span>
         </div>
-      ))}
+
+        {entries.length === 0 ? (
+          at === "" ? (
+            <div style={S.empty}>
+              <div style={S.emptyBig}>{L.emptyBig}</div>
+              <div style={S.emptySub}>{L.emptySub}</div>
+            </div>
+          ) : (
+            <div style={S.folderEmpty}>{L.folderEmpty}</div>
+          )
+        ) : (
+          <div style={S.list}>
+            {/* A folder row carries no date, unlike a file's. A directory's mtime moves
+                only when something is added or removed *directly* inside it, so on
+                `wecom/` it is the day that folder was made and not the day the last
+                message landed under it — it reads as a freshness signal and is not one.
+                It also cost the row its second line on a phone, on every folder. */}
+            {dirs.map((d) => {
+              const name = d.path.split("/").pop();
+              return (
+                <button key={d.path} type="button" style={S.rowBtn} onClick={() => go(d.path)}>
+                  <span style={S.folderSlot}><FolderMark /></span>
+                  <span style={S.name}>{name}</span>
+                  <span style={S.size}>{L.items(d.items || 0)}</span>
+                </button>
+              );
+            })}
+            {files.map((f, i) => (
+              // Still an `<a>` at the bytes, and still the real href: the preview is
+              // the primary action, but middle-click, ⌘-click and "save link as" are
+              // how people get a file *out*, and a `<div onClick>` would take all
+              // three away. The click is intercepted only when it is a plain one.
+              <a key={f.path} style={S.row} href={fileUrl(f.path)}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                  e.preventDefault();
+                  setOpen({ files, index: i });
+                }}>
+                <span style={S.ext}>{(f.ext || "·").slice(0, 4)}</span>
+                <span style={S.name}>{f.path.split("/").pop()}</span>
+                <span style={S.size}>{bytes(f.bytes)}</span>
+                <span style={S.when}>{short(f.modified)}</span>
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {open && (
@@ -398,19 +468,29 @@ const S = {
     color: "var(--fg)", fontFamily: "var(--font-display)" },
   scroll: { width: "100%", height: "100%", minHeight: 0, overflowY: "auto", boxSizing: "border-box",
     padding: "max(20px, var(--hi-safe-top)) clamp(14px,4vw,44px) 128px" },
-  head: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 20 },
-  h1: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, letterSpacing: 0 },
+  head: { display: "flex", alignItems: "baseline", justifyContent: "space-between",
+    flexWrap: "wrap", gap: "4px 12px", marginBottom: 20 },
+  // The heading is the folder you are in; the trail above it is navigation and is sized
+  // as such. Both live in one wrapping line rather than two rows, and it wraps rather
+  // than scrolls — a drive path six segments deep is longer than a phone is wide, and a
+  // sideways-scrolling heading hides the one segment you are trying to click back to.
+  // At the full heading size the whole trail took three lines of a 390px phone before
+  // the first row; the ancestors dropping to navigation size is most of that back.
+  h1: { display: "flex", alignItems: "baseline", flexWrap: "wrap", minWidth: 0,
+    fontSize: 14, fontWeight: 700, letterSpacing: 0, lineHeight: 1.5 },
+  crumbPart: { display: "inline-flex", alignItems: "baseline", minWidth: 0 },
+  // Every segment but the last one goes somewhere. The last is where you already are, so
+  // it is the heading — not a link, and not styled as one.
+  crumbBack: { cursor: "pointer", color: "var(--fg-mute)" },
+  crumbHere: { fontSize: "clamp(22px,6vw,30px)", fontWeight: 800, color: "var(--fg)" },
+  crumbSep: { padding: "0 6px", color: "var(--fg-mute)", fontWeight: 500 },
   count: { fontSize: 13, color: "var(--fg-mute)", fontWeight: 600 },
 
   empty: { padding: "46px 8px", textAlign: "center" },
   emptyBig: { fontSize: 17, fontWeight: 600, color: "var(--fg-dim)" },
   emptySub: { fontSize: 13.5, color: "var(--fg-mute)", marginTop: 7, lineHeight: 1.55 },
 
-  group: { marginBottom: 22 },
-  sect: { display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700,
-    letterSpacing: ".05em", color: "var(--fg-mute)", marginBottom: 9 },
-  sectN: { fontWeight: 600 },
-  shelfEmpty: { fontSize: 13, color: "var(--fg-mute)", padding: "2px 2px 4px" },
+  folderEmpty: { fontSize: 13, color: "var(--fg-mute)", padding: "2px 2px 4px" },
 
   list: { display: "flex", flexDirection: "column", gap: 6 },
   // The row wraps, and the filename claims a floor of 150px before it will shrink.
@@ -420,9 +500,21 @@ const S = {
   row: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, textDecoration: "none", color: "inherit",
     background: "var(--surface-strong)", borderRadius: 13, boxShadow: "var(--v-shadow)",
     padding: "11px 14px", cursor: "pointer" },
+  // A folder row is a button, not a link: there is no URL for a folder, and an `<a>`
+  // with no href is a div wearing a link's clothes. `row`'s own properties are repeated
+  // rather than spread, because a button brings a browser default for every one of
+  // font, text-align and border that the file row inherits for free.
+  rowBtn: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12,
+    font: "inherit", color: "inherit", textAlign: "left", border: "none", width: "100%",
+    background: "var(--surface-strong)", borderRadius: 13, boxShadow: "var(--v-shadow)",
+    padding: "11px 14px", cursor: "pointer" },
   ext: { flex: "none", width: 40, fontSize: 10.5, fontWeight: 800, letterSpacing: ".04em",
     textTransform: "uppercase", color: "var(--accent)", background: "var(--accent-wash)",
     borderRadius: 7, padding: "5px 0", textAlign: "center" },
+  // Same 40px slot as `ext`, so the two kinds of row share a left edge.
+  folderSlot: { flex: "none", width: 40, display: "flex", alignItems: "center",
+    justifyContent: "center", color: "var(--fg-mute)" },
+  folderMark: { display: "block" },
   name: { flex: "1 1 150px", minWidth: 0, fontSize: 14, fontWeight: 600, letterSpacing: "-.01em",
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   size: { flex: "none", fontSize: 12.5, color: "var(--fg-mute)", width: 64, textAlign: "right" },

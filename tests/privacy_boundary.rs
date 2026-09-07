@@ -126,14 +126,23 @@ async fn a_typed_key_is_filed_while_the_conversation_keeps_it_verbatim() {
     );
 
     // The file is an ordinary drive file: visible, listable, and readable, which is
-    // what lets a command consume it without the value entering a prompt.
+    // what lets a command consume it without the value entering a prompt. The listing
+    // is one folder at a time, so being listable means being reachable by walking in —
+    // `accounts` at the root, then the file itself two folders down.
     let listing = reqwest::get(format!("{base}/api/drive"))
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(listing.contains("accounts/secrets/"));
+    assert!(listing.contains("\"accounts\""), "{listing}");
+    let inside = reqwest::get(format!("{base}/api/drive?under=accounts/secrets"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(inside.contains("accounts/secrets/openai-api-key.txt"), "{inside}");
     let direct = reqwest::get(format!(
         "{base}/api/drive/file/{}",
         stored[0].reference.trim_start_matches("drive/")

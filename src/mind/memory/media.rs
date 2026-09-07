@@ -192,6 +192,14 @@ pub async fn resolve_in_drive(data_dir: &Path, rel: &str) -> Option<PathBuf> {
     resolve_in_root(&root, rel).await
 }
 
+/// Resolve a drive-relative path to a *directory* inside [`drive_root`], or `None`.
+/// The listing route walks one folder at a time, so the folder it is handed needs the
+/// same two guards a file gets — the path comes from a client either way.
+pub async fn resolve_dir_in_drive(data_dir: &Path, rel: &str) -> Option<PathBuf> {
+    let root = drive_root(data_dir);
+    resolve_dir_in_root(&root, rel).await
+}
+
 /// Resolve `rel` inside `root`, yielding the path only if it is a regular file that is
 /// *still inside the root after canonicalisation*.
 ///
@@ -199,6 +207,20 @@ pub async fn resolve_in_drive(data_dir: &Path, rel: &str) -> Option<PathBuf> {
 /// `..`; canonicalising both sides stops what it cannot see — a symlink *inside* the
 /// root pointing at `~/.ssh` has no `..` anywhere in its path.
 pub async fn resolve_in_root(root: &Path, rel: &str) -> Option<PathBuf> {
+    let full = canonical_in_root(root, rel).await?;
+    tokio::fs::metadata(&full).await.ok()?.is_file().then_some(full)
+}
+
+/// [`resolve_in_root`] for a directory. Same two guards; only the kind at the end differs.
+pub async fn resolve_dir_in_root(root: &Path, rel: &str) -> Option<PathBuf> {
+    let full = canonical_in_root(root, rel).await?;
+    tokio::fs::metadata(&full).await.ok()?.is_dir().then_some(full)
+}
+
+/// Both guards, without the kind check — the half the file and directory resolvers share.
+/// Keeping it in one place is the same reason the drive has one guard module at all: the
+/// copy that gets a fix is never reliably the copy in the path under attack.
+async fn canonical_in_root(root: &Path, rel: &str) -> Option<PathBuf> {
     if !safe_rel_path(rel) {
         return None;
     }
@@ -206,10 +228,7 @@ pub async fn resolve_in_root(root: &Path, rel: &str) -> Option<PathBuf> {
     // so comparing an un-canonicalised root against a canonicalised file never matches.
     let root = tokio::fs::canonicalize(root).await.ok()?;
     let full = tokio::fs::canonicalize(root.join(rel)).await.ok()?;
-    if !full.starts_with(&root) {
-        return None;
-    }
-    tokio::fs::metadata(&full).await.ok()?.is_file().then_some(full)
+    full.starts_with(&root).then_some(full)
 }
 
 /// Lowercase extension without the dot; `""` for directories and extensionless files.
