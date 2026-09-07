@@ -157,6 +157,17 @@
 // spare goes into the gutters — into air, never into bigger cards, because a card's size is
 // decided by what it holds and must not drift with the window.
 //
+// **A wire travels in a gutter**, because a gutter is the only space the packing guarantees is
+// empty — it keeps the lanes from overlapping each other and says nothing about what stands
+// between a wire's two ends. Leaving the hub radially, straight at the cluster it is going to,
+// crosses whatever lane is in between by construction: measured on the store this was designed
+// against, the wire to `songguo` spent a third of its length inside the `also on its mind`
+// cluster and the one to `hi-agent` clipped the same chips from the other side. So a
+// side-entering wire leaves the hub level, turns up or down the gutter beside its lane, and
+// comes in level with the label. The heading's paper ground went with the crossings it was
+// there for: painted in a 30px box, a gradient starts over, so it was a lighter chip laid on
+// the page in every skin whose two paper stops differ.
+//
 // **The canvas is whatever the content grew to, and the frame then scales it to fit.** That
 // order is the whole idea; sizing the layout to the frame first is what produced a sparse ring
 // with a hole in it.
@@ -189,6 +200,12 @@
 //     been read from across a room.
 //   - The four corners still carry air, and the lane count is coarse: 3, 5, 7 and nothing
 //     between. Both are quantities to tune, not structure to redo.
+//   - **A wire to a cluster two lanes out still crosses the lane in between.** Its gutter is
+//     beside its own lane, and reaching it means passing the inner one at hub height — where
+//     that lane centres its stack, so something is nearly always there. Over 600 random stores
+//     that is the whole of what is left: three lanes went from 184 crossings to 19, five lanes
+//     from 1292 to 1153. Fixing it wants a route with two turns rather than one, or a packing
+//     that knows wires exist; neither is worth it while the live store lays out in three.
 //   - **Nothing in the host decides when it goes up**, and nothing should: `stage.md` refuses
 //     a host gate on what is on the screen. It is a view like any other — reachable from the
 //     bookmarks row, shown by `hi_show`. When Reaction reaches for it is guidance, and it
@@ -198,7 +215,10 @@
 //     **rests**: up when the subject is the state of the work rather than any one piece of
 //     it, and replaced the moment a particular thing exists to put there.
 //
-// Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
+// Colour comes from the host theme tokens (see tasks.jsx for the vocabulary). Type is three
+// sizes and two weights for the whole surface — `TYPE` in the canvas section, which the
+// stylesheet reads back out as custom properties and the chip ruler measures in. It had seven
+// sizes and four weights, which is not a hierarchy but a hierarchy per element.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLive, useViews, TEMPO } from "@hi/core";
 
@@ -765,29 +785,82 @@ const SUB_H = 24;
 // *these are two separate things* — so the grouping stops reading at all.
 const GAP = 9;
 const LANE_GAP = 46;
-const CHIP_ROW = 28;
+// A chip is a fixed height in the stylesheet rather than whatever its contents come to, so the
+// row arithmetic below is exact instead of nearly right — and so a run of them reads as a run.
+const CHIP_H = 24;
+const CHIP_GAP = 6;
 const GUT = 34;
 const PAD = 34;
 // The hub is not special-cased in the packing: it is a fixed box that takes part in it, so the
 // clearing in the middle is space it *occupies* rather than space left for it.
 const HUB_W = 210;
 const HUB_H = 118;
+// Where a wire starts: clear of the pip and the ring around it, so a line grows out of the hub
+// rather than out from under it.
+const HUB_R = 13;
 
 const shapeOf = (leaf) =>
   leaf.tone === "todo" ? "XS" : leaf.tone === "wait" ? (leaf.view ? "P" : "T") : "R";
 
-const CHIP_CHAR = 7.4;
-const CHIP_PAD = 26;
+// **How wide a chip will be, measured rather than counted.** It was `title.length * 7.4`, which
+// is wrong by a whole row the moment a title is CJK — one em a character, not half — and it
+// left out the timestamp beside the name entirely, which is most of a chip's width. A row out is
+// a cluster 30px shorter than the one on the screen, and on a cluster whose label sits at the
+// bottom that ended the wire above its own name, leaving a stub of line over the word.
+//
+// `measureText` is the same engine that will lay the chip out, so it cannot disagree with it.
+// The ruler is made once, and only where there is a document; without one the old character
+// count is the fallback. A read taken before the display face has finished loading measures the
+// fallback face, and the next one — the ledger reads every few seconds — corrects it.
+// **Three sizes for the whole surface**, in JavaScript rather than in the stylesheet because
+// the ruler has to measure in the same type the chip is set in. The stylesheet reads them back
+// out as custom properties, so there is still one place to change them.
+const TYPE = { lg: 15, md: 12, sm: 10.5 };
+const CHIP_PAD = 20; // 9px of padding either side, plus the hairline
+const CHIP_THUMB = 31; // the thumbnail and the gap before it
+const CHIP_GAP_IN = 5; // between a chip's own parts
+let ruler = null;
+let fonts = null;
+function faces() {
+  if (fonts) return fonts;
+  const root = typeof document !== "undefined" && document.documentElement;
+  const read = (name) => (root ? getComputedStyle(root).getPropertyValue(name).trim() : "");
+  fonts = {
+    chip: `700 ${TYPE.md}px ${read("--font-display") || "sans-serif"}`,
+    mark: `700 ${TYPE.sm}px ${read("--font-mono") || "monospace"}`,
+  };
+  return fonts;
+}
+function textWidth(text, font) {
+  if (ruler === null) {
+    ruler =
+      typeof document !== "undefined" && document.createElement("canvas").getContext
+        ? document.createElement("canvas").getContext("2d")
+        : false;
+  }
+  if (!ruler) return String(text).length * 7.4;
+  ruler.font = font;
+  return ruler.measureText(String(text)).width;
+}
+function chipWidth(chip) {
+  const face = faces();
+  return (
+    CHIP_PAD +
+    textWidth(chip.title, face.chip) +
+    (chip.fact ? CHIP_GAP_IN + textWidth(chip.fact, face.mark) : 0) +
+    (chip.view ? CHIP_THUMB : 0)
+  );
+}
 function chipRows(list) {
   let rows = 1;
   let x = 0;
   for (const chip of list) {
-    const w = chip.title.length * CHIP_CHAR + (chip.view ? 34 : 0) + CHIP_PAD;
+    const w = chipWidth(chip);
     if (x > 0 && x + w > W) {
       rows += 1;
       x = 0;
     }
-    x += w + 6;
+    x += w + CHIP_GAP;
   }
   return rows;
 }
@@ -820,10 +893,19 @@ function cluster(node) {
   };
   walk(node, false);
 
-  let h = LABEL_H + blocks.reduce((n, b) => n + b.h + GAP, 0);
-  if (chips.length > 0) h += chipRows(chips) * CHIP_ROW;
-  else h -= GAP;
-  return { key: node.key, label: node.label, tone: node.tone, count: node.count, blocks, chips, w: W, h: Math.max(h, LABEL_H + 20) };
+  // **The height the browser will stack, not an estimate of it.** The column is the label, each
+  // block, and the chip run, with one GAP between every pair. The old sum charged a gap to every
+  // block and none to the chips, so a cluster stood 4 to 9px taller than the layout believed —
+  // and on a cluster whose label is at the *bottom* that put the wire's endpoint above its own
+  // label, leaving a stub of line poking out over the word. Every part of the column is now a
+  // fixed height in the stylesheet, which is what lets this be arithmetic rather than a guess.
+  const parts = [LABEL_H, ...blocks.map((b) => b.h)];
+  if (chips.length > 0) {
+    const rows = chipRows(chips);
+    parts.push(rows * CHIP_H + (rows - 1) * CHIP_GAP);
+  }
+  const h = parts.reduce((n, x) => n + x, 0) + (parts.length - 1) * GAP;
+  return { key: node.key, label: node.label, tone: node.tone, count: node.count, blocks, chips, w: W, h: Math.max(h, LABEL_H) };
 }
 
 /** Deal the clusters onto lanes. Each one goes whole into the lane where it costs least:
@@ -895,6 +977,21 @@ function put({ m, lanes }, gut) {
       }
     }
   }
+  // **The x a wire runs along on its way here.** The packing guarantees exactly one kind of
+  // empty space — the column between two lanes — so that is where a wire travels: the gutter
+  // between this cluster's lane and the hub's. A cluster sharing the hub's lane and coming in
+  // from the side goes around through the gutter beside it, which is the same rule seen from
+  // the inside; one straight above or below the hub has nothing to go around and runs down the
+  // hub's own line.
+  const half = (W + gut) / 2;
+  for (const lane of lanes) {
+    for (const c of [...lane.up, ...lane.down]) {
+      const a = anchorOf(c);
+      if (a === "top" || a === "bottom") c.gx = c.cx;
+      else if (c.cx) c.gx = c.cx - Math.sign(c.cx) * half;
+      else c.gx = (a === "right" ? 1 : -1) * half;
+    }
+  }
 }
 
 /** Choose the lane count, then spend what is left over on air.
@@ -938,37 +1035,39 @@ function place(cs, fw, fh) {
  *  arrives from the hub's direction: off the hub's lane that is sideways, on it that is vertical.
  *
  *  The one exception is a cluster that is not first in its stack: its own sibling stands between
- *  it and the hub, so a vertical arrival is guaranteed to be hidden. Those come in from the side
- *  and leave the hub angled outward, which is what makes the wire visibly go around. */
+ *  it and the hub, so a vertical arrival is guaranteed to be hidden. Those come in from the side,
+ *  which is what sends their wire around the sibling through the gutter beside the lane. */
 function anchorOf(c) {
   if (!c.hubLane) return c.cx < 0 ? "right" : "left";
   if (!c.slot) return c.cy < 0 ? "bottom" : "top";
   return c.slot % 2 ? "right" : "left";
 }
 
-/** Which way a wire leaves the hub: radially, except for the ones routing around a sibling. */
-function departure(c, anchor) {
-  if (c.hubLane && c.slot) {
-    const side = anchor === "right" ? 1 : -1;
-    const n = Math.hypot(1.5, 1);
-    return [(side * 1.5) / n, Math.sign(c.cy) / n];
-  }
-  const n = Math.hypot(c.cx, c.cy) || 1;
-  return [c.cx / n, c.cy / n];
-}
-
-/** One branch: out of the hub along `u`, into the cluster along the entry edge's outward normal
- *  `n`. Both ends carry a direction, so the curve is right at any angle.
+/** One branch, as a path. **A wire travels in a gutter**, for the reason `c.gx` is computed at
+ *  all: the packing keeps the lanes from overlapping each other and says nothing about what
+ *  stands between a wire's two ends.
  *
- *  This went wrong in a way worth keeping written down: the departure vector was computed as
- *  `c.cx - hub.x + x0`, and `hub.x` is itself `-x0`, so it reduced to `c.cx + 2 * x0` — always
- *  negative, since `x0` is the canvas's left edge. Every wire left the hub heading left, the ones
- *  going right included, and they read as lines grazing past the hub rather than growing out of
- *  it. The hub is the origin of the layout's own coordinates, so the direction is the cluster's
- *  centre and nothing else. */
-function branch(sx, sy, ux, uy, ex, ey, nx, ny) {
-  const d = Math.hypot(ex - sx, ey - sy) * 0.45;
-  return `M ${sx} ${sy} C ${sx + ux * d} ${sy + uy * d}, ${ex + nx * d} ${ey + ny * d}, ${ex} ${ey}`;
+ *  It used to leave the hub radially — straight at the cluster it was going to — and the
+ *  straight line from the hub to a label two ranks up crosses whatever lane is in between by
+ *  construction, whatever curve is then fitted to it. Measured on the store this page was
+ *  designed against: the wire to `songguo` spent 34% of its length inside the `also on its mind`
+ *  cluster, 36px deep, and the one to `hi-agent` clipped the same chips from the other side.
+ *
+ *  So a side-entering wire leaves the hub level, turns up or down its gutter, and comes in level
+ *  with the label — three straight intentions in one cubic, and no crossings at all on that
+ *  store. One straight above or below the hub still runs straight, having nothing to go around.
+ */
+function route(c, hub, ex, ey) {
+  const a = anchorOf(c);
+  if (a === "top" || a === "bottom") {
+    const dir = a === "top" ? 1 : -1;
+    const sy = hub.y + dir * HUB_R;
+    const d = Math.abs(ey - sy) * 0.5;
+    return `M ${hub.x} ${sy} C ${hub.x} ${sy + dir * d}, ${ex} ${ey - dir * d}, ${ex} ${ey}`;
+  }
+  const gx = hub.x + c.gx;
+  const sx = hub.x + Math.sign(c.gx) * HUB_R;
+  return `M ${sx} ${hub.y} C ${gx} ${hub.y}, ${gx} ${ey}, ${ex} ${ey}`;
 }
 
 // ── the surface ───────────────────────────────────────────────────────────────
@@ -1107,24 +1206,19 @@ function Canvas({ clusters, box, root, onOpen }) {
     const left = c.cx - c.w / 2 - x0;
     const top = c.cy - c.h / 2 - y0;
     const a = anchorOf(c);
-    const labelY = a === "bottom" ? top + c.h - LABEL_H / 2 : top + LABEL_H / 2;
-    if (a === "left") return [left, labelY, -1, 0];
-    if (a === "right") return [left + c.w, labelY, 1, 0];
-    if (a === "bottom") return [left + c.w / 2, top + c.h, 0, 1];
-    return [left + c.w / 2, top, 0, -1];
+    if (a === "left") return [left, top + LABEL_H / 2];
+    if (a === "right") return [left + c.w, top + LABEL_H / 2];
+    if (a === "bottom") return [left + c.w / 2, top + c.h];
+    return [left + c.w / 2, top];
   };
 
   return (
     <div className="hi-home__canvas" style={{ width: cw, height: ch, transform: `scale(${scale})` }}>
       <svg className="hi-home__wires" width={cw} height={ch} aria-hidden>
-        {clusters.map((c) => {
-          const [ex, ey, nx, ny] = edge(c);
-          const [ux, uy] = departure(c, anchorOf(c));
-          return (
-            <path key={c.key} className="hi-home__wire" style={{ "--tone": TONE[c.tone] }}
-              d={branch(hub.x + ux * 13, hub.y + uy * 13, ux, uy, ex, ey, nx, ny)} />
-          );
-        })}
+        {clusters.map((c) => (
+          <path key={c.key} className="hi-home__wire" style={{ "--tone": TONE[c.tone] }}
+            d={route(c, hub, ...edge(c))} />
+        ))}
       </svg>
       <div className="hi-home__rootnode" style={{ left: hub.x, top: hub.y }}>{root}</div>
       {clusters.map((c) => {
@@ -1220,7 +1314,7 @@ function Card({ block, onOpen }) {
         {k === "T" && leaf.fact && <p className="hi-home__ask">{leaf.fact}</p>}
         <p className="hi-home__ln">
           <b className="hi-home__st">{L.state[leaf.tone]}</b>
-          {k === "P" ? `${L.open} ${view.label || view.ref}` : k === "T" ? leaf.age : leaf.fact}
+          <span>{k === "P" ? `${L.open} ${view.label || view.ref}` : k === "T" ? leaf.age : leaf.fact}</span>
           {kind && k === "R" && <em className="hi-home__kind">{kind}</em>}
         </p>
       </div>
@@ -1237,7 +1331,7 @@ function Card({ block, onOpen }) {
 function Chip({ chip, onOpen }) {
   const inner = (
     <>
-      {chip.view?.shot && <img src={chip.view.shot} alt="" loading="lazy" />}
+      {chip.view?.shot && <img className="hi-home__tiny" src={chip.view.shot} alt="" loading="lazy" />}
       <span className="hi-home__chip-t">{chip.title}</span>
       {chip.fact && <i>{chip.fact}</i>}
     </>
@@ -1301,6 +1395,15 @@ const CSS = `
   padding: max(24px, var(--hi-safe-top)) clamp(18px, 3vw, 52px) 118px;
   color: var(--fg);
   font-family: var(--font-display);
+  /* **Three sizes and two weights, for the whole surface** (the sizes are TYPE, above, because
+     the chip ruler measures in them). It had seven sizes and four weights, which is not a
+     hierarchy — it is a hierarchy per element, and a wall of cards built that way reads as
+     untidy however carefully each card was reasoned about. The three are the three things a
+     card does: name something, say one thing about it, and carry a small mark. Every rank is
+     told apart by size and colour; weight only ever separates a name from prose. */
+  --t-lg: ${TYPE.lg}px;
+  --t-md: ${TYPE.md}px;
+  --t-sm: ${TYPE.sm}px;
 }
 .hi-home:has(.hi-home__canvas) { align-items: center; justify-content: center; overflow: hidden; }
 
@@ -1327,9 +1430,9 @@ const CSS = `
   0%, 100% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent); }
   50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent) 3%, transparent); }
 }
-.hi-home__meta { white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--fg-mute); }
+.hi-home__meta { white-space: nowrap; font-size: var(--t-md); font-weight: 700; color: var(--fg-mute); }
 .hi-home__deaf { color: var(--danger); font-weight: 700; }
-.hi-home__empty { font-size: 14px; color: var(--fg-mute); margin: 26px 0 0; }
+.hi-home__empty { font-size: var(--t-lg); color: var(--fg-mute); margin: 26px 0 0; }
 
 /* ── the canvas ── */
 .hi-home__canvas { position: relative; flex: 0 0 auto; transform-origin: center center; }
@@ -1344,27 +1447,50 @@ const CSS = `
 
 .hi-home__cluster { position: absolute; box-sizing: border-box; display: flex;
   flex-direction: column; align-items: stretch; gap: 9px; }
-.hi-home__trunk { margin: 0; height: 30px; display: flex; align-items: center; gap: 6px; }
-.hi-home__cluster[data-anchor="right"] .hi-home__trunk { flex-direction: row-reverse; }
-.hi-home__cluster[data-anchor="top"] .hi-home__trunk,
-.hi-home__cluster[data-anchor="bottom"] .hi-home__trunk { justify-content: center; }
-/* On its own ground, because a wire to another cluster passes behind this one and a curve
-   drawn through a word reads as a strikethrough. */
-.hi-home__trunk-name {
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -.01em;
-  color: var(--tone);
-  background: var(--paper);
-  padding: 1px 6px;
-  margin: 0 -6px;
-  border-radius: 5px;
+/* **A heading is as wide as its words and hangs off the edge the wire arrives at.** It used to
+   be a stretched row with a paper ground behind the name alone, to keep a wire that passed
+   behind it from reading as a strikethrough through the word. The ground is gone with the reason
+   for it: wires travel in the gutters now and stop at the edge of the label rather than running
+   through it. It was never free — the paper token is a *gradient*, so painting it in a 30px
+   box starts it over and the label reads as a lighter chip laid on the page: plainly visible
+   in the dark skin, and invisible in the light one only because both its stops are white. Both
+   ranks take the same treatment; the count rides on the heading rather than outside it. */
+.hi-home__trunk, .hi-home__sub {
+  margin: 0;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.hi-home__trunk-n { font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--tone); opacity: .55; }
+.hi-home__trunk { height: 30px; }
+.hi-home__sub { height: 24px; }
+.hi-home__cluster[data-anchor="right"] .hi-home__trunk,
+.hi-home__cluster[data-anchor="right"] .hi-home__sub { flex-direction: row-reverse; align-self: flex-end; }
+.hi-home__cluster[data-anchor="top"] .hi-home__trunk,
+.hi-home__cluster[data-anchor="top"] .hi-home__sub,
+.hi-home__cluster[data-anchor="bottom"] .hi-home__trunk,
+.hi-home__cluster[data-anchor="bottom"] .hi-home__sub { align-self: center; }
+.hi-home__trunk-name, .hi-home__sub > span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.hi-home__trunk-name { font-size: var(--t-lg); font-weight: 700; letter-spacing: -.012em; color: var(--tone); }
 /* A rank below a topic is a part of it, so it is quieter than the thing it is part of. */
-.hi-home__sub { margin: 0; height: 24px; display: flex; align-items: center; gap: 6px;
-  font-size: 12.5px; font-weight: 700; color: var(--fg-dim); }
-.hi-home__sub i { font-style: normal; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-mute); }
+.hi-home__sub { font-size: var(--t-md); font-weight: 700; color: var(--fg-dim); }
+/* **Every small mark is the same mark**: a topic's count, a sub-topic's, how many sessions are
+   on a row, how long ago a thing was thought about. They were 11px, 10.5px and 10px, three
+   sizes for one idea and nothing on the screen saying why. */
+.hi-home__trunk-n, .hi-home__sub i, .hi-home__on i, .hi-home__chip i {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  font-weight: 700;
+  color: var(--fg-mute);
+}
+.hi-home__trunk-n { color: var(--tone); opacity: .55; }
 
 .hi-home__bx {
   box-sizing: border-box;
@@ -1413,7 +1539,7 @@ const CSS = `
   max-height: 100%;
   width: auto;
   height: auto;
-  border-radius: 3px;
+  border-radius: 4px;
   box-shadow: 0 1px 4px color-mix(in srgb, var(--fg) 18%, transparent);
 }
 .hi-home__hd { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -1424,26 +1550,29 @@ const CSS = `
   align-items: center;
   gap: 7px;
   min-width: 0;
-  font-size: 15px;
+  font-size: var(--t-lg);
   font-weight: 700;
   letter-spacing: -.012em;
   line-height: 1.3;
 }
 .hi-home__title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* **One thumbnail**, the same size with the same edge in a card's title as in a chip. Two
+   sizes of the same thing is half of what makes a wall of them read as untidy; the other half
+   was one of them having an edge and the other not. */
 .hi-home__tiny {
   flex: 0 0 auto;
-  width: 30px;
-  height: 19px;
+  width: 26px;
+  height: 16px;
   object-fit: cover;
   object-position: top left;
-  border-radius: 3px;
+  border-radius: 4px;
   border: 1px solid var(--surface-border);
 }
 /* A text card has no picture, so its body fills the space one would have taken. */
 .hi-home__ask {
   margin: 0;
   flex: 1;
-  font-size: 12px;
+  font-size: var(--t-md);
   line-height: 1.5;
   color: var(--fg-dim);
   display: -webkit-box;
@@ -1453,7 +1582,7 @@ const CSS = `
 }
 .hi-home__ln {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--t-md);
   color: var(--fg-mute);
   display: flex;
   align-items: baseline;
@@ -1461,16 +1590,20 @@ const CSS = `
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
+/* The sentence is its own element so it can ellipsise. Bare text in a flex row is an anonymous
+   item and text-overflow has nothing to apply to, so an overrun was cut mid-word at the card's
+   edge — a fact that ended in "· just no" read as a card that had failed rather than a line
+   that was long. */
+.hi-home__ln > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* The one place a state is named, in the one colour it is worth spending. */
-.hi-home__st { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: var(--tone); }
-.hi-home__kind { font-style: normal; font-weight: 700; color: var(--accent); }
+.hi-home__st { flex: 0 0 auto; font-size: var(--t-md); font-weight: 700; color: var(--tone); }
+.hi-home__kind { flex: 0 0 auto; font-style: normal; font-weight: 700; color: var(--accent); }
 /* A topic this row is under that did not earn a rank of its own. */
 .hi-home__mark {
   flex: 0 0 auto;
   font-style: normal;
-  font-size: 10.5px;
+  font-size: var(--t-sm);
   font-weight: 700;
   color: var(--fg-mute);
   border: 1px solid var(--surface-border);
@@ -1479,7 +1612,6 @@ const CSS = `
   padding: 1px 6px;
 }
 .hi-home__on { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
-.hi-home__on i { font-style: normal; font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--fg-mute); }
 .hi-home__on b {
   width: 7px;
   height: 7px;
@@ -1508,12 +1640,14 @@ const CSS = `
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 9px;
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid var(--surface-border);
   background: var(--surface);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--t-md);
+  font-weight: 700;
   color: var(--fg-dim);
   white-space: nowrap;
   font-family: inherit;
@@ -1524,14 +1658,6 @@ const CSS = `
 button.hi-home__chip { cursor: pointer; }
 button.hi-home__chip:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--surface-border)); }
 button.hi-home__chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.hi-home__chip img {
-  width: 24px;
-  height: 15px;
-  object-fit: cover;
-  object-position: top left;
-  border-radius: 3px;
-}
-.hi-home__chip i { font-style: normal; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-mute); }
 
 /* ── the narrow one ── */
 .hi-home__flow { margin-top: 22px; display: flex; flex-direction: column; gap: 26px; }
