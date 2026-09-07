@@ -110,12 +110,28 @@ const VOICE_TURNS_MIN: usize = 2;
 const ENROLL_MIN_VOICED_SECS: f32 = 1.5;
 
 /// Words (or CJK characters) a turn must have been transcribed to before it is kept.
-/// The acoustic gates measure whether *something* was sounding; this is the only one
-/// that can tell speech from a television, a cough, or music — the recognizer heard
-/// energy, and the transcriber found no words in it. Small on purpose: the length
-/// requirement is [`ENROLL_MIN_VOICED_SECS`]'s job, and this one only has to catch
-/// "nothing was actually said".
-const ENROLL_MIN_UNITS: usize = 5;
+///
+/// Two jobs. It is the only gate that can tell speech from a television, a cough or
+/// music — the acoustics knew energy was there and the transcriber found no words in
+/// it. And it is what asks for **a sentence rather than a phrase**: a speaker
+/// embedding is only as good as the range of sounds it was taken from, and ten
+/// characters is roughly 2.2 s of continuous speech against a median of 3.0 s among
+/// the samples this install had already kept — a real remark, not "嗯对好的".
+const ENROLL_MIN_UNITS: usize = 10;
+
+/// How far a turn's speech must stand above the room it was spoken in to be kept.
+/// **Scale-free** — a difference of two levels from one capture — so it means the same
+/// on every microphone. Among the samples here that already clear every other gate the
+/// tenth percentile is 25 dB and the floor 14 dB, so this takes the tail sitting
+/// nearest the room: the muttered ones.
+const ENROLL_MIN_SNR_DB: f32 = 20.0;
+
+/// How far under the room's recent median a turn may be and still be kept. The other
+/// half of "too quiet": someone who turned away, spoke from a doorway, or dropped
+/// their voice is not quiet in absolute terms — which would mean something different
+/// on every microphone — but quiet *for them, just now*
+/// ([`acoustics::Reading::level_vs_room`]).
+const ENROLL_QUIET_BELOW_DB: f32 = 8.0;
 
 /// How much audio the timeline retains *before* the last consumed utterance end —
 /// slack so a span whose diarized final lands slightly after its audio can still be
@@ -221,16 +237,23 @@ fn speech_units(text: &str) -> usize {
 /// confidently it was matched. **The judgment is used and the sample is dropped** —
 /// those were one decision until September 2026, which is how a gallery ends up
 /// holding a thousand fragments.
-fn worth_keeping(samples: usize, sound: &acoustics::Sound, said: &str, overlapped: bool) -> bool {
-    // Two people talking at once is one waveform holding two voices, and the
-    // embedding of it is a blend belonging to neither. Diarization separates speakers
-    // *in time* — that is what the per-span slicing already uses — and nothing here
-    // separates them when they overlap. Pulling them apart would be a source-separation
-    // model and a new dependency; declining to keep the turn costs one sample.
-    !overlapped
+fn worth_keeping(
+    samples: usize,
+    sound: &acoustics::Sound,
+    said: &str,
+    reading: &acoustics::Reading,
+) -> bool {
+    // Two people talking at once is one waveform holding two voices, and the embedding
+    // of it is a blend belonging to neither. Diarization separates speakers *in time* —
+    // what the per-span slicing already uses — and nothing here separates them when
+    // they overlap. Pulling them apart would be a source-separation model and a new
+    // dependency; declining to keep the turn costs one sample.
+    !reading.crosstalk
         && samples as u64 >= VP_ENROLL_MIN_SAMPLES
         && sound.voiced_secs(samples) >= ENROLL_MIN_VOICED_SECS
         && speech_units(said) >= ENROLL_MIN_UNITS
+        && sound.snr_db() >= ENROLL_MIN_SNR_DB
+        && reading.level_vs_room.is_none_or(|d| d >= -ENROLL_QUIET_BELOW_DB)
 }
 
 /// Who each diarized speaker is, accumulated across their turns on this stream.
@@ -660,8 +683,8 @@ pub async fn ingest_pcm_stream(
                                     // talking across this turn, which decides whether
                                     // it can be kept.
                                     let reading = room.note(turn);
-                                    let overlapped = reading.crosstalk;
-                                    pending_room = Some(reading.note().unwrap_or_default());
+                                    pending_room =
+                                        Some(reading.note().clone().unwrap_or_default());
                                     if voiceprints_on {
                                         resolve_speaker(
                                             &relay_state,
@@ -670,7 +693,7 @@ pub async fn ingest_pcm_stream(
                                             pcm,
                                             sound,
                                             said.clone(),
-                                            overlapped,
+                                            reading,
                                         );
                                     }
                                 }
@@ -926,7 +949,8 @@ async fn deliver_transcript(
 /// store that can place it confidently or not at all. `said` is what the transcriber
 /// made of this turn, and `None` means the utterance it came from held more than one
 /// speaker, which is never kept and never has text that belongs to one person.
-/// `overlapped` says somebody else was talking across this span.
+/// `reading` is the room this turn landed in — whether anybody talked across it, and
+/// how it stood against how loudly the room has lately been talking.
 ///
 /// Detached and best-effort: a failure leaves the speaker unplaced, which is an
 /// ordinary state rather than an error. Unlike clips and stills, the live mic persists
@@ -939,7 +963,7 @@ fn resolve_speaker(
     pcm: Vec<i16>,
     sound: acoustics::Sound,
     said: Option<String>,
-    overlapped: bool,
+    reading: acoustics::Reading,
 ) {
     if pcm.is_empty() {
         return;
@@ -948,7 +972,7 @@ fn resolve_speaker(
     // A playable WAV of this turn, built before the PCM is consumed by `embed`, so a
     // kept sample carries an audible preview of the live-mic voice (the stream stores
     // no per-utterance clip otherwise). Built only for a turn actually worth keeping.
-    let keep = said.filter(|t| worth_keeping(pcm.len(), &sound, t, overlapped));
+    let keep = said.filter(|t| worth_keeping(pcm.len(), &sound, t, &reading));
     let wav = keep.as_ref().map(|_| {
         let pcm_bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
         pcm16_mono_16k_to_wav(&pcm_bytes)
@@ -1265,6 +1289,17 @@ mod tests {
         assert!((short.len() as u64) < VP_MIN_SPAN_SAMPLES);
     }
 
+    /// An unremarkable room: nobody talking across, nothing to be quieter than.
+    fn quiet_room() -> acoustics::Reading {
+        acoustics::Reading {
+            voices: 1,
+            distance: acoustics::Distance::Unplaced,
+            clarity: acoustics::Clarity::Clear,
+            crosstalk: false,
+            level_vs_room: None,
+        }
+    }
+
     /// A turn of `secs` whose speech occupies `voiced` of it.
     fn turn(secs: f32, voiced: f32) -> (usize, acoustics::Sound) {
         let n = (16_000.0 * secs) as usize;
@@ -1287,21 +1322,24 @@ mod tests {
         // its levels are healthy, which is exactly why neither of those catches it.
         let (n, sound) = turn(4.0, 0.1);
         assert!(sound.snr_db() > 20.0, "the levels look fine");
-        assert!(!worth_keeping(n, &sound, "嗯 对 好 的 是", false));
+        assert!(!worth_keeping(n, &sound, "嗯 对 好 的 是 吧 哦 呀 嘛 啦", &quiet_room()));
     }
 
     #[test]
     fn a_turn_with_no_words_in_it_is_not_worth_keeping() {
         // A television, a cough, music: energy for two seconds, nothing transcribed.
         let (n, sound) = turn(4.0, 0.6);
-        assert!(!worth_keeping(n, &sound, "", false), "no words, whatever the acoustics say");
-        assert!(!worth_keeping(n, &sound, "嗯。", false), "one syllable is not a voice sample");
+        assert!(!worth_keeping(n, &sound, "", &quiet_room()), "no words, whatever the acoustics say");
+        assert!(!worth_keeping(n, &sound, "嗯。", &quiet_room()), "one syllable is not a voice sample");
     }
+
+    /// A remark long enough to be worth keeping — eleven characters.
+    const SENTENCE: &str = "帮我看看明天会不会下雨";
 
     #[test]
     fn a_real_sentence_at_a_normal_pace_is_kept() {
         let (n, sound) = turn(4.0, 0.6);
-        assert!(worth_keeping(n, &sound, "帮我看看明天会不会下雨", false));
+        assert!(worth_keeping(n, &sound, SENTENCE, &quiet_room()));
     }
 
     #[test]
@@ -1309,8 +1347,34 @@ mod tests {
         // Everything else about it is ideal. The waveform still holds two voices and
         // its embedding belongs to neither of them.
         let (n, sound) = turn(4.0, 0.6);
-        assert!(worth_keeping(n, &sound, "帮我看看明天会不会下雨", false));
-        assert!(!worth_keeping(n, &sound, "帮我看看明天会不会下雨", true));
+        assert!(worth_keeping(n, &sound, SENTENCE, &quiet_room()));
+        let mut over = quiet_room();
+        over.crosstalk = true;
+        assert!(!worth_keeping(n, &sound, SENTENCE, &over));
+    }
+
+    #[test]
+    fn muttering_is_not_kept_and_neither_kind_of_quiet_needs_an_absolute_level() {
+        // Close to the room it was spoken in: the words are there, the voice is not.
+        let (n, mut near_floor) = turn(4.0, 0.6);
+        near_floor.floor_dbfs = -35.0; // 15 dB of headroom, under the 20 the gate wants
+        assert!(near_floor.snr_db() < ENROLL_MIN_SNR_DB);
+        assert!(!worth_keeping(n, &near_floor, SENTENCE, &quiet_room()));
+
+        // Or plain quieter than this speaker has just been — a doorway, a turned head.
+        let (n, sound) = turn(4.0, 0.6);
+        let mut hushed = quiet_room();
+        hushed.level_vs_room = Some(-12.0);
+        assert!(!worth_keeping(n, &sound, SENTENCE, &hushed));
+        hushed.level_vs_room = Some(-3.0);
+        assert!(worth_keeping(n, &sound, SENTENCE, &hushed), "a little under is still speech");
+    }
+
+    #[test]
+    fn a_phrase_is_not_a_sentence() {
+        let (n, sound) = turn(4.0, 0.6);
+        assert!(!worth_keeping(n, &sound, "好的没问题", &quiet_room()), "five characters");
+        assert!(worth_keeping(n, &sound, "好的没问题我等下过去看一眼", &quiet_room()));
     }
 
     #[test]
@@ -1319,7 +1383,7 @@ mod tests {
         // never enough to become part of who somebody is.
         let (n, sound) = turn(1.0, 0.9);
         assert!(n as u64 >= VP_MIN_SPAN_SAMPLES, "we do embed it");
-        assert!(!worth_keeping(n, &sound, "明天会不会下雨", false), "and we do not keep it");
+        assert!(!worth_keeping(n, &sound, "明天会不会下雨,谢谢啦", &quiet_room()), "and we do not keep it");
     }
 
     #[test]

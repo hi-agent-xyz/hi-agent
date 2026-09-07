@@ -183,13 +183,22 @@ pub struct Turn {
 }
 
 /// What the room was like when a turn landed in it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Reading {
     /// Distinct diarized speakers heard in the last [`WINDOW_MS`], this one included.
     /// A count from the clock and the vendor's labels — no judgment in it.
     pub voices: usize,
     pub distance: Distance,
     pub clarity: Clarity,
+    /// This turn's speech level against the median of the room's recent turns, in dB.
+    /// Negative means quieter than the room has lately been — someone who turned away,
+    /// spoke from a doorway, or muttered.
+    ///
+    /// A difference, so the microphone's gain cancels; and against the *median of
+    /// everything recently heard* rather than the loudest other speaker, so it still
+    /// says something when one person is talking alone. `None` on the first turn of a
+    /// stream, where there is nothing to be quieter than.
+    pub level_vs_room: Option<f32>,
     /// This turn's span overlapped another speaker's. Someone talking over someone
     /// else is not, in that moment, addressing either of them — but that is the
     /// mind's inference to draw, not this module's.
@@ -278,6 +287,14 @@ impl Room {
             Distance::Unplaced // alone in the window: nothing to be far from
         };
 
+        // Against everything still in the window, this speaker's own earlier turns
+        // included — the reference has to exist when only one person is talking.
+        let mut levels: Vec<f32> = self.turns.iter().map(|t| t.sound.speech_dbfs).collect();
+        let level_vs_room = (!levels.is_empty()).then(|| {
+            levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            turn.sound.speech_dbfs - levels[levels.len() / 2]
+        });
+
         let snr = turn.sound.snr_db();
         let clarity = if snr < MUFFLED_SNR_DB {
             Clarity::Muffled
@@ -292,7 +309,7 @@ impl Room {
         voices.sort_unstable();
         voices.dedup();
 
-        Reading { voices: voices.len(), distance, clarity, crosstalk }
+        Reading { voices: voices.len(), distance, clarity, crosstalk, level_vs_room }
     }
 }
 
@@ -388,6 +405,20 @@ mod tests {
     #[test]
     fn too_short_to_be_a_stretch_of_speech() {
         assert!(measure(&[0i16; 100]).is_none());
+    }
+
+    #[test]
+    fn a_speaker_who_drops_their_voice_is_measured_against_the_room_not_a_number() {
+        let mut room = Room::default();
+        // Nothing to compare the first turn with.
+        assert_eq!(room.note(turn("0", 0, 2_000, sound(-20.0, -60.0))).level_vs_room, None);
+        room.note(turn("0", 2_500, 4_500, sound(-20.0, -60.0)));
+        // The same person, twelve decibels down: muttering, whoever's microphone it is.
+        let r = room.note(turn("0", 5_000, 7_000, sound(-32.0, -60.0)));
+        assert_eq!(r.level_vs_room, Some(-12.0));
+        // And back to normal.
+        let r = room.note(turn("0", 8_000, 10_000, sound(-20.0, -60.0)));
+        assert_eq!(r.level_vs_room, Some(0.0));
     }
 
     #[test]
