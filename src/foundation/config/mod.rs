@@ -158,12 +158,21 @@ pub mod tunables {
         (!v.is_empty()).then(|| v.to_string())
     }
 
-    /// The declared owner's `people/` subject, or `None` when this install has none.
-    /// The one read behind every addressed-channel attribution — see
-    /// [`super::KEY_OWNER`].
-    pub fn owner() -> Option<String> {
-        get(super::KEY_OWNER)
-    }
+}
+
+/// The declared owner's `people/` subject, or `None` when this install has none.
+/// The one read behind every addressed-channel attribution — see [`KEY_OWNER`].
+///
+/// **Read from the store on every use, deliberately not from the boot snapshot**
+/// ([`tunables`]). The owner is declared by an act on the "认识的人" page — pointing
+/// at somebody the agent already holds and saying *this one is me* — and every line
+/// typed after that act has to carry it. Applying at restart is right for a cognition
+/// parameter and wrong for an identity: the person who just said so would go on being
+/// unattributed until the process happened to come back up, with nothing on screen
+/// saying why. A `app_settings` read is a local key lookup and these channels arrive
+/// at human rate, so there is nothing to cache.
+pub fn owner(data_dir: &std::path::Path) -> Option<String> {
+    crate::foundation::credentials::get_setting(data_dir, KEY_OWNER)
 }
 
 /// HTTP headers a session's MCP attach carries on every tool call. Set when the

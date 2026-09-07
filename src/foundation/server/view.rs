@@ -500,7 +500,7 @@ async fn record_move(state: &Arc<AppState>, line: &str) {
     // Addressed, like text: this is the person acting on the agent's own surface,
     // through a control nobody else can reach. Labelled `owner` rather than written
     // bare — see `docs/arch/signal-attribution.md`.
-    let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
+    let sender = Sender::owner_or_unknown(crate::foundation::config::owner(&state.data_dir).as_deref());
     let entry = JournalEntry::Observation {
         id: Uuid::now_v7().to_string(),
         ts,

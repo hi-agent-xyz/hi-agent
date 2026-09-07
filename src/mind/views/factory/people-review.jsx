@@ -16,6 +16,8 @@ const api = {
     fetch("/api/people/split/preview", { method: "POST", headers: J, body: JSON.stringify({ subject, modality }) }).then((r) => r.json()),
   applySplit: (subject, modality, groups) =>
     fetch("/api/people/split/apply", { method: "POST", headers: J, body: JSON.stringify({ subject, modality, groups }) }).then((r) => r.json()),
+  owner: (subject) =>
+    fetch("/api/people/owner", { method: "POST", headers: J, body: JSON.stringify({ subject }) }).then((r) => r.json()),
 };
 const J = { "Content-Type": "application/json" };
 // `url()`, not a bare path: the `fetch` calls above are rewritten for us when this
@@ -57,6 +59,13 @@ const T = {
     leadUnnamed: (noun, n) => <>These {noun} clips look like more than one person, so I split them into {n} piles.</>,
     groupN: (i) => `Group ${i}`, keep: "Kept", countN: (n) => `${n} clips`,
     later: "Leave it", apply: "Split them",
+    // The one action here that is not a correction. Its copy has to say what it
+    // changes, because nothing else on screen will: from here on, what you type is
+    // filed under this person.
+    isMe: "This is me",
+    me: "You",
+    meHint: "Typed messages and files handed over will be attributed to them.",
+    notMe: "Not me after all",
   },
   zh: {
     title: "认识的人",
@@ -75,6 +84,10 @@ const T = {
     leadUnnamed: (noun, n) => <>这些{noun}像是不止一个人，我分成了 {n} 份。</>,
     groupN: (i) => `第 ${i} 组`, keep: "保留", countN: (n) => `${n} 个`,
     later: "先不动", apply: "就这样分",
+    isMe: "这个是我",
+    me: "你",
+    meHint: "以后你打的字、递过来的文件，都算在这个人名下。",
+    notMe: "其实不是我",
   },
 };
 
@@ -93,6 +106,11 @@ const L = words();
 
 export default function PeopleReview() {
   const [people, setPeople] = useState(null);
+  // Who this install belongs to, and whether this window is allowed to say so. The
+  // backend answers both on the list read: the verb is loopback-only, so a phone
+  // opening this page must not be shown a control that would only ever fail.
+  const [owner, setOwner] = useState(null);
+  const [settable, setSettable] = useState(false);
   const [openId, setOpenId] = useState(null);
   const gridRef = useRef(null);
   const rects = useRef(new Map()); // FLIP: id -> DOMRect before a change
@@ -101,8 +119,11 @@ export default function PeopleReview() {
     // A failed read keeps the cards that are up. "Nobody stored yet" is a real answer here
     // with its own copy, and one 500 must not be able to make it.
     const d = await api.list().catch(() => null);
-    if (d) setPeople(d.people || []);
-    else setPeople((prev) => (prev === null ? [] : prev));
+    if (d) {
+      setPeople(d.people || []);
+      setOwner(d.owner || null);
+      setSettable(!!d.owner_settable);
+    } else setPeople((prev) => (prev === null ? [] : prev));
   }, []);
 
   // New clusters appear while this is open — it grows one every time it hears or sees
@@ -179,9 +200,10 @@ export default function PeopleReview() {
       <div style={S.grid} ref={gridRef}>
         {ordered.map((p) =>
           p.subject === openId ? (
-            <Review key={p.subject} person={p} onClose={close} onChanged={reload} />
+            <Review key={p.subject} person={p} isOwner={p.subject === owner} settable={settable}
+              onClose={close} onChanged={reload} />
           ) : (
-            <Card key={p.subject} person={p} onOpen={() => open(p.subject)} />
+            <Card key={p.subject} person={p} isOwner={p.subject === owner} onOpen={() => open(p.subject)} />
           ),
         )}
       </div>
@@ -189,7 +211,7 @@ export default function PeopleReview() {
   );
 }
 
-function Card({ person, onOpen }) {
+function Card({ person, isOwner, onOpen }) {
   const isFace = person.face.length > 0;
   const poster = isFace ? clipUrl(person.subject, "face", person.face[0]) : null;
   const mixed = person.face_shape?.smeared || person.voice_shape?.smeared;
@@ -203,13 +225,14 @@ function Card({ person, onOpen }) {
       )}
       <div style={person.named ? S.name : S.nameNone}>
         {person.named ? person.subject : L.unnamed}
+        {isOwner && <span style={S.meTag}>{L.me}</span>}
         {mixed && <span style={S.mixedTag}>{L.mixedTag}</span>}
       </div>
     </button>
   );
 }
 
-function Review({ person, onClose, onChanged }) {
+function Review({ person, isOwner, settable, onClose, onChanged }) {
   const [name, setName] = useState(person.named ? person.subject : "");
   const [merge, setMerge] = useState("");
   const isFace = person.face.length > 0;
@@ -218,6 +241,14 @@ function Review({ person, onClose, onChanged }) {
     const v = name.trim();
     if (!v || v === (person.named ? person.subject : "")) return;
     await api.name(person.subject, v);
+    onChanged();
+  };
+
+  // Declaring the owner, and taking it back. Both go through the same call — the
+  // empty subject is how an install returns to having no owner, which the design
+  // holds to be a legitimate state rather than a broken one.
+  const claim = async () => {
+    await api.owner(isOwner ? "" : person.subject);
     onChanged();
   };
 
@@ -240,6 +271,14 @@ function Review({ person, onClose, onChanged }) {
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           />
           <div style={S.mergeHint}>{merge && merge !== person.subject ? L.mergeHint(merge) : ""}</div>
+          {settable && (
+            <div style={S.meRow}>
+              <button type="button" style={isOwner ? S.meOn : S.meOff} onClick={claim}>
+                {isOwner ? L.notMe : L.isMe}
+              </button>
+              <span style={S.meHint}>{isOwner ? L.meHint : ""}</span>
+            </div>
+          )}
         </div>
         <button style={S.close} onClick={onClose}>✕</button>
       </div>
@@ -488,6 +527,14 @@ const S = {
   nameInput: { font: "inherit", fontSize: "clamp(19px,5vw,27px)", fontWeight: 800, letterSpacing: "-.03em", color: "var(--fg)",
     background: "transparent", border: "none", outline: "none", width: "100%", padding: "2px 0", borderBottom: "2px solid transparent" },
   mergeHint: { fontSize: 13, color: "var(--accent)", marginTop: 8, minHeight: 17, fontWeight: 500 },
+  meTag: { marginLeft: 8, padding: "1px 7px", borderRadius: 99, fontSize: 11, fontWeight: 600,
+    verticalAlign: "middle", color: "var(--surface-strong)", background: "var(--fg)" },
+  meRow: { display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" },
+  meOff: { font: "inherit", fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 99,
+    border: "1px solid var(--line-strong)", background: "transparent", color: "var(--fg)", cursor: "pointer" },
+  meOn: { font: "inherit", fontSize: 13, fontWeight: 600, padding: "5px 12px", borderRadius: 99,
+    border: "1px solid transparent", background: "var(--fg)", color: "var(--surface-strong)", cursor: "pointer" },
+  meHint: { fontSize: 12, color: "var(--fg-mute)", fontWeight: 500 },
   close: { flex: "none", width: 34, height: 34, borderRadius: "50%", border: "none", background: "var(--line)",
     color: "var(--fg)", fontSize: 16, cursor: "pointer", alignSelf: "flex-start" },
   revBody: { padding: "4px clamp(15px,4vw,28px) clamp(18px,4vw,28px)" },

@@ -201,7 +201,7 @@ pub(crate) async fn deliver_artifact(
     // Addressed, like text: a file is *handed over*, and the hander is the owner
     // unless something says otherwise. `Channel::File`'s own definition already
     // promised "the signal says who handed over what"; this is that field.
-    let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
+    let sender = Sender::owner_or_unknown(crate::foundation::config::owner(&state.data_dir).as_deref());
 
     // **One arrival, one message per thing communicated.** A note the person
     // effectively said — the screen gesture's own first-person line — is its own

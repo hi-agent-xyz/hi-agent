@@ -267,7 +267,7 @@ async fn post_words(state: &AppState, ts: DateTime<Utc>, body_str: String) -> Re
     // tell the default from a recognition — see `docs/arch/signal-attribution.md`.
     // Decided once and handed to both the journal and the conversation, so the face
     // beside the message and the name in the log are one answer, not two.
-    let sender = Sender::owner_or_unknown(crate::foundation::config::tunables::owner().as_deref());
+    let sender = Sender::owner_or_unknown(crate::foundation::config::owner(&state.data_dir).as_deref());
     // Minted once and used three times: the journal entry, the conversation and
     // Reaction are the same value under the same key, which is what lets the list be
     // rebuilt from the log without a merge — and what gives Reaction something to

@@ -75,6 +75,28 @@ agent it is.
 The owner is **declared, not inferred**, and lives in the config store beside the mode flag
 and credentials. It names a `people/<subject>` facet.
 
+**Declaring it is an act on a person, not a setting.** It lives on the 认识的人 review
+surface (`POST /api/people/owner`), beside naming, ejecting and regrouping — because
+what it does is point at somebody the store already holds and say *this one is me*.
+Putting it in Settings would have made it a string to type, and a typed string that
+matches no cluster is exactly the silent, unattributed install this section exists to
+prevent; from the review page the candidates are on screen. A name the store has not met
+is still accepted — a fresh install has met nobody, and the owner is often the first
+person named — and the reply says which of the two it was.
+
+**That one verb is loopback-only, and its neighbours are not.** Naming, ejecting and
+regrouping are corrections: visible, reversible, and safe from a paired phone.
+Declaring the owner is not a correction — it silently changes who every future typed
+line is attributed to — so it takes the posture `/api/settings` already takes for mode
+and credentials: the person holding the machine. A server install is unaffected, since
+`curl` on the box is loopback and that is the same person who deployed it.
+
+**It is read from the store on every addressed signal, not from the boot snapshot.** The
+cognition tunables are loaded once at startup and apply on restart, which is right for a
+parameter and wrong for an identity: the person who just said *this one is me* would go
+on being unattributed until the process happened to come back up, with nothing on screen
+saying why.
+
 This does not reopen *"there is no user slot and no self slot"*
 ([`data.md`](data.md#prompts)). That rule is about **instructions** — a preference, a
 correction, a standing request — and those still land as facets and tasks, going through

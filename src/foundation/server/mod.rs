@@ -659,6 +659,9 @@ pub fn build(
         .route("/api/people/eject", post(people::post_eject))
         .route("/api/people/split/preview", post(people::post_split_preview))
         .route("/api/people/split/apply", post(people::post_split_apply))
+        // …and the one verb here that is not a correction: which of these people
+        // this install belongs to. Loopback-only — see `people::post_owner`.
+        .route("/api/people/owner", post(people::post_owner))
         .route("/api/people/{subject}/{modality}/{stem}", get(people::get_clip))
         // …and the one crop that stands for a person, which the conversation reads
         // to put a face beside their messages.

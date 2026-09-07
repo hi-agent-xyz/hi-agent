@@ -19,21 +19,24 @@
 //! - `POST /api/people/eject` — pull one clip out into its own fresh cluster.
 //! - `POST /api/people/split/preview` — propose an auto-regrouping (moves nothing).
 //! - `POST /api/people/split/apply` — commit an accepted regrouping.
+//! - `POST /api/people/owner` — declare which of them this install belongs to.
 //!
 //! The people store is global.
 //! Reads are cheap directory walks; writes are atomic file moves in `people_vectors`.
 
 use std::sync::Arc;
 
-use axum::Json;
-use axum::body::Body;
 use axum::extract::{Path, State};
+use axum::body::Body;
+use axum::{Extension, Json};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
+use crate::foundation::config;
 use crate::foundation::server::AppState;
+use crate::foundation::surfaces::Acceptor;
 use crate::mind::memory::facets;
 use crate::mind::memory::people_vectors::{self, Modality};
 
@@ -98,8 +101,18 @@ impl From<people_vectors::GalleryShape> for ShapeDto {
     }
 }
 
-/// `GET /api/people` — every cluster with its per-modality clip stems, named first.
-pub async fn get_people(State(state): State<Arc<AppState>>) -> Response {
+/// `GET /api/people` — every cluster with its per-modality clip stems, named first,
+/// plus **who this install belongs to** and whether this caller may say so.
+///
+/// `owner_settable` is here because the review view has to know before it draws: an
+/// action offered off-box would be a button that always fails. See [`post_owner`]
+/// for why that verb is loopback-only when its neighbours are not.
+pub async fn get_people(
+    State(state): State<Arc<AppState>>,
+    acceptor: Option<Extension<Acceptor>>,
+) -> Response {
+    let settable = is_loopback(acceptor);
+    let owner = config::owner(&state.data_dir);
     match people_vectors::list_clusters(&state.data_dir).await {
         Ok(list) => {
             let people: Vec<PersonDto> = list
@@ -115,7 +128,12 @@ pub async fn get_people(State(state): State<Arc<AppState>>) -> Response {
                     notes: c.notes,
                 })
                 .collect();
-            Json(serde_json::json!({ "people": people })).into_response()
+            Json(serde_json::json!({
+                "people": people,
+                "owner": owner,
+                "owner_settable": settable,
+            }))
+            .into_response()
         }
         Err(e) => err(&e.to_string()),
     }
@@ -318,6 +336,81 @@ pub async fn post_split_apply(
         Ok(ids) => Json(serde_json::json!({ "ok": true, "new_clusters": ids })).into_response(),
         Err(e) => err(&e.to_string()),
     }
+}
+
+// ── who this install belongs to ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct OwnerReq {
+    /// The person to declare, as a name or an existing cluster id. Empty clears the
+    /// declaration — an install with no owner is a legitimate state
+    /// (`docs/arch/signal-attribution.md`), so it has to be reachable from here too.
+    subject: String,
+}
+
+/// `POST /api/people/owner` — declare which person this install belongs to.
+///
+/// **This is the act that makes the addressed channels attributable.** Typing,
+/// handing over a file and walking a view are attributed to the owner by default; a
+/// store with no owner in it makes all three unattributed, which is correct but
+/// teaches nothing. The value lands in `app_settings` under
+/// [`config::KEY_OWNER`] and is read live on every such signal.
+///
+/// **Loopback only, unlike every other verb on this surface.** Naming, ejecting and
+/// regrouping are corrections: visible, reversible, and safe to do from a paired
+/// phone. Declaring the owner is not a correction — it silently changes who every
+/// future typed line is attributed to, and the gate ([`Acceptor`]) lets any paired
+/// client reach this router. So it takes the posture `/api/settings` already takes
+/// for mode and credentials: the person holding the machine. A server install is
+/// unaffected — `curl` on the box is loopback, and that is the same person who
+/// deployed it.
+///
+/// The subject is slugged, so it lands on the exact key a gallery directory uses and
+/// a later face or voiceprint match can agree with it. It need not exist yet: a fresh
+/// install has met nobody, and the owner is often the first person named. The reply
+/// says which it was (`known`), so the page can show "指向已有的人" rather than
+/// silently accepting a typo.
+pub async fn post_owner(
+    State(state): State<Arc<AppState>>,
+    acceptor: Option<Extension<Acceptor>>,
+    Json(req): Json<OwnerReq>,
+) -> Response {
+    if !is_loopback(acceptor) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "loopback_only" })),
+        )
+            .into_response();
+    }
+    let subject = facets::slug(&req.subject);
+    if subject.is_empty() && !req.subject.trim().is_empty() {
+        return err("subject must contain a usable character");
+    }
+    let known = !subject.is_empty()
+        && people_vectors::list_clusters(&state.data_dir)
+            .await
+            .map(|list| list.iter().any(|c| c.subject == subject))
+            .unwrap_or(false);
+    match crate::foundation::credentials::set_setting(&state.data_dir, config::KEY_OWNER, &subject) {
+        Ok(()) => {
+            tracing::info!(owner = %subject, known, "owner declared");
+            Json(serde_json::json!({
+                "ok": true,
+                "owner": (!subject.is_empty()).then_some(subject),
+                "known": known,
+            }))
+            .into_response()
+        }
+        Err(e) => err(&e.to_string()),
+    }
+}
+
+/// Whether this request came in on the loopback listener. **Fails closed**: a missing
+/// marker is not loopback. Reads the acceptor the listener stamped rather than the
+/// peer address, because the community tunnel serves this same router with no socket
+/// of its own — a peer check would see nothing there, or worse, something local.
+fn is_loopback(acceptor: Option<Extension<Acceptor>>) -> bool {
+    acceptor.map(|Extension(a)| a) == Some(Acceptor::Loopback)
 }
 
 /// A uniform JSON error body with a 400.
