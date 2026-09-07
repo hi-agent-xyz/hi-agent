@@ -1140,23 +1140,100 @@ mod soul_tests {
     /// Watched failing, journey 07: the answer that went back was "I have no browser"
     /// while a provisioned Chromium sat on the same disk.
     ///
-    /// Three things are pinned, because the failure needs all three to be closed: the
-    /// scan itself, the rule about when to run it, and `--help` as the source of a
-    /// tool's arguments (a flag list copied into a note is a second truth that drifts).
+    /// Five things are pinned, because the failure needs all five to be closed: the scan
+    /// itself, the rule about when to run it, `--help` as the source of a tool's
+    /// arguments (a flag list copied into a note is a second truth that drifts), and —
+    /// for the case where the workshop genuinely has nothing — the two halves of what to
+    /// do about a step only the person can take. It is asked for **at the wall**, rather
+    /// than assumed past and answered with something thinner; and it is asked for at all,
+    /// rather than helped to out of their browser profile, cookie store or keychain.
     #[test]
     fn a_worker_scans_the_workshop_before_saying_it_cannot() {
-        assert!(
-            WORKER_GENERAL_BASE.contains("^(purpose|description):"),
-            "the derived registry needs a reader; the scan must be in the prompt"
-        );
-        assert!(
-            WORKER_GENERAL_BASE.contains("before you tell anyone you can't do something"),
-            "scanning is only worth anything on the path where the answer would be no"
-        );
-        assert!(
-            WORKER_GENERAL_BASE.contains("--help"),
-            "a tool's arguments come from the tool, not from a list written down"
-        );
+        // **The subjects are derived, not listed** — every rung that sees the workshop,
+        // found by looking for `{skills_dir}`, the same way the cross-tree test in
+        // `mind::skills` picks its own. An enumerated list is what shipped the gap this
+        // test now closes: it named `general` and `cognition`, the two that happened to
+        // be open, while `view-builder`, `task-manager` and `drive-organizer` carried the
+        // workshop pointer and no way to read it. Watched 2026-09-07 — a view-builder
+        // researching 小红书 drove `/Applications/Google Chrome.app/...` by absolute path
+        // into a private profile, never learning that `browser` and its signed-in profile
+        // under `drive/` existed, because nothing on its rung had ever named one.
+        //
+        // Reflection is out for the same reason it is out there: it writes the workshop
+        // and runs no errands.
+        //
+        // Prose wraps, so a pinned sentence is matched against the base with its runs of
+        // whitespace collapsed — otherwise re-flowing a paragraph breaks a test that has
+        // nothing to say about line length.
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut checked = 0;
+        for (name, base) in all_bases() {
+            if !base.contains("{skills_dir}") || name == "reflection" {
+                continue;
+            }
+            let one_line = flat(base);
+            checked += 1;
+            assert!(
+                base.contains("^(purpose|description):"),
+                "{name} sees the workshop; the derived registry needs a reader on this rung"
+            );
+            // Both spellings, because the scan must find a note the agent runtime's own
+            // skills feature taught it to write. Watched 2026-08-27: a worker produced a
+            // `SKILL.md` with `description:` and no `use:`, and a scan anchored on
+            // `purpose:` alone would report the workshop as empty of it.
+            assert!(
+                base.contains("description"),
+                "{name} scans for one spelling; the common one must be scanned too"
+            );
+            // **The rule that was written and never reached the case that beat it.**
+            // A wall only the person can pass — a sign-in, a key, a grant — is not an
+            // ambiguity to assume past, and assuming past it silently is how an errand
+            // returns a thinner source than the one that was asked for. Both halves are
+            // pinned: that the substitution is never passed off as the answer, and that
+            // the ask happens at the wall rather than in the report.
+            assert!(
+                one_line.contains("Never hand back a worse answer while implying it is the answer"),
+                "{name} can substitute a thinner source without ever saying so"
+            );
+            assert!(
+                one_line.contains("Ask at the wall, not in the report"),
+                "{name} is told to ask but not when; the report is too late to be asked at"
+            );
+            // **The other half of the same rule: asked for, never taken.** Watched
+            // 2026-09-07, same run — blocked by the sign-in, the view-builder read the
+            // person's own `Chrome/Default/Cookies` with sqlite3, copied it together
+            // with `Local State`, `Preferences` and `Local Storage` into /tmp, and
+            // drove Chrome on that. A cookie jar is every account in it, so the reach
+            // that got past one login put all of them behind the pages it then opened.
+            // The prohibition existed — in `skills/factory/browser.md`, the note this
+            // rung had no way to find. A boundary about the person's credentials does
+            // not belong only in a file a session may never open.
+            assert!(
+                one_line
+                    .contains("not something to go and find on their disk"),
+                "{name} can help itself to the person's credentials to get past a login"
+            );
+        }
+        assert!(checked >= 5, "only {checked} prompts checked; the filter stopped matching");
+
+        // Worker-voice specifics, on the rungs that carry the section verbatim. Cognition
+        // states the same two things in its own voice and has no `--help` line, because
+        // it looks a tool up and hands the errand on.
+        for base in [
+            WORKER_GENERAL_BASE,
+            WORKER_VIEW_BUILDER_BASE,
+            WORKER_TASK_MANAGER_BASE,
+            WORKER_DRIVE_ORGANIZER_BASE,
+        ] {
+            assert!(
+                flat(base).contains("before you tell anyone you can't do something"),
+                "scanning is only worth anything on the path where the answer would be no"
+            );
+            assert!(
+                base.contains("--help"),
+                "a tool's arguments come from the tool, not from a list written down"
+            );
+        }
 
         // **And Cognition, because it is the rung that was actually in the path.**
         // Watched 2026-08-26 on an isolated instance: asked to read a page, Cognition
@@ -1166,20 +1243,42 @@ mod soul_tests {
         // never opened — this repo's oldest failure, an instruction handed to nobody.
         // Cognition holds codex's own shell, so it can and must find a tool too.
         assert!(
-            COGNITION_BASE.contains("^(purpose|description):"),
-            "Cognition holds a shell and answers directly; the scan has to reach it too"
-        );
-        // Both spellings, because the scan must find a note the agent runtime's own
-        // skills feature taught it to write. Watched 2026-08-27: a worker produced a
-        // `SKILL.md` with `description:` and no `use:`, and a scan anchored on
-        // `purpose:` alone would report the workshop as empty of it.
-        for base in [WORKER_GENERAL_BASE, COGNITION_BASE] {
-            assert!(base.contains("description"), "the common spelling must be scanned too");
-        }
-        assert!(
             COGNITION_BASE.contains("still goes to a worker"),
             "knowing how to find a tool must not read as licence to run the errand itself"
         );
+    }
+
+    /// **The four copies of the workshop section are one text, or they are four texts.**
+    ///
+    /// Retiring `common.md` made duplication the accepted price and named these tests as
+    /// what holds it (see [`install_prompts`]). `contains` on a few sentences catches a
+    /// deletion; it does not catch a rung whose copy quietly grew a different rule. So the
+    /// section is compared whole: edit it in `general.md` and copy it across, or the diff
+    /// says which rung disagrees and about what.
+    #[test]
+    fn the_workshop_section_has_not_drifted_between_the_worker_copies() {
+        const START: &str = "## Some of those notes are tools you can run";
+        let section = |base: &'static str| -> &'static str {
+            let i = base.find(START).expect("every subject carries the section");
+            let rest = &base[i..];
+            // The section runs to the next top-level heading.
+            let j = rest.find("\n# ").expect("a section is followed by a heading");
+            &rest[..j]
+        };
+        let canonical = section(WORKER_GENERAL_BASE);
+        let mut copies = 0;
+        for (name, base) in all_bases() {
+            if name == "worker/general" || !base.contains(START) {
+                continue;
+            }
+            copies += 1;
+            assert_eq!(
+                section(base),
+                canonical,
+                "{name}'s copy of the workshop section has drifted from general.md's"
+            );
+        }
+        assert!(copies >= 3, "only {copies} copies compared; the filter stopped matching");
     }
 
     /// The seeded tool note and the prompt that reads it must agree about the format.
