@@ -1,3 +1,7 @@
+---
+purpose: getting hold of something a job needs and you haven't got — what to look for, what to ask the person for, where to keep it, and why not to write it up
+---
+
 # Getting hold of what a job needs
 
 When a job needs something you haven't got, **getting it is part of the job**. Handing back a

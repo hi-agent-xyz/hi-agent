@@ -304,6 +304,16 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         .context("building the child PATH")?;
         child_env.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
     }
+    // `chrome-devtools-mcp` reports usage statistics to Google unless told not to, and
+    // a session may reach for it however it likes — `hi mcp "npx -y
+    // chrome-devtools-mcp@latest …"`, a script, a note yet to be written. A note saying
+    // "remember the flag" leaks the once it is forgotten, so the opt-out lives here
+    // instead, where it holds for every spawn. Set for a path nothing exercises yet:
+    // harmless if that server is never run, and the wrong thing to discover afterwards.
+    child_env.push((
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS".to_string(),
+        "1".to_string(),
+    ));
     // Diagnostic: surface exactly what differs between launchers (terminal vs. cmux
     // etc.) — cwd, the resolved codex binary, its home, and the upstream key's
     // fingerprint. The credential is not frozen into `child_env` (it is re-resolved per

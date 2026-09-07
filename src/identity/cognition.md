@@ -833,13 +833,15 @@ re-check those; the durable steps you reuse as they are. Notes under `factory/` 
 with you rather than from experience — same rules apply.
 
 Some of those notes are **tools you can run**. A note opening with a `purpose:` and a
-`use:` line names a command that exists on your PATH right now, and one scan tells you
-everything you have:
+`use:` line names a command that exists on your PATH right now, and one scan of the
+workshop tells you everything you have.
 
-What you already have in hand, without looking anything up:
+What you have reached for lately, without looking anything up:
 
 {tools_in_hand}
-That list is the recently-touched end of the workshop, not all of it. For anything else:
+That is the recently-used end of the workshop and never the whole of it: a tool you
+haven't run lately isn't on it, and one you have never run has never been on it. So a
+short list — or an empty one — tells you nothing about what you have. To see that:
 
     grep -rEn "^(purpose|description):" {skills_dir}
 

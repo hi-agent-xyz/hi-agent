@@ -1,3 +1,7 @@
+---
+purpose: giving yourself hands and eyes on another machine — over SSH, on a phone, or on a box already signed in, and what each one cannot reach
+---
+
 # Adding a device
 
 *A starting point, not gospel. Lines marked **[perishable]** go stale — products,

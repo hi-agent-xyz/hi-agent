@@ -243,8 +243,30 @@ pub const HOT_BUDGET_BYTES: usize = 1536;
 /// note is not using it — so it decides nothing except the order of things nobody has
 /// run yet, where a newly written note is the better guess.
 ///
-/// Returns an empty string for an empty workshop, so a caller can interpolate it
-/// without special-casing a fresh install.
+/// **Complete while it fits; ranked only when it can't be.** The cut is the only thing
+/// that excludes anything — a note nobody has run is still in hand while there is
+/// budget for it, and ranking decides who survives only once survival is contested.
+/// This is the same tier as an agent runtime's skill-discovery layer (one line each,
+/// always resident, the body on demand), differing in that theirs is complete by
+/// construction and this one is complete only while it fits — which is why what it
+/// dropped has to be said.
+///
+/// The rejected alternative was to make never-run mean never-resident outright. It
+/// reads tidier and it is wrong: it empties the set on exactly the installs where
+/// completeness costs nothing, and a fresh install that knows about nothing has to
+/// *think* to scan. That is journey 07's live failure — a browser on the disk and "I
+/// have no browser" going back — reintroduced as the default state.
+///
+/// **Whatever was left out is said, however it was left out.** A cut for budget and a
+/// cut for never having been run are the same fact to the reader — that this is not the
+/// workshop — and the failure this repo has paid for is the silent one. So a fresh
+/// install, where nothing has been run yet, interpolates the invitation rather than
+/// nothing: an empty spot under "what you have in hand" reads as *you have nothing*,
+/// and that is precisely the confusion between an absent entry and an absent tool that
+/// killed the truncated middle tier.
+///
+/// Returns an empty string only for a genuinely empty workshop — no notes at all —
+/// where there is nothing to scan and so nothing to say.
 /// How often this note's tool was actually reached for.
 ///
 /// A note is credited with the command its `use:` names — first word only, since usage
@@ -259,6 +281,15 @@ pub const HOT_BUDGET_BYTES: usize = 1536;
 /// took all three. Harmless while `hi` is nearly always `hi mcp`, and it grows into a
 /// real distortion if `hi` gains unrelated subcommands. Fixing it means recording argv[1]
 /// for known multi-tool hosts, which is a special case waiting for a second example.
+///
+/// A zero ranks last; it does not exclude. Note what the arithmetic can and cannot
+/// see: a note naming no command can never accrue a count, so once a workshop outgrows
+/// its budget a pure procedure sorts below every tool and falls out first, however
+/// often it was *read* — reading one is credited to `sed`, not to the note. Whether
+/// that matters is a question for a workshop big enough to cut, and the answer if it
+/// does is to count opens, which the frame logs already record. Meanwhile the floor
+/// under it is the scan, which is why every seeded note carries a `purpose:` line: the
+/// scan greps for exactly that, and a note without one is invisible to it.
 fn used_count(
     note: &NoteRef,
     fm: &FrontMatter,
@@ -284,6 +315,13 @@ pub fn hot_inventory(
         let (fm, _) = split_front_matter(&text);
         entries.push((used_count(&note, &fm, usage), note, fm));
     }
+    // An empty workshop has nothing to say and nothing to scan; the caller
+    // interpolates it without special-casing a fresh install.
+    if entries.is_empty() {
+        return String::new();
+    }
+    let in_workshop = entries.len();
+
     // Most-used first, then freshest, then the id so the output is stable rather than
     // filesystem-ordered — two identical installs should produce the same prompt, and
     // a diff of it should be readable.
@@ -292,6 +330,7 @@ pub fn hot_inventory(
     });
 
     let mut out = String::new();
+    let mut in_hand = 0usize;
     for (_, note, fm) in entries {
         // A note with no purpose line degrades to a bare name — unhelpful, never a
         // confident wrong answer, which is the bargain the views toolbox already makes.
@@ -300,13 +339,25 @@ pub fn hot_inventory(
             None => format!("- {}\n", note.id),
         };
         if out.len() + line.len() > budget {
-            // Silently stopping at a budget is the failure shape this repo has paid
-            // for before, so say what was dropped. The scan is still the floor
-            // underneath: what is not in hand is one grep away.
-            out.push_str("- (more in the workshop — scan it)\n");
             break;
         }
         out.push_str(&line);
+        in_hand += 1;
+    }
+    // Silently stopping is the failure shape this repo has paid for before, so say
+    // that something was left out — whether the cap cut it or nobody has ever run it.
+    // The scan is the floor underneath either way: what is not in hand is one grep
+    // away, and saying so is what keeps an absent *entry* from reading as an absent
+    // *tool*.
+    if in_hand < in_workshop {
+        // `in_hand == 0` needs its own wording rather than "more": nothing is shown, so
+        // there is no "more" to be had than. It takes a note whose purpose line alone
+        // outgrows the whole budget, which is rare and not worth a confusing sentence.
+        out.push_str(if in_hand == 0 {
+            "- (the workshop is one scan away)\n"
+        } else {
+            "- (more in the workshop — scan it)\n"
+        });
     }
     out
 }
@@ -610,11 +661,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         install_factory_skills(dir.path()).unwrap();
 
-        let before = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
-        assert!(before.contains("factory/browser"), "seeded tools are in hand: {before}");
+        // **Complete while it fits.** A fresh install has run nothing, and every seed is
+        // still in hand: ranking orders the set, the cap is the only thing that removes
+        // from it. Emptying it on the installs where completeness is free is how an
+        // agent ends up having to *think* to scan — journey 07's live failure.
+        let cold = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
+        for seed in ["factory/browser", "factory/mcp-service", "factory/equipping-a-tool"] {
+            assert!(cold.contains(seed), "a seed nobody ran is still in hand: {cold}");
+        }
         // A purpose line is what the entry carries; a note without one degrades to a
         // bare name rather than vanishing.
-        assert!(before.contains("drive a real Chrome"), "{before}");
+        assert!(cold.contains("drive a real Chrome"), "{cold}");
+        // Nothing was left out, so nothing claims it was.
+        assert!(!cold.contains("more in the workshop"), "a complete set says nothing: {cold}");
 
         // Nothing stored: a note written now appears at the next build, no bookkeeping.
         std::fs::write(
@@ -622,26 +681,53 @@ mod tests {
             "---\npurpose: something the agent worked out today\n---\n\nbody\n",
         )
         .unwrap();
-        let after = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
-        assert!(after.contains("just-learnt"), "{after}");
+        let fresh = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
+        assert!(fresh.contains("just-learnt"), "{fresh}");
         assert!(
-            after.find("just-learnt") < after.find("factory/browser"),
-            "with nothing used, freshest leads: {after}"
+            fresh.find("just-learnt") < fresh.find("factory/browser"),
+            "with nothing used, freshest leads: {fresh}"
         );
+
+        let usage = std::collections::HashMap::from([
+            ("browser".to_string(), 9u64),
+            ("just-learnt".to_string(), 1u64),
+        ]);
+        let after = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &usage);
 
         // **Use beats freshness, which is the whole point.** A note written last week
         // that the install actually reaches for outranks one written a minute ago and
-        // never run — writing a note is not using it.
-        let usage = std::collections::HashMap::from([("browser".to_string(), 9u64)]);
-        let ranked = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &usage);
+        // barely run — writing a note is not using it.
         assert!(
-            ranked.find("factory/browser") < ranked.find("just-learnt"),
-            "a used tool leads a fresh unused one: {ranked}"
+            after.find("factory/browser") < after.find("just-learnt"),
+            "a much-used tool leads a fresher, less-used one: {after}"
         );
 
-        // An empty workshop interpolates to nothing rather than to an apology.
+        // An empty workshop interpolates to nothing rather than to an apology: there is
+        // no scan to send anyone on.
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(hot_inventory(empty.path(), HOT_BUDGET_BYTES, &Default::default()), "");
+    }
+
+    /// The scan is the floor under residency, so it has to actually reach everything:
+    /// it greps for a `purpose:`/`description:` line, and a seed without one is
+    /// invisible to it. That was true of the two procedure notes, which were reachable
+    /// only because the inventory degrades a note with no purpose to a bare name — and
+    /// once never-run notes stopped being resident, that accident would have hidden
+    /// them completely.
+    #[test]
+    fn every_seeded_note_is_findable_by_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        install_factory_skills(dir.path()).unwrap();
+
+        for note in notes(dir.path()).unwrap() {
+            let text = std::fs::read_to_string(&note.path).unwrap();
+            let (fm, _) = split_front_matter(&text);
+            assert!(
+                fm.purpose.is_some(),
+                "{} is invisible to `grep -rEn \"^(purpose|description):\"`",
+                note.id
+            );
+        }
     }
 
     #[test]
