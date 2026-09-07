@@ -1023,6 +1023,42 @@ loop {
 
 ---
 
+## 30 · 常驻监听只往上报"管子是通的",于是"你收到了吗"永远答不出来 🟡
+
+**症状。** 问它"我微信发给你的照片都收到了吗"、"视频收到了吗",**一次都答不上来**,每次都变成"我去核对一下"。而这不是 Reaction 的毛病——Cognition 也不知道。
+
+**证据(2026-08-24 … 2026-09-06,`raw/sessions/mail.jsonl`)。** 企业微信"小力"的常驻 listener 往 Cognition 发过 **144 条**:含心跳/健康指标(`verify PASS`、`heartbeat 2011`、`96/96 committed receipts`)的 **134 条(93%)**,提到有人发来了什么的 **6 条(4%)**——而那 6 条全部出现在 2026-08-28 那次"照片没收到"的排障里,不是日常。
+
+对着当时的 brief 逐条核过(brief 可以从 `reaction.jsonl` 的历史 prompt 里还原):四次"收到了吗"的当下,brief 都在(1109–3080 字)也都提到"小力收件"——写的是**在推进这件事**,不是**此刻收到了什么**。
+
+**机制。** [`duties.rs`](../../src/body/reaction/duties.rs) 的模块文档自己写着 *"Routine traffic wakes no rung but the handler"* 与 *"Cognition is not in the path"*。到达的东西进 listener 自己的 `drive/` 台账,Cognition 只拿到 worker **主动选择**发上去的那部分,而它选择发的是心跳。
+
+**这不是"Reaction 手里信息不全"那一类。** Cognition 也不知道 = 整个 agent 不知道 = "我去查一下"**是正确回答**。要修的是**哪些信息该主动推上去**,而不是 Reaction 的定位(那条已由 `37fce40` 处理)。
+
+**修的时候不要新写规矩。** [`general.md`](../../src/identity/workers/general.md) 已经为**台账**写过一模一样的规矩,还带实测:*一条 duty 的记录六天里写了 525 行——360 行写心跳、租约、进程号,恰好 1 行写了真正部署了什么;那个窗口里发生了 14 次部署,人一次都找不到。* 同一个错误现在发生在 `hi_send_message` 这条线上。按 CLAUDE.md:**把那条重新瞄准,别加第二份。**
+
+**涉及。** [09](09-wechat.md)、[18](18-send-files-to-agent.md)、[02](02-feishu-sprint-backlog.md) / [03](03-feishu-flash-cards.md)(同一套常驻职责机制)。
+
+---
+
+## 31 · 每个 rung 都开着 `features.steer`,只有 Cognition 有人 steer 🟡
+
+**症状。** 你说话的时候有 **53%** 的概率 Reaction 正在跑一轮,而你的话进不去——只能等它把这一轮跑完,中位 **18.9 秒**,p90 50.1 秒。人不是这样的:你插一句,他停下来听。
+
+**证据(2026-08-24 … 2026-09-06,`make measure`)。** 322 条配对里 171 条撞上正在跑的 turn;挡路的那些轮里 **151/171 是它在回你上一句**——是对话轮次重叠,不是它忙(整体占空比只有 3.8%)。而 turn 在**说完最后一句之后**还要跑中位 10.7 秒(p90 28.2s),你排的队排到 `turn/completed`,不是排到最后一句。
+
+去掉这段等待,"说完 → 第一句"从中位 29.1s / p90 70.1s 降到 **19.3s / 38.6s**——剩下的正是那个一次 LLM 请求的地板。
+
+**机制。** [`agent/mod.rs`](../../src/foundation/agent/mod.rs) 给**每个** role 开 `features.steer = true`,还有测试 `every_rung_opens_steerable` 守着,注释写 *"must be reachable mid-turn"*。全仓 `.steer()` 只有一个调用点,在 [`cognition.rs`](../../src/body/reaction/cognition.rs)。**能力开着、测试守着、没人用。**
+
+floor 里已经有 barge-in 的概念(`take_pending` → `render_interruption`),只是它把"你插话了"投递到**下一轮**而不是走进正在跑的这一轮——这是真正要改的那一处,而且范围很小:steer 不开新 turn,sequencer 的 `TurnStart`/`TurnEnd` 括号一个字都不用动。
+
+**顺带一条,同一次分析发现的。** 自动 hand-down 是 host 代发的(`from: None`),而 Cognition 的 steer 判据 `from_reaction` 明确把 `from: None` 读成"不是人"——**全系统唯一装着人刚说的话的那封信,是唯一永远 steer 不进去的**。worker 的报告上行也是 `from: None`,所以靠 `from` 分不开这两者,得由发件方声明。这条只影响**实质答案什么时候回来**,不影响第一句。
+
+**涉及。** 所有 journey 的对话节奏,尤其 [15](15-talk-over-the-agent.md)(抢话)与 [34](34-a-step-ahead.md)。
+
+---
+
 ## 附:测试方法(复现用)
 
 `docs/user-journeys/` 是**意图**的规格,只能对着真跑的实例验,不能靠读代码验。本轮的做法:

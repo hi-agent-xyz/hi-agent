@@ -8,6 +8,11 @@ These are the source of truth for *intended* behavior — write the expected UX 
 first, then build/verify against it. When behavior and a journey disagree, that's a
 bug in one or the other; resolve it explicitly rather than silently.
 
+**How a run is measured — stage boundaries, the script, and a baseline to beat —
+is in [measuring.md](measuring.md).** Speed and what it actually said are the two
+things reading the conversation cannot settle; `make measure` reads the wire log
+instead.
+
 **Gaps found by running these against a live instance live in [gaps.md](gaps.md)** —
 one entry per problem, with the evidence that was verified *outside* the conversation.
 Each journey file keeps its own `实测` section for what one run looked like; `gaps.md`

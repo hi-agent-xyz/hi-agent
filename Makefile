@@ -56,6 +56,12 @@ test-web: ## run the web tests alone (no Rust toolchain needed)
 	@test -x src/appearance/web/node_modules/.bin/vitest || (cd src/appearance/web && npm ci)
 	cd src/appearance/web && npm test
 
+# Not a test — it reads a live instance's wire log and reports what a week of
+# conversation actually cost, which is the one thing `cargo test` can never
+# answer. Lives here because `make help` is where this repo keeps its verbs.
+measure: ## report reply latency and reply shape from a data dir's wire log (DATA=./data)
+	python3 scripts/measure-replies.py $(if $(DATA),$(DATA),data)
+
 docker: ## build the docker image
 	docker build -t hi-agent:dev .
 
