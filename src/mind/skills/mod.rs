@@ -502,6 +502,13 @@ fn sh_quote(path: &Path) -> String {
 /// The POSIX shim. `--resolve-browser` prints the argv prefix one element per line;
 /// splitting on newline alone (`IFS`) with globbing off (`set -f`) keeps a path
 /// containing spaces or `*` in one piece.
+///
+/// `--headed` is the one argument the shim reads rather than forwards, because it
+/// decides the prefix instead of being part of it. It is matched **anywhere in the
+/// args, not just first**: a caller writing `browser --headed <url>` and one writing
+/// `browser <url> --headed` mean the same thing, and a positional rule that only one
+/// of them satisfies is a trap with no way to discover it — `browser --help` is
+/// Chrome's own help and will never mention this flag.
 #[cfg(not(windows))]
 fn write_browser_shim(dir: &Path, exe: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -509,12 +516,18 @@ fn write_browser_shim(dir: &Path, exe: &Path) -> io::Result<()> {
     let script = format!(
         "#!/bin/sh\n\
          # Written by hi-agent at every start — see skills/factory/browser.md.\n\
-         # Binds the name `browser` to whatever browser this machine has, adding\n\
-         # --headless only if that binary needs telling. Everything you pass goes\n\
-         # straight through to Chrome.\n\
+         # Binds the name `browser` to whatever browser this machine has. Runs\n\
+         # headless unless you pass --headed, which this script eats. Everything\n\
+         # else goes straight through to Chrome.\n\
          set -ef\n\
          IFS='\n'\n\
-         set -- $({exe} --resolve-browser) \"$@\"\n\
+         headed=\n\
+         n=$#\n\
+         while [ $n -gt 0 ]; do\n\
+         \x20 a=$1; shift; n=$((n-1))\n\
+         \x20 if [ \"$a\" = --headed ]; then headed=--headed; else set -- \"$@\" \"$a\"; fi\n\
+         done\n\
+         set -- $({exe} --resolve-browser $headed) \"$@\"\n\
          exec \"$@\"\n",
         exe = sh_quote(exe)
     );
@@ -728,6 +741,44 @@ mod tests {
                 note.id
             );
         }
+    }
+
+    /// The shim is generated shell, so nothing else in the suite ever runs it — and
+    /// the argument rotation that lets `--headed` appear anywhere is exactly the kind
+    /// of POSIX-`sh` writing that typechecks by not being code. Run it for real
+    /// against a stub resolver and look at the argv that comes out the far end.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_shim_eats_headed_wherever_it_appears_and_forwards_the_rest_in_order() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Stands in for the agent's own binary: answers `--resolve-browser` with a
+        // prefix, and drops `--headless` when it was asked for a window.
+        let stub = dir.path().join("stub-exe");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\nprintf '/bin/echo\\n'\ncase \"$*\" in *--headed*) ;; *) printf -- '--headless\\n';; esac\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_browser_shim(dir.path(), &stub).unwrap();
+        let shim = dir.path().join("browser");
+
+        let run = |args: &[&str]| -> String {
+            let out = std::process::Command::new(&shim).args(args).output().unwrap();
+            assert!(out.status.success(), "shim failed: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+
+        // No window asked for: headless, and every argument survives untouched.
+        assert_eq!(run(&["--window-size=1,2", "https://x/"]), "--headless --window-size=1,2 https://x/");
+        // Leading and trailing both mean the same thing, and neither reaches Chrome.
+        assert_eq!(run(&["--headed", "https://x/"]), "https://x/");
+        assert_eq!(run(&["https://x/", "--headed"]), "https://x/");
+        // Order is preserved through the rotation, which is the easy thing to break.
+        assert_eq!(run(&["a", "--headed", "b", "c"]), "a b c");
+        assert_eq!(run(&[]), "--headless");
     }
 
     #[test]

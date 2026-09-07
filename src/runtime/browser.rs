@@ -56,9 +56,39 @@ pub struct ResolvedBrowser {
     pub headless_shell: bool,
 }
 
-/// Resolve a headless browser: an explicit override, else a system
-/// Chrome/Chromium/Edge, else the pinned managed build (installed on first use
-/// and reused after).
+/// The argv prefix the `bin/browser` shim puts in front of whatever the caller passed:
+/// the executable, and `--headless` unless a window was asked for.
+///
+/// **Headless is the default, not the only option, and that distinction is the point.**
+/// This module was written for the view render pipeline, where a window would be wrong,
+/// and `bin/browser` later reused the resolution wholesale — inheriting an assumption
+/// nobody had written down as one. It cost the capability that matters most on a desktop:
+/// **only a visible window lets the person sign the agent's browser in**, and a login is
+/// the one thing no note can rebuild. So the flag normalises what actually differs between
+/// binaries (a full Chrome must be told, a `chrome-headless-shell` rejects the telling)
+/// and leaves *whether there is a window* to the caller.
+///
+/// Asking a `chrome-headless-shell` for a window is an error rather than a silent
+/// headless run: the caller wanted something to put in front of a person, and quietly
+/// not doing that is the failure shape where nobody finds out until much later.
+pub fn argv_prefix(browser: &ResolvedBrowser, headed: bool) -> anyhow::Result<Vec<String>> {
+    if headed && browser.headless_shell {
+        bail!(
+            "this machine has no windowed browser — {} is a headless build, which has no \
+             UI to show anyone. Install Chrome (or set HI_AGENT_BROWSER_BIN) if someone \
+             needs to see the page or sign in.",
+            browser.bin.display()
+        );
+    }
+    let mut argv = vec![browser.bin.display().to_string()];
+    if !headed && !browser.headless_shell {
+        argv.push("--headless".to_string());
+    }
+    Ok(argv)
+}
+
+/// Resolve a browser: an explicit override, else a system Chrome/Chromium/Edge, else
+/// the pinned managed build (installed on first use and reused after).
 pub async fn ensure() -> anyhow::Result<ResolvedBrowser> {
     if let Some(bin) = env_override() {
         return Ok(describe(bin, "system"));
@@ -459,6 +489,36 @@ async fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolved(bin: &str, headless_shell: bool) -> ResolvedBrowser {
+        ResolvedBrowser { bin: PathBuf::from(bin), origin: "system", headless_shell }
+    }
+
+    /// Headless is the default and `--headed` is reachable — the whole point of the
+    /// flag, since the view pipeline this module was written for wants no window and
+    /// the person signing the agent into a site needs one.
+    #[test]
+    fn a_window_is_the_callers_to_ask_for() {
+        let chrome = resolved("/Applications/Chrome", false);
+        assert_eq!(argv_prefix(&chrome, false).unwrap(), ["/Applications/Chrome", "--headless"]);
+        assert_eq!(argv_prefix(&chrome, true).unwrap(), ["/Applications/Chrome"]);
+
+        // A headless-shell is headless by construction and rejects being told so.
+        let shell = resolved("/cache/chrome-headless-shell", true);
+        assert_eq!(argv_prefix(&shell, false).unwrap(), ["/cache/chrome-headless-shell"]);
+    }
+
+    /// Asking a headless build for a window fails loudly. Quietly running headless
+    /// would hand back something that looks like it worked while nobody can see the
+    /// page — and the caller only asked because a person was going to look at it.
+    #[test]
+    fn a_headless_build_refuses_to_pretend_it_has_a_window() {
+        let err = argv_prefix(&resolved("/cache/chrome-headless-shell", true), true)
+            .expect_err("a headless build cannot be headed");
+        let msg = err.to_string();
+        assert!(msg.contains("no windowed browser"), "{msg}");
+        assert!(msg.contains("Install Chrome"), "the way out has to be in the message: {msg}");
+    }
 
     #[test]
     fn pinned_version_looks_like_a_chrome_version() {

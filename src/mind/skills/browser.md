@@ -30,6 +30,10 @@ in, once. Not "I can't open it" — that is false, and it is the same shape as t
 browser" that has gone back to someone before. Never reach for their profile or their cookies
 instead.
 
+**`--headed` is how you hand them a window** — the one argument this wrapper reads rather than
+passes on. Everything else you do runs without one, which is faster and stays out of their way;
+a sign-in is the case where somebody has to see the page.
+
 Web search and plain fetches are still the right tool for a page that is just text. Reach for
 this when the page has to actually *run*.
 

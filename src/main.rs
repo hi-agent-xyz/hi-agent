@@ -102,6 +102,12 @@ struct Cli {
     #[arg(long, hide = true)]
     resolve_browser: bool,
 
+    /// With `--resolve-browser`: leave `--headless` out, because someone is going to
+    /// look at this window. The shim passes it through when a caller says `browser
+    /// --headed`, and it is how a person signs the agent's browser into a site.
+    #[arg(long, hide = true)]
+    headed: bool,
+
     /// macOS only: run headless (no menu-bar icon), giving the HTTP server the main
     /// thread as on Linux/Docker. The tray is also auto-skipped under SSH (no window
     /// server). No effect on other platforms.
@@ -397,15 +403,15 @@ fn main() -> anyhow::Result<()> {
 
     // The `bin/browser` shim asking what to run. After the `.env` load above, so an
     // `HI_AGENT_BROWSER_BIN` override set there is honoured exactly as it is for a
-    // view render. One element per line: the executable, then `--headless` iff this
-    // binary is a full Chrome (a `chrome-headless-shell` build rejects the flag).
+    // view render. One element per line, and whether there is a window is the
+    // caller's to say — see [`runtime::browser::argv_prefix`].
     if cli.resolve_browser {
+        let headed = cli.headed;
         let rt = tokio::runtime::Runtime::new()?;
         return rt.block_on(async move {
             let browser = hi_agent::runtime::browser::ensure().await?;
-            println!("{}", browser.bin.display());
-            if !browser.headless_shell {
-                println!("--headless");
+            for arg in hi_agent::runtime::browser::argv_prefix(&browser, headed)? {
+                println!("{arg}");
             }
             Ok(())
         });
