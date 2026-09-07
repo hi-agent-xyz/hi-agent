@@ -227,6 +227,26 @@ pub struct FacePresence {
     pub announced: HashSet<String>,
 }
 
+impl FacePresence {
+    /// Internal label for an unrecognized face. The empty string can never be a real
+    /// subject, and **every unknown face collapses onto this one key** — "there is
+    /// someone here I don't know" is the useful signal, and telling two strangers
+    /// apart needs clustering, which reflection does later.
+    pub const STRANGER: &'static str = "";
+
+    /// The one person on camera right now — `None` for an empty room, for more than
+    /// one person, and for a stranger. **Exactly one identified person is the only
+    /// shape that answers a question**: it says the room contains this person and
+    /// nobody else, which is what lets another sense borrow it
+    /// ([`super::audio::resolve_speaker`]).
+    pub fn alone(&self) -> Option<&str> {
+        match self.announced.iter().collect::<Vec<_>>().as_slice() {
+            [only] if only.as_str() != Self::STRANGER => Some(only.as_str()),
+            _ => None,
+        }
+    }
+}
+
 /// Shared state passed to every handler via `axum::extract::State`.
 pub struct AppState {
     /// Inbound signals from every channel POST. The reaction consumes these.

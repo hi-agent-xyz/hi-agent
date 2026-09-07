@@ -97,11 +97,6 @@ pub async fn post_vision(
 /// the transcript — set apart from the minute-grid `vision` signals.
 const PRESENCE_STREAM: &str = "presence";
 
-/// Internal label for an unrecognized face. The empty string can never be a real
-/// subject (enrollment requires a non-empty slug), so it is a collision-proof key
-/// for the "someone I don't know" bucket; all strangers collapse onto it.
-const STRANGER: &str = "";
-
 /// How long a known label may go unseen before the presence lane calls it gone.
 /// With a ~2.5s still cadence this absorbs a few dropped detections (a turned head,
 /// a missed frame) so presence doesn't flap appear/leave on flicker.
@@ -142,7 +137,7 @@ pub async fn post_presence(
             .await
             .ok()
             .and_then(|seen| seen.named().map(|c| c.subject.clone()))
-            .unwrap_or_else(|| STRANGER.to_string());
+            .unwrap_or_else(|| FacePresence::STRANGER.to_string());
         seen_now.insert(label);
     }
 
@@ -267,7 +262,7 @@ fn presence_body(appeared: &[String], left: &[String]) -> String {
 /// never leaks into the agent's perception; the stranger bucket reads as "someone
 /// you don't recognize".
 fn presence_display(label: &str) -> String {
-    if label == STRANGER {
+    if label == FacePresence::STRANGER {
         "someone you don't recognize".to_string()
     } else if looks_like_cluster_id(label) {
         "a familiar face".to_string()
@@ -810,6 +805,23 @@ fn video_mime_to_ext(mime: &str) -> &'static str {
 mod tests {
     use super::*;
 
+    /// The one shape that answers a question. A room with nobody, a room with two
+    /// people, and a room with one person nobody knows all say the same thing about
+    /// who is here — nothing another sense can borrow.
+    #[test]
+    fn only_one_identified_person_on_camera_is_something_a_second_sense_can_use() {
+        let mut fp = FacePresence::default();
+        assert_eq!(fp.alone(), None, "an empty room");
+        fp.announced = seen(&["赵力"]);
+        assert_eq!(fp.alone(), Some("赵力"));
+        fp.announced = seen(&["赵力", "老王"]);
+        assert_eq!(fp.alone(), None, "two people is not one answer");
+        fp.announced = seen(&[FacePresence::STRANGER]);
+        assert_eq!(fp.alone(), None, "somebody, and we cannot say who");
+        fp.announced = seen(&["赵力", FacePresence::STRANGER]);
+        assert_eq!(fp.alone(), None, "a known face plus one we cannot place is still two");
+    }
+
     fn seen(labels: &[&str]) -> HashSet<String> {
         labels.iter().map(|s| s.to_string()).collect()
     }
@@ -856,7 +868,7 @@ mod tests {
     fn presence_body_reads_naturally() {
         assert_eq!(presence_body(&["赵力".to_string()], &[]), "赵力 appeared on camera.");
         assert_eq!(
-            presence_body(&[STRANGER.to_string()], &[]),
+            presence_body(&[FacePresence::STRANGER.to_string()], &[]),
             "someone you don't recognize appeared on camera."
         );
         assert_eq!(
@@ -871,7 +883,7 @@ mod tests {
         assert!(!looks_like_cluster_id("samantha")); // 8 letters, no digit → a name
         assert!(!looks_like_cluster_id("赵力"));
         assert!(!looks_like_cluster_id("alice"));
-        assert!(!looks_like_cluster_id(STRANGER));
+        assert!(!looks_like_cluster_id(FacePresence::STRANGER));
     }
 
     /// Build a minimal MP4 box: 4-byte big-endian size + 4-byte type + body.

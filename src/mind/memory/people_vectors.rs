@@ -460,6 +460,30 @@ impl Recognition {
         })
     }
 
+    /// The candidate an **independent sense** settles: [`Self::top`], when it clears
+    /// the modality's floor and names the same person some *other* modality has
+    /// already placed here. `None` if the two disagree, or if this one never got off
+    /// the floor.
+    ///
+    /// **What corroboration buys is the margin, and only the margin.** A tie between
+    /// two subjects is this store saying *it could be either of them*, and that is a
+    /// question a second sense can answer without weakening anything: the floor still
+    /// has to be cleared, an incoherent gallery still gets its objection, and a
+    /// candidate the store never proposed at all is never invented — corroboration
+    /// picks among answers already on the table, it does not add one.
+    ///
+    /// **Nothing is added to a score.** A number nudged by another modality can never
+    /// be explained afterwards, and `basis` exists precisely so that how an answer was
+    /// reached stays legible. So the evidence stays exactly as strong as it was; what
+    /// changes is which of two equally-good readings is taken.
+    pub fn corroborated_by(&self, subject: &str) -> Option<&Candidate> {
+        self.top.as_ref().filter(|c| {
+            c.subject == subject
+                && c.similarity >= self.modality.recognize_min()
+                && self.objection.is_none_or(|o| c.similarity - o >= -MARGIN_MIN)
+        })
+    }
+
     /// Where an observation scoring like this belongs in the store — the pure
     /// decision behind [`cluster`], exposed so a caller that has already asked
     /// [`recognize`] can act on it without paying for a second scan of every gallery.
@@ -1859,6 +1883,45 @@ mod tests {
         let named = seen.named().expect("a stand-out match names its subject");
         assert_eq!(named.subject, "alice");
         assert_eq!(named.support, 1);
+    }
+
+    /// The tie above is exactly the question a second sense can answer: the store said
+    /// *it could be either of them*, and the camera says only one of them is here.
+    #[tokio::test]
+    async fn a_second_sense_breaks_a_tie_the_store_could_not() {
+        let dir = td();
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0]).await;
+        enroll_v(dir.path(), "Bob", Modality::Voice, &[0.9, 0.436]).await;
+        let seen = recognize(dir.path(), Modality::Voice, &[0.99, 0.14]).await.unwrap();
+        assert_eq!(seen.top.as_ref().unwrap().subject, "alice");
+        assert!(seen.margin() < MARGIN_MIN, "margin {}", seen.margin());
+        assert!(seen.named().is_none(), "the voice alone cannot tell them apart");
+        let c = seen.corroborated_by("alice").expect("the one person in the room");
+        assert_eq!(c.subject, "alice");
+    }
+
+    /// Corroboration picks among answers already on the table. It cannot hand the
+    /// name to somebody the store ranked second, and it cannot conjure one at all.
+    #[tokio::test]
+    async fn corroboration_names_only_the_stores_own_best_candidate() {
+        let dir = td();
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0]).await;
+        enroll_v(dir.path(), "Bob", Modality::Voice, &[0.9, 0.436]).await;
+        let seen = recognize(dir.path(), Modality::Voice, &[0.99, 0.14]).await.unwrap();
+        assert_eq!(seen.top.as_ref().unwrap().subject, "alice");
+        assert!(seen.corroborated_by("bob").is_none(), "the runner-up is still not it");
+        assert!(seen.corroborated_by("carol").is_none(), "and a stranger is nobody here");
+    }
+
+    /// The floor is not what corroboration buys. A voice that sounds like nobody in
+    /// particular stays unplaced however certain the camera is about the room.
+    #[tokio::test]
+    async fn corroboration_does_not_lower_the_floor() {
+        let dir = td();
+        enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0]).await;
+        let seen = recognize(dir.path(), Modality::Voice, &[0.2, 0.98]).await.unwrap();
+        assert!(seen.top.as_ref().unwrap().similarity < Modality::Voice.recognize_min());
+        assert!(seen.corroborated_by("alice").is_none());
     }
 
     #[tokio::test]

@@ -45,7 +45,7 @@
 //! semantics as the other channels — the request is fine, the agent just never
 //! speaks).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -304,14 +304,24 @@ struct SpeakerVoices {
 #[derive(Default)]
 struct SpeakerEvidence {
     named: HashMap<String, Vec<f32>>,
+    /// Subjects a **second sense** placed in the room on a turn that also matched
+    /// them. One such turn settles this speaker on its own: the turns rule exists
+    /// because one voiceprint is one piece of evidence, and a match the camera agrees
+    /// with is two.
+    corroborated: HashSet<String>,
 }
 
 impl SpeakerVoices {
-    /// Record what one turn of `speaker_id` sounded like.
-    fn note(&mut self, speaker_id: &str, named: Option<&Candidate>) {
+    /// Record what one turn of `speaker_id` sounded like. `corroborated` is set when
+    /// another sense independently placed that same person here — see
+    /// [`Recognition::corroborated_by`].
+    fn note(&mut self, speaker_id: &str, named: Option<&Candidate>, corroborated: bool) {
         let ev = self.by_speaker.entry(speaker_id.to_string()).or_default();
         if let Some(c) = named {
             ev.named.entry(c.subject.clone()).or_default().push(c.similarity);
+            if corroborated {
+                ev.corroborated.insert(c.subject.clone());
+            }
         }
     }
 
@@ -320,7 +330,9 @@ impl SpeakerVoices {
     /// scored well enough to be worth filing as a sample — the store's own
     /// [`Modality::append_min`], borrowed rather than re-invented, because "solid
     /// enough to keep" and "solid enough to say out loud alone" are the same
-    /// judgment. Two subjects level on turns settle nothing: that is the speaker
+    /// judgment. **A turn another sense agreed with also settles it alone** — the
+    /// rule is there because one voiceprint is one piece of evidence, and that turn
+    /// had two. Two subjects level on turns settle nothing: that is the speaker
     /// sounding like both, which is the honest answer and leaves them unplaced.
     fn subject(&self, speaker_id: &str) -> Option<String> {
         let ev = self.by_speaker.get(speaker_id)?;
@@ -338,7 +350,9 @@ impl SpeakerVoices {
         if ranked.get(1).is_some_and(|second| second.1 == turns) {
             return None;
         }
-        (turns >= VOICE_TURNS_MIN || best >= Modality::Voice.append_min())
+        (turns >= VOICE_TURNS_MIN
+            || best >= Modality::Voice.append_min()
+            || ev.corroborated.contains(subject))
             .then(|| subject.clone())
     }
 }
@@ -1034,6 +1048,19 @@ fn resolve_speaker(
         return;
     }
     let data_dir = state.data_dir.clone();
+    // Who the camera has in frame right now, when it is exactly one person and the
+    // store has a name or an id for them. Read here rather than after the embedding,
+    // so it is the room as it stood nearest the turn itself.
+    //
+    // **This is up to 2.5 s stale on arrival and up to 8 s stale on departure** — the
+    // presence lane's still cadence and its leave grace. That is the accuracy of "who
+    // is in the room", which is what it is being asked, and not of "who spoke".
+    let on_camera = state
+        .face_presence
+        .lock()
+        .expect("face_presence mutex poisoned")
+        .alone()
+        .map(str::to_owned);
     // A playable WAV of this turn, built before the PCM is consumed by `embed`, so a
     // kept sample carries an audible preview of the live-mic voice (the stream stores
     // no per-utterance clip otherwise). Built only for a turn actually worth keeping.
@@ -1057,7 +1084,18 @@ fn resolve_speaker(
                 return;
             }
         };
-        voices.lock().unwrap().note(&speaker_id, seen.named());
+        // Two senses beat one margin. When the only person on camera is also this
+        // recognition's top candidate, a tie the voice alone could not break is broken
+        // — nothing is added to the score, and no name the store did not already
+        // propose can appear this way. Face is the sense that gets to do this and not
+        // the reverse: its floor is measured to sit in a gap with no overlap, while
+        // voice's is a guess in the region where the two distributions meet.
+        let corroborated = on_camera
+            .as_deref()
+            .and_then(|who| seen.corroborated_by(who))
+            .cloned();
+        let named = seen.named().or(corroborated.as_ref());
+        voices.lock().unwrap().note(&speaker_id, named, corroborated.is_some());
 
         let (Some(wav), Some(said)) = (wav, keep) else {
             return; // heard and weighed, and that is all this turn was good for
@@ -1473,41 +1511,60 @@ mod tests {
         let mut voices = SpeakerVoices::default();
         // Above the store's floor — it was willing to say a name — but nowhere near
         // solid enough to stand on its own.
-        voices.note("0", Some(&named("赵力", 0.47)));
+        voices.note("0", Some(&named("赵力", 0.47)), false);
         assert_eq!(voices.subject("0"), None);
     }
 
     #[test]
     fn a_second_turn_agreeing_settles_it() {
         let mut voices = SpeakerVoices::default();
-        voices.note("0", Some(&named("赵力", 0.47)));
-        voices.note("0", Some(&named("赵力", 0.46)));
+        voices.note("0", Some(&named("赵力", 0.47)), false);
+        voices.note("0", Some(&named("赵力", 0.46)), false);
         assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
     }
 
     #[test]
     fn one_turn_solid_enough_to_file_stands_alone() {
         let mut voices = SpeakerVoices::default();
-        voices.note("0", Some(&named("赵力", Modality::Voice.append_min() + 0.05)));
+        voices.note("0", Some(&named("赵力", Modality::Voice.append_min() + 0.05)), false);
         assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
+    }
+
+    /// A weak turn the camera agreed with settles on its own. One voiceprint at 0.47
+    /// is one piece of evidence and waits for a second turn; the same turn with the
+    /// only person on camera being that same person is two, and does not.
+    #[test]
+    fn a_turn_a_second_sense_agreed_with_does_not_wait_for_another() {
+        let mut voices = SpeakerVoices::default();
+        voices.note("0", Some(&named("赵力", 0.47)), true);
+        assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
+    }
+
+    /// Corroboration settles *which* subject, never *whether* there is one. A turn
+    /// the store declined to name is not rescued by anybody being on camera.
+    #[test]
+    fn corroboration_never_invents_a_subject_the_store_did_not_propose() {
+        let mut voices = SpeakerVoices::default();
+        voices.note("0", None, true);
+        assert_eq!(voices.subject("0"), None);
     }
 
     #[test]
     fn turns_split_between_two_people_name_neither() {
         let mut voices = SpeakerVoices::default();
-        voices.note("0", Some(&named("赵力", 0.48)));
-        voices.note("0", Some(&named("赵君宁", 0.47)));
+        voices.note("0", Some(&named("赵力", 0.48)), false);
+        voices.note("0", Some(&named("赵君宁", 0.47)), false);
         assert_eq!(voices.subject("0"), None, "sounding like both is not being either");
         // A third turn breaks the tie.
-        voices.note("0", Some(&named("赵力", 0.46)));
+        voices.note("0", Some(&named("赵力", 0.46)), false);
         assert_eq!(voices.subject("0").as_deref(), Some("赵力"));
     }
 
     #[test]
     fn speakers_are_weighed_apart_and_an_unheard_one_is_nobody() {
         let mut voices = SpeakerVoices::default();
-        voices.note("0", Some(&named("赵力", 0.47)));
-        voices.note("1", Some(&named("赵力", 0.47)));
+        voices.note("0", Some(&named("赵力", 0.47)), false);
+        voices.note("1", Some(&named("赵力", 0.47)), false);
         assert_eq!(voices.subject("0"), None, "one turn each, not two for either");
         assert_eq!(voices.subject("2"), None, "a speaker with no turns is unplaced");
     }
@@ -1516,7 +1573,7 @@ mod tests {
     fn turns_that_named_nobody_are_kept_as_nobody() {
         let mut voices = SpeakerVoices::default();
         for _ in 0..5 {
-            voices.note("0", None);
+            voices.note("0", None, false);
         }
         assert_eq!(voices.subject("0"), None, "five unplaced turns do not add up to a person");
     }

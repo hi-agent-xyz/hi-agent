@@ -246,6 +246,34 @@ the expensive kind. The captured-still path is safe from this in a way the alway
 lane is not: somebody chose to take that picture. Presence waits for a way to say *that
 is a screen*.
 
+## One sense may break the other's tie
+
+**Amended September 7, 2026.** The two recognizers had never met. A face scoring 0.83
+on camera and a voice scoring 0.47 in the same second were two answers to one question,
+and the second stayed unplaced because it could not clear a margin the first had already
+settled.
+
+So when the camera has **exactly one identified person** in frame, a voice match naming
+that same person is taken, and a lone turn naming them settles the speaker without
+waiting for a second one. Three limits keep it from becoming a way to guess:
+
+- **What corroboration buys is the margin, and only the margin.** A tie is the store
+  saying *it could be either of them*, which is a question another sense can answer. The
+  floor still has to be cleared, and an incoherent gallery still gets its objection.
+- **No score is ever adjusted.** A number nudged by another modality cannot be explained
+  afterwards, and `basis` exists so that how an answer was reached stays legible. The
+  evidence stays exactly as strong as it was; what changes is which of two equally good
+  readings is taken.
+- **It runs one way — face corroborates voice, never the reverse.** Face's floor is
+  measured to sit in a gap with no overlap between same and different people; voice's is
+  a guess in the region where the two distributions meet. Letting the guess settle the
+  measurement would be borrowing certainty in the wrong direction.
+
+And it is only ever *exactly one* person: an empty room, a crowd, and a single stranger
+all say the same thing about who is here — nothing to borrow. The presence map behind
+it is up to 2.5 s stale on arrival and 8 s on departure, which is the accuracy of *who
+is in the room* and not of *who spoke*.
+
 ## Sender is not subject
 
 Attribution answers *who sent this*. It never answers *who this is about*.
