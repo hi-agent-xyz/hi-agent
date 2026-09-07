@@ -21,7 +21,7 @@ import { useSyncExternalStore } from "react";
 // `<html data-shape="phone">` rather than left as a media query each rule repeats.
 // Same reason `data-chrome` is a flag on `<html>` (`lib/chrome.ts`), plus one this
 // one has on its own: **the gesture that goes with the shape is JavaScript**
-// (`ui/PageEdge.tsx`), and a query written once in CSS and again in `matchMedia`
+// (`ui/PanelEdge.tsx`), and a query written once in CSS and again in `matchMedia`
 // is two answers waiting to disagree — a page that swipes back on a screen the
 // stylesheet is still drawing as a popover.
 export const PHONE = "(max-width: 640px) and (pointer: coarse)";

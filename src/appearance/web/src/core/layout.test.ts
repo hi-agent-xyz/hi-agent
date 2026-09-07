@@ -7,14 +7,14 @@ import { stage, type StageInput } from "./layout";
 
 const at = (over: Partial<StageInput> = {}): StageInput => ({
   content: false,
-  collapsed: false,
+  away: false,
   ...over,
 });
 
 describe("stage", () => {
   it("nothing on the stage → the conversation is the face", () => {
     const s = stage(at());
-    expect(s.conversation).toBe("popover");
+    expect(s.conversation).toBe("panel");
     expect(s.demote).toBe(0);
   });
 
@@ -22,7 +22,7 @@ describe("stage", () => {
   // conversation to its newest line, and the only way back was to close the view.
   it("a view on screen → the conversation stays over it, it does not collapse", () => {
     const s = stage(at({ content: true }));
-    expect(s.conversation).toBe("popover");
+    expect(s.conversation).toBe("panel");
     expect(s.demote).toBe(0.72);
   });
 
@@ -37,28 +37,27 @@ describe("stage", () => {
   it("the person puts it away → the pill, and the line being written goes with it", () => {
     // There is no separate answer for the input any more: it is inside the
     // conversation, so putting the conversation away puts the line away too.
-    const s = stage(at({ content: true, collapsed: true }));
+    const s = stage(at({ content: true, away: true }));
     expect(s.conversation).toBe("pill");
   });
 
   // Reversed on purpose. The pill is timed now, so what is left behind is the room
-  // and a line that fades rather than a shelf — and the control that does this is
-  // the text channel's, which cannot be the one button in the cluster that goes
-  // dead in the state where its channel is the whole face.
+  // and a line that fades rather than a shelf.
   it("putting it away with nothing up leaves the room, not the stage", () => {
-    expect(stage(at({ collapsed: true })).conversation).toBe("pill");
+    expect(stage(at({ away: true })).conversation).toBe("pill");
   });
 
-  // The rail's width threshold went with the rail: a popover splits no window, so
-  // a narrow one gets the whole scrollback rather than only the newest line, and
-  // the pass has no `width` input left to answer with.
-  it("the presentation is the person's toggle alone, at every window size", () => {
-    expect(stage(at({ content: true })).conversation).toBe("popover");
-    expect(stage(at({ content: true, collapsed: true })).conversation).toBe("pill");
+  // The rail's width threshold went with the rail, and the one that replaced it
+  // lives in `lib/panel.ts` — which stops a shape has. This pass reads no width at
+  // all, so a narrow window gets the whole scrollback rather than only the newest
+  // line.
+  it("the presentation is where the panel is, at every window size", () => {
+    expect(stage(at({ content: true })).conversation).toBe("panel");
+    expect(stage(at({ content: true, away: true })).conversation).toBe("pill");
   });
 
-  // The self-view is full-bleed as a backdrop; the conversation floats in its
-  // corner over it, which is where it floats over everything else too. Whether the
+  // The self-view is full-bleed as a backdrop; the panel sits beside or over it,
+  // which is where it sits relative to everything else too. Whether the
   // camera is *on* is not an input any more — it was read only to decide that the
   // stage was "occupied", and there is no second box left to be pushed out of.
   it("the camera is the backdrop until a view leads, and moves nothing else", () => {
@@ -73,7 +72,7 @@ describe("stage", () => {
     // and the only one that ever did rendered a fixed outage message rather than the
     // words — so the claim took the record and the input line away at the moment they
     // were most needed. The claim is gone; the host always draws them.
-    expect(stage(at({ content: true })).conversation).toBe("popover");
-    expect(stage(at({ content: true, collapsed: true })).conversation).toBe("pill");
+    expect(stage(at({ content: true })).conversation).toBe("panel");
+    expect(stage(at({ content: true, away: true })).conversation).toBe("pill");
   });
 });

@@ -261,21 +261,15 @@ export function Chat({ messages, interim, typing, onLoadOlder, children }: ChatP
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
       <div className="hi-chat">
-        {/* One line, and it names the surface: this card is the conversation.
-            Nothing else belongs in it: there is no thread to title (the record is
-            one append-only list — `docs/arch/text-transcript.md`), so no "new
-            chat" to offer beside it, and the one piece of the agent's current
-            state worth showing is shown at the foot, where the reply it is about
-            will land — not in a subtitle up here.
-
-            It used to name the other side — the app's mark and "Hi Agent" — which
-            is a messenger's habit and wrong here: there is exactly one agent, its
-            face is in the window's own title, and the card sits over the agent's
-            own views. The mark went with the name; a badge on a panel that is
-            always the same panel is decoration on a row that is already a row. */}
-        <header className="hi-chat-head">
-          <span className="hi-chat-title">Conversation</span>
-        </header>
+        {/* No title row. There was one, reading "Conversation", and it named the
+            surface because the surface was a card floating in a corner with nothing
+            else to say what it was. The panel's tabs say it now, in the row directly
+            above — so the row here was the same word twice, one row apart. What it
+            argued still holds and is now argued by the tab: there is no thread to
+            title (the record is one append-only list —
+            `docs/arch/text-transcript.md`), so no "new chat" to offer beside it, and
+            the one piece of the agent's current state worth showing is shown at the
+            foot, where the reply it is about will land. */}
         <MessageScroller className="hi-chat-scroller">
           <ScrollbackTrigger
             onLoadOlder={onLoadOlder}

@@ -118,17 +118,12 @@ export interface AgentSession {
   visionStream: MediaStream | null;
   /** Whether the agent's voice (audio output) channel is on. */
   audioOutput: boolean;
-  /** Whether the text channel is on — the conversation and the line that adds to
-   * it, which are one surface and go up and away together. */
-  text: boolean;
   /** Flip the audio-input channel on/off independently of the others. */
   toggleAudio: () => void;
   /** Flip the vision-input channel on/off independently of the others. */
   toggleVideo: () => void;
   /** Flip the agent's voice (audio output) on/off; text output is unaffected. */
   toggleAudioOutput: () => void;
-  /** Show the conversation, or put it away. */
-  setTextChannel: (on: boolean) => void;
   /** Rejects if the line did not reach the server, so a caller can say so. */
   sendText: (text: string) => Promise<void>;
 }
@@ -173,27 +168,6 @@ export function useAgentSession(): AgentSession {
   // the upload-only `visionRef` so a render is triggered when it appears/clears.
   const [visionStream, setVisionStream] = useState<MediaStream | null>(null);
   const [audioOutput, setAudioOutput] = useState(prefsRef.current.audioOutput);
-  // The text channel starts OFF: a page that has just loaded is a room nobody has
-  // spoken in yet, and the conversation is what a person reaches for, not what
-  // they arrive at. It used to start on, on the reasoning that the panel is the
-  // default face of the application — which is true of a desktop window, where it
-  // is a 420px popover in a corner, and false everywhere the panel is the whole
-  // screen. Under 420px `.hi-stage` is a full-bleed sheet (`ui/global.css`), so on
-  // a phone and in the menu-bar popover the old default covered the face with the
-  // chat on every load, and there are a lot of loads: the iOS client mints a fresh
-  // session cookie per launch and reloads the page (`CoreWebView.install`), so a
-  // put-away never survived to the next opening.
-  //
-  // Still not remembered across visits, and for the unchanged reason: a put-away
-  // is something a person does to *this* screen for a minute, not a setting that
-  // should still be in force tomorrow, least of all when a stray press behind the
-  // popover is one of the ways to do it. The state is symmetric now — neither
-  // being up nor being away outlives the page.
-  //
-  // Reaching for it is one gesture either way: the text control in the cluster
-  // (`ui/ChannelControls.tsx`), which is the only one on a phone, or any printable
-  // key, which opens the panel and seeds the line (`ui/Composer.tsx`).
-  const [textOn, setTextOn] = useState(false);
   const [backendActivity, setBackendActivity] = useState<AgentActivity | null>(null);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   // Is anyone actually looking at this window right now?
@@ -674,9 +648,6 @@ export function useAgentSession(): AgentSession {
     });
   }, [persistPrefs]);
 
-  // ---- text channel: show the conversation, or put it away ---------------
-  const setTextChannel = useCallback((on: boolean) => setTextOn(on), []);
-
   // Restore the input channels the user last had on — but *honestly*: a saved-on
   // mic/camera is re-acquired only when its permission is already granted, so the
   // restore is silent (no surprise prompt). A channel that can't be restored
@@ -885,11 +856,9 @@ export function useAgentSession(): AgentSession {
     videoError,
     visionStream,
     audioOutput,
-    text: textOn,
     toggleAudio,
     toggleVideo,
     toggleAudioOutput,
-    setTextChannel,
     sendText,
   };
 }

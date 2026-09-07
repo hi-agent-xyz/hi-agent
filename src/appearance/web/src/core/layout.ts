@@ -17,9 +17,9 @@
 // blacks out the feed; re-mounting the chat throws away the scroll position and
 // every page of scrollback already fetched.
 
-/** How the conversation is presented. One surface, three states — not three surfaces.
+/** How the conversation is presented. One surface, two states — not two surfaces.
  *
- * - `popover` — the panel in the corner the controls hold, carrying the full
+ * - `panel`   — the conversation as the panel's Messages tab, carrying the full
  *               scrollback and, in its foot, the line being written. **The only
  *               box the conversation ever stands in**, whether or not the agent
  *               has something up: it used to fill the frame while the stage was
@@ -37,13 +37,14 @@
  * inside it (`ui/Composer.tsx`). That is what lets one control own the surface —
  * see `docs/arch/stage.md`.
  *
- * The popover replaced a rail: a column the view had to inset past for as long as
- * the conversation was open. The view is what is being read while it is up, and a
- * permanent third of the window is a steep price for a surface that is idle most
- * of that time — overlaying on demand costs the view nothing while it is closed.
- * See `docs/arch/stage.md`.
+ * The panel replaced a corner popover, which had replaced a rail. The rail was a
+ * column the view had to inset past for as long as the conversation was open, and
+ * it lost on the word *permanently*: a third of the window whether or not anyone
+ * was reading. The panel's middle stop is that same column, charged only while a
+ * person is holding it open and reflowing only because they pulled it there. See
+ * `docs/arch/stage.md` § *The panel, and the axis it runs on*.
  */
-export type Conversation = "popover" | "pill";
+export type Conversation = "panel" | "pill";
 
 /** The self-view fills the frame when nothing else is on it, else a corner pip. */
 export type Camera = "fill" | "pip";
@@ -51,11 +52,11 @@ export type Camera = "fill" | "pip";
 export interface StageInput {
   /** The agent has a view up. */
   content: boolean;
-  /** The conversation is not up — the text channel's own on/off. True on a fresh
-   * page (the channel starts off, `hooks/useAgentSession.ts`) and true again once
-   * the person puts the panel away. A window preference, never server state, so a
-   * phone cannot collapse a desktop's. */
-  collapsed: boolean;
+  /** The panel is at the room — off the right-hand side of the window, so the
+   * conversation is not on screen and the newest line is a caption over whatever
+   * is. A window's own position on the axis (`lib/panel.ts`), never server state,
+   * so a phone cannot put a desktop's panel away. */
+  away: boolean;
 }
 
 export interface Stage {
@@ -87,7 +88,7 @@ export interface Stage {
  * words.
  *
  * **Asking works with nothing on the stage too**, and that is a reversal: the pass
- * used to ignore `collapsed` unless something else was up, on the reasoning that
+ * used to ignore the put-away unless something else was up, on the reasoning that
  * hiding the only thing on screen is not a thing to offer. Two changes make it
  * one. The pill is timed now, so what is left behind is the room and a line that
  * fades, not a shelf. And the same control that puts the conversation away is the
@@ -95,17 +96,18 @@ export interface Stage {
  * nothing in the state where it is the whole face. Any printable key brings it
  * back (`ui/Composer.tsx`).
  *
- * There is no width threshold any more. The rail needed one — below ~760px a
- * window cannot be split into two usable columns — but a popover splits nothing,
- * so the same gesture works at every size and a narrow window gets the whole
- * scrollback rather than only the newest line.
+ * There is no width threshold *here* any more. The one that survives is in
+ * `lib/panel.ts`, where it belongs: a phone has no middle stop, because below
+ * ~640px a screen cannot be split into two usable columns. This pass reads no
+ * width at all, and a narrow window gets the whole scrollback rather than only
+ * the newest line.
  */
 export function stage(input: StageInput): Stage {
   // The host always draws the conversation. A view used to be able to stand it down by
   // declaring `owns_conversation`, and the one view that ever did was the outage notice,
   // which renders a fixed message rather than the words — so the claim took away the
   // record and the line at the moment the person most needed both. See `docs/arch/stage.md`.
-  const conversation: Conversation = input.collapsed ? "pill" : "popover";
+  const conversation: Conversation = input.away ? "pill" : "panel";
 
   return {
     conversation,

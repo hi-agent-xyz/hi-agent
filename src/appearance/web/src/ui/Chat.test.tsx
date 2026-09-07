@@ -100,24 +100,27 @@ describe("the avatar column", () => {
 
 });
 
-describe("the card", () => {
-  // The shape borrowed from shadcn's own chat: a title line, the messages, the
-  // line being written. One card in one box — where that box is is the
-  // compositor's business and not this component's.
-  it("names the surface, above the messages", () => {
+describe("the conversation", () => {
+  // The shape borrowed from shadcn's own chat was a title line, the messages, the
+  // line being written. The title line is gone: the panel's tabs name this surface
+  // in the row directly above it (`ui/Panel.tsx`), so a header here was the same
+  // word twice, one row apart — and where the box is at all is the compositor's
+  // business, not this component's.
+  it("names nothing, because the tab above it does", () => {
     const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
-
-    const title = html.indexOf('class="hi-chat-head"');
-    const scroller = html.indexOf('data-slot="message-scroller"');
-    expect(title).toBeGreaterThanOrEqual(0);
-    expect(html).toContain("Conversation");
-    expect(title, "the title is the card's first row").toBeLessThan(scroller);
+    expect(html).not.toContain("hi-chat-head");
+    expect(html).not.toContain("Conversation");
   });
 
-  // It named the other side — the app's mark and "Hi Agent" — which is a
+  it("opens on the messages", () => {
+    const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
+    expect(html.indexOf('data-slot="message-scroller"')).toBeGreaterThanOrEqual(0);
+  });
+
+  // It named the other side too — the app's mark and "Hi Agent" — which is a
   // messenger's habit: there is one agent, its face is the window's own title,
   // and a badge on a panel that is always the same panel is decoration.
-  it("carries no mark beside the title", () => {
+  it("carries no mark", () => {
     const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
     expect(html).not.toContain("icon.svg");
   });

@@ -54,7 +54,14 @@ pages:** on a screen that is narrow *and* touched, the conversation and the view
 are pushed pages, full bleed, swiped back off the left edge — not panels floating over a
 room, which is a window's arrangement and a phone is not a window; and the channel controls
 are a finger's size there rather than the menu-bar popover's, which a `max-width` rule had
-been quietly imposing on both. Argued in *The phone stacks pages*.
+been quietly imposing on both. Argued in *The phone stacks pages*. **Amended September 7,
+2026 — the host's surfaces are one panel on one axis, and the room keeps no controls:** the
+conversation, the views navigator and the channel controls stop being three surfaces with
+two drawings apiece and become one box that comes in from the right at one of three stops,
+pushing the view narrower rather than covering it; the corner cluster is deleted, so a room
+with something in it is that thing and nothing else. That reverses the overlay half of *The
+popover*, folds the views page into a tab, and takes back this document's own "every channel
+is one press away wherever you are". Argued in *The panel, and the axis it runs on*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -145,6 +152,14 @@ one surface now. See *The line is inside the conversation*.
 *August 17: this section replaced one called **The rail**, which specified a ~400px column
 beside the content, built and shipped that way. What it argued, and why it lost, is below.*
 
+*September 7: **the box described here is gone, and half of what it argued survives it.** The
+conversation is the panel's first tab now, not a corner popover, and at the panel's middle
+stop it pushes the view narrower instead of covering it — which is the rail's geometry
+returning. Why that is not the rail losing twice is argued in* The panel, and the axis it
+runs on. *What stands: the conversation is never moved by anything the agent does, it is
+charged to the view only while someone has pulled it in, and the pill carries the newest line
+behind it. What goes: the corner, the ~420px overlay, and the press-behind dismissal.*
+
 The conversation opens as a panel pinned to the **bottom right**, rising out of the button
 that opens it — over the content when there is content, over the room when there is not.
 Not a column beside the content, which is what this document originally specified and what
@@ -227,9 +242,180 @@ dismissable, still comes on any printable key. The pill is unchanged. *(It was a
 by default here, until September 2 moved the start to the pill — see* The conversation opens
 when it is reached for.*)* A view that owns the conversation still stands the whole surface down.
 
+## The panel, and the axis it runs on
+
+*September 7, 2026.*
+
+### What was actually on the cover plane
+
+Three of the host's surfaces were each drawn two different ways, and which drawing you got
+was decided by a media query:
+
+| | wide | phone |
+|---|---|---|
+| the conversation | a ~420px popover in the bottom-right corner | a full-bleed page pushed from the right |
+| the views navigator | a short band above the controls | a full-bleed page pushed from the right |
+| the channel controls | six discs in the corner | the page's head bar, text control drawn as a chevron |
+
+That is six drawings, three dismissal rules (Escape, press-behind, swipe), two page types on
+a stack, and a `bar` prop whose whole job was to say which of two positions a row of buttons
+was standing in. Every one of them was argued for on its own and every argument was right on
+its own. Together they are a cover plane nobody can hold in their head.
+
+**They are one thing on one axis.** The conversation, the views and the controls are all *the
+person's side of the screen*, they are all reached at the same moment, and they all leave the
+same way. So they are one box — **the panel** — and where it is, is a number.
+
+### Three stops
+
+The panel lives off-screen to the right. Pulling it in is a drag that begins at the right
+edge; pushing it back out is a drag that begins at the left edge, which is the gesture
+[`PageEdge`](../../src/appearance/web/src/ui/PanelEdge.tsx) already implemented, grown a
+forward half and renamed `PanelEdge` for it.
+
+| Stop | The view gets | The panel is |
+|---|---|---|
+| `room` | the whole frame | off-screen |
+| `panel` | the frame minus the panel's measure, **reflowed** | ~420px against the right edge |
+| `full` | nothing | the whole frame |
+
+**Not every shape has every stop.** A 390px screen cannot be split into two usable columns —
+that threshold is the one piece of window measurement worth keeping, and it is the same
+number the rail died of.
+
+| Shape | Stops | How it moves |
+|---|---|---|
+| `phone` | `room` ↔ `full` | the edge drag, and only the edge drag |
+| `wide` | `room` ↔ `panel` ↔ `full` | the edge drag, a click on the edge, a printable key, `←` / `→` |
+| `tv` | `room` ↔ `panel` | `→` opens, Back closes |
+
+### Why the rail is allowed back at the middle stop
+
+At `panel` the view plane insets and the content reflows into what is left. That is the rail,
+which [The popover](#the-popover) killed on August 17 — so the reversal has to answer that
+section, not step around it.
+
+**The rail lost on a word that is no longer true, and that word was *permanently*.** It cost
+the view 320–460px "and the same third whether the conversation was being read or had been
+idle for an hour". The middle stop costs the same width *while a person is holding the panel
+open*, which is the popover's own defence — "a popover charges the same width only while it
+is open" — applied to a box that pushes instead of covering.
+
+The stronger test is the one [One box, whatever else is on the stage](#one-box-whatever-else-is-on-the-stage)
+applies to any surface that moves under a reader's eye: **who fires it.** That section's
+objection to the old two-box behaviour was not that the conversation was re-laid; it was that
+*"the person is not the one who fires it — the agent is, by showing something"*. Here the
+person is. A thumb on the edge is what reflows the board, at the moment they asked for both
+things at once. Nothing the agent does moves the panel, and nothing the agent does changes the
+stop.
+
+**The cost, stated rather than hidden: some views will not reflow well.** A view is a compiled
+artifact composed for the frame it was handed, and 1512px → ~1090px is a real change to that
+frame mid-look. Boards that lay out in columns will be fine; a board with a fixed-width table
+will scroll. This is payable because it is the person's own action and because `full` is one
+more stop away when they would rather have the panel whole — but it is a cost, not a wash, and
+the fix if it bites is composing views for a narrower frame, never a host that refuses to
+push.
+
+### The room keeps no controls at all
+
+The corner cluster is deleted. A room with something in it is that thing, edge to edge, with
+the caption pill and the camera pip over it and nothing else.
+
+**This takes back a rule this document and `ChannelControls` both stated**: *every control is
+always present, no state-gated chrome, so a user who can't use a given channel still has a
+clear way in or out.* [The phone stacks pages](#the-phone-stacks-pages) leaned on it
+specifically — *"on a phone the mic is the main way in, and 'go back to the room to unmute' is
+a tax on the thing people do most"* — and that is exactly the tax now being charged.
+
+It is charged because the rule was answering a question nobody had after the axis existed. The
+rule protects against a channel becoming *unreachable*; one gesture is not unreachable, and
+the gesture is the same one that reaches everything else. What six permanent discs cost, by
+contrast, was paid on every frame the agent ever put up: they sat on paper of a value they
+could not know, carried their own scrim to survive it, and were the reason the corner was the
+one place a view could not use.
+
+**What replaces the rule is a narrower one that is still worth keeping:** *no channel is
+behind a mode.* Every control is in the panel's head, in one row, visible at every stop and on
+every tab — not on a settings tab, not behind a disclosure. Opening the panel is one act;
+after it, nothing is further away than it was.
+
+### What is in the panel
+
+A head and a body.
+
+- **Head** — the channel discs, one row: mic · speaker · camera · close-view. Always there,
+  every stop, every tab. The text control is gone: it opened and closed the conversation, and
+  the panel is what does that now, so it was a button that would have had to mean "close the
+  thing you are looking at from inside it".
+- **Body** — tabs. **Messages** (the default) and **Views**. `ViewsBand`'s band-versus-page
+  split goes with them: it is a tab at every stop, and a tab has the room the band was
+  apologising for not having.
+
+### The ways in, and the one that is thin
+
+Zero buttons means the entrances carry the whole load, so they are named:
+
+| | |
+|---|---|
+| a thumb | drag from the right edge; the panel tracks the finger and settles on distance or a flick, the existing rule |
+| a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `→` and `←` move a stop, `Escape` retreats one |
+| a D-pad | `→` opens. [`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) calls `preventDefault()` only when it actually moved the focus, so with nothing focusable in the room a right-press finds nothing, falls through, and the shell takes it. Back closes — the depth ladder already exists |
+| a mouse | the right-edge strip takes a **click** as well as a drag, and shows a hairline on hover within it |
+
+**The mouse is the thin one and it is an accepted cost.** A hover-revealed hairline is
+discoverable by a person who happens to travel to the right edge and by nobody else; there is
+no equivalent of the phone's platform-taught edge swipe on a desktop. It is paid because the
+alternative is one permanent disc in a corner, which is the thing being removed, and because
+the desktop has the entrance the phone does not: typing.
+
+### Where it starts
+
+`panel` on wide, `room` on phone and tv — and the stop does not outlive the page, like the
+collapse it replaces.
+
+This partly reverses [The conversation opens when it is reached for](#the-conversation-opens-when-it-is-reached-for),
+which moved the desktop's first load to the pill. That decision was made in a face where six
+discs in the corner advertised the way back; with the corner empty, a wide window that boots
+to bare paper has no visible way in at all. A wide window has room for the room *and* the
+panel, so it opens showing both. The phone does not, and its swipe is the platform's own
+idiom, so it still boots to the room.
+
+### Accepted, as costs
+
+- **The mouse entrance is a hover-revealed strip.** Above.
+- **A view reflows when the person pulls the panel to the middle stop.** Above.
+- **Turning the mic on is two acts, not one.** The tax [The phone stacks pages](#the-phone-stacks-pages)
+  refused to pay, paid.
+- **A tap in the window's leftmost or rightmost twenty points may do nothing but move the
+  panel** — a strip claims its touches up front, the same trade iOS makes for its own edge.
+  A strip is only mounted when it has somewhere to go, so this is never charged where it
+  would be worst: no left strip stands over a board at the `room` stop, and no right strip
+  stands over the panel at `full`. The one place it is real is a window at `panel`, where
+  the panel's rightmost twenty points are the advance strip.
+
+### Open
+
+- **Is `panel` the right middle measure on a television?** It is a wide shape, so it gets the
+  stop, but a ~420px column read from three metres away is not obviously the same object as a
+  ~420px column read from sixty centimetres. Left at the wide measure until someone watches
+  one.
+- **A third tab.** Two is a thin tab strip. Nothing else has earned one yet; when something
+  does, it goes here rather than growing a second navigator.
+
 ## The phone stacks pages
 
 *September 2, 2026.*
+
+*September 7: **the phone's two pages are one panel**, and the controls no longer ride in a
+page's head bar because there is no corner cluster left for them to be an alternative
+placement of — see* The panel, and the axis it runs on. *What this section established and
+what still holds: what a phone is and why width alone cannot say it; that a page arrives from
+the right and leaves under the finger, one-to-one; that it is placement and never lifecycle,
+so `<Chat>` is mounted once through every push and pop; the `visualViewport` floor; and the
+iPhone client not claiming the same edge. Read it for those. Its argument that every channel
+must stay one press away is the part that was taken back, and the taking-back is argued
+where.*
 
 Everything above this section is written for a **window**. The popover argument — charge
 the view its width only while someone is reading, dismiss by pressing what is behind —
@@ -247,7 +433,7 @@ way under the finger.
 |---|---|
 | What a phone is | narrow **and** coarse — `(max-width: 640px) and (pointer: coarse)`, published as `<html data-shape="phone">` ([`lib/shape.ts`](../../src/appearance/web/src/lib/shape.ts)) |
 | The stack | the **room** (presence, the agent's view, the caption, the controls) with up to two pages on it: the conversation, and the views page over it |
-| Going back | drag from the left twenty points; the page tracks the finger and leaves on distance **or** a flick ([`ui/PageEdge.tsx`](../../src/appearance/web/src/ui/PageEdge.tsx)). The chevron in the page's bar does the same thing without the gesture |
+| Going back | drag from the left twenty points; the page tracks the finger and leaves on distance **or** a flick (`ui/PageEdge.tsx`, now [`ui/PanelEdge.tsx`](../../src/appearance/web/src/ui/PanelEdge.tsx)). The chevron in the page's bar does the same thing without the gesture |
 | The bar | the same six channel controls, laid as the page's head instead of the room's corner. The text control is drawn as the chevron there, because from inside the page that is what it does |
 
 **Width alone cannot say what a phone is, and assuming it could is the defect this closes.**
@@ -1434,28 +1620,26 @@ the agent can read but not act on.
 
 ## Accepted consequences
 
-- **The popover occludes the lower-right of the view while it is open.** That is the trade
-  taken knowingly: a board's own right-hand column can be behind it, and the way to see it
-  is the same gesture that opened the panel. The alternative was occluding nothing and
-  paying a third of the window all the time.
+- ~~**The popover occludes the lower-right of the view while it is open.**~~ Gone with the
+  popover on September 7: the panel pushes rather than covers, so nothing is behind it. What
+  replaced this consequence is the reflow — see *The panel, and the axis it runs on*.
 - **The empty room is no longer a wide card in the middle of it** — the panel keeps its
   corner and its ~420px whether or not anything is behind it. The grandeur is the price of
   the conversation never being moved by something the agent did (*One box, whatever else is
   on the stage*).
-- The content view is handed the whole frame in every state, so it no longer reflows when
-  the conversation opens. (Under the rail this was the opposite consequence: *"a view built
-  assuming the full window reflows"*.)
+- ~~The content view is handed the whole frame in every state, so it no longer reflows when
+  the conversation opens.~~ True only at the `room` stop after September 7. The rail's
+  consequence — *"a view built assuming the full window reflows"* — is back at the middle
+  stop, and back on purpose: the person fires it.
 - Two windows on the same conversation can be in different presentations. That is intended
   — it is the same conversation, drawn to fit.
 - The pill still exists, so there are two chat renderers to keep honest. They share
   `useMessages` and the pill renders one message, so the divergence is bounded to styling.
 - Popover width is a host constant, not a preference. If it becomes one, it is a window
   preference like the collapse — never appearance state.
-- **A page that has just loaded shows no scrollback.** Someone opening a window to check
-  what was said reaches for the panel first, and on the desktop that is a press rather than
-  the keystroke a reply already costs. Taken because the reverse — the panel arriving unasked
-  — is paid on every load by every surface where the panel is the whole screen (*The
-  conversation opens when it is reached for*).
+- **A page that has just loaded shows no scrollback** — on the phone and the television.
+  On a wide window it does again as of September 7, because the corner that used to advertise
+  the way in is empty now (*The panel, and the axis it runs on* § *Where it starts*).
 
 ## Work
 
@@ -1581,6 +1765,15 @@ wear the same scrim (`--scrim-bg` / `--scrim-ink`, dark ground and light ink, an
 deliberately *not* flipped by the skin, because a pill is dark on white paper and dark on a
 night-sky poster alike). The band keeps the skin's surface, because it is full of the skin's
 own type, and takes `--chrome-edge` for an edge that flips.
+
+*September 7: **two of those three no longer float over anything.** The cluster and the band
+are inside the panel, which pushes rather than covers, so nothing they are drawn against is
+the agent's. The caption pill is the only chrome left over a view, and it still needs its
+scrim for exactly the reason given here. The discs kept theirs too — not because they need
+it any more, but because a channel disc is the same object wherever it is drawn and a second
+dressing for a second home is the duplication the panel exists to remove. The decision this
+section states — nothing is reserved, the view is handed the window whole — is unchanged and
+is what makes the `room` stop possible at all.*
 
 What this replaces is an inset the layer pressed onto every view's root as a transparent
 border — the titlebar strip on top, a gutter either side, 76px for the controls at the

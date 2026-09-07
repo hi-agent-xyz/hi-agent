@@ -383,7 +383,7 @@ button,
      in the face still scrolls and the page can still be zoomed deliberately.
      Declared once here rather than per control, because the browser resolves
      touch-action by walking up from the touched node — and a descendant needing
-     more still overrides it (`.hi-page-edge` takes `none` for its drag). */
+     more still overrides it (`.hi-panel-edge` takes `none` for its drag). */
   touch-action: manipulation;
 
   /* The three planes, and the only global z-indexes in the application. They are
@@ -397,17 +397,33 @@ button,
   --z-view: 1;
   --z-cover: 2;
 
-  /* The conversation panel's box — the one it stands in whatever else is on the
-     stage. Its measure is a readable line, never a column of two-word wraps, and
-     it gives way to the window on anything small enough that a fixed 420px would
-     run off the edge. The view frame does not inset past it: nothing does, which
-     is the whole of what changed when the rail became a popover. */
-  --hi-pop-width: min(420px, calc(100vw - 40px));
-  --hi-pop-right: max(20px, var(--hi-safe-right));
-  /* The bottom band's rows, counted from the window's floor: the control cluster
-     is 38px tall sitting at 20, and the input line clears it by 10. Named so the
-     panel can sit on whichever of the two is actually the top row. */
-  --hi-pop-floor: calc(max(20px, var(--hi-safe-bottom)) + 48px);
+  /* The panel's measure at the middle stop — a readable line, never a column of
+     two-word wraps, and it gives way to the window on anything small enough that a
+     fixed 420px would run off the edge. Read by the stylesheet for geometry and by
+     `ui/PanelEdge.tsx` for the drag's arithmetic, which is why it is a token and not
+     a literal in one rule. */
+  --hi-panel-width: min(420px, calc(100vw - 40px));
+  /* Where the panel's left edge is, which is the whole of where the panel is.
+     Every stop is a position for this one edge (`lib/panel.ts`), so sliding in,
+     sliding out, widening and narrowing are one motion with different endpoints
+     rather than four animations to keep in step. The resting value comes off
+     `data-stop` below; a drag in flight overwrites it in px and clears it on
+     release. */
+  --hi-panel-left: 100%;
+}
+
+/* The three stops, and the only place the axis becomes geometry.
+   `docs/arch/stage.md` § *The panel, and the axis it runs on*. */
+.hi-root[data-stop="room"] {
+  --hi-panel-left: 100%;
+}
+
+.hi-root[data-stop="panel"] {
+  --hi-panel-left: calc(100% - var(--hi-panel-width));
+}
+
+.hi-root[data-stop="full"] {
+  --hi-panel-left: 0px;
 }
 
 /* --- Planes -----------------------------------------------------------
@@ -425,12 +441,26 @@ button,
   z-index: var(--z-ground);
 }
 
+/* The agent's plane, and the one rule that makes the middle stop a *push* rather
+   than an overlay: the view gives up the panel's measure and reflows into what is
+   left. Keyed on the committed stop alone — never on the drag — because a compiled
+   board re-laying itself sixty times a second under a moving finger is the one cost
+   of pushing that would have made pushing not worth it. During a drag the panel
+   simply slides over the view, and the view re-flows once, when the stop lands.
+
+   `full` does not inset: it covers. A view asked to reflow to zero width is a bug,
+   not a stop. */
 .hi-plane--view {
   z-index: var(--z-view);
+  transition: right 260ms var(--ease);
+}
+
+.hi-root[data-stop="panel"] .hi-plane--view {
+  right: var(--hi-panel-width);
 }
 
 /* The person's plane is transparent to the pointer as a whole; each surface on it
-   takes its own events back (`.hi-channels`, the chat, the pill). Without this
+   takes its own events back (`.hi-panel`, the pill, the edge strips). Without this
    the plane would swallow every click meant for the view underneath it. */
 .hi-plane--cover {
   z-index: var(--z-cover);
@@ -599,78 +629,139 @@ button,
   mix-blend-mode: overlay;
 }
 
-/* --- The conversation ------------------------------------------------- */
-/* The box the card stands in — the ONE box, in every state the conversation has.
-   Not the card itself: that recipe is on `.hi-chat` below.
+/* --- The panel ---------------------------------------------------------
+   The person's side of the screen, all of it, in one box: the channel row, the
+   tabs, the conversation, the views. It was a corner popover plus a floating band
+   plus a fixed cluster, each with a second drawing for the phone; the axis
+   replaced all six (`docs/arch/stage.md` § *The panel, and the axis it runs on*).
 
-   It rises out of the controls cluster, so it is pinned to that corner rather than
-   centred: the button that opens it is directly below its foot, and its right edge
-   is that cluster's right edge, `--hi-pop-right` being the same 20px the controls
-   sit at. Bounded in height rather than stretched to the window — a panel that
-   reaches the titlebar is a drawer, and a drawer is the shape this is not.
+   Positioned by its left edge alone, because that is what the stop moves and what
+   a drag writes. Always in the document at every stop — `room` is this box off the
+   right-hand side, not a state in which it does not exist — which is what lets the
+   scroller keep its position and its already-fetched scrollback across every open
+   and close.
 
-   There used to be a second box here, `.hi-stage--popover`, and this rule was the
-   *lead position*: the card centred in the room at up to 880px, `inset: 0` minus
-   its margins, for as long as the agent had nothing up. The moment it did, the
-   same card jumped to this corner at half the measure and reflowed — a surface
-   someone was reading, moved and resized by something that happened elsewhere.
-   One box costs the empty room a little grandeur and buys the conversation the
-   thing a record needs most: it stays where it was put. The modifier is gone
-   rather than left always-on, so there is no second geometry to keep in step.
-
-   No z-index: it sits on the `cover` plane, after the camera and before the
-   controls in DOM order, which is all the ordering it has ever needed. */
-.hi-stage {
+   No z-index: it sits on the `cover` plane, after the camera and before the edge
+   strips in DOM order, which is all the ordering it has ever needed. */
+.hi-panel {
   position: absolute;
-  right: var(--hi-pop-right);
-  bottom: var(--hi-pop-floor);
-  width: var(--hi-pop-width);
-  height: min(58vh, 560px, calc(100dvh - var(--hi-safe-top) - 148px));
+  left: var(--hi-panel-left);
+  top: 0;
+  bottom: 0;
+  right: 0;
   display: flex;
+  flex-direction: column;
   pointer-events: auto;
+  overflow: hidden;
+  border-left: 1px solid var(--surface-border);
+  background: var(--surface-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: -18px 0 60px var(--shadow-strong);
+  transition: left 260ms var(--ease);
 }
 
-/* The rise, on the shown state rather than on the element, because the element is
-   never mounted or unmounted: a keyframe attached to `.hi-stage` itself would run
-   once at page load and never again on an open. Newly matching this selector is
-   what starts it, so every open rises out of the corner and every close is
-   instant, which is what a dismissal should feel like. */
-.hi-stage[data-shown="true"] {
-  animation: hi-popover-in 180ms var(--ease);
+/* While a finger has it. The transition is off so the box tracks the pointer
+   one-to-one rather than chasing it a quarter-second behind — the whole of what
+   makes the gesture read as the panel being moved is that it is being moved. */
+.hi-panel[data-dragging] {
+  transition: none;
 }
 
-/* Collapsed to the pill, or a view rendering the words itself. The chat stays
-   MOUNTED and merely stops being visible — flipping visibility rather than
-   branching is what keeps the scroll position and every page of scrollback
-   already fetched through /api/messages. */
-.hi-stage[data-shown="false"] {
+/* At the full stop it is the window, so the seam and the lift have nothing to sit
+   against and only draw a line down the middle of the screen. */
+.hi-panel[data-stop="full"] {
+  border-left-color: transparent;
+  box-shadow: none;
+}
+
+/* The head: the channel row and the tabs. The same at every stop and on every
+   tab — that is the rule left standing where *every channel is one press away
+   wherever you are* used to be. Two zones on one row, tabs leading, because the
+   tabs are what a person reads and the discs are what they aim at. */
+.hi-panel-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  padding-top: max(10px, var(--hi-safe-top));
+  border-bottom: 1px solid var(--line);
+}
+
+.hi-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.hi-panel-tab {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--fg-mute);
+  transition: color 160ms var(--ease), background 160ms var(--ease);
+}
+
+.hi-panel-tab:hover {
+  color: var(--fg-dim);
+}
+
+.hi-panel-tab.is-on {
+  color: var(--fg);
+  background: var(--line);
+}
+
+/* The body: one tab at a time. `min-height: 0` is what lets a pane shrink instead
+   of pushing the head off the top — a flex item's default `min-height: auto` is
+   its content, and the content here is the whole scrollback. */
+.hi-panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Panes stack rather than flow, so the messages pane can be *hidden* rather than
+   unmounted while the views pane is up: flipping visibility is what keeps the
+   scroll position and every page of scrollback already fetched. */
+.hi-panel-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hi-panel-pane[data-shown="false"] {
   visibility: hidden;
   pointer-events: none;
 }
 
-/* The card, and the whole of it: a title line, the messages, and the line that
-   adds to them standing in the foot. It fills its box, which is the same box
-   always (`.hi-stage` above) — so the card has one measure, and a line that wrapped
-   where it did keeps wrapping there when the agent puts a view up behind it.
+/* The conversation, and the whole of it: a title line, the messages, and the line
+   that adds to them standing in the foot. It fills the pane it is in, which is the
+   panel's body — so it has one measure at a stop, and a line that wrapped where it
+   did keeps wrapping there whatever the agent puts up beside it.
+
+   It draws no frame of its own any more. It used to be a card with its own border,
+   surface, blur and lift, because it *was* the box — a popover floating in a corner
+   over the agent's screen. The panel is the box now, and a card inside a panel is
+   two edges where the eye needs one.
 
    The line used to be a separately positioned box that this stylesheet held flush
-   under the panel by giving it the panel's width and right edge and lifting the
-   panel's floor by exactly its row; inside the card it needs none of that, and
-   neither does the caption dock that used to step up over it.
-
-   `overflow: hidden` is what clips the scroller's square corners to the radius. */
+   under the popover by giving it the popover's width and right edge and lifting its
+   floor by exactly that row; inside the conversation it needs none of that, and
+   neither does the caption dock that used to step up over it. */
 .hi-chat {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
   text-align: start;
-  border-radius: 18px;
-  border: 1px solid var(--surface-border);
-  background: var(--surface-strong);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  box-shadow: 0 18px 60px var(--shadow-strong);
   overflow: hidden;
 }
 
@@ -699,9 +790,9 @@ button,
   min-height: 0;
 }
 
-/* No safe-area inset here: the box the foot sits in already carries one — the
-   panel's floor is `--hi-pop-floor` — so adding it again would push the line a
-   notch's worth off its own surface.
+/* The safe-area inset is here, and it is here alone: the panel reaches the floor of
+   the window at every stop, so the line being written is the thing standing on the
+   home indicator and nothing above it carries the notch on its behalf.
 
    No rule off the top either. The line is already a bounded box of its own on the
    card's glass (`.hi-composer` below), so a divider above it was drawing the same
@@ -1071,34 +1162,32 @@ button,
 }
 
 
-/* --- Channel controls ------------------------------------------------- */
+/* --- Channel controls -------------------------------------------------
+   One row, in the panel's head. It was a cluster fixed to the room's bottom-right
+   corner, and it is not any more: the room keeps no chrome, so there is nothing
+   left standing on paper the agent painted (`docs/arch/stage.md` § *The room keeps
+   no controls at all*). */
 .hi-channels {
-  position: fixed;
-  right: max(20px, var(--hi-safe-right));
-  bottom: max(20px, var(--hi-safe-bottom));
-  /* No z-index: the `cover` plane already puts the whole cluster over the view,
-     so the way in and out stays reachable whatever the agent has on screen. */
-  pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-/* The cluster is the only way in and out, and nothing is held clear for it: the
-   view runs under it corner to corner (see the view-stage note), so it is standing
-   on paper the agent painted, of a value it cannot know. So it carries its own —
-   the same scrim the caption pills carry, for the same reason. A dark disc with
-   light ink reads on a night-sky poster and on white paper alike; a disc dressed in
-   the theme's own `--surface-strong` reads on exactly the half of views the theme
-   guessed right about, which is how eight controls came to be invisible over a dark
-   view while the stylesheet said they were dressed.
+/* The discs kept their scrim through the move, and it is worth saying why, because
+   the reason it was introduced is gone. It was armour: the cluster floated over the
+   agent's screen, of a value it could not know, and a disc dressed in the theme's own
+   `--surface-strong` read on exactly the half of views the theme guessed right about
+   — which is how eight controls came to be invisible over a dark view while the
+   stylesheet said they were dressed. In the panel's head there is nothing to survive.
+   They keep it because a channel disc is the same object wherever it is drawn and a
+   second dressing for a second home is the kind of duplication this refactor was
+   about; the scrim is quiet against the panel's surface and costs nothing.
 
    The ink is full, not `--fg-dim`: these are 1.6px strokes, where antialiasing costs
-   about a third of the nominal colour, and the cluster is the way in and out — it is
-   quiet by being small and cornered, not by being faint. The ring is what draws the
-   disc when the scrim and the paper behind it are close in value, and the shadows
-   are lift, not edge: on a dark backdrop they draw nothing at all, which is why the
-   ring is not one of them. */
+   about a third of the nominal colour. The ring is what draws the disc when the scrim
+   and the surface behind it are close in value, and the shadows are lift, not edge:
+   on a dark backdrop they draw nothing at all, which is why the ring is not one of
+   them. */
 .hi-channel {
   display: grid;
   place-items: center;
@@ -1289,13 +1378,13 @@ button,
   to   { opacity: 1; transform: none; filter: blur(0); }
 }
 
-/* The panel rises out of the corner it is opened from. Only on the way in: the
-   chat is never unmounted, so there is no leaving element to animate — it stops
-   being visible, which is what keeps its scroll position. */
-@keyframes hi-popover-in {
-  from { opacity: 0; transform: translateY(12px) scale(0.985); }
-  to   { opacity: 1; transform: none; }
-}
+/* There is no entrance keyframe for the panel, and that is the point: it does not
+   appear, it *arrives*, along the one axis it lives on, from wherever the last stop
+   left it. A keyframe would be a second account of the same motion, and the two
+   would disagree the moment a finger interrupted one — which is what happened to
+   the popover's rise, fired by a class change and so played when a view appeared
+   and never when someone actually opened the conversation. `transition: left` on
+   `.hi-panel` is the whole of it. */
 
 /* --- Reduced motion --------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
@@ -1329,15 +1418,11 @@ button,
    the panel height are not excluded: those are about width, which is the one thing
    the two hosts really do share. */
 @media (max-width: 420px) {
-  /* The panel is already a full-width sheet at this width — `--hi-pop-width`
-     resolves to the window minus its margins — so all it wants here is the rest
-     of the height. On a 380x540 menu-bar popover the desktop's `58vh` leaves the
-     top half of the whole app empty; there is nothing behind it to keep in view,
-     because at this size the panel IS the face. Still one box: this is the
-     window's size deciding, never what the agent has up. */
-  .hi-stage {
-    height: calc(100dvh - var(--hi-safe-top) - var(--hi-pop-floor) - 8px);
-  }
+  /* The menu-bar popover is ~380x540 and is not a phone — it hovers, so it is
+     `wide` and has all three stops (`lib/shape.ts`). What it does not have is room
+     for two columns, so its middle stop resolves to the whole window: the token
+     already gives way to `100vw - 40px` here, and the inset the view plane takes
+     is then the whole of it. Still one axis; the measure simply ran out. */
   .hi-sentence {
     font-size: clamp(15px, 5vw, 24px);
   }
@@ -1348,8 +1433,6 @@ button,
     font-size: clamp(14px, 4.4vw, 22px);
   }
   :root:not([data-shape="phone"]) .hi-channels {
-    right: max(12px, var(--hi-safe-right));
-    bottom: max(12px, var(--hi-safe-bottom));
     gap: 6px;
   }
   :root:not([data-shape="phone"]) .hi-channel {
@@ -1362,29 +1445,22 @@ button,
   }
 }
 
-/* --- Views band --------------------------------------------------------
-   Opened by the views control and anchored directly above it. A band rather
-   than a sheet: it is opened to compare what is up with something that was,
-   so it stays as short as its two rows allow and dismisses on choosing. It
-   sits on the `cover` plane with the rest of the host's chrome, so nothing
-   the agent shows can rise over it. */
-.hi-views-band {
-  position: fixed;
-  right: max(20px, var(--hi-safe-right));
-  bottom: calc(max(20px, var(--hi-safe-bottom)) + 58px);
-  width: min(720px, calc(100vw - 2 * max(20px, var(--hi-safe-right))));
-  pointer-events: auto;
-  /* The band keeps the skin's surface rather than the scrim, because it is a panel
-     of the skin's own type and thumbnails — so it needs the edge that flips with the
-     skin. A 0.12 hairline had it disappearing on a dark view exactly as the discs
-     did. */
-  border: 1px solid var(--chrome-edge);
-  border-radius: 16px;
-  background: var(--surface-strong);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  box-shadow: 0 10px 40px var(--shadow);
-  overflow: hidden;
+/* --- The views tab -----------------------------------------------------
+   It was a band: a short sheet floating above the views control, anchored to that
+   corner, as short as its two rows allowed because it was opened to compare what
+   was up with something that was — and a tall sheet would have covered the very
+   thing being compared. The axis answers that now instead of the height does: at
+   the middle stop the panel sits *beside* what it is being compared against
+   (`docs/arch/stage.md` § *The panel, and the axis it runs on*), so the tab can
+   have the panel's whole body and still cover nothing.
+
+   So it draws no box of its own — no float, no corner, no surface, no lift. The
+   panel is the box; this is what is in it. */
+.hi-views {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .hi-views-section {
@@ -1702,11 +1778,6 @@ button,
    The dot is the whole of the signal: the alternative is moving them off the
    thing they went back to read, which is the one thing this must never do. */
 @media (max-width: 640px) {
-  .hi-views-band {
-    right: max(12px, var(--hi-safe-right));
-    bottom: calc(max(12px, var(--hi-safe-bottom)) + 46px);
-    width: calc(100vw - 2 * max(12px, var(--hi-safe-right)));
-  }
   .hi-views-card,
   .hi-views-tile {
     width: 128px;
@@ -1716,32 +1787,27 @@ button,
   }
 }
 
-/* --- The phone stacks pages -------------------------------------------
-   Everything above this line is written for a window: surfaces that float in a
-   corner of it, sized to leave the rest of it visible, dismissed by pressing the
-   part of it that is behind them. A phone is not a window. There is no "behind",
-   because anything worth reading is already the whole screen; there is no corner
-   to spare, because 390px has no spare corner; and the pointer is a thumb that
-   arrives from the bottom edge and expects a page it can push away.
+/* --- The phone, and the axis on a screen with no room -------------------
+   The rules above are written for a window. A phone is not one: there is no
+   "behind", because anything worth reading is already the whole screen; there is
+   no corner to spare, because 390px has no spare corner; and the pointer is a
+   thumb that arrives from an edge and expects a surface it can push away.
 
-   So on the phone shape — narrow AND coarse, `<html data-shape="phone">`, see
-   `lib/shape.ts` — the two surfaces the person opens are **pages on a stack**:
-   full bleed, arriving from the right, leaving the same way under the finger
-   (`ui/PageEdge.tsx`). The room is what the stack sits on: the presence, whatever
-   the agent has up, the caption, and the controls in their corner.
+   This used to be a much longer block, because the phone had a whole second
+   arrangement — two surfaces redrawn as pushed pages, a controls row redrawn as a
+   page's head bar, a stack that could be two deep. The axis absorbed all of it
+   (`docs/arch/stage.md` § *The panel, and the axis it runs on*): a page is just the
+   panel at the `full` stop, the stack is the axis, and the head bar is the panel's
+   head at any stop. What is left here is what is genuinely about a *finger* rather
+   than about an arrangement.
 
-   **This is placement, and only placement.** `<Chat>` is the same component in
-   the same element, mounted once, keeping its scroll position and its scrollback
-   through every push and pop — the box around it is drawn differently and moves
-   differently, which is all. `docs/arch/stage.md` § *The phone stacks pages*.
+   `lib/shape.ts` decides what a phone is — narrow AND coarse — and publishes it as
+   `<html data-shape="phone">`. */
 
-   Nothing here is a new plane. A page is on `cover`, where the conversation and
-   the controls have always been, and the agent's view is still underneath it. */
-
-/* The controls, at a finger's size. 44px is the platform's own floor for a touch
-   target and the reason the popover's 32px was wrong here: same width, different
-   pointer. The glyphs go up with the disc — an 18px mark on a 44px face reads as
-   a small button someone enlarged. */
+/* The discs, at a finger's size. 44px is the platform's own floor for a touch
+   target and the reason the menu-bar popover's 32px was wrong here: same width,
+   different pointer. The glyphs go up with the disc — an 18px mark on a 44px face
+   reads as a small button someone enlarged. */
 :root[data-shape="phone"] .hi-channel {
   width: 44px;
   height: 44px;
@@ -1753,326 +1819,145 @@ button,
 }
 
 :root[data-shape="phone"] .hi-channels {
-  gap: 10px;
+  gap: 8px;
 }
 
-/* The caption clears the taller cluster. It steps over the row below it, and that
-   row just grew by six pixels. */
-:root[data-shape="phone"] .hi-captions,
-:root[data-shape="phone"] .hi-root:has(.hi-selfview--pip) .hi-captions {
-  bottom: calc(var(--hi-safe-bottom) + 74px);
-}
+/* --- The panel's floor, and the keyboard -------------------------------
+   The panel reaches the bottom of the window at every stop, so the line being
+   written is on the last row of the screen — which is exactly where the software
+   keyboard lands.
 
-/* --- A page ------------------------------------------------------------
-   Two surfaces wear this: the conversation (`.hi-stage[data-page]`) and the views
-   page (`.hi-views-band[data-page]`). What they share is the geometry and the
-   gesture; what they hold is their own business.
-
-   `--hi-page-x` is where the page is along its one axis. At rest it is unset and
-   the page sits at 0; during a drag `ui/PageEdge.tsx` writes it every frame, which
-   is why the transform reads a variable rather than being animated from here — a
-   finger is not a keyframe. `data-dragging` cuts the transition for exactly as
-   long as the finger is down, so the page is under it rather than chasing it. */
-:root[data-shape="phone"] .hi-stage[data-page] {
-  inset: 0;
-  /* The page ends where the keyboard begins. `100dvh` does not know about the
-     keyboard on iOS — WebKit overlays it on a layout viewport that never
-     changed — so the number comes from `visualViewport` instead
-     (`lib/softKeyboard.ts`). It is 0 whenever no keyboard is up, which is every
-     other host and most of this one. Shrinking the whole page rather than only
-     padding its foot is what keeps the *messages* above the keyboard too: the
-     scroller measures itself against this box, so the tail of the conversation
-     stays where it can be read while a reply is being typed. */
+   `100dvh` does not know about the keyboard on iOS: WebKit overlays it on a layout
+   viewport that never changed, and `interactive-widget=resizes-content`, which says
+   precisely what we want, is not implemented there. So the floor is
+   `visualViewport`-derived instead (`lib/softKeyboard.ts` publishes `--hi-keyboard`)
+   and the whole panel shrinks — the tail of the conversation stays readable above
+   the keys rather than only the line clearing them. */
+.hi-panel {
   bottom: var(--hi-keyboard, 0px);
-  width: auto;
-  height: auto;
-  flex-direction: column;
-  /* One surface for the whole page — the bar, the messages and the line are all
-     on it — so the card inside gives its own up below.
-
-     **Opaque, and it is the paper.** Every other surface in this application is
-     glass floating over something the person is meant to keep seeing; a page is
-     the opposite — it is what you are looking at now, and the stack it is on can
-     be two deep (the views page over the conversation). Left at the card's 0.9
-     glass, the second page showed the first one's bar and input line through
-     itself, which reads as a rendering fault rather than as depth. And there is
-     nothing left to blur: the thing behind is covered. */
-  background: var(--paper);
-  transform: translateX(var(--hi-page-x, 0px));
-  transition: transform 260ms var(--ease);
 }
 
-/* The rise-out-of-the-corner entrance belongs to the popover. A page slides, and
-   it slides on the transform above; leaving both on would play the two at once. */
-:root[data-shape="phone"] .hi-stage[data-page][data-shown="true"] {
-  animation: none;
-}
-
-/* Off the stack: parked one screen to the right, and only then made unreachable.
-   The delay on `visibility` is what lets it *leave* rather than vanish — without
-   it the page would be hidden on the first frame and the slide would play to
-   nobody. (Coming back needs no such delay: `visibility` returns instantly, and
-   the transform animates from where it was parked.) */
-:root[data-shape="phone"] .hi-stage[data-page][data-shown="false"] {
-  transform: translateX(100%);
-  visibility: hidden;
-  transition: transform 260ms var(--ease), visibility 0s 260ms;
-}
-
-/* Under the finger, the page is not animating anywhere — it is being held. Both
-   page selectors are spelled out because this has to *outrank* the transition
-   each one declares, and a shorter `[data-dragging]` does not: it lost the cascade
-   by one attribute and left the page easing after the thumb 260ms behind, which is
-   the exact difference between dragging a page and watching one catch up. */
-:root[data-shape="phone"] .hi-stage[data-page][data-dragging],
-:root[data-shape="phone"] .hi-views-band[data-page][data-dragging] {
-  transition: none;
-}
-
-/* The card gives up its own dressing on a page: the page is the surface now, and
-   a bordered, shadowed, blurred card drawn edge to edge inside another one is two
-   sheets of glass with nothing between them. */
-:root[data-shape="phone"] .hi-stage[data-page] .hi-chat {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: none;
-}
-
-/* The title line goes, because the bar above it is the title line — a page that
-   spent one row on "Conversation" and another on the controls would spend a fifth
-   of a phone screen saying where you are. The cost is that the page has no written
-   name; the chevron and the messages under it are the whole of what it needs to
-   say, which is not true of the views page, and that one keeps its title. */
-:root[data-shape="phone"] .hi-stage[data-page] .hi-chat-head {
-  display: none;
-}
-
-/* The line being written is at the bottom of the screen now, not at the bottom of
-   a panel floating above one, so it owes the home indicator its own clearance —
-   and owes it only while the indicator is actually down there. With the keyboard
-   up the page's floor has already risen above it (see `bottom` above), and paying
-   the inset a second time would leave a strip of paper between the line and the
-   keys. */
-:root[data-shape="phone"] .hi-stage[data-page] .hi-chat-foot {
+/* The line owes the home indicator its own clearance, and owes it only while the
+   indicator is actually down there. With the keyboard up the panel's floor has
+   already risen above it, and paying the inset a second time would leave a strip of
+   paper between the line and the keys. */
+.hi-chat-foot {
   padding-bottom: calc(10px + max(0px, var(--hi-safe-bottom) - var(--hi-keyboard, 0px)));
 }
 
-/* Where a back-swipe may begin. Invisible, and deliberately not `aria`-anything:
-   the gesture is a shortcut for the chevron in the bar, which is the affordance
-   that gets announced. `touch-action: none` up front because iOS assigns a touch
-   at the moment it starts and never reconsiders — see `ui/PageEdge.tsx`. */
-.hi-page-edge {
-  position: absolute;
-  left: 0;
+/* --- The two edges -----------------------------------------------------
+   Where a gesture may begin: the right edge advances a stop, the left edge
+   retreats one. Invisible at rest and deliberately not `aria`-anything — with no
+   button in the room there is nothing for them to be a shortcut *for*, and a strip
+   announced as a control is a control a screen reader cannot operate. The keyboard
+   and D-pad ladders in `ui/Shell.tsx` are the announced way along the axis.
+
+   `touch-action: none` up front, because iOS assigns a touch at the moment it
+   starts and never reconsiders: a pan that begins over the scrollback belongs to
+   the scroller by then, and asking for it afterwards gets nothing. 20px is the
+   width the system's own edge gesture claims.
+
+   Fixed rather than absolute, so a strip standing over the panel does not scroll
+   away with the panel's content. */
+.hi-panel-edge {
+  position: fixed;
   top: 0;
   bottom: 0;
   width: 20px;
-  /* Over the page's own content, so a press near the edge starts the gesture
-     rather than landing in the scrollback behind it. Single digit, inside the
-     `cover` plane's stacking context — see `planes.test.ts`. */
-  z-index: 1;
   touch-action: none;
   pointer-events: auto;
 }
 
-/* --- The controls as a page's bar --------------------------------------
-   Same six controls, laid as the head of the page instead of a cluster in the
-   room's corner (`ui/ChannelControls.tsx`). It rides inside the page rather than
-   fixed to the window, so the drag carries it: a bar that held still while the
-   page slid out from under it would say the two were separate things. */
-.hi-channels--bar {
-  position: relative;
-  right: auto;
-  bottom: auto;
-  justify-content: flex-end;
-  flex: none;
-  padding: 6px 12px;
-  padding-top: calc(6px + var(--hi-safe-top));
-  border-bottom: 1px solid var(--line);
+.hi-panel-edge[data-edge="left"] {
+  left: 0;
 }
 
-/* The way back sits where a way back sits, and the rest pack to the trailing
-   edge. `order` rather than a reordered JSX: the row is one list of channels in
-   one order, and which end this one is drawn at is a fact about the bar.
-
-   Scoped to the bar, not written on `.hi-channel--back` itself, because the views
-   page wears the same chevron in a row that is a chevron and a *title* — and the
-   `auto` margin there shoved the title to the far edge of the screen, which read
-   as two unrelated things rather than as a labelled way back. */
-.hi-channels--bar .hi-channel--back {
-  order: -1;
-  margin-right: auto;
+.hi-panel-edge[data-edge="right"] {
+  right: 0;
 }
 
-/* In the bar the discs stop being discs. The scrim they wear in the room exists
-   because they float over whatever the agent painted and must be legible on all
-   of it; here they are standing on the page's own surface, in the page's own ink,
-   and six dark pills in a row would read as six badges rather than as a toolbar. */
-.hi-channels--bar .hi-channel {
-  border-color: transparent;
-  background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  color: var(--fg-dim);
-  box-shadow: none;
+/* The mouse's entrance, and the only thing either strip ever draws.
+
+   A desktop has no platform-taught edge swipe, so the strip answers a click as well
+   as a drag — and a click on nothing at all is not an entrance anyone finds. This
+   hairline is the compromise the zero-button room accepts: nothing at rest, a hint
+   once the pointer is already there. Named as a cost in `docs/arch/stage.md`
+   § *The ways in, and the one that is thin*, not as a solution.
+
+   Fine pointers only. A finger does not hover, and on a phone the swipe is the
+   platform's own idiom and needs no hint. */
+@media (pointer: fine) {
+  .hi-panel-edge::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 3px;
+    height: 46px;
+    margin-top: -23px;
+    border-radius: 3px;
+    background: var(--scrim-ink);
+    opacity: 0;
+    transition: opacity 160ms var(--ease);
+  }
+
+  .hi-panel-edge[data-edge="left"]::after {
+    left: 4px;
+  }
+
+  .hi-panel-edge[data-edge="right"]::after {
+    right: 4px;
+  }
+
+  .hi-panel-edge:hover::after {
+    opacity: 0.34;
+  }
 }
 
-.hi-channels--bar .hi-channel:hover {
-  box-shadow: none;
-}
+/* --- The views tab, with the panel across the whole window --------------
+   The two rows are strips that scroll sideways at the panel's own measure, which
+   is what they were designed for. Given the whole window they finally get to be
+   what they are: a grid of pictures big enough to recognise, and chips that wrap
+   instead of running off the edge.
 
-.hi-channels--bar .hi-channel.is-on {
-  border-color: transparent;
-  background: var(--accent-wash);
-  color: var(--accent);
-  box-shadow: none;
-}
-
-.hi-channels--bar .hi-channel.is-error {
-  border-color: transparent;
-  color: var(--danger);
-}
-
-.hi-channels--bar .hi-channel:focus-visible {
-  outline-color: var(--accent-line);
-}
-
-/* The note a refused channel leaves. In the corner cluster it rises above the
-   row; under a bar there is nothing above, so it hangs below it instead. */
-.hi-channels--bar .hi-channel-note {
-  top: calc(100% + 8px);
-  bottom: auto;
-  left: 12px;
-  right: 12px;
-  max-width: none;
-  border-color: var(--line);
-  background: var(--surface-strong);
-  color: var(--fg);
-  text-align: left;
-}
-
-/* --- The views page ----------------------------------------------------
-   The band's whole argument is *stay short, you were opened to compare with the
-   thing behind you* — and on a phone there is nothing behind it that a short
-   sheet would have saved. So here it is the second page on the stack, and the
-   two rows finally get to be what they are: a grid of pictures big enough to
-   recognise, and chips that wrap instead of running off the edge. */
-:root[data-shape="phone"] .hi-views-band[data-page] {
-  inset: 0;
-  width: auto;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  overflow-y: auto;
-  /* Opaque, for the reason the conversation page is: this one is usually the
-     second page on the stack, and it was showing the first one through itself. */
-  background: var(--paper);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  /* The page is the whole screen; a bounce past its ends would drag the web view
-     itself, which on iOS looks like the app coming unstuck. */
-  overscroll-behavior: contain;
-  transform: translateX(var(--hi-page-x, 0px));
-  transition: transform 260ms var(--ease);
-  animation: hi-page-in 260ms var(--ease);
-}
-
-/* The band is the scrolling box on this page, so an absolutely-placed edge strip
-   inside it would scroll away with the content. Fixed instead — resolved against
-   the page itself, since the transform above makes it the containing block. */
-:root[data-shape="phone"] .hi-views-band[data-page] > .hi-page-edge {
-  position: fixed;
-}
-
-/* This page keeps its title: unlike the conversation, what is on it — a grid of
-   thumbnails — does not say what it is. */
-.hi-views-bar {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  padding-top: calc(6px + var(--hi-safe-top));
-  border-bottom: 1px solid var(--line);
-  /* It stays put while the page scrolls under it, so it needs the page's own
-     ground behind it — glass here would smear the grid as it passed. */
-  background: var(--bg-0);
-}
-
-.hi-views-bar .hi-channel {
-  border-color: transparent;
-  background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  color: var(--fg-dim);
-  box-shadow: none;
-}
-
-.hi-views-bar-title {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--fg);
-}
-
-/* Two across: at 390px that is a ~176px tile, which is where a screenshot of a
-   board stops being a grey rectangle with rows in it and starts being the picture
-   the card is supposed to be. */
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-strip {
+   Keyed on the stop rather than on the shape, which is the same answer arrived at
+   through the right question — a window at the full stop wants the grid too, and
+   the old rule reached it only if the window happened to be a phone. */
+.hi-panel[data-stop="full"] .hi-views-strip {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  overflow: visible;
-  padding: 2px 14px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 4px 14px 14px;
+  overflow-x: visible;
 }
 
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-card,
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-tile {
+.hi-panel[data-stop="full"] .hi-views-card,
+.hi-panel[data-stop="full"] .hi-views-tile {
   width: 100%;
 }
 
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-tile {
+.hi-panel[data-stop="full"] .hi-views-tile {
   height: auto;
   aspect-ratio: 16 / 9;
 }
 
-/* The star is a second verb on a card, and on a touch screen it is standing there
-   rather than appearing on hover (see the `hover: none` block above) — so it has
-   to be a target a thumb can hit without opening the view underneath it. */
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-keep {
+.hi-panel[data-stop="full"] .hi-views-keep {
   width: 30px;
   height: 30px;
 }
 
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-bookmarks {
+.hi-panel[data-stop="full"] .hi-views-bookmarks {
   flex-wrap: wrap;
-  gap: 8px;
-  overflow: visible;
-  padding: 2px 14px calc(16px + var(--hi-safe-bottom));
+  overflow-x: visible;
+  padding: 4px 14px 20px;
 }
 
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-chip {
-  height: 38px;
+.hi-panel[data-stop="full"] .hi-views-chip {
+  min-height: 40px;
 }
 
-:root[data-shape="phone"] .hi-views-band[data-page] .hi-views-drop {
-  width: 30px;
-}
-
-/* A page arriving. The conversation does not use this — it is never unmounted, so
-   it animates on the transform above from wherever it was parked — but the views
-   page is mounted when it opens, and a keyframe is how an element that did not
-   exist a frame ago comes in. */
-@keyframes hi-page-in {
-  from { transform: translateX(100%); }
-  to   { transform: translateX(0); }
+.hi-panel[data-stop="full"] .hi-views-drop {
+  width: 28px;
+  height: 28px;
 }
 
 /* ── The television ────────────────────────────────────────────────────────────

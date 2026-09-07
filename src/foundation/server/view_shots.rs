@@ -1,4 +1,4 @@
-//! Thumbnails for the views band — a picture of what was on the screen.
+//! Thumbnails for the views tab — a picture of what was on the screen.
 //!
 //! The band's history row used to carry a coloured initial in the box a thumbnail
 //! would occupy, on the argument that a view is a live React app and there is no

@@ -713,7 +713,7 @@ impl ViewBus {
     /// back up when the talk comes back round to one.
     ///
     /// **The person could always see this and the agent never could.** The band draws the
-    /// same list with pictures and labels ([`ui/ViewsBand.tsx`]), Cognition is told what
+    /// same list with pictures and labels ([`ui/Views.tsx`]), Cognition is told what
     /// went up in the last 90 minutes
     /// ([`crate::mind::memory::snapshot::shown_recently`]) — and Reaction, the one rung
     /// that actually calls `hi_show`, had [`on_screen`](Self::on_screen) and nothing else:

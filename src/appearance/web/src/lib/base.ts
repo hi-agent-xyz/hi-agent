@@ -80,7 +80,7 @@ export function inCore(pathname: string = window.location.pathname): string {
  *
  * That gap is not theoretical. Three call sites shipped without it — the face
  * crops and voice clips in `people-review`, the picture on every tile of the
- * views band, and the task-file links — and each was invisible on a desktop and
+ * views tab, and the task-file links — and each was invisible on a desktop and
  * blank on a phone, where the prefix is the ordinary case. A regex over the
  * sources would not have caught the band: the path came from the backend and sat
  * in a variable (`src={shot}`), which reads like every correct call site. The

@@ -5,9 +5,9 @@ import { stage as composeStage } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
 import { onHostKey } from "../lib/keyboard";
 import { useShape } from "../lib/shape";
+import { advance, depth, initial, opened, retreat, type Stop } from "../lib/panel";
 import { focusInViewPlane, leaveViewPlane } from "../lib/spatial";
 import { onShellBack, reportBackDepth } from "../lib/tvBack";
-import { PageEdge } from "./PageEdge";
 import { Atmosphere } from "./Atmosphere";
 import { Presence } from "./Presence";
 import { Chat } from "./Chat";
@@ -15,10 +15,10 @@ import { SpeechText, type SpeechItem } from "./SpeechText";
 import { useCaption } from "./caption";
 import { ViewSlot } from "./ViewSlot";
 import { Composer } from "./Composer";
-import { ChannelControls } from "./ChannelControls";
 import { CameraPreview } from "./CameraPreview";
 import { HandoffOverlay } from "./HandoffOverlay";
-import { ViewsBand } from "./ViewsBand";
+import { Panel, type Tab } from "./Panel";
+import { PanelEdge } from "./PanelEdge";
 
 /**
  * The host chrome — a calm, breathing room — reading the session through
@@ -33,7 +33,7 @@ import { ViewsBand } from "./ViewsBand";
  *   view   — everything the agent put up: its content view, the host's condition
  *            notice over it, ordered by the wire and by nothing else
  *   cover  — everything the host owns and the agent can never occlude: the camera
- *            self-view, the conversation, the input line, the controls, alerts
+ *            self-view, the caption, the panel, alerts
  *
  * The order carries a meaning, not just a value: **the agent's plane is below the
  * person's.** Nothing the agent shows can rise above the record of what was said
@@ -41,51 +41,69 @@ import { ViewsBand } from "./ViewsBand";
  * inside one is a local question — a view writing `z-index: 9999` climbs to the
  * top of `view` and no further.
  *
- * Placement is one job, and `composeStage` is the whole of it: it decides
- * *geometry* — panel, pill or stood down; fill or pip — and never who covers
- * whom, which is static. Its answer for the conversation is one box: the panel
- * does not change measure or corner when the agent puts something up. It also decides placement, **never lifecycle**: `<Chat>` and
- * `<CameraPreview>` are mounted ONCE here, above the swappable `ViewSlot`, and
- * the pass only flips their props and classes. They must never move into
- * `ViewSlot` or a conditional branch — re-mounting `<CameraPreview>` re-acquires
- * the camera and blacks out the feed, and re-mounting `<Chat>` throws away the
- * scroll position and every page of scrollback already fetched.
+ * **The person's side of the screen is one box on one axis.** The conversation,
+ * the views navigator and the channel controls were three surfaces with two
+ * drawings apiece, chosen by a media query. They are the panel now, and where it
+ * is, is a stop: `room`, `panel`, `full` (`lib/panel.ts`, `docs/arch/stage.md` §
+ * *The panel, and the axis it runs on*). This component owns that number and
+ * nothing else does.
  *
- * **On the phone the cover plane's surfaces are pages, not panels**
- * (`docs/arch/stage.md` — *The phone stacks pages*). That is a placement change
- * and only a placement change: the same `<Chat>`, in the same box element, mounted
- * in the same place — the box is drawn full-bleed and slides in from the right
- * instead of rising out of a corner, and `<PageEdge>` gives it the swipe back. The
- * one thing that does move is the controls cluster, which is the page's head bar
- * while a page is up and the room's corner cluster when it is not; it is rendered
- * in one of two places for that, which is safe here and nowhere else on this plane
- * — `ChannelControls` is a pure function of its props, holding no stream, no
- * scroll position and no state to throw away.
+ * **The room keeps no controls.** With the panel away, what is on screen is what
+ * the agent put there, edge to edge, with the caption and the camera pip over it
+ * and nothing else. Every way back in is listed in `<PanelEdge>` and in the two
+ * key ladders below; there is deliberately no button, which is why those ladders
+ * are the load-bearing part of this file rather than a convenience.
+ *
+ * Placement is one job, and `composeStage` is the whole of it: it decides
+ * *geometry* — the conversation as itself or as a caption; the camera filling or
+ * a pip — and never who covers whom, which is static. It also decides placement,
+ * **never lifecycle**: `<Chat>` and `<CameraPreview>` are mounted ONCE here, above
+ * the swappable `ViewSlot`, and the pass only flips their props and classes. They
+ * must never move into `ViewSlot` or a conditional branch — re-mounting
+ * `<CameraPreview>` re-acquires the camera and blacks out the feed, and re-mounting
+ * `<Chat>` throws away the scroll position and every page of scrollback already
+ * fetched. `<Panel>` is mounted at every stop for the same reason: `room` is that
+ * box off the right-hand side of the window, not a state in which it is gone.
  */
 export function Shell() {
   const presence = usePresence();
   const { messages, interim, loadOlder } = useMessages();
   const ch = useChannels();
-  // Pulled out because `useChannels` hands back a fresh object every render, and
-  // the dismissal effect below would resubscribe its window listeners on each one.
-  const { setTextChannel } = ch;
   const sendText = useSendText();
   const { views, clear } = useViews();
   // Which arrangement this is. Read once here and handed down, rather than each
-  // surface asking: what it decides is one arrangement of the cover plane, and
-  // two components disagreeing about it would put the back chevron on a page that
-  // is still a popover.
+  // surface asking: what it decides is which stops exist at all, and two
+  // components disagreeing about that would put a middle stop on a screen too
+  // narrow to hold one.
   const shape = useShape();
-  const phone = shape === "phone";
-  // Whether the views band is open. A window preference like the text channel's
-  // own on/off, and never server state for the same reason: it says what this
-  // window is showing the person, not what the agent expressed.
-  const [bandOpen, setBandOpen] = useState(false);
+
+  // Where the panel is. A window preference like the put-away it replaces, and
+  // never server state for the same reason: it says what this window is showing
+  // the person, not what the agent expressed. Seeded per shape and not persisted
+  // — neither being open nor being away outlives the page.
+  const [stop, setStop] = useState<Stop>(() => initial(shape));
+  const [tab, setTab] = useState<Tab>("messages");
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  // Rotating a phone into landscape makes it `wide`, which has a stop the phone
+  // does not — and being at `full` on a shape that no longer offers it would leave
+  // the panel covering a window it should be sitting beside. Re-seat rather than
+  // re-seed: the person's position on the axis is kept as closely as the new shape
+  // allows, so a panel that was open stays open.
+  const shapeRef = useRef(shape);
+  useEffect(() => {
+    if (shapeRef.current === shape) return;
+    shapeRef.current = shape;
+    setStop((at) => (at === "room" ? "room" : opened(shape)));
+  }, [shape]);
+
   // Stable, because the composer's start-typing-to-open listener depends on it.
-  const openConversation = useCallback(() => setTextChannel(true), [setTextChannel]);
+  const openConversation = useCallback(() => {
+    setTab("messages");
+    setStop((at) => (at === "room" ? opened(shape) : at));
+  }, [shape]);
   const pasteIntoTextInput = useCallback((text: string) => {
     pasteIdRef.current += 1;
     setPastedInputText({ id: pasteIdRef.current, text });
@@ -93,56 +111,80 @@ export function Shell() {
 
   const layout = composeStage({
     content: views.length > 0,
-    collapsed: !ch.text,
+    away: stop === "room",
   });
 
   // The conversation is shown as itself in one of its two states; the pill is a
   // different rendering of the same list. `<Chat>` stays mounted through both.
-  const chatShown = layout.conversation === "popover";
+  const chatShown = layout.conversation === "panel" && tab === "messages";
 
   const handoff = useHandoff({
     // Whether there is a line on screen to paste into. Since the line lives in
     // the conversation, that is the same question as whether the conversation is
-    // drawn as itself: put away, or stood down by a view that renders the words
-    // itself, a paste is sent rather than dropped into a box nobody can see.
+    // drawn as itself: with the panel away, or on the other tab, a paste is sent
+    // rather than dropped into a box nobody can see.
     textInputOpen: chatShown,
     sendText,
     pasteIntoTextInput,
   });
 
-  // Escape puts the conversation away, in every state it is up in. It defers to
+  // The keyboard's half of the axis, and the desktop's answer to having no button.
+  //
+  // Escape retreats a stop, in every stop the panel is out in. It defers to
   // whoever already handled it, so clearing a half-typed line closes the line and
-  // leaves the conversation up.
+  // leaves the panel where it is. The arrows are the same axis said spatially —
+  // and they are also what a D-pad presses, which is the whole of the television's
+  // way in: `installSpatialNav` claims a key only when it actually moved the focus
+  // (`lib/spatial.ts`), so with nothing focusable in the room a right press finds
+  // nothing, does not claim, and arrives here.
   //
   // Through `onHostKey` rather than a `window` listener, because a key pressed in
   // the panel is chrome's and stops at the document — one node short of the window
   // (`lib/keyboard.ts`). It also means a view holding the focus keeps its own
-  // Escape.
+  // arrows and its own Escape.
   useEffect(() => {
-    if (!chatShown) return;
     return onHostKey((event) => {
-      if (event.key === "Escape" && !event.defaultPrevented) setTextChannel(false);
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      // Inside a line being written the arrows move the caret. Escape is not
+      // excluded here: the composer clears its own draft and marks the key
+      // handled, and only an empty line lets it through to this.
+      const active = document.activeElement as HTMLElement | null;
+      const typing =
+        active?.tagName === "INPUT" || active?.tagName === "TEXTAREA" || active?.isContentEditable;
+
+      if (event.key === "Escape") {
+        setStop((at) => retreat(shape, at));
+        return;
+      }
+      if (typing) return;
+      if (event.key === "ArrowRight") {
+        setStop((at) => advance(shape, at));
+        event.preventDefault();
+      } else if (event.key === "ArrowLeft") {
+        setStop((at) => retreat(shape, at));
+        event.preventDefault();
+      }
     });
-  }, [chatShown, setTextChannel]);
+  }, [shape]);
 
   // The television's Escape, which is the remote's Back button.
   //
-  // Same ladder as Escape's and in the same order, with one rung Escape does not
-  // need: a view holding the focus. On a desktop the pointer leaves a view by
-  // clicking somewhere else, and there is no pointer here — while a view has the
-  // focus the arrows are its own (`lib/keyboard.ts`), so Back is the only way
-  // out of it.
+  // Same ladder and in the same order, with one rung the keyboard does not need: a
+  // view holding the focus. On a desktop the pointer leaves a view by clicking
+  // somewhere else, and there is no pointer here — while a view has the focus the
+  // arrows are its own (`lib/keyboard.ts`), so Back is the only way out of it.
   //
-  // Reported as a depth rather than handled by the shell, because *what* closes
-  // is this component's business and *whether Back is ours at all* is the
-  // shell's. When the count is zero the shell keeps the press and shows its own
-  // chrome, one step from leaving the app.
+  // Reported as a depth rather than handled by the shell, because *what* closes is
+  // this component's business and *whether Back is ours at all* is the shell's.
+  // When the count is zero the shell keeps the press and shows its own chrome, one
+  // step from leaving the app. The panel is worth one rung per stop behind it, so
+  // Back walks the axis a stop at a time rather than dropping the whole thing.
   //
-  // Where the focus is has to be watched rather than read: it moves without
-  // React, so a depth computed during render would be the depth as of whatever
-  // last happened to re-render. `focusout` is listened for alongside `focusin`
-  // because focus leaving for nothing at all — a view unmounting under it — is a
-  // rung coming off the ladder and fires only the former.
+  // Where the focus is has to be watched rather than read: it moves without React,
+  // so a depth computed during render would be the depth as of whatever last
+  // happened to re-render. `focusout` is listened for alongside `focusin` because
+  // focus leaving for nothing at all — a view unmounting under it — is a rung
+  // coming off the ladder and fires only the former.
   const [focusInView, setFocusInView] = useState(false);
   useEffect(() => {
     if (shape !== "tv") return;
@@ -156,7 +198,7 @@ export function Shell() {
     };
   }, [shape]);
 
-  const backDepth = (focusInView ? 1 : 0) + (bandOpen ? 1 : 0) + (chatShown ? 1 : 0);
+  const backDepth = (focusInView ? 1 : 0) + depth(shape, stop);
   useEffect(() => {
     if (shape !== "tv") return;
     reportBackDepth(backDepth);
@@ -166,35 +208,9 @@ export function Shell() {
     if (shape !== "tv") return;
     return onShellBack(() => {
       if (leaveViewPlane()) return;
-      if (bandOpen) setBandOpen(false);
-      else if (chatShown) setTextChannel(false);
+      setStop((at) => retreat(shape, at));
     });
-  }, [shape, bandOpen, chatShown, setTextChannel]);
-
-  // The other dismissal: a press on what is behind the panel. Armed only while
-  // there IS something behind it — a view. With nothing on the stage the press
-  // lands on bare paper, and the room is not a thing anyone reaches past the
-  // conversation for; a click to focus the window would put the record away.
-  // (Before the panel became the conversation's only box, this was the same
-  // condition by accident: the box existed only while a view did.)
-  //
-  // Host chrome is never "behind": the controls cluster, whose toggle would
-  // otherwise close on the press and reopen on the click, and the views band that
-  // cluster opens — picking a view there is how a view gets on the stage, and
-  // putting one up must not take the conversation down with it. The line being
-  // written needs no exclusion of its own: it is inside the panel, so `contains`
-  // already covers it.
-  useEffect(() => {
-    if (!chatShown || views.length === 0) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Element | null;
-      if (popoverRef.current?.contains(target as Node)) return;
-      if (target?.closest?.(".hi-channels, .hi-views-band")) return;
-      setTextChannel(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [chatShown, views.length, setTextChannel]);
+  }, [shape]);
 
   // The pill shows the newest thing said, or the line currently being recognized
   // if one is in flight — the same tail the chat ends on. It is a caption, so it
@@ -211,10 +227,6 @@ export function Shell() {
       ? [{ id: 0, text: newest.text, speaker: newest.role === "user" ? "user" : "agent" }]
       : [];
 
-  // The cluster, named once and placed twice: it is the conversation page's head
-  // bar while that page is up on the phone, and the room's corner cluster the rest
-  // of the time. Every control is in it in both positions — see `ChannelControls`
-  // for why the text one is a chevron in the bar.
   const channels = {
     audioOn: ch.audioInput,
     onToggleAudio: ch.toggleAudio,
@@ -222,20 +234,15 @@ export function Shell() {
     videoOn: ch.videoInput,
     onToggleVideo: ch.toggleVideo,
     videoError: ch.videoError,
-    textOn: ch.text,
-    onToggleText: () => setTextChannel(!ch.text),
     voiceOn: ch.audioOutput,
     onToggleVoice: ch.toggleAudioOutput,
     onCloseViews: clear,
-    viewsOpen: bandOpen,
-    onToggleViews: () => setBandOpen((open) => !open),
   };
-  /** The conversation is a page on the stack right now, and owns the bar. */
-  const asPage = phone && chatShown;
 
   return (
     <div
       className="hi-root"
+      data-stop={stop}
       data-file-drop={handoff.feedback?.state}
       onDragEnterCapture={handoff.onFileDragEnter}
       onDragOverCapture={handoff.onFileDragOver}
@@ -248,7 +255,9 @@ export function Shell() {
       </div>
 
       {/* The agent's plane. Its internal order is the wire's array order — content
-          first, the condition notice over it — so it needs no z-index at all. */}
+          first, the condition notice over it — so it needs no z-index at all. It
+          insets past the panel at the middle stop and only there, which is the
+          reflow the person fires by pulling the panel in. */}
       <div className="hi-plane hi-plane--view">
         <ViewSlot />
       </div>
@@ -259,28 +268,33 @@ export function Shell() {
       <div className="hi-plane hi-plane--cover">
         <CameraPreview stream={ch.visionStream} pip={layout.camera === "pip"} />
 
-        {/* PINNED — the conversation. One list, mounted once, standing in ONE box:
-            the same panel in the same corner at the same measure whether or not
-            the agent has a view up, so nothing it shows moves the thing being
-            read. `data-shown` is a visibility flip and not a branch, so the
-            scroller keeps its position and its already-fetched scrollback across
-            every transition. */}
-        <div
-          ref={popoverRef}
-          className="hi-stage"
-          data-shown={chatShown ? "true" : "false"}
-          data-page={phone ? "true" : undefined}
-          aria-hidden={chatShown ? undefined : true}
-        >
-          {/* The page's head bar and its way back, both only while this box is a
-              page. Inside the box on purpose: the drag moves the box, and a bar
-              fixed to the window would sit still while the page it belongs to slid
-              out from under it. */}
-          {asPage && <ChannelControls bar {...channels} />}
-          {asPage && <PageEdge onBack={() => setTextChannel(false)} />}
+        {layout.conversation === "pill" && (
+          // The dock steps past the camera pip (bottom-left) so the bottom bar's
+          // two zones — pip · captions — never overlap, and that step is keyed in
+          // the stylesheet on the pip *being on screen* (`:has(.hi-selfview--pip)`).
+          <div
+            className="hi-captions"
+            data-shown={captionShown ? "true" : "false"}
+            aria-hidden={captionShown ? undefined : true}
+          >
+            <SpeechText items={lastSpoken} />
+          </div>
+        )}
 
-          {/* The one activity the person is shown, and it is shown inside the
-              conversation because that is what it is about — see `ui/Chat.tsx`. */}
+        {/* PINNED — the panel, and everything the person owns inside it. Mounted
+            once at every stop, so the scroller keeps its position and its
+            already-fetched scrollback across every open and close. */}
+        <Panel
+          ref={panelRef}
+          stop={stop}
+          tab={tab}
+          onTab={setTab}
+          // Choosing a view moves the screen. If the panel is covering that screen,
+          // step it back so the person can see what they picked; if it is sitting
+          // beside it, they already can.
+          onChose={() => setStop((at) => (at === "full" ? retreat(shape, at) : at))}
+          {...channels}
+        >
           <Chat
             messages={messages}
             interim={interim}
@@ -294,39 +308,11 @@ export function Shell() {
               onOpen={openConversation}
             />
           </Chat>
-        </div>
+        </Panel>
 
-        {layout.conversation === "pill" && (
-          // The dock steps past the camera pip (bottom-left) so the bottom
-          // bar's three zones — pip · captions · controls — never overlap, and
-          // that step is keyed in the stylesheet on the pip *being on screen*
-          // (`:has(.hi-selfview--pip)`), the same way the input line does it.
-          // It used to be this element's `data-camera`, read off the layout
-          // pass — which says `pip` whenever a view leads, camera or no camera.
-          // With the camera off the words then stepped past nothing and sat
-          // ~400px right of centre.
-          <div
-            className="hi-captions"
-            data-shown={captionShown ? "true" : "false"}
-            aria-hidden={captionShown ? undefined : true}
-          >
-            <SpeechText items={lastSpoken} />
-          </div>
-        )}
-
-        {/* The views band, directly above the controls that open it. Short by
-            design: it is opened to compare what is up with something that was, and a
-            tall sheet would cover the thing being compared. */}
-        {bandOpen && <ViewsBand onDismiss={() => setBandOpen(false)} />}
-
-        {/* The lower cluster is controls and only controls: every channel, always
-            available, nothing that merely reports. Managed energy is represented
-            only by the gate-owned full-screen view.
-
-            Stood down exactly when the conversation page has taken it into its own
-            bar above — never otherwise, so the room always has its cluster and no
-            state can leave the face with no way in or out. */}
-        {!asPage && <ChannelControls {...channels} />}
+        {/* Last, so the strips are over everything they may have to claim a touch
+            from — including the panel they move. */}
+        <PanelEdge shape={shape} stop={stop} onStop={setStop} panel={panelRef} />
 
         <HandoffOverlay
           feedback={handoff.feedback}

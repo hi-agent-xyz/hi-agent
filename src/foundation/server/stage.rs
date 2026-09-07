@@ -3,7 +3,7 @@
 //! `POST /api/stage` carries `{"width":…,"height":…,"scale":…,"theme":…}` in CSS
 //! pixels, and both consumers are renderers: `review_view` renders into whatever the
 //! window last reported, so a builder composes for the frame the person actually has
-//! and a reviewer signs off on that same frame; and the views band's thumbnails
+//! and a reviewer signs off on that same frame; and the views tab's thumbnails
 //! (`view_shots`) render into that frame *and* that skin, so the picture in the
 //! history row is of the screen the person was looking at.
 //!

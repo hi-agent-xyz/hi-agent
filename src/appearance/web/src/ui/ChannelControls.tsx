@@ -11,40 +11,49 @@ interface ChannelControlsProps {
   onToggleVideo: () => void;
   /** Surfaced if the last attempt to turn vision on failed. */
   videoError?: string | null;
-  /** Whether the text channel is on — the conversation and its line, together. */
-  textOn: boolean;
-  /** Show the conversation, or put it away. */
-  onToggleText: () => void;
   /** Whether the agent's voice (audio output) is on. */
   voiceOn: boolean;
   /** Mute/unmute the agent's voice. */
   onToggleVoice: () => void;
-  /** Close the agent's view — the conversation takes the screen back. */
+  /** Close the agent's view — the room takes the screen back. */
   onCloseViews: () => void;
-  /** Whether the views band is open. */
-  viewsOpen: boolean;
-  /** Open/close the views band. */
-  onToggleViews: () => void;
-  /** Draw the cluster as the head bar of a pushed page rather than as a corner
-   * cluster floating over the room — the phone shape, where the conversation is
-   * a page and this row is its nav bar. Placement only: the same six controls,
-   * re-laid. See the note on the text control below for the one that changes
-   * shape with it. */
-  bar?: boolean;
 }
 
 /**
- * The channel controls — a quiet cluster in the corner. The input channels (mic,
- * camera, text) and the output channel (voice) are all independent: each can be
- * on or off at any time, and they don't conflict. Every control is always
- * present (no state-gated chrome) so a user who can't (or won't) use a given
- * channel still has a clear way in or out; the trailing reset closes the agent's
- * view, which gives the conversation the screen back.
- * Order: mic · speaker · text · camera · views · reset, and every one of them is
- * always there — the cluster has no item that comes and goes.
+ * The channel controls — one row in the panel's head.
  *
- * **Handing over a file is not a channel, so it is not in the cluster.** There was
- * an attach button that opened the system file picker, sitting between the text
+ * The input channels (mic, camera) and the output channel (voice) are all
+ * independent: each can be on or off at any time, and they don't conflict. The
+ * trailing reset closes the agent's view, which gives the room the screen back.
+ * Order: mic · speaker · camera · reset.
+ *
+ * **They live in exactly one place, and it is the panel's head.** There was a
+ * corner cluster floating over the room and a `bar` variant of the same row
+ * standing in a pushed page's head, chosen by shape — two placements, one of
+ * which drew the text control as a back chevron so that the row could keep
+ * claiming it had no item that came and went. Both are gone with the room's
+ * chrome (`docs/arch/stage.md` § *The panel, and the axis it runs on*): the room
+ * is now whatever the agent put in it and nothing else, and this row is visible
+ * at every stop and on every tab of the panel that replaced the corner.
+ *
+ * **What that costs, named rather than hidden: turning the mic on is two acts.**
+ * The older rule was that every channel is always present and one press away
+ * wherever you are, and on a phone the mic is the main way in — *"go back to the
+ * room to unmute"* was written down as a tax not worth paying, and it is the tax
+ * now being paid. It is paid because the rule protects against a channel becoming
+ * *unreachable*, and one gesture is not unreachable. The narrower rule that
+ * replaces it is the one this row still keeps: **no channel is behind a mode.**
+ * Every control is here, in one row, at every stop and on every tab — not on a
+ * settings tab, not behind a disclosure.
+ *
+ * **There is no text control any more.** It opened and closed the conversation,
+ * and the panel is what does that now — from inside the panel it would have been
+ * a button meaning "close the thing you are looking at", which is the edge's job.
+ * There is no views control either: the views navigator is a tab beside the
+ * messages rather than a band this row opened.
+ *
+ * **Handing over a file is not a channel, so it is not in the row.** There was an
+ * attach button that opened the system file picker, sitting between the text
  * control and the camera as though files were a fifth channel to turn on. They are
  * not: a file is a handed artifact, and the window already takes one dropped or
  * pasted anywhere on it (`hooks/useHandoff`), so the button was a second door onto
@@ -53,40 +62,18 @@ interface ChannelControlsProps {
  * on a phone there is now no way to hand over a file at all. `/api/handoff` and
  * `/up/<token>` are still standing and still have no caller.
  *
- * **Every control here does something, and none of them reports.** The cluster
- * used to open with a read-only status disc that drew whichever of six activities
- * the agent was in — a button that could not be pressed, sitting in a row of
- * buttons. Five of those six states are the agent going about its own business
- * and are nobody's cue to act, so they are drawn nowhere now; the sixth, a reply
- * being composed, is a thing said in a conversation and is drawn in the
- * conversation (`ui/Chat.tsx`).
+ * **Every control here does something, and none of them reports.** The row used to
+ * open with a read-only status disc that drew whichever of six activities the agent
+ * was in — a button that could not be pressed, sitting in a row of buttons. Five of
+ * those six states are the agent going about its own business and are nobody's cue
+ * to act, so they are drawn nowhere now; the sixth, a reply being composed, is a
+ * thing said in a conversation and is drawn in the conversation (`ui/Chat.tsx`).
  *
- * **One control per channel, and the text one owns the whole of its channel.**
- * There used to be two: a keyboard button that showed the input line and a
- * separate conversation button that opened the popover over a view — a control
- * that had to appear and disappear, because there is nothing to open a popover
- * over unless something else is on the stage. Now that the line is written inside
- * the conversation rather than beside it (`ui/Composer.tsx`), the two were toggling
- * halves of one surface, and one press moves all of it: the record, the scrollback
- * and the line. What is left is what the cluster was always for — mic, speaker,
- * text, camera, one apiece.
- *
- * **On the phone the same cluster is the page's bar, and the text control is the
- * back chevron.** The conversation there is a page pushed onto the stack rather
- * than a panel in a corner (`docs/arch/stage.md`), so the row rides in its head
- * instead of floating over the room — and the control that owns the text channel
- * is, in that position, the control that takes the page back off the stack. It is
- * drawn as a chevron because that is what it does from there; it is the same
- * button, doing the same one thing it has always done, which is why the cluster
- * still has no item that comes and goes. A second dismissal button beside a
- * keyboard glyph that meant "close this" would have been two doors onto one act.
- *
- * **Nothing here signals a show, because a show is not something to be signalled about.**
- * There was a return-to-live button, and then a dot on the views control in its place, both
- * standing in for a window that had gone back and would not follow the agent onto the
- * screen. A show takes the window with it now (`docs/arch/stage.md`), so there is nothing
- * left to stand in for: what the agent put up is what is up, and the band is where going
- * back lives.
+ * **Nothing here signals a show, because a show is not something to be signalled
+ * about.** There was a return-to-live button, and then a dot on the views control in
+ * its place, both standing in for a window that had gone back and would not follow
+ * the agent onto the screen. A show takes the window with it now
+ * (`docs/arch/stage.md`), so there is nothing left to stand in for.
  */
 export function ChannelControls({
   audioOn,
@@ -95,14 +82,9 @@ export function ChannelControls({
   videoOn,
   onToggleVideo,
   videoError,
-  textOn,
-  onToggleText,
   voiceOn,
   onToggleVoice,
   onCloseViews,
-  viewsOpen,
-  onToggleViews,
-  bar = false,
 }: ChannelControlsProps) {
   // A channel that refused to open has to say so where it can be read. `title`
   // is the desktop half of that and nothing at all on a phone, where a tap that
@@ -111,7 +93,7 @@ export function ChannelControls({
   const note = audioError ?? videoError ?? null;
 
   return (
-    <div className={`hi-channels${bar ? " hi-channels--bar" : ""}`} role="group" aria-label="channels">
+    <div className="hi-channels" role="group" aria-label="channels">
       {note && (
         <p className="hi-channel-note" role="status">
           {note}
@@ -142,25 +124,6 @@ export function ChannelControls({
 
       <button
         type="button"
-        className={`hi-channel${textOn && !bar ? " is-on" : ""}${bar ? " hi-channel--back" : ""}`}
-        onClick={onToggleText}
-        title={textOn ? "conversation — tap to put away" : "conversation — tap to open"}
-        aria-pressed={bar ? undefined : textOn}
-        aria-expanded={textOn}
-        aria-label={textOn ? "put the conversation away" : "open the conversation"}
-      >
-        {/* In the page's bar this button is the way back, so it is drawn as the
-            way back — and it drops the on-state with the glyph. The tint means
-            "this channel is open"; on a chevron in the bar of the very page that
-            channel opened, it says nothing and reads as a back button that has
-            somehow been selected. `aria-pressed` goes for the same reason: a
-            chevron announced as a pressed toggle is a lie about what pressing it
-            does, and the label already says what it does. */}
-        {bar ? <BackGlyph /> : <KeyboardGlyph />}
-      </button>
-
-      <button
-        type="button"
         className={`hi-channel${videoOn ? " is-on" : ""}${videoError ? " is-error" : ""}`}
         onClick={onToggleVideo}
         title={videoError ?? (videoOn ? "camera on — tap to turn off" : "camera off — tap to turn on")}
@@ -172,38 +135,14 @@ export function ChannelControls({
 
       <button
         type="button"
-        className={`hi-channel${viewsOpen ? " is-on" : ""}`}
-        onClick={onToggleViews}
-        title="views — what has been shown, and where you can go"
-        aria-pressed={viewsOpen}
-        aria-expanded={viewsOpen}
-        aria-label="views"
-      >
-        <ViewsGlyph />
-      </button>
-
-      <button
-        type="button"
         className="hi-channel"
         onClick={onCloseViews}
-        title="close the view — the conversation takes the screen back"
+        title="close the view — the room takes the screen back"
         aria-label="close the view"
       >
         <ResetGlyph />
       </button>
     </div>
-  );
-}
-
-/** Tiles: the band's contents, not any one view. */
-function ViewsGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-      <rect x="3" y="4.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-      <rect x="13.5" y="4.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-      <rect x="3" y="13.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-      <rect x="13.5" y="13.5" width="7.5" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
   );
 }
 
@@ -259,37 +198,7 @@ function SpeakerGlyph({ muted }: { muted: boolean }) {
   );
 }
 
-/** The way back off the stack — the text control's glyph while the cluster is a
- * pushed page's bar, and the views page's own back button (`ui/ViewsBand.tsx`).
- * A bare chevron, at the weight the platform draws one. Exported so there is one
- * chevron in the application rather than one per page that has a way back. */
-export function BackGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
-      <path
-        d="M15 5l-7 7 7 7"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
-function KeyboardGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-      <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />
-      <path
-        d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 function ResetGlyph() {
   return (

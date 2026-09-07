@@ -6,7 +6,7 @@ import { url } from "./base";
 // has and a reviewer signs off on that same frame. Before this, both worked
 // against a hardcoded 1280×800 that matched no real window, which is how a
 // composition built at one aspect shipped with its cards overlapping at another.
-// The views band's history thumbnails render into that frame *and* the skin we
+// The views tab's history thumbnails render into that frame *and* the skin we
 // report, so the picture on a tile is of the screen this window was showing.
 //
 // **Every face that can show a view reports, under its own id.** The same page runs

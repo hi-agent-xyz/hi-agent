@@ -3,18 +3,21 @@ import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
 import { url } from "../lib/base";
 import { scrollToShow } from "../lib/strip";
-import { useIsPhone } from "../lib/shape";
-import { BackGlyph } from "./ChannelControls";
-import { PageEdge } from "./PageEdge";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
 /**
- * The views band — what has been shown, and where a person can go.
+ * The views tab — what has been shown, and where a person can go.
  *
- * **A band, not a panel.** It sits above the controls and is as short as its two rows
- * allow, because the most common reason to open it is to compare what is on the stage
- * with something that was there before, and a tall sheet would cover the very thing
- * being compared. Choosing dismisses it for the same reason.
+ * **A tab, not a band.** It was a short strip floating above the channel controls
+ * on a window and a pushed page on a phone, and the shortness was argued for: the
+ * most common reason to open it is to compare what is on the stage with something
+ * that was there before, and a tall sheet would cover the very thing being
+ * compared. That argument is answered by the axis rather than by the height now
+ * (`docs/arch/stage.md` § *The panel, and the axis it runs on*) — at the middle
+ * stop the panel sits *beside* what it is being compared against rather than over
+ * it, so the tab can have the panel's whole body and still not cover anything.
+ * The band-versus-page split goes with it: one tab, laid out by how much room the
+ * stop gives it.
  *
  * **Two rows, because there are two ways to want a view.** The upper row is the trail:
  * where the screen can go back to, **newest first** — the shows the server recorded and
@@ -32,7 +35,7 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * floor is now the system views alone, and anything else is there because the person
  * put it there: the star on a history card keeps it, the cross on a chip drops it.
  * Kept refs live in the config store, so they are the same on the desktop and the
- * phone — unlike the cursor, which is each window's own.
+ * phone — unlike the stop, which is each window's own.
  *
  * **A flat strip rather than a cover flow.** The instinct behind a cover flow is right:
  * a view is remembered as a picture. But album art is square, uniform and *is* the
@@ -59,30 +62,24 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  *
  * **It opens on where you are.** Both rows can be a dozen items long and the cursor is
  * not always at the head of either — a show lands there, but a card gone back to keeps
- * its place, and a bookmark can sit anywhere in the lower row — so opening the band
+ * its place, and a bookmark can sit anywhere in the lower row — so opening the tab
  * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
  * opening: a show arriving afterwards must not drag a row out from under someone
  * reading it. The stage does follow a show; the row someone is reading does not.
  *
- * **The inventory is re-read while the band is up.** A picture is only taken when
- * someone shows an interest in the view, and the first interest is usually the band
- * opening; the shot lands a second or two later, and this is what carries it onto the
- * card the person is already looking at.
+ * **The inventory is re-read while the tab is up.** A picture is only taken when
+ * someone shows an interest in the view, and the first interest is usually this tab
+ * being opened; the shot lands a second or two later, and this is what carries it onto
+ * the card the person is already looking at.
  *
- * **On the phone it is not a band.** Everything above is an argument about a
- * surface floating over a window that has room for both it and the thing being
- * compared, and a 390px screen has no such room: a band there is a short letterbox
- * of a strip with two cards in it, sitting on top of the view it was opened to
- * compare against and covering most of it anyway. So on the phone shape it is a
- * page pushed onto the stack, swiped back off the same way the conversation is
- * (`docs/arch/stage.md`), and the two rows spend the whole screen — history as a
- * grid of pictures big enough to recognise, bookmarks as chips that wrap. The
- * shortness was the compromise, not the goal; the goal was *what has been shown,
- * and where you can go*, which a page serves better than a strip.
+ * **`stacked` is how much room the stop gave it, not which device this is.** At the
+ * panel's measure the two rows are strips that scroll sideways; with the panel across
+ * the whole window they are a grid of pictures big enough to recognise and chips that
+ * wrap. That used to be a `phone` branch, which was the same answer arrived at through
+ * the wrong question — a window at the full stop wants the grid too.
  */
-export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
+export function Views({ stacked, onChose }: { stacked: boolean; onChose: () => void }) {
   const { trail, live, parked, goTo, openRef } = useViews();
-  const phone = useIsPhone();
   const [inventory, setInventory] = useState<ListedView[]>([]);
   /** Shots whose `<img>` failed after the state said one existed — a shot pruned out
    * of the cache between the snapshot and the render. Falls back to the mark. */
@@ -103,11 +100,11 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   // there. `scrollLeft` rather than `scrollIntoView`, which would also scroll whatever
   // ancestor it decided was interesting, and would animate.
   useLayoutEffect(() => {
-    if (phone) {
-      // The page scrolls down, not the rows across, so the same job is a vertical
+    if (stacked) {
+      // The tab scrolls down, not the rows across, so the same job is a vertical
       // one and `scrollIntoView` is the right tool for it here: the ancestor it
-      // would otherwise scroll by surprise *is* the page, which is the box that
-      // has to move. Still once, and still for the same reason.
+      // would otherwise scroll by surprise *is* the tab's body, which is the box
+      // that has to move. Still once, and still for the same reason.
       show(hereCard.current, placedCards);
       show(hereChip.current, placedChips);
       return;
@@ -134,12 +131,12 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
             }),
           ),
         // An inventory that cannot be read leaves the row empty; the trail still works,
-        // and the person is no worse off than before the band existed.
+        // and the person is no worse off than before the tab existed.
         (error) => console.warn("listing views failed", error),
       );
     read();
-    // Re-read while the band is up, for the pictures: a read is a directory walk and a
-    // handful of `stat`s, and it stops the moment the band closes.
+    // Re-read while the tab is up, for the pictures: a read is a directory walk and a
+    // handful of `stat`s, and it stops the moment the tab is left.
     const again = setInterval(read, INVENTORY_POLL_MS);
     return () => {
       alive = false;
@@ -177,31 +174,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
   const bookmarks = inventory.filter((view) => view.system || view.bookmarked);
 
   return (
-    <div
-      className="hi-views-band"
-      data-page={phone ? "true" : undefined}
-      role="group"
-      aria-label="views"
-    >
-      {phone && (
-        <>
-          {/* The page's bar. One control, and it is the way back — there is
-              nothing else a person does to this page except leave it or pick
-              something off it. */}
-          <div className="hi-views-bar">
-            <button
-              type="button"
-              className="hi-channel hi-channel--back"
-              onClick={onDismiss}
-              aria-label="back"
-            >
-              <BackGlyph />
-            </button>
-            <span className="hi-views-bar-title">Views</span>
-          </div>
-          <PageEdge onBack={onDismiss} />
-        </>
-      )}
+    <div className="hi-views" role="group" aria-label="views">
       <div className="hi-views-section">
         <span className="hi-views-heading">history</span>
         <span className="hi-views-rule" aria-hidden="true" />
@@ -213,7 +186,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
           {trail.map((entry) => {
             const key = destinationOf(entry);
             const isLive = key === live;
-            // The inventory wins when it has one: it is re-read while the band is up,
+                    // The inventory wins when it has one: it is re-read while the tab is up,
             // so it is the fresher of the two answers about a named surface's picture.
             const listed = entry.view_ref ? known.get(entry.view_ref) : undefined;
             const current = listed?.shot_url ?? entry.shot_url;
@@ -232,7 +205,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
                   className="hi-views-open"
                   onClick={() => {
                     goTo(entry);
-                    onDismiss();
+                    onChose();
                   }}
                   aria-current={key === here ? "true" : undefined}
                 >
@@ -302,7 +275,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
               className="hi-views-go"
               onClick={() => {
                 openRef(view.view_ref);
-                onDismiss();
+                onChose();
               }}
             >
               <span className="hi-views-ico" style={markStyle(view.view_ref)} aria-hidden="true">
@@ -329,7 +302,7 @@ export function ViewsBand({ onDismiss }: { onDismiss: () => void }) {
 }
 
 /** Scroll one row so the item marked *here* is on screen, once. A row the browser has
- * not measured yet (`clientWidth` 0 — the band is mounted, layout has not reached it)
+ * not measured yet (`clientWidth` 0 — the tab is mounted, layout has not reached it)
  * is left for a later render: `scrollToShow` on a zero-width box answers with a number,
  * and it is the wrong one. */
 function place(
@@ -343,8 +316,8 @@ function place(
   if (at !== null) row.scrollLeft = at;
 }
 
-/** The page's version of the same job: bring the item marked *here* onto the
- * screen, once, by scrolling the page down to it. `center` rather than `start`,
+/** The stacked version of the same job: bring the item marked *here* onto the
+ * screen, once, by scrolling the tab's body down to it. `center` rather than `start`,
  * because a card at the very top of the frame reads as the head of the list and
  * this one is somewhere in the middle of one. */
 function show(item: HTMLElement | null, done: { current: boolean }): void {
@@ -353,8 +326,8 @@ function show(item: HTMLElement | null, done: { current: boolean }): void {
   item.scrollIntoView({ block: "center" });
 }
 
-/** How often the band re-reads the inventory while it is up — long enough not to be a
- * poll anyone notices, short enough that a picture taken because the band opened lands
+/** How often the tab re-reads the inventory while it is up — long enough not to be a
+ * poll anyone notices, short enough that a picture taken because the tab opened lands
  * on the card before the person has finished reading the row. */
 const INVENTORY_POLL_MS = 3000;
 
@@ -392,7 +365,7 @@ function initial(label: string): string {
 
 /** A stable hue per destination, so a view keeps the same mark between sessions and
  * the row is scannable by colour before it is readable by label. Muted on purpose —
- * the band sits over the agent's screen and must not compete with it. */
+ * the tab sits beside the agent's screen and must not compete with it. */
 function markStyle(key: string): { background: string } {
   let hash = 0;
   for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) | 0;

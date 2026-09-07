@@ -125,11 +125,9 @@ const stubSession: AgentSession = {
   videoError: null,
   visionStream: null,
   audioOutput: false,
-  text: true,
   toggleAudio: () => {},
   toggleVideo: () => {},
   toggleAudioOutput: () => {},
-  setTextChannel: () => {},
   sendText: () => Promise.resolve(),
 };
 

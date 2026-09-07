@@ -57,9 +57,10 @@ struct CoreWebView: UIViewRepresentable {
         // surface in it is shown by state rather than by navigating — so this
         // gesture never had anything to do here. What it does have is a screen-edge
         // recognizer sitting on the left twenty points, which is exactly where the
-        // face's own back-swipe begins on a phone: the conversation and the views
-        // page are pushed onto a stack there and popped by dragging from that edge
-        // (`ui/PageEdge.tsx`). Two recognizers over one strip means WebKit delays
+        // face's own retreat gesture begins: the panel is pulled in from the right
+        // edge and pushed back out from the left one (`ui/PanelEdge.tsx`), and the
+        // left strip is the same twenty points. Two recognizers over one strip
+        // means WebKit delays
         // the touches and the page's drag starts late, or not at all.
         webView.allowsBackForwardNavigationGestures = false
         // Let the canvas show through until the face paints, so opening a core
