@@ -149,13 +149,76 @@ fn pairing_app_url(core_url: &str, code: &str) -> String {
 
 /// `GET /api/surfaces` — the device list. Labels, when each was added, and when
 /// each was last seen; never a credential.
-pub async fn get_surfaces(State(state): State<Arc<AppState>>) -> Response {
+pub async fn get_surfaces(
+    State(state): State<Arc<AppState>>,
+    acceptor: Option<axum::Extension<surfaces::Acceptor>>,
+) -> Response {
+    // Whether this caller may register a device to a person — the page needs to know
+    // before it draws, or it shows a control that would only ever be refused.
+    let settable = acceptor.map(|axum::Extension(a)| a) == Some(surfaces::Acceptor::Loopback);
     match surfaces::store::list(state.surfaces.data_dir()) {
-        Ok(list) => axum::Json(serde_json::json!({ "surfaces": list })).into_response(),
+        Ok(list) => axum::Json(serde_json::json!({
+            "surfaces": list,
+            "subject_settable": settable,
+        }))
+        .into_response(),
         Err(e) => {
             tracing::warn!(error = %format!("{e:#}"), "listing surfaces");
             (StatusCode::INTERNAL_SERVER_ERROR, "could not read the surface list\n")
                 .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SubjectBody {
+    /// The `people/` subject this device belongs to, or empty to unregister it.
+    subject: String,
+}
+
+/// `POST /api/surfaces/{id}/subject` — register this device to a person.
+///
+/// **What it buys is attribution on the addressed channels**: what somebody types,
+/// hands over, or opens on a registered device is recorded as theirs, with basis
+/// `stated`, in preference to the install's owner default. A device nobody registered
+/// states nothing and falls through to that default.
+///
+/// **It says nothing about the microphone.** A microphone records whatever was
+/// audible, and no property of the device it is attached to changes that — a phone on
+/// a train hears the train. Audio is answered by the voiceprint or by nobody.
+///
+/// **Loopback only**, for the same reason declaring the install's owner is: this
+/// silently changes who future messages are attributed to, and the gate lets any
+/// paired client reach this router — so without the check a borrowed phone could
+/// register itself to the owner and have everything typed on it filed under them.
+/// Revoking and renaming stay reachable from anywhere; they are corrections.
+pub async fn post_subject(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    acceptor: Option<axum::Extension<surfaces::Acceptor>>,
+    axum::Json(body): axum::Json<SubjectBody>,
+) -> Response {
+    if acceptor.map(|axum::Extension(a)| a) != Some(surfaces::Acceptor::Loopback) {
+        return (StatusCode::FORBIDDEN, "registering a device is loopback-only\n").into_response();
+    }
+    let subject = crate::mind::memory::facets::slug(&body.subject);
+    if subject.is_empty() && !body.subject.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "subject must contain a usable character\n")
+            .into_response();
+    }
+    match surfaces::store::bind(state.surfaces.data_dir(), &id, &subject) {
+        Ok(true) => {
+            tracing::info!(surface = %id, subject = %subject, "surface registered to a person");
+            axum::Json(serde_json::json!({
+                "ok": true,
+                "subject": (!subject.is_empty()).then_some(subject),
+            }))
+            .into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "no such surface\n").into_response(),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "registering a surface");
+            (StatusCode::INTERNAL_SERVER_ERROR, "could not write the surface\n").into_response()
         }
     }
 }

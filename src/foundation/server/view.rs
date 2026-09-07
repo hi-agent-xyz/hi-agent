@@ -399,8 +399,16 @@ pub async fn open_view(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
     FaceHeader(face): FaceHeader,
+    surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
     axum::Json(body): axum::Json<OpenViewRequest>,
 ) -> impl IntoResponse {
+    // Addressed, like typing: the person went somewhere on the agent's own surface,
+    // through a control nobody else can reach. Which device they did it on answers
+    // who, when that device is registered to somebody.
+    let sender = Sender::stated_or_owner(
+        crate::foundation::surfaces::registered_to(&state.data_dir, surface.as_deref()).as_deref(),
+        crate::foundation::config::owner(&state.data_dir).as_deref(),
+    );
     let view_ref = body.view_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let module = body.module.as_deref().map(str::trim).filter(|s| !s.is_empty());
     tracing::info!(auth = ?auth, view_ref = ?view_ref, module = ?module, live = body.live, "POST /api/views/open");
@@ -408,7 +416,7 @@ pub async fn open_view(
     // Back to live: nothing to resolve, and the content slot is always mountable.
     if body.live {
         if state.views.go_to(None).await {
-            record_move(&state, "came back to the live view").await;
+            record_move(&state, "came back to the live view", sender).await;
         }
         return axum::http::StatusCode::ACCEPTED.into_response();
     }
@@ -432,7 +440,7 @@ pub async fn open_view(
             view_ref: None,
         };
         if state.views.go_to(Some(dest)).await {
-            record_move(&state, &format!("went to \"{id}\"")).await;
+            record_move(&state, &format!("went to \"{id}\""), sender).await;
         }
         return axum::http::StatusCode::ACCEPTED.into_response();
     }
@@ -459,7 +467,7 @@ pub async fn open_view(
                 view_ref: Some(view_ref.clone()),
             };
             if state.views.go_to(Some(dest)).await {
-                record_move(&state, &format!("went to \"{view_ref}\"")).await;
+                record_move(&state, &format!("went to \"{view_ref}\""), sender).await;
             }
             // Going somewhere is the moment its picture is worth re-taking: the person
             // is looking at the board right now, so whatever the browser sees a second
@@ -493,14 +501,10 @@ pub async fn open_view(
 /// a perception, read into the next turn's context rather than answered. It rides here,
 /// on the write that moves the screen, rather than on an inbound channel of its own: a
 /// second path would be a second thing to keep in step with the first.
-async fn record_move(state: &Arc<AppState>, line: &str) {
+async fn record_move(state: &Arc<AppState>, line: &str, sender: Sender) {
     let ts = Utc::now();
     crate::foundation::channel_log::inbound(Channel::View, line);
 
-    // Addressed, like text: this is the person acting on the agent's own surface,
-    // through a control nobody else can reach. Labelled `owner` rather than written
-    // bare — see `docs/arch/signal-attribution.md`.
-    let sender = Sender::owner_or_unknown(crate::foundation::config::owner(&state.data_dir).as_deref());
     let entry = JournalEntry::Observation {
         id: Uuid::now_v7().to_string(),
         ts,

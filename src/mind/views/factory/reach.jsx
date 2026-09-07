@@ -45,6 +45,12 @@ const T = {
     pairWith: "Open this address on the other device and enter this code. It lasts ten minutes.",
     pairAt: "or scan with the Hi Agent app",
     done: "Done",
+    // Registering a device to a person. The copy has to say what it changes and what
+    // it does not, because "whose phone is this" sounds like it should cover the
+    // microphone and it deliberately does not.
+    whose: "Whose device",
+    nobody: "Not said",
+    whoseWhy: "What's typed, handed over or opened on it is attributed to them. Not what its microphone hears — that is answered by the voice itself.",
   },
   zh: {
     title: "怎么找到它",
@@ -69,6 +75,9 @@ const T = {
     pairWith: "在另一台设备上打开这个地址，输入这个码。十分钟内有效。",
     pairAt: "或者用 Hi Agent App 扫码",
     done: "好了",
+    whose: "谁的设备",
+    nobody: "没指定",
+    whoseWhy: "在上面打的字、递过来的文件、点开的页面，都算在这个人名下。麦克风听到的不算——那由声音本身回答。",
   },
 };
 
@@ -90,13 +99,32 @@ const WRITE = { "Content-Type": "application/json", "X-HI-Surface": "1" };
 export default function Reach() {
   const [handle, setHandle] = useState(null); // {handles, limit, why?}
   const [devices, setDevices] = useState(null);
+  // Who there is to register a device to, and whether this window is allowed to.
+  // Registering is loopback-only, so a phone opening this page must not be shown a
+  // control that would only ever be refused.
+  const [people, setPeople] = useState([]);
+  const [settable, setSettable] = useState(false);
 
   const loadDevices = useCallback(
     () =>
       fetch(url("/api/surfaces"))
         .then((r) => r.json())
-        .then((d) => setDevices(d.surfaces || []))
+        .then((d) => {
+          setDevices(d.surfaces || []);
+          setSettable(!!d.subject_settable);
+        })
         .catch(() => setDevices((prev) => (prev === null ? [] : prev))),
+    [],
+  );
+
+  // The people the agent knows, so a device is registered by picking somebody rather
+  // than by typing a name that may match nobody.
+  const loadPeople = useCallback(
+    () =>
+      fetch(url("/api/people"))
+        .then((r) => r.json())
+        .then((d) => setPeople((d.people || []).map((p) => p.subject)))
+        .catch(() => {}),
     [],
   );
 
@@ -119,7 +147,8 @@ export default function Reach() {
     <div style={S.page}>
       <div style={S.h1}>{L.title}</div>
       <Name state={handle} onChanged={loadHandle} />
-      <Devices list={devices} reload={loadDevices} />
+      <Devices list={devices} people={people} settable={settable}
+        reload={loadDevices} reloadPeople={loadPeople} />
     </div>
   );
 }
@@ -205,7 +234,7 @@ function stripScheme(u) {
 
 // ── the devices ───────────────────────────────────────────────────────────────
 
-function Devices({ list, reload }) {
+function Devices({ list, people, settable, reload, reloadPeople }) {
   const [pairing, setPairing] = useState(null); // {code, url, app_url}
   const [busy, setBusy] = useState("");
 
@@ -222,6 +251,24 @@ function Devices({ list, reload }) {
     period: pairing ? TEMPO.watching : TEMPO.ledger,
     hold: () => busy !== "",
   });
+  // The roster grows on its own — the agent mints a cluster every time it hears or
+  // sees somebody it cannot place — so the picker is refreshed on the same clock as
+  // the list it sits in.
+  useLive(reloadPeople, { period: TEMPO.ledger, hold: () => busy !== "" });
+
+  async function register(id, subject) {
+    setBusy(id);
+    try {
+      await fetch(url(`/api/surfaces/${id}/subject`), {
+        method: "POST",
+        headers: WRITE,
+        body: JSON.stringify({ subject }),
+      });
+      reload();
+    } finally {
+      setBusy("");
+    }
+  }
 
   async function addDevice() {
     setBusy("pair");
@@ -246,7 +293,7 @@ function Devices({ list, reload }) {
   }
 
   return (
-    <Section title={L.devices} why={L.devicesWhy}>
+    <Section title={L.devices} why={settable ? `${L.devicesWhy} ${L.whoseWhy}` : L.devicesWhy}>
       {list === null ? null : list.length === 0 ? (
         <div style={S.note}>{L.noDevices}</div>
       ) : (
@@ -260,6 +307,33 @@ function Devices({ list, reload }) {
                   {" · "}
                   {L.added(ago(s.created_at))}
                 </div>
+                {settable ? (
+                  <label style={S.whoseRow}>
+                    <span style={S.whoseLabel}>{L.whose}</span>
+                    <select
+                      style={S.whosePick}
+                      value={s.subject || ""}
+                      disabled={busy === s.id}
+                      onChange={(e) => register(s.id, e.target.value)}
+                    >
+                      <option value="">{L.nobody}</option>
+                      {(people.includes(s.subject) || !s.subject
+                        ? people
+                        : [s.subject, ...people]
+                      ).map((who) => (
+                        <option key={who} value={who}>
+                          {who}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  s.subject && (
+                    <div style={S.cardWhen}>
+                      {L.whose}: {s.subject}
+                    </div>
+                  )
+                )}
               </div>
               <button
                 style={S.danger}
@@ -375,6 +449,10 @@ const S = {
   cardName: { fontSize: 13.5, fontWeight: 700, letterSpacing: "-.01em",
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   cardWhen: { fontSize: 11.5, color: "var(--fg-mute)", marginTop: 2 },
+  whoseRow: { display: "flex", alignItems: "center", gap: 8, marginTop: 7 },
+  whoseLabel: { fontSize: 11.5, color: "var(--fg-mute)" },
+  whosePick: { font: "inherit", fontSize: 12, padding: "3px 6px", borderRadius: 7,
+    border: "1px solid var(--line-strong)", background: "transparent", color: "var(--fg)" },
 
   pair: { background: "var(--surface-strong)", borderRadius: 14, boxShadow: "var(--v-shadow)",
     padding: "16px 18px", display: "flex", flexDirection: "column", alignItems: "flex-start",

@@ -253,12 +253,15 @@ impl Surfaces {
         Ok(revoked)
     }
 
-    /// Whether the request carries a live credential, and how it was presented.
-    fn authorize(&self, headers: &HeaderMap) -> Option<Presented> {
+    /// Whether the request carries a live credential, how it was presented, and
+    /// **which** credential it was — the id is what says whose device this is
+    /// ([`store::subject_of`]), so it has to survive the check rather than being
+    /// thrown away at it.
+    fn authorize(&self, headers: &HeaderMap) -> Option<(Presented, String)> {
         if let Some(token) = bearer(headers) {
             if let Some(id) = self.verify(&token) {
                 store::touch(&self.data_dir, &id);
-                return Some(Presented::Bearer);
+                return Some((Presented::Bearer, id));
             }
             self.note_failure();
         }
@@ -277,7 +280,7 @@ impl Surfaces {
             };
             if let Some(id) = live {
                 store::touch(&self.data_dir, &id);
-                return Some(Presented::Cookie);
+                return Some((Presented::Cookie, id));
             }
             self.note_failure();
         }
@@ -334,6 +337,26 @@ impl Surfaces {
     }
 }
 
+/// The surface credential a request authenticated with. Present only on off-box
+/// requests that passed the gate; absent on loopback, which presents none.
+///
+/// **This is the boundary saying which device**, not the request claiming one — the
+/// same property that makes [`Acceptor`] trustworthy. Nothing a sender can write
+/// produces it.
+#[derive(Debug, Clone)]
+pub struct SurfaceId(pub String);
+
+/// Who the device behind this request is registered to, if anybody. `None` for
+/// loopback (no credential), for an unregistered device, and for a revoked one.
+///
+/// **Addressed channels only.** Typing, handing over a file and opening a view are
+/// each one person doing one thing, so the device they did it on says who. A
+/// microphone is not: it records whatever was audible, and no property of the device
+/// changes that. See [`docs/arch/signal-attribution.md`].
+pub fn registered_to(data_dir: &std::path::Path, surface: Option<&SurfaceId>) -> Option<String> {
+    store::subject_of(data_dir, &surface?.0)
+}
+
 /// Paths answered without a session, off-box included.
 ///
 /// `/healthz` and `POST /api/session` are open by definition — one says the
@@ -376,12 +399,21 @@ pub async fn gate(
 
     let headers = req.headers().clone();
     match surfaces.authorize(&headers) {
-        Some(Presented::Cookie) if !Surfaces::csrf_ok(&headers, &method) => (
+        Some((Presented::Cookie, _)) if !Surfaces::csrf_ok(&headers, &method) => (
             StatusCode::FORBIDDEN,
             "a state-changing request needs a non-simple content type or the X-HI-Surface header\n",
         )
             .into_response(),
-        Some(_) => next.run(req).await,
+        Some((_, id)) => {
+            // Which device this came in on, for the handlers that attribute what a
+            // person sends. Stamped here because this is the only place that knows:
+            // the credential is checked once, and a handler cannot re-derive it
+            // without the token. A loopback request never reaches this line and so
+            // never carries one — it has no credential to be registered.
+            let mut req = req;
+            req.extensions_mut().insert(SurfaceId(id));
+            next.run(req).await
+        }
         None => unauthorized(&headers, &method),
     }
 }
@@ -601,7 +633,7 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_str(&format!("{SESSION_COOKIE}={session}")).unwrap(),
         );
-        assert_eq!(s.authorize(&headers), Some(Presented::Cookie));
+        assert_eq!(s.authorize(&headers), Some((Presented::Cookie, id.clone())));
 
         assert!(s.exchange("not-a-credential", "x").is_none());
     }
@@ -615,7 +647,16 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
         );
-        assert_eq!(s.authorize(&headers), Some(Presented::Bearer));
+        assert_eq!(s.authorize(&headers), Some((Presented::Bearer, id.clone())));
+        // Which credential answered is what says whose device this is — a request
+        // that passed the gate carries it, and one on loopback carries none.
+        assert_eq!(registered_to(s.data_dir(), Some(&SurfaceId(id.clone()))), None);
+        store::bind(s.data_dir(), &id, "赵力").unwrap();
+        assert_eq!(
+            registered_to(s.data_dir(), Some(&SurfaceId(id.clone()))).as_deref(),
+            Some("赵力")
+        );
+        assert_eq!(registered_to(s.data_dir(), None), None, "loopback presents no device");
         let listed = store::list(s.data_dir()).unwrap();
         let row = listed.iter().find(|r| r.id == id).unwrap();
         assert!(!row.last_seen_at.is_empty());

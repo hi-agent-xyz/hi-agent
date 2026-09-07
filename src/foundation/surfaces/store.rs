@@ -20,7 +20,8 @@ const SCHEMA: &str = "
         hash         TEXT NOT NULL,
         created_at   TEXT NOT NULL,
         last_seen_at TEXT NOT NULL DEFAULT '',
-        revoked_at   TEXT NOT NULL DEFAULT ''
+        revoked_at   TEXT NOT NULL DEFAULT '',
+        subject      TEXT NOT NULL DEFAULT ''
     );
 ";
 
@@ -33,6 +34,16 @@ pub struct Surface {
     pub created_at: String,
     /// Empty until this surface has authenticated once.
     pub last_seen_at: String,
+    /// **Whose device this is** — a `people/` subject, or empty for one nobody has
+    /// said. What somebody types, hands over or opens on a registered device is
+    /// attributed to them; an unregistered one attributes nothing, which is the same
+    /// answer an install with no owner gives. Never inferred: a device is registered
+    /// by a person saying so, exactly like the owner.
+    ///
+    /// **It says nothing about the microphone.** A microphone records whatever was
+    /// audible, and no property of the device it is attached to changes that — a phone
+    /// on a train hears the train. Audio stays with the voiceprint.
+    pub subject: String,
 }
 
 /// Open `config.db` and ensure our table. Shares the file with
@@ -45,12 +56,56 @@ fn open(data_dir: &Path) -> anyhow::Result<Connection> {
     let conn = Connection::open(&p).with_context(|| format!("opening {}", p.display()))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch(SCHEMA).context("initializing the surface-credential schema")?;
+    // Idempotent column add for a DB written before devices could be registered to a
+    // person, guarded on `table_info` the same way the vendor-credential store does it.
+    if !column_exists(&conn, "surface_credential", "subject")? {
+        conn.execute_batch("ALTER TABLE surface_credential ADD COLUMN subject TEXT NOT NULL DEFAULT ''")?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
     }
     Ok(conn)
+}
+
+/// Whether `table` already has `column`. A fresh DB gets it from [`SCHEMA`]; an old
+/// one gets it from the `ALTER` above, and this is what keeps that re-runnable.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> anyhow::Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let name: String = r.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Register this surface to a person (a `people/` subject), or clear it with an empty
+/// string. `false` when there is no such live surface.
+pub fn bind(data_dir: &Path, id: &str, subject: &str) -> anyhow::Result<bool> {
+    let conn = open(data_dir)?;
+    let n = conn.execute(
+        "UPDATE surface_credential SET subject = ?1 WHERE id = ?2 AND revoked_at = ''",
+        params![subject, id],
+    )?;
+    Ok(n > 0)
+}
+
+/// Who a live surface is registered to, or `None` for an unregistered or revoked one.
+pub fn subject_of(data_dir: &Path, id: &str) -> Option<String> {
+    let conn = open(data_dir).ok()?;
+    let subject: String = conn
+        .query_row(
+            "SELECT subject FROM surface_credential WHERE id = ?1 AND revoked_at = ''",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok()?;
+    let subject = subject.trim();
+    (!subject.is_empty()).then(|| subject.to_string())
 }
 
 /// Record a freshly minted credential. Takes the **hash**, never the token: the
@@ -82,7 +137,7 @@ pub fn live(data_dir: &Path) -> anyhow::Result<Vec<(String, String)>> {
 pub fn list(data_dir: &Path) -> anyhow::Result<Vec<Surface>> {
     let conn = open(data_dir)?;
     let mut stmt = conn.prepare(
-        "SELECT id, label, created_at, last_seen_at FROM surface_credential \
+        "SELECT id, label, created_at, last_seen_at, subject FROM surface_credential \
          WHERE revoked_at = '' ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -91,6 +146,7 @@ pub fn list(data_dir: &Path) -> anyhow::Result<Vec<Surface>> {
             label: r.get(1)?,
             created_at: r.get(2)?,
             last_seen_at: r.get(3)?,
+            subject: r.get(4)?,
         })
     })?;
     Ok(rows.filter_map(Result::ok).collect())
@@ -133,6 +189,35 @@ pub fn revoke(data_dir: &Path, id: &str) -> anyhow::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_device_is_registered_to_a_person_and_can_be_unregistered() {
+        let dir = tempdir();
+        insert(&dir, "a", "the phone", "hash-a").unwrap();
+        assert_eq!(subject_of(&dir, "a"), None, "a new device says nothing");
+
+        assert!(bind(&dir, "a", "赵力").unwrap());
+        assert_eq!(subject_of(&dir, "a").as_deref(), Some("赵力"));
+        assert_eq!(list(&dir).unwrap()[0].subject, "赵力", "and the device list shows it");
+
+        assert!(bind(&dir, "a", "").unwrap(), "unregistering is a write, not a delete");
+        assert_eq!(subject_of(&dir, "a"), None);
+
+        assert!(!bind(&dir, "nope", "赵力").unwrap(), "no such device");
+    }
+
+    /// A revoked device answers for nobody. Otherwise a phone taken back would go on
+    /// attributing anything that still reached this core to the person it was
+    /// registered to.
+    #[test]
+    fn a_revoked_device_states_nothing() {
+        let dir = tempdir();
+        insert(&dir, "a", "the phone", "hash-a").unwrap();
+        bind(&dir, "a", "赵力").unwrap();
+        revoke(&dir, "a").unwrap();
+        assert_eq!(subject_of(&dir, "a"), None);
+        assert!(!bind(&dir, "a", "老王").unwrap(), "and cannot be re-registered");
+    }
 
     #[test]
     fn mint_list_touch_revoke() {

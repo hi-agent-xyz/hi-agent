@@ -588,6 +588,9 @@ pub fn build(
         )
         .route("/api/surfaces", get(surfaces::get_surfaces))
         .route("/api/surfaces/{id}", axum::routing::delete(surfaces::delete_surface))
+        // Whose device this is — the one verb here that is not a correction, so it is
+        // loopback-only. See `surfaces::post_subject`.
+        .route("/api/surfaces/{id}/subject", post(surfaces::post_subject))
         // No size limit, and the handler is what earns that: it streams the body and
         // spills past 64 KiB to a blob, so nothing here can be made to buffer a large
         // one. Left at the framework default it inherited 2 MB — a ceiling nobody

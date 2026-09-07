@@ -155,6 +155,7 @@ async fn ingest_file(
     mime: &str,
     bytes: &Bytes,
     note: Option<String>,
+    sender: Sender,
 ) -> Result<(), String> {
     let ts = Utc::now();
     let ext = ext_for(name, mime);
@@ -179,6 +180,7 @@ async fn ingest_file(
             peek: None,
         },
         note,
+        sender,
     )
     .await
 }
@@ -197,11 +199,11 @@ pub(crate) async fn deliver_artifact(
     ts: DateTime<Utc>,
     file: FileRef,
     note: Option<String>,
+    sender: Sender,
 ) -> Result<(), String> {
-    // Addressed, like text: a file is *handed over*, and the hander is the owner
-    // unless something says otherwise. `Channel::File`'s own definition already
-    // promised "the signal says who handed over what"; this is that field.
-    let sender = Sender::owner_or_unknown(crate::foundation::config::owner(&state.data_dir).as_deref());
+    // Addressed, like text: a file is *handed over*, and who handed it is decided at
+    // the boundary it arrived on — see the caller. `Channel::File`'s own definition
+    // already promised "the signal says who handed over what"; this is that field.
 
     // **One arrival, one message per thing communicated.** A note the person
     // effectively said — the screen gesture's own first-person line — is its own
@@ -313,7 +315,12 @@ pub(crate) async fn receive_screenshot(
     bytes: &Bytes,
 ) -> Result<(), String> {
     let name = format!("screen-{}.png", Utc::now().format("%Y%m%d-%H%M%S"));
-    ingest_file(state, &name, "image/png", bytes, Some("Here's my screen right now.".to_string())).await
+    // The screenshot gesture is a key held on this machine — no device credential is
+    // involved and none could be, so this is the owner default or nothing.
+    let sender = Sender::owner_or_unknown(
+        crate::foundation::config::owner(&state.data_dir).as_deref(),
+    );
+    ingest_file(state, &name, "image/png", bytes, Some("Here's my screen right now.".to_string()), sender).await
 }
 
 /// Drain a multipart body, storing every file part. A failed file does not hide
@@ -329,6 +336,7 @@ pub(crate) async fn receive_screenshot(
 async fn drain_multipart(
     state: &AppState,
     mut mp: Multipart,
+    sender: Sender,
 ) -> Result<UploadResult, (StatusCode, String)> {
     let mut result = UploadResult::default();
     let mut note: Option<String> = None;
@@ -355,7 +363,7 @@ async fn drain_multipart(
                 let index = result.attempted;
                 result.attempted += 1;
                 match field.bytes().await {
-                    Ok(bytes) => match ingest_file(state, &name, &mime, &bytes, note.take()).await {
+                    Ok(bytes) => match ingest_file(state, &name, &mime, &bytes, note.take(), sender.clone()).await {
                         Ok(()) => result.received += 1,
                         Err(error) => {
                             tracing::error!(file = %name, %error, "file upload failed");
@@ -379,10 +387,17 @@ async fn drain_multipart(
 /// `POST /api/in/file` — drag-drop / picker from the agent's own page.
 pub async fn post_file(
     State(state): State<Arc<AppState>>,
+    surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
     mp: Multipart,
 ) -> Response {
     tracing::info!("POST /api/in/file");
-    match drain_multipart(&state, mp).await {
+    // Addressed, like a typed line: whose device handed this over answers who, when
+    // that device is registered to somebody. Decided here, at the boundary.
+    let sender = Sender::stated_or_owner(
+        crate::foundation::surfaces::registered_to(&state.data_dir, surface.as_deref()).as_deref(),
+        crate::foundation::config::owner(&state.data_dir).as_deref(),
+    );
+    match drain_multipart(&state, mp, sender).await {
         Ok(result) => (result.status(), Json(result)).into_response(),
         Err((code, msg)) => (code, msg).into_response(),
     }
@@ -433,7 +448,15 @@ pub async fn post_up(
         return (StatusCode::GONE, Html(EXPIRED_PAGE.to_string())).into_response();
     }
     tracing::info!("POST /api/up/<token>");
-    match drain_multipart(&state, mp).await {
+    // **No device answers for this one.** The upload page is reached with a one-time
+    // token rather than a credential — it is open at the gate precisely so a phone
+    // with no pairing can use it — so there is no registered device behind it and the
+    // owner default is all there is. Whoever an already-authorized person handed the
+    // QR to is exactly the thing this route cannot know.
+    let sender = Sender::owner_or_unknown(
+        crate::foundation::config::owner(&state.data_dir).as_deref(),
+    );
+    match drain_multipart(&state, mp, sender).await {
         Ok(result) if result.attempted == 0 => {
             (StatusCode::BAD_REQUEST, Html(result_page("没有选择文件", false))).into_response()
         }

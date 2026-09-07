@@ -41,7 +41,7 @@ rule — no new judgment is required at the boundary.
 
 | Class | Channels | What arrival means | Sender |
 |---|---|---|---|
-| **Addressed** | `text`, `file`, `view` | someone deliberately sent this *to the agent* | the **owner**, by default |
+| **Addressed** | `text`, `file`, `view` | someone deliberately sent this *to the agent* | whoever the **device** is registered to, else the **owner** |
 | **Ambient** | `audio`, `vision` | captured from wherever the agent is | a cluster, or unknown |
 | **Machine** | `clock`, `worker` | the agent's own machinery moved | **none, ever** |
 
@@ -107,6 +107,52 @@ identity has never been something the agent was supposed to work out for itself.
 **An install may have no owner declared.** Then addressed channels are unattributed, and
 that is a correct and complete answer, not a degraded one.
 
+## A registered device says who, and a microphone still does not
+
+**Amended September 7, 2026.** Off-box and loopback were the same to attribution:
+a line typed on a phone on the other side of the world got the owner default, exactly
+like one typed at the keyboard. The boundary has always known the difference — every
+request is stamped with which listener took it, and an off-box one has authenticated
+with a specific credential — and none of it reached the sender.
+
+A surface credential can now be **registered to a person**. What somebody types, hands
+over, or opens on a registered device is theirs, basis `stated` — which is what that
+basis was reserved for from the start and never had a producer for: the device,
+presenting its credential, is the carrier saying who. A device nobody registered states
+nothing and falls through to the owner default; **it is never assumed to be the
+owner's**, because somebody else's phone paired to this core is still somebody else's
+phone.
+
+`stated` beats `owner` because it is the nearer fact. The owner default answers *whose
+install is this*, which is a guess about the person at the other end; a registration
+answers *whose device sent this*, which somebody stated on purpose. A recognition still
+beats both, being nearer still — it is about this signal rather than about a machine.
+
+**Registering is loopback-only**, like declaring the owner and for the same reason: it
+silently changes who future messages are attributed to, and the gate lets any paired
+client reach this router — so without the check a borrowed phone could register itself
+to the owner and have everything typed on it filed under them. Revoking and renaming a
+device stay reachable from anywhere; those are corrections.
+
+**It does not extend to the microphone, and the reason is not the device.** The first
+draft of this gave a device a second flag — *is this a personal microphone?* — meaning a
+phone held to the mouth could attribute its audio the way it attributes typing. That was
+wrong, and the objection is short: **a microphone records whatever was audible.** A
+phone on a train hears the train; a phone in a meeting hears the meeting. No property of
+the hardware changes what a recording contains, so there is no flag a person could
+truthfully set. Audio stays with the voiceprint, and with the camera that may now break
+its ties.
+
+What this leaves is an asymmetry that reads like a defect and is not: typing on a
+registered phone is attributed and speaking into it is not. Those are two different
+acts. **Typing is one person doing one thing; speaking is a recording of whoever was in
+range**, and the difference was never about which device or how far away it is.
+
+One route is deliberately outside all of this: the one-time upload page
+(`POST /api/up/{token}`) is open at the gate so a phone with no pairing can use it, so
+no credential answers for it and the owner default is all there is. Who an
+already-authorized person handed that QR to is exactly what it cannot know.
+
 ## The sender is recorded with its basis
 
 The field carries **who**, and **how that was decided**:
@@ -115,7 +161,7 @@ The field carries **who**, and **how that was decided**:
 |---|---|---|
 | `owner` | the addressed-channel default | the channel rule |
 | `cluster` | a face or voiceprint matched | recognition |
-| `stated` | the signal itself says who sent it | the carrier |
+| `stated` | the device it arrived on is registered to somebody | the carrier |
 | `unknown` | not grounded | everything else |
 
 **The basis is the load-bearing half.** A default that is *labelled a default* is

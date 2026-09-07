@@ -88,6 +88,7 @@ pub async fn post_text(
     State(state): State<Arc<AppState>>,
     StreamHeader(stream): StreamHeader,
     AuthBearer(auth): AuthBearer,
+    surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
     body: Body,
 ) -> Response {
     let ts = Utc::now();
@@ -102,9 +103,21 @@ pub async fn post_text(
 
     tracing::info!(auth = ?auth, len = received.total, "POST /api/in/text");
 
+    // Addressed: somebody typed this *to* the agent. Whose device it came in on
+    // answers who, when that device is registered to a person; otherwise it falls to
+    // the owner default. **Decided here, at the boundary**, and carried down both
+    // tails — words and spilled artifact are one arrival and must not be able to
+    // answer this two different ways.
+    let sender = Sender::stated_or_owner(
+        crate::foundation::surfaces::registered_to(&state.data_dir, surface.as_deref()).as_deref(),
+        crate::foundation::config::owner(&state.data_dir).as_deref(),
+    );
+
     match received.kind {
-        Received::Words(text) => post_words(&state, ts, text).await,
-        Received::Artifact { rel, peek } => post_artifact(&state, ts, rel, peek, received.total).await,
+        Received::Words(text) => post_words(&state, ts, text, sender).await,
+        Received::Artifact { rel, peek } => {
+            post_artifact(&state, ts, rel, peek, received.total, sender).await
+        }
     }
 }
 
@@ -236,7 +249,12 @@ fn peek_of(head: &[u8]) -> String {
 }
 
 /// Under the seam: a typed line, exactly as before.
-async fn post_words(state: &AppState, ts: DateTime<Utc>, body_str: String) -> Response {
+async fn post_words(
+    state: &AppState,
+    ts: DateTime<Utc>,
+    body_str: String,
+    sender: Sender,
+) -> Response {
     // The one place credentials are looked for. A key somebody typed without
     // thinking is written to `drive/accounts/secrets/`, and every model prompt
     // gets that path in its place (`AgentSession::prompt`). Nothing below this
@@ -262,12 +280,6 @@ async fn post_words(state: &AppState, ts: DateTime<Utc>, body_str: String) -> Re
     }
     crate::foundation::channel_log::inbound(Channel::Text, &body_str);
 
-    // Addressed: somebody typed this *to* the agent, so absent evidence otherwise it
-    // is the owner. Labelled `owner` rather than written bare, so a later pass can
-    // tell the default from a recognition — see `docs/arch/signal-attribution.md`.
-    // Decided once and handed to both the journal and the conversation, so the face
-    // beside the message and the name in the log are one answer, not two.
-    let sender = Sender::owner_or_unknown(crate::foundation::config::owner(&state.data_dir).as_deref());
     // Minted once and used three times: the journal entry, the conversation and
     // Reaction are the same value under the same key, which is what lets the list be
     // rebuilt from the log without a merge — and what gives Reaction something to
@@ -309,6 +321,7 @@ async fn post_artifact(
     rel: String,
     peek: String,
     total: u64,
+    sender: Sender,
 ) -> Response {
     let reff = crate::mind::memory::media::signal_ref(Channel::File, ts, &rel);
     let name = format!("pasted-{}.txt", ts.format("%Y%m%d-%H%M%S"));
@@ -325,7 +338,7 @@ async fn post_artifact(
         bytes: Some(total),
         peek: Some(peek),
     };
-    match crate::foundation::server::files::deliver_artifact(state, ts, file, None).await {
+    match crate::foundation::server::files::deliver_artifact(state, ts, file, None, sender).await {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
         Err(err) => {
             tracing::error!(error = %err, "delivering the pasted artifact failed");

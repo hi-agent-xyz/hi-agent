@@ -208,6 +208,29 @@ impl Sender {
         }
     }
 
+    /// The addressed-channel sender, in precedence order: **the person this device is
+    /// registered to**, else the owner default, else unattributed.
+    ///
+    /// `stated` wins because it is the nearer fact. The owner default answers *whose
+    /// install is this*, which is a guess about the person at the other end; a
+    /// registered device answers *whose device sent this*, which somebody stated on
+    /// purpose. The basis table has always had `stated` reserved for a carrier saying
+    /// who sent something, and a device credential registered to a person is exactly
+    /// that — the phone, presenting its credential, is the carrier saying so.
+    ///
+    /// **A device nobody registered states nothing**, and falls through to the owner
+    /// default rather than being assumed to be the owner's. Somebody else's phone
+    /// paired to this core is still somebody else's phone.
+    ///
+    /// This is not the constructor for ambient channels: a microphone records whatever
+    /// was audible whoever owns it, so a voice is answered by recognition or by nobody.
+    pub fn stated_or_owner(stated: Option<&str>, owner: Option<&str>) -> Self {
+        match stated.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => Self { subject: Some(s.to_owned()), basis: SenderBasis::Stated },
+            None => Self::owner_or_unknown(owner),
+        }
+    }
+
     /// Someone sent this and we cannot say who.
     pub fn unknown() -> Self {
         Self { subject: None, basis: SenderBasis::Unknown }
@@ -577,6 +600,23 @@ mod sender_tests {
 
     /// A subject with `Unknown` behind it is not a person to act on. Belt and braces:
     /// nothing constructs this today, and if something ever does it must not qualify.
+    /// A registered device beats the default, and an unregistered one does not
+    /// pretend to be the owner's.
+    #[test]
+    fn a_registered_device_says_who_and_an_unregistered_one_says_nothing() {
+        let s = Sender::stated_or_owner(Some("老王"), Some("赵力"));
+        assert_eq!(s.subject.as_deref(), Some("老王"));
+        assert_eq!(s.basis, SenderBasis::Stated);
+        assert_eq!(s.label(), "老王 (stated)");
+
+        let s = Sender::stated_or_owner(None, Some("赵力"));
+        assert_eq!(s.subject.as_deref(), Some("赵力"));
+        assert_eq!(s.basis, SenderBasis::Owner);
+
+        let s = Sender::stated_or_owner(Some("  "), None);
+        assert!(!s.is_grounded(), "no device and no owner is unattributed");
+    }
+
     #[test]
     fn an_unknown_basis_is_never_grounded_even_with_a_subject() {
         let s = Sender { subject: Some("赵力".into()), basis: SenderBasis::Unknown };
