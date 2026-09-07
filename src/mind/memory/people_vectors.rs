@@ -56,14 +56,37 @@ use super::{facets, layout};
 /// The facet dimension these sidecars attach to.
 const DIM: &str = "people";
 
-/// Cap on samples kept per subject per modality. A gallery is a *bounded, diverse*
-/// set, not a log of every observation; this is the ceiling on its size.
-const MAX_SAMPLES: usize = 1000;
+/// Cap on samples kept per subject per modality — **and the mechanism, not just a
+/// ceiling.** A gallery is a bounded, diverse set, not a log of every observation, and
+/// once it is full a newcomer has to *earn* its place from an incumbent
+/// ([`plan_admission`]). That is what makes the cap load-bearing: the worst-fitting
+/// sample in a full gallery is the bar every later observation must clear, and it
+/// rises on its own as good samples replace poor ones.
+///
+/// **Two hundred, down from a thousand.** Measured on this install's largest gallery:
+/// with 442 samples the bar sits at 0.470, which lets in family members who score
+/// 0.648 and 0.660 against it. Keeping the 200 best-fitting instead puts the bar at
+/// 0.774, which does not. Recognition reads only [`SCORE_SAMPLES`] neighbours anyway,
+/// so past a couple of hundred varied looks the extra samples add nothing to a match
+/// and add one more place for a stranger to sit unnoticed.
+const MAX_SAMPLES: usize = 200;
 
 /// How many near-identical samples (cosine ≥ [`DEDUP_SIMILARITY`]) to keep of any
 /// one *look*. A few variants are useful (lighting, angle); beyond that they are
 /// just one session crowding out diversity, so the oldest is rolled out.
 const MAX_VARIANTS: usize = 3;
+
+/// The newest share of a full gallery that may not be displaced — one sample in this
+/// many. **Time is the other half of the replacement rule.**
+///
+/// A fit measured against the whole gallery is lowest at both ends of a person who is
+/// slowly changing: the look they have grown out of, and the one they are growing
+/// into. Only the first is obsolete. Without protecting the newest arrivals a gallery
+/// would keep trimming its own leading edge and stay pinned to whoever that person
+/// used to be. The cost is that a stranger who does get in sits a while before ageing
+/// into the displaceable part — bounded, and far cheaper than a gallery that cannot
+/// follow anyone.
+const KEEP_RECENT_FRACTION: usize = 4;
 
 /// Cosine at/above which two samples count as the *same look* — essentially a
 /// duplicate frame, not a new angle. Well above [`Modality::append_min`] (same
@@ -240,8 +263,10 @@ struct Sample {
 
 /// Store one observation — its `embedding` and the `media` it came from (`ext` is
 /// the media's extension, e.g. `"jpg"`/`"wav"`) — as a uuid-keyed pair under
-/// `subject`'s `modality` dir, then re-apply the gallery's bounds. Returns the
-/// canonical `people/<subject>` ref. The pair keeps the gallery 1:1 (one crop per
+/// `subject`'s `modality` dir, if the gallery has room or the newcomer can earn a
+/// place in it ([`plan_admission`]). Returns the canonical `people/<subject>` ref, or
+/// `None` when the gallery was full of samples that fit this person better and
+/// nothing was written. The pair keeps the gallery 1:1 (one crop per
 /// embedding); diversity/cap pruning ([`MAX_VARIANTS`]/[`MAX_SAMPLES`]) drops whole
 /// pairs, oldest first. Media is written before the embedding so a crash leaves at
 /// worst an unmatched media orphan, never an embedding pointing at missing media.
@@ -254,7 +279,7 @@ pub async fn enroll(
     media: &[u8],
     ext: &str,
     note: Option<&str>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Option<String>> {
     let subj = facets::slug(subject);
     anyhow::ensure!(!subj.is_empty(), "subject must contain a usable character");
     anyhow::ensure!(!embedding.is_empty(), "embedding must be non-empty");
@@ -263,10 +288,16 @@ pub async fn enroll(
     let dir = modality_dir(data_dir, &subj, modality);
     tokio::fs::create_dir_all(&dir).await?;
 
-    // Existing samples, oldest first, then decide what the newcomer displaces.
+    // Existing samples, oldest first, then decide whether the newcomer belongs here
+    // at all and what it displaces if so.
     let existing = read_samples(&dir).await?;
     let embs: Vec<&[f32]> = existing.iter().map(|s| s.embedding.as_slice()).collect();
-    for idx in plan_drops(&embs, embedding, DEDUP_SIMILARITY, MAX_VARIANTS, MAX_SAMPLES) {
+    let Admission::Keep(drops) =
+        plan_admission(&embs, embedding, DEDUP_SIMILARITY, MAX_VARIANTS, MAX_SAMPLES)
+    else {
+        return Ok(None); // a full gallery, and nothing in it fits this person worse
+    };
+    for idx in drops {
         remove_sample(&dir, &existing[idx].stem).await;
     }
 
@@ -281,21 +312,51 @@ pub async fn enroll(
     let emb_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
     write_atomic(&dir, &format!("{stem}.f32"), &emb_bytes).await?;
 
-    Ok(format!("{DIM}/{subj}"))
+    Ok(Some(format!("{DIM}/{subj}")))
 }
 
-/// Decide which of `existing` (oldest first) the newcomer `new` displaces, by index.
-/// Diversity first: if `new`'s look already has `max_variants` near-identical
-/// samples (cosine ≥ `dedup`), drop the oldest of them down to that bound. Then the
-/// global ceiling: with the newcomer added, drop oldest overall until `max_samples`.
-/// Pure — the IO-free core of [`enroll`].
-fn plan_drops(
+/// What [`enroll`] should do with a newcomer, given the gallery as it stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Admission {
+    /// Store it, dropping these indices (of `existing`) first.
+    Keep(Vec<usize>),
+    /// The gallery is full and every sample in it fits this person better. Not stored.
+    /// **A full gallery is a competition, not a queue** — see [`MAX_SAMPLES`].
+    Full,
+}
+
+/// How well one sample sits among a set of others: the mean cosine to its
+/// [`SCORE_SAMPLES`] nearest, which is exactly how [`nearest`] scores a query.
+///
+/// **Local on purpose.** A person whose face or voice is slowly changing still has
+/// three very close neighbours — themselves, last week — so their fit stays high while
+/// they drift; the gallery follows them. A stranger who happens to resemble the
+/// subject overall has no close neighbour at all, so their fit is low however
+/// plausible they looked to a single threshold. Distance to a centroid would grade
+/// those two the same way and evict the wrong one.
+fn fit_among<'a>(one: &[f32], others: impl Iterator<Item = &'a [f32]>) -> f32 {
+    let mut sims: Vec<f32> = others.map(|o| cosine(o, one)).collect();
+    top_mean(&mut sims, SCORE_SAMPLES).map(|(v, _)| v).unwrap_or(1.0)
+}
+
+/// Decide what the newcomer `new` displaces in `existing` (oldest first), or whether
+/// it earns a place at all. Pure — the IO-free core of [`enroll`].
+///
+/// Diversity first: if `new`'s look already has `max_variants` near-identical samples
+/// (cosine ≥ `dedup`), the oldest of them go, down to that bound. Then the ceiling —
+/// and this is where a full gallery stops being a queue. Under `max_samples` the
+/// newcomer is simply stored. At `max_samples` it is measured against the gallery the
+/// same way a query is ([`fit_among`]) and compared with the incumbent that fits
+/// worst; only a better fit gets in, and that incumbent is what it replaces. The
+/// newest [`KEEP_RECENT_FRACTION`] of the gallery is out of the running for being
+/// replaced, so a changing person's leading edge survives its own low fit.
+fn plan_admission(
     existing: &[&[f32]],
     new: &[f32],
     dedup: f32,
     max_variants: usize,
     max_samples: usize,
-) -> Vec<usize> {
+) -> Admission {
     let mut drops: Vec<usize> = Vec::new();
     let near: Vec<usize> = existing
         .iter()
@@ -307,16 +368,36 @@ fn plan_drops(
         let to_drop = near.len() - max_variants + 1; // leaves max_variants after adding the newcomer
         drops.extend(near.iter().take(to_drop).copied());
     }
-    let mut remaining = existing.len() - drops.len() + 1;
-    let mut i = 0;
-    while remaining > max_samples && i < existing.len() {
-        if !drops.contains(&i) {
-            drops.push(i);
-            remaining -= 1;
+
+    // `existing` is in sighting order, so its tail is the newest and is protected.
+    let displaceable = existing.len().saturating_sub(max_samples / KEEP_RECENT_FRACTION);
+    while existing.len() - drops.len() + 1 > max_samples {
+        let newcomer = fit_among(
+            new,
+            existing.iter().enumerate().filter(|(i, _)| !drops.contains(i)).map(|(_, e)| *e),
+        );
+        // The worst-fitting incumbent among those old enough to be replaced, earliest
+        // first on a tie.
+        let worst = existing
+            .iter()
+            .enumerate()
+            .take(displaceable)
+            .filter(|(i, _)| !drops.contains(i))
+            .map(|(i, e)| {
+                let rest = existing
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i && !drops.contains(j))
+                    .map(|(_, o)| *o);
+                (i, fit_among(e, rest))
+            })
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        match worst {
+            Some((i, worst_fit)) if newcomer > worst_fit => drops.push(i),
+            _ => return Admission::Full,
         }
-        i += 1;
     }
-    drops
+    Admission::Keep(drops)
 }
 
 /// A short, opaque, stable identity key for a freshly-discovered person — what a
@@ -476,7 +557,9 @@ pub async fn cluster(
         Filing::Mint => mint_id(),
         Filing::Unplaceable => return Ok(None),
     };
-    enroll(data_dir, &subject, modality, embedding, media, ext, note).await?;
+    if enroll(data_dir, &subject, modality, embedding, media, ext, note).await?.is_none() {
+        return Ok(None); // placed, but the gallery had no room it could earn
+    }
     Ok(Some(subject))
 }
 
@@ -1478,7 +1561,7 @@ mod tests {
     }
 
     /// Enroll an embedding with a tiny dummy media sibling — the common test shape.
-    async fn enroll_v(dir: &Path, subject: &str, modality: Modality, emb: &[f32]) -> String {
+    async fn enroll_v(dir: &Path, subject: &str, modality: Modality, emb: &[f32]) -> Option<String> {
         let ext = if modality == Modality::Face { "jpg" } else { "wav" };
         enroll(dir, subject, modality, emb, b"media", ext, None).await.unwrap()
     }
@@ -1509,7 +1592,7 @@ mod tests {
     async fn enroll_then_nearest_finds_the_subject() {
         let dir = td();
         let r = enroll_v(dir.path(), "Alice", Modality::Voice, &[1.0, 0.0, 0.0, 0.0]).await;
-        assert_eq!(r, "people/alice");
+        assert_eq!(r.as_deref(), Some("people/alice"));
         let got = nearest(dir.path(), Modality::Voice, &[1.0, 0.0, 0.0, 0.0], 5).await.unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].subject, "alice");
@@ -1636,32 +1719,78 @@ mod tests {
         assert_eq!(sample_media_counts(dir.path(), "alice", Modality::Face).await, (4, 4));
     }
 
+    fn keeps(a: Admission) -> Vec<usize> {
+        match a {
+            Admission::Keep(d) => d,
+            Admission::Full => panic!("expected the newcomer to be kept"),
+        }
+    }
+
     #[test]
-    fn plan_drops_rolls_the_oldest_variant_when_a_look_is_full() {
+    fn plan_rolls_the_oldest_variant_when_a_look_is_full() {
         // Three near-identical (cosine ~1) + a newcomer near them, max_variants 3.
         let a = [1.0_f32, 0.0];
         let existing: Vec<&[f32]> = vec![&a, &a, &a];
-        let drops = plan_drops(&existing, &a, 0.85, 3, 1000);
-        assert_eq!(drops, vec![0], "drop the single oldest variant");
+        assert_eq!(keeps(plan_admission(&existing, &a, 0.85, 3, 1000)), vec![0]);
     }
 
     #[test]
-    fn plan_drops_keeps_a_look_below_the_variant_bound() {
+    fn plan_keeps_a_look_below_the_variant_bound() {
         let a = [1.0_f32, 0.0];
         let existing: Vec<&[f32]> = vec![&a, &a];
-        assert!(plan_drops(&existing, &a, 0.85, 3, 1000).is_empty(), "2 < 3 variants, keep all");
+        assert!(keeps(plan_admission(&existing, &a, 0.85, 3, 1000)).is_empty(), "2 < 3, keep all");
+    }
+
+    /// One person seen `n` ways, every pair at cosine 0.8 — varied enough that dedup
+    /// reads them as different looks (0.8 < 0.85), close enough to be one person.
+    fn look(slot: usize) -> Vec<f32> {
+        let (a, b) = (0.8_f32.sqrt(), 0.2_f32.sqrt());
+        let mut v = vec![0.0; 8];
+        v[0] = a;
+        v[1 + slot] = b;
+        v
+    }
+
+    /// Somebody else entirely: nothing in common with the family of looks above.
+    fn outsider() -> Vec<f32> {
+        let mut v = vec![0.0; 8];
+        v[7] = 1.0;
+        v
     }
 
     #[test]
-    fn plan_drops_trims_oldest_overall_at_the_global_cap() {
-        // Distinct (orthogonal) looks so none are near; cap forces oldest out.
-        let vs: Vec<Vec<f32>> = (0..6)
-            .map(|i| (0..6).map(|j| if i == j { 1.0 } else { 0.0 }).collect())
-            .collect();
+    fn a_full_gallery_refuses_a_newcomer_that_fits_it_worse_than_anyone_in_it() {
+        let vs: Vec<Vec<f32>> = (0..6).map(look).collect();
         let existing: Vec<&[f32]> = vs.iter().map(|v| v.as_slice()).collect();
-        let newcomer = vec![0.5_f32; 6];
-        // max_samples 4: with the newcomer there'd be 7 → drop the 3 oldest.
-        assert_eq!(plan_drops(&existing, &newcomer, 0.85, 3, 4), vec![0, 1, 2]);
+        // Cosine 0.5 to every sample: plausible against the subject overall, close to
+        // nobody in particular. That is the shape a family member has — measured here
+        // at 0.648 against a gallery whose own samples sit at 0.767.
+        let mut stranger = vec![0.0_f32; 8];
+        stranger[0] = 0.559;
+        stranger[7] = 0.829;
+        assert_eq!(plan_admission(&existing, &stranger, 0.85, 3, 6), Admission::Full);
+    }
+
+    #[test]
+    fn a_full_gallery_takes_a_better_fit_and_replaces_the_sample_that_fits_worst() {
+        // Five of one person and, third to arrive, somebody who is not them.
+        let vs = vec![look(0), look(1), outsider(), look(2), look(3), look(4)];
+        let existing: Vec<&[f32]> = vs.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(keeps(plan_admission(&existing, &look(5), 0.85, 3, 6)), vec![2],
+                   "the one who does not belong is what it replaces");
+    }
+
+    #[test]
+    fn a_gallery_can_still_follow_a_person_who_is_slowly_changing() {
+        // A look that has walked a long way from where it started. Both ends fit the
+        // whole worst — the one grown out of and the one being grown into — and only
+        // the first is obsolete.
+        let vs: Vec<Vec<f32>> =
+            (0..8).map(|i| { let a = i as f32 * 0.6; vec![a.cos(), a.sin()] }).collect();
+        let existing: Vec<&[f32]> = vs.iter().map(|v| v.as_slice()).collect();
+        let a = 7.0 * 0.6_f32 + 0.3; // carrying on from the newest end
+        assert_eq!(keeps(plan_admission(&existing, &[a.cos(), a.sin()], 0.85, 3, 8)), vec![0],
+                   "the look grown out of goes, not the one being grown into");
     }
 
     #[tokio::test]

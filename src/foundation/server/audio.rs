@@ -978,11 +978,16 @@ fn resolve_speaker(
             people_vectors::Filing::Mint => people_vectors::mint_id(),
             people_vectors::Filing::Unplaceable => return,
         };
-        if let Err(err) =
-            people_vectors::enroll(&data_dir, &subject, Modality::Voice, &embedding, &wav, "wav", Some(&said))
-                .await
+        match people_vectors::enroll(
+            &data_dir, &subject, Modality::Voice, &embedding, &wav, "wav", Some(&said),
+        )
+        .await
         {
-            tracing::warn!(error = %format!("{err:#}"), "live voice enroll failed");
+            // `None` is a full gallery that this turn could not earn a place in —
+            // ordinary once somebody has been heard a couple of hundred times, and the
+            // reason a gallery stops drifting toward whoever else is in the room.
+            Ok(_) => {}
+            Err(err) => tracing::warn!(error = %format!("{err:#}"), "live voice enroll failed"),
         }
     });
 }
