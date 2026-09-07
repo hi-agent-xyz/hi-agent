@@ -598,6 +598,32 @@ pub fn base_path(headers: &HeaderMap) -> String {
     raw.to_string()
 }
 
+/// Put a base path on a root-absolute URL **this core is handing out**.
+///
+/// The producing half of `lib/base.ts`'s `url()`, and the JSON counterpart of
+/// [`crate::appearance::reroot`], which has always done this for the paths the
+/// served HTML emits. A path in a JSON field is read by the same browser under the
+/// same prefix; it was simply never rerooted, so every reader had to remember —
+/// and the readers that forgot were invisible on a desktop and blank on a phone.
+///
+/// **Only a field that is *only* an address may go through this.** `module_url` is
+/// deliberately not one: with no `view_ref` it is also the identity a trail entry is
+/// matched by (`destination_of`, `trail.ts`), and prefixing an identity makes two
+/// names for one thing. It is resolved with `url()` where it is *used* as an address
+/// instead, in `ViewSlot`.
+///
+/// Idempotent, and a no-op with no prefix — so a caller that already resolved the
+/// path, and every ordinary root-served shape, is unaffected.
+pub fn reroot_path(path: &str, prefix: &str) -> String {
+    if prefix.is_empty() || !path.starts_with('/') {
+        return path.to_string();
+    }
+    if path == prefix || path.starts_with(&format!("{prefix}/")) {
+        return path.to_string();
+    }
+    format!("{prefix}{path}")
+}
+
 /// Whether the request reached us over TLS. `X-Forwarded-Proto` is the community's
 /// word for it in the relayed shape; it is only ever read to decide whether to
 /// *add* a cookie attribute, never to decide access.
@@ -617,6 +643,23 @@ mod tests {
         let p = std::env::temp_dir().join(format!("hi-surfaces-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&p).unwrap();
         Surfaces::new(p)
+    }
+
+    /// The rule `lib/base.ts` states for the page, held on the producing side: a path
+    /// this core hands out starts where the caller's page starts. Idempotent, because
+    /// a reader that already resolved it must stay right — the seam and the helper have
+    /// to be able to run over the same value without making `/ana/ana/…`.
+    #[test]
+    fn a_path_handed_out_starts_where_the_caller_does() {
+        assert_eq!(reroot_path("/views/_shots/ref/factory/home.png", "/ana"), "/ana/views/_shots/ref/factory/home.png");
+        assert_eq!(reroot_path("/views/x.png", ""), "/views/x.png", "the ordinary root-served shape");
+        assert_eq!(reroot_path("/ana/views/x.png", "/ana"), "/ana/views/x.png", "idempotent");
+        assert_eq!(reroot_path("/anagram/x.png", "/ana"), "/ana/anagram/x.png", "a prefix is whole segments");
+        assert_eq!(
+            reroot_path("https://cdn.example.com/x.png", "/ana"),
+            "https://cdn.example.com/x.png",
+            "somewhere else is left alone"
+        );
     }
 
     #[test]

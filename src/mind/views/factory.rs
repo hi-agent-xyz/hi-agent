@@ -478,6 +478,12 @@ mod tests {
     ///
     /// Matched on the literal attribute openers rather than every `"/` in the file:
     /// a path inside a `fetch` is fine, and flagging it would teach the wrong rule.
+    ///
+    /// **What it cannot see is a path in a variable**, and that is not hypothetical:
+    /// `home.jsx` read `shot_url` off `GET /api/views` and rendered `src={view.shot}`,
+    /// which is the shape of every correct call site, so it passed here and was blank
+    /// on every phone. Reading provenance needs a parser this test does not have — so
+    /// a green run here means no *literal* bare path, not that the class is closed.
     #[test]
     fn no_bundled_view_puts_a_bare_absolute_path_in_an_attribute() {
         let dir = tempfile::tempdir().unwrap();
@@ -487,7 +493,13 @@ mod tests {
         names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
         for name in names {
             let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
-            for bare in ["src=\"/", "href=\"/", "src={\"/", "href={\"/", "src={`/", "href={`/"] {
+            // `url(/` is the CSS function with a raw path — a `background-image` the
+            // people-review comment has always named as uncovered. Unambiguous only
+            // without a quote after the paren: `url("/…")` and `url(`/…`)` are the
+            // `@hi/core` helper doing the right thing, and share the CSS one's name.
+            for bare in
+                ["src=\"/", "href=\"/", "src={\"/", "href={\"/", "src={`/", "href={`/", "url(/"]
+            {
                 assert!(
                     !source.contains(bare),
                     "{name}.jsx has a bare `{bare}…` — wrap the path in url() from @hi/core"

@@ -9,13 +9,13 @@
 // it onto the page; this reads it back. Empty is the normal case and costs
 // nothing.
 //
-// Through the *desktop* app this is always empty: `crates/hi-app` proxies from
-// its own root, holds the credential, and the face never learns where the core
-// actually is. **The iPhone app does not.** `CoreWebView` loads the paired
-// address itself — which is what the QR carried, `https://hi-agent.xyz/ana` —
-// with the session cookie set on that origin, so on a phone the prefix is not
-// the exceptional case, it is the normal one. Anything below that only holds
-// "when the prefix is empty" is broken on every phone, and only on phones.
+// **Every app loads the attached core's own address**, desktop and mobile alike:
+// the local proxy that once hid it was tried and deleted (topology.md § App), so
+// the prefix is simply whatever that address carries. Empty at
+// `http://127.0.0.1:12358`; `/ana` for a core the community routes by subpath,
+// which is what a pairing QR hands a phone and therefore the ordinary shape of
+// every remote attach. Anything below that only holds "when the prefix is empty"
+// is broken on exactly those attaches, and works locally while it is broken.
 
 declare global {
   interface Window {
@@ -78,14 +78,20 @@ export function inCore(pathname: string = window.location.pathname): string {
  * attribute (`<img src>`, `<a href>`), a CSS `background-image`, a `new Audio(…)`,
  * and a `WebSocket` built from `location.host`. Those call `url()` by hand.
  *
- * That gap is not theoretical. Three call sites shipped without it — the face
- * crops and voice clips in `people-review`, the picture on every tile of the
- * views tab, and the task-file links — and each was invisible on a desktop and
- * blank on a phone, where the prefix is the ordinary case. A regex over the
- * sources would not have caught the band: the path came from the backend and sat
- * in a variable (`src={shot}`), which reads like every correct call site. The
- * only fix that closes the class is for the phone to stop being served under a
- * prefix at all — an iOS-side local proxy, the way `crates/hi-app` already works.
+ * That gap is not theoretical, and it recurred until the ownership moved: the face
+ * crops and voice clips in `people-review`, the picture on every tile of the views
+ * tab, the task-file links, then the cards and chips of `factory/home` — each
+ * invisible on a desktop and blank on a phone, where the prefix is the ordinary
+ * case. A regex over the sources caught none of the ones that mattered: the path
+ * came from the backend and sat in a variable (`src={shot}`), which reads like
+ * every correct call site.
+ *
+ * **So a path the core hands out now arrives resolved** — `surfaces::reroot_path`,
+ * applied at the endpoint against `X-Forwarded-Prefix`. What is left for `url()` is
+ * only a path the page *builds itself*, which is the one kind whose call site the
+ * author is already looking at. The prefix itself is permanent: hiding it behind a
+ * client-side proxy is the shape this repo tried and deleted, and the community
+ * addresses cores by subpath by design (topology.md).
  */
 export function installBase(): void {
   if (!base()) return;

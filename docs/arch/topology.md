@@ -195,6 +195,14 @@ community is not enough: the core emits absolute paths for `/assets/*`, `/genera
 the import map that `index()` injects, and under a subpath those must render as
 `/ana/assets/*` or views will not resolve. `HI_AGENT_BASE_URL` is the precedent.
 
+**That holds for a path in a JSON body as well as one in the HTML**, and for the same
+reason — the browser resolves both against the same origin. A field that is *only* an
+address (`shot_url`) is rerooted onto the caller's prefix as it leaves; a field that is
+also an identity (`module_url`, which is how a trail entry with no ref is matched) stays
+canonical and is resolved where it is used as an address. The page's own rebasing seam
+covers what JavaScript requests, never what an attribute or a stylesheet does, so a path
+the core hands out has to arrive usable.
+
 **One origin is shared, and that is a real property rather than a caveat.** Every relayed
 core lives on `hi-agent.xyz`, so they share storage and a cookie jar; `Path=/ana` decides
 what is *sent* where and is not a boundary. It matters more here than in a typical app

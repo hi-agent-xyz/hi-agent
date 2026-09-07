@@ -1229,12 +1229,20 @@ export default function Home() {
     setMinds(seen);
   }, []);
 
+  // `shot_url` goes straight into an `<img src>`, and it is safe to: the core resolves it
+  // against the base path the request arrived on before it hands it over (`list_views`,
+  // `foundation::surfaces::reroot_path`). That is deliberately the producer's job and not
+  // this file's — an `<img src>` is not carried by the `fetch` seam that rebases everything
+  // else, and asking each reader to remember is how this surface shipped a broken picture on
+  // every phone while the desktop looked fine. A path this view builds *itself* still needs
+  // `url()`; there are none here.
   const loadViews = useCallback(async () => {
     const list = await api.views().catch(() => null);
     if (!Array.isArray(list)) return;
     const known = new Map();
     for (const v of list) {
-      if (v?.view_ref) known.set(v.view_ref, { ref: v.view_ref, label: v.label, shot: v.shot_url || null });
+      if (!v?.view_ref) continue;
+      known.set(v.view_ref, { ref: v.view_ref, label: v.label, shot: v.shot_url || null });
     }
     setViews(known);
   }, []);

@@ -247,9 +247,10 @@ pub struct WireHistoryEntry {
     pub view_ref: Option<String>,
     pub label: String,
     pub at: DateTime<Utc>,
-    /// A picture of this show, served from `/views/_shots/<hash>.png` — absent while
-    /// the capture is still running, and for good on a view that did not render
-    /// cleanly. The tile falls back to its mark either way, so this is decoration on
+    /// A picture of this show, served from `/views/_shots/<hash>.png` and **already
+    /// resolved against the base path this request arrived on**, so it can go straight
+    /// into an `<img src>` — absent while the capture is still running, and for good on
+    /// a view that did not render cleanly. The tile falls back to its mark either way, so this is decoration on
     /// a record that is complete without it. See [`super::view_shots`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shot_url: Option<String>,
@@ -283,6 +284,28 @@ pub struct ViewState {
     /// leaves the room empty with the entry still in it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live: Option<String>,
+}
+
+impl ViewState {
+    /// Put the caller's base path on the pictures, on the way out.
+    ///
+    /// The state is kept canonical — a shot is `/views/_shots/…` in memory and in the
+    /// journal, because the same core answers on loopback *and* under the community's
+    /// subpath and only the request knows which. So the prefix goes on at the edge,
+    /// once, rather than being remembered by each of the readers.
+    ///
+    /// `module_url` is not touched here on purpose: it is this entry's identity as well
+    /// as its address — see [`crate::foundation::surfaces::reroot_path`].
+    pub fn reroot_shots(&mut self, prefix: &str) {
+        if prefix.is_empty() {
+            return;
+        }
+        for entry in &mut self.history {
+            if let Some(shot) = entry.shot_url.take() {
+                entry.shot_url = Some(crate::foundation::surfaces::reroot_path(&shot, prefix));
+            }
+        }
+    }
 }
 
 impl ViewBus {
@@ -1035,6 +1058,47 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The picture is rerooted; the identity is not.** A history entry with no
+    /// `view_ref` is matched against `live` by its `module_url` (`destination_of` here,
+    /// `destinationOf` in `trail.ts`), so prefixing that field would give one show two
+    /// names and the trail would stop marking the live one. The shot has no such second
+    /// job, and is the field an `<img src>` reads.
+    #[test]
+    fn rerooting_moves_the_picture_and_leaves_the_identity_alone() {
+        let mut state = ViewState {
+            version: 1,
+            views: vec![WireView {
+                id: "v1".into(),
+                module_url: "/views/_compiled/abc.mjs".into(),
+                slot: WireSlot::Content,
+            }],
+            history: vec![WireHistoryEntry {
+                id: "v1".into(),
+                module_url: "/views/_compiled/abc.mjs".into(),
+                view_ref: None,
+                label: "Something".into(),
+                at: Utc::now(),
+                shot_url: Some("/views/_shots/abc.png".into()),
+            }],
+            cursor: None,
+            live: Some("/views/_compiled/abc.mjs".into()),
+        };
+        state.reroot_shots("/ana");
+        assert_eq!(state.history[0].shot_url.as_deref(), Some("/ana/views/_shots/abc.png"));
+        assert_eq!(state.history[0].module_url, "/views/_compiled/abc.mjs");
+        assert_eq!(state.views[0].module_url, "/views/_compiled/abc.mjs");
+        assert_eq!(
+            state.live.as_deref(),
+            Some(destination_of_wire(&state.history[0])),
+            "the live show still matches its own history entry"
+        );
+    }
+
+    /// `destinationOf` in `trail.ts`, on the wire shape the browser actually receives.
+    fn destination_of_wire(entry: &WireHistoryEntry) -> &str {
+        entry.view_ref.as_deref().unwrap_or(&entry.module_url)
+    }
 
     fn show(id: &str, url: &str) -> ViewEnvelope {
         ViewEnvelope {

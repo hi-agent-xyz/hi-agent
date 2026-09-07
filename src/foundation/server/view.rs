@@ -31,6 +31,7 @@ pub async fn get_out_view(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ViewQuery>,
     AuthBearer(auth): AuthBearer,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     // A held view long-poll = a screen is attached; counted until this handler returns.
     let _attached = state.attachments.connect(crate::body::attachments::OutChannel::View);
@@ -41,7 +42,12 @@ pub async fn get_out_view(
     // process + session + upstream cache are hot before the first utterance.
     state.warm();
 
-    axum::Json(state.views.wait_state(query.since).await)
+    // Read per request, because the same core answers on loopback and through the
+    // community and only the caller knows which. `base_path` is the core's one parse.
+    let prefix = crate::foundation::surfaces::base_path(&headers);
+    let mut appearance = state.views.wait_state(query.since).await;
+    appearance.reroot_shots(&prefix);
+    axum::Json(appearance)
 }
 
 /// DELETE /api/out/view — clear the appearance (close all views, back
@@ -71,8 +77,11 @@ pub struct ListedView {
     /// in the row by being system.
     pub bookmarked: bool,
     /// A picture of this surface as it currently stands, served from
-    /// `/views/_shots/ref/<ref>.png`. Absent until one has been taken — see
-    /// [`super::view_shots`] for when that is. It is what a card the person opens
+    /// `/views/_shots/ref/<ref>.png`, **already resolved against the base path this
+    /// request arrived on** — so it can go straight into an `<img src>`, which is the
+    /// only thing it is ever for and the one place the page's rebasing seam cannot
+    /// reach. Absent until one has been taken — see [`super::view_shots`] for when
+    /// that is. It is what a card the person opens
     /// carries into the band's row, so a view they went to has a face even though the
     /// agent never shown it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,8 +157,10 @@ pub async fn list_views(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
     FaceHeader(face): FaceHeader,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     tracing::debug!(auth = ?auth, face = ?face, "GET /api/views");
+    let prefix = crate::foundation::surfaces::base_path(&headers);
     let root = state.data_dir.join("views");
     let mut found = Vec::new();
     collect_views(&root, &root, &mut found).await;
@@ -157,7 +168,8 @@ pub async fn list_views(
     for view in &mut found {
         view.system = view.view_ref.starts_with(SYSTEM_PREFIX);
         view.bookmarked = !view.system && saved.iter().any(|r| r == &view.view_ref);
-        view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref);
+        view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref)
+            .map(|shot| crate::foundation::surfaces::reroot_path(&shot, &prefix));
     }
     found.sort_by(|a: &ListedView, b: &ListedView| a.view_ref.cmp(&b.view_ref));
 
