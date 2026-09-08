@@ -87,13 +87,15 @@ fn normalize_ts(s: &str) -> Option<String> {
 
 /// One subject in the index, with the file's mtime beside its name.
 ///
-/// **The timestamp is why this is an object rather than a string.** The listing used to
-/// hand back names alone, so a surface that wanted to know *when* the mind last wrote
-/// about a project had to read every facet in full to find out — `factory/home` read one
-/// request per project and, because that cost is proportional to nothing a clock should
-/// pay, it read on attention instead of on a clock and quietly showed a mount-time
-/// answer for as long as the window stayed up. The mtime is one `stat` per subject on
-/// this side of the wire, which is what a listing is for.
+/// **The timestamp is why this is an object rather than a string.** A listing of bare names
+/// makes a surface that wants to know *when* the mind last wrote about a project read every
+/// facet in full to find out — one request per subject, for a number this side already holds
+/// from a `stat` it does anyway.
+///
+/// **No bundled view reads it today.** `factory/home` asks this endpoint for the names alone,
+/// which is what decides whether a one-row topic earns a rank of its own on that chart; the
+/// run of chips that carried each project's age is gone from it. The field stays because it
+/// is what a listing is for, not because anything is waiting on it.
 #[derive(Serialize)]
 struct SubjectDto {
     subject: String,
