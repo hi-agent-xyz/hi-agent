@@ -127,4 +127,55 @@ special tool, just write the file」),没有任何一个工具调用可以挂钩
   单测(`a_picture_taken_for_another_face_is_re_taken`)+ 读代码,没在活实例上点过。
 - ⚠️ **没在浏览器里看过格子**。看的是盘上 PNG 的宽高,band 里那张图实际长什么样是推的。
 - ⚠️ **两张脸同时开着 band 会互相重拍**。设计里按 accepted 写下了(三张一轮、一次一个浏览器),
-  没去实测它到底有多吵。
+  没去实测它到底有多吵 —— 见下一节,量出来了,而且这条设计整个被推翻了。
+
+## 实测 2026-09-08 · 两张脸同时开着 band,到底有多吵
+
+上一节最后那条 ⚠️ 的答案:**大约每秒一次,而且吵的不是 band,是这台 core 上挂着的每一扇窗。**
+
+还是用户自己那台开发机撞见的。`make dev` 的日志里 `GET /api/out/view long-poll opened` 一秒滚
+两三行,dock 上 Chrome 的图标一直在弹。在活实例上量的:
+
+- 30 秒里 appearance 版本 `4256 → 4279`(+23),同一段时间 `data/views/_shots/ref/` 下正好写了
+  23 个 PNG —— 一比一,版本是被缩略图顶着涨的。
+- 这 23 次重拍里 18 次宽高比直接翻转,`393x852 ⇄ 479x271` 来回。`/api/surfaces` 里 iPhone 的
+  `last_seen_at` 就是当时,桌面窗口也开着 band,两边都在每 3 秒读一次 `GET /api/views`
+  (`INVENTORY_POLL_MS`)。
+- 起的是系统里那个真的 Chrome:`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  --headless --user-data-dir=…/hi-render-<pid>-…`,平均 1.3 秒一个。
+
+**accepted 那条把账算漏了一项。**它算的是浏览器(三张一轮、一次一个),没算 `note_shot`:每张
+图落地都 bump appearance 版本,而那是所有窗口同步屏幕的那根线。所以两张脸争一张缩略图,唤醒的
+是每一个挂着的客户端,每次一条日志。band 内部有界,跨 install 无界。
+
+**修法不是把架调停,是把架的前提删掉。**第一版改成按形状分文件存(bucket 正好一个容差宽,
+同 bucket 互相认、跨 bucket 不碰面),量下来确实归零了 —— 但那是为一个**在 118×76 里根本看不出来
+的区别**付一份 (view × 形状) 的渲染 + 一路穿透的 face 参数。9-07 那次真正看见的坏处是**竖图落进
+16:9 的格子变成一条窄条**,那是宽高比,不是排版。所以最后落的是:**所有缩略图固定按格子自己的
+1280×720 渲**,盘上永远 480×270,谁读都一样。详见 `docs/arch/stage.md` §
+*A thumbnail is rendered at the tile's own frame*。
+
+**复测**(release 二进制,独立 `--data-dir`,端口 12360;`POST /api/stage` 报两张脸:`phone`
+393×852、`desk` 1512×856,两张脸各每 3 秒读一次 `GET /api/views`):
+
+- ✅ **预热一轮就停**:10 个 factory 具名 view 各拍一次,共 10 张 —— 不是 20 张,两张脸共用。
+- ✅ **稳态是零**:两张脸继续轮询 60 秒,appearance 版本不动,新写的 PNG 0 张。同样条件在 main
+  上是 30 秒 23 张。
+- ✅ **盘上全是 `480x270`**:跟格子的 16:9 对齐,不再有竖条。
+- ⚠️ **没在浏览器里看过格子**。两张脸是 `POST /api/stage` 报的,band 的读是 curl 打的;真的两台
+  设备同时开着 band 没试过,格子里那张图长什么样也是从盘上 PNG 推的。
+- ⚠️ **旧图的自愈只有单测见过**。复测用的 `--data-dir` 是新的,所以"旧的 393×852 被读到时重拍成
+  480×270"这条走的是 `a_picture_of_any_other_shape_is_re_taken_once`,没在有历史数据的实例上跑过。
+
+### 顺带发现:手机上的 view 从来没被渲染过
+
+`view_render::surfaces()` 的注释说它是给 "the refine pass ... to render the frames the first
+show deliberately skipped" 读的。**它没有任何生产调用者,只有测试** —— 那个补渲其他 frame 的
+refine pass 不存在。而 `hi_review_view` 不带 width/height 时渲的是 `stage_frame()`,也就是最后
+上报的那张脸;`src/identity/workers/view-builder.md` 又明确劝阻 builder 自己挑宽度("the most
+expensive habit in this loop")。
+
+合起来:人在桌面上跟 agent 说话 → builder 在桌面 frame 上审 → 通过 → 发布。**手机版排版在发布
+前一次都没有被渲染出来看过**,等人在手机上打开才是它第一次以那个宽度存在。用户报的"mobile 上
+排版常常不尽人意、各种换行"很可能就是这条链路的直接后果。**未验证** —— 还没在 393px 下真渲过
+现有的 view 看它到底怎么坏。

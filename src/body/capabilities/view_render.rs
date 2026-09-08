@@ -153,23 +153,6 @@ pub fn stage_theme() -> Option<String> {
     STAGE.read().ok().and_then(|l| l.first().and_then(|s| s.theme)).map(str::to_owned)
 }
 
-/// The frame and skin a picture rendered **for one named face** should use: what that
-/// face last reported, or the primary's when it is unnamed or has never reported.
-///
-/// The primary is the right target for a render nobody asked for — a review, or the
-/// agent's own show. It is the wrong one for a thumbnail, which is a picture *for the
-/// person looking at the band*, and the band is drawn by a face that knows its own
-/// frame. With a phone attached, [`stage_frame`] hands the desktop a portrait picture
-/// of a layout the desktop is not showing.
-pub fn face_frame(face: Option<&str>) -> (Viewport, Option<String>) {
-    let named = face.filter(|id| !id.is_empty()).and_then(|id| {
-        let list = STAGE.read().ok()?;
-        let seen = list.iter().find(|s| s.id == id)?;
-        Some((seen.viewport, seen.theme.map(str::to_owned)))
-    });
-    named.unwrap_or_else(|| (stage_frame(), stage_theme()))
-}
-
 /// Every face currently known, primary first. The refine pass reads this to render
 /// the frames the first show deliberately skipped; nothing on the ship path does.
 pub fn surfaces() -> Vec<Surface> {

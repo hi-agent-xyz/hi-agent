@@ -471,9 +471,6 @@ impl ViewBus {
                     self.data_dir.clone(),
                     view_ref,
                     shown.module_url.clone(),
-                    // The agent putting something up, so there is no asking face; the
-                    // picture goes to the primary surface's frame.
-                    None,
                     done,
                 ),
                 None => super::view_shots::capture(

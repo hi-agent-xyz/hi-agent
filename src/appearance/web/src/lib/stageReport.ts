@@ -41,11 +41,12 @@ interface StageFrame {
  *  entry it already had instead of minting a second one beside it. */
 const SURFACE_KEY = "hi.surface";
 
-/** This face's id, for anything that has to say *which face is asking*. Exported
- *  because the views calls carry it (`X-HI-Face`): a thumbnail is a picture for the
- *  band that is about to show it, so it is rendered at this face's frame rather than
- *  at whichever face reported to `/api/stage` most recently. Same id either way — the
- *  frame it names is the one reported here. */
+/** This face's id: what a frame report is filed under, so a resize replaces this
+ *  window's entry instead of minting a second one beside it.
+ *
+ *  It used to ride on the views calls as `X-HI-Face` too, because a thumbnail was
+ *  rendered at the asking face's frame. Thumbnails are rendered at the tile's own
+ *  fixed frame now (`server/view_shots.rs`), so nothing downstream asks who wants one. */
 export function surfaceId(): string {
   try {
     const kept = sessionStorage.getItem(SURFACE_KEY);

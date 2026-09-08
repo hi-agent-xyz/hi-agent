@@ -1332,8 +1332,8 @@ takes a picture for up to three of the tiles it draws that have none, so the shi
 surfaces stop being a row of coloured letters without putting a browser per bookmark on
 the machine at the moment someone reaches for their tasks. Staleness is not chased there:
 keeping a picture current is what opening the view is for, and opening it is also the only
-evidence anyone cares what is on it. *(Amended September 7, 2026 — that read also re-takes
-a tile whose picture is of another face's frame; see* The frame is a surface*, below.)*
+evidence anyone cares what is on it. *(Amended September 8, 2026 — that read also re-takes a
+tile whose picture is not the tile's own shape; see* The frame is a surface*, below.)*
 
 The render is given the person's **language** as well as their skin, for the same reason
 and by the same lane: the bundled surfaces carry both copies and pick per render, so
@@ -1378,48 +1378,60 @@ plausible ones**. With more than one attached, the primary is the surface that r
 recently, because reporting follows a resize, a theme flip or a load, and all three are
 someone looking. The others are not a second review; they are the background pass below.
 
-**A thumbnail is rendered for the face that asked, and only a render nobody asked for takes
-the primary.** Amended September 7, 2026. The primary is the right target for a review and
-for the agent's own show — nobody asked for either, so the last face to move is the best
-guess available. A tile is asked for: the band is drawn *by* a face, and that face knows its
-own frame, so guessing is not the only option and the primary is a wrong answer whenever it
-is not the asker. Reporting is edge-triggered, which makes it wrong often: a window someone
-is reading on reports nothing while they read, so a phone opened once and put away holds the
-head indefinitely. Seen live: a phone reported at 12:11 that day and never yielded, and by
-the afternoon 13 of ~50 named-surface pictures on that instance were 393×852 — including
-the one in the band of a 1920×1050 desktop window, where 17px type came out legible inside
-a 160px tile because the picture was of a layout that window was not showing.
+**A thumbnail is rendered at the tile's own frame, and nobody else's** — amended September
+8, 2026, reversing the amendment of September 7 that this paragraph replaces. Every picture
+in the band, from a show or from an open, renders at a fixed 1280×720 and lands on disk as
+480×270. One picture per view, every face reads it, nothing is passed about who is asking.
 
-So `GET /api/views` and `POST /api/views/open` carry **`X-HI-Face`** — the id the face
-already mints to report its frame — and the picture is rendered at that face's frame and
-skin. `hi_show`'s capture sends none and keeps the primary, which is the honest answer:
-nobody asked, so the last face to move is the best guess there is.
+**The September 7 reasoning is worth keeping**, because it was sound and its conclusion was
+still wrong. What was seen live: a phone reported at 12:11 that day and never yielded the
+head — reporting is edge-triggered, so a window someone is *reading* on says nothing while
+they read — and by that afternoon 13 of ~50 named-surface pictures on the instance were
+393×852, including the one in the band of a 1920×1050 desktop window, where 17px type came
+out legible inside a 160px tile. The fix was to render the tile at the asking face's frame:
+`GET /api/views` and `POST /api/views/open` carried `X-HI-Face`, and a tile whose picture was
+of a frame that face was not in counted as needing one.
 
-**The band's read is where that guess gets corrected**, and this is the half that reaches
-the observed case, whose tile came from a show and so had no asker at all. Reading the
-inventory says the band is open, and now says whose: a tile whose picture is of a frame the
-asking face is not in counts as needing one, exactly like a tile with no picture. The
-candidates widen from the row to **every named tile the band draws** — the row and the
-trail — because the trail is where shows land, and narrow again to the same three per read,
-missing pictures first. Age is still not chased there; a wrong shape is not a staleness, it
-is a picture of somewhere else.
+**Two things were wrong with it.** The first is that it misread its own evidence. What a
+person can see in a 118×76 box is not *which layout* a picture is of — at that size the
+mobile and desktop compositions of the same view are indistinguishable — it is that a
+393×852 picture arrives in a 16:9 box as a sliver between two margins. The defect was
+aspect; the layout was the story attached to it.
 
-**The shape is part of what makes a picture good enough**, because there is still one file
-per ref and every face reads it. A tile whose aspect is more than 1.25× off the asking
-face's is re-taken, beside the fifteen-minute clock and the source's mtime — without that,
-the phone's picture simply survives in the desktop's band for the whole of the TTL, which is
-the bug and not a fix for it. The tolerance is what separates a different composition from a
-different window: 1920×1050 against 1512×856 is 1.04 and not worth a re-render; a portrait
-phone against a landscape Mac is 3.97 and is not a picture of the same thing.
+The second is that "the asking face's frame" cannot be satisfied by one file. Two bands of
+different shapes read the same path, each finds it wrong-shaped, and each re-renders it into
+its own shape: measured on a live instance at **23 re-takes in 30 seconds**, a headless
+Chromium every 1.3 seconds, for as long as both stayed open. And a re-take is not local to
+the band — it calls `note_shot`, which bumps the appearance version, which is the one line
+every window's screen syncs on, so two bands arguing over a thumbnail woke every attached
+client about once a second. Filing per shape does close that (buckets one tolerance wide, so
+same-bucket faces keep each other's pictures and different-bucket faces never meet), but it
+buys a render per (view, shape) plus a face threaded through every read of a thumbnail URL —
+all to preserve a distinction nobody can see.
 
-*Accepted: two bands open at once on faces of different shapes re-take each other's
-pictures for as long as both are open. Bounded — three per read, one browser at a time —
-and against the premise this section rests on, which is that there is one screen and
-someone is in front of it.*
+**So the frame is a constant**, and everything the argument needed goes with it: no
+`X-HI-Face` on the views calls, no per-shape files, no `face_frame`. A picture more than 1.05
+off the tile's aspect is re-taken — not a judgement about who is reading but about who
+*wrote* it: anything off that constant came from a version aiming somewhere else. It heals on
+the next read instead of needing a sweep, and it cannot oscillate, because what replaces it is
+rendered at the same constant it is measured against.
 
-**Not amended: what a review renders.** It reads like the same idea and it is not. A review
-is a bet about the frame the view *will be read on*, made before anyone has opened it; a tile
-is a picture *for a band that is open right now*, and the face holding it open is not a bet.
+**What is given up, plainly:** on a phone, a tile shows the desktop composition of the view.
+That is the right trade for a picture whose job is to be *recognised* at 118×76 — it is what
+a browser's tab switcher does — and it must not be confused with what a view looks like when
+someone actually opens it on a phone, which is a real problem and a different one.
+
+**The band's read is still where a wrong picture gets caught.** Reading the inventory says
+the band is open, which is the one moment the pictures are about to be looked at. The
+candidates are **every named tile the band draws** — the row and the trail — because the
+trail is where shows land, narrowed to three per read, missing pictures first. A picture that
+is not the tile's shape counts as missing. Age is still not chased there.
+
+**Not amended: what a review renders** — and the gap between the two widened here. A review
+is a bet about the frame the view *will be read on*, and getting that frame right is most of
+whether the view works when someone opens it. A tile is a picture of a *place*, at a size
+where composition is not legible. Only one of the two is a bet, which is why only one of them
+can take a constant.
 
 **The skin stays swept, and this is the asymmetry worth writing down.** A dark render sends
 the builder back to the source 4% of the time — the same rate as a light one — because
