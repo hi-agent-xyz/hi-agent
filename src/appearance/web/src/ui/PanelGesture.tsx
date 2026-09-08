@@ -246,11 +246,18 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
    * Let go, and land on a stop.
    *
    * The throw is finished on the variables the panel is already being drawn by, and
-   * React is told when it has arrived. Handing straight to `onStop` would swap the
-   * resting geometry underneath a box still sitting at its gestured offset. The
-   * measure lands here rather than with the stop, so the one reflow a gesture costs
-   * happens as the box starts moving to where it is going, not a quarter-second
-   * later when it is already sitting there.
+   * **React is told immediately, not when the animation is over.** The view plane's
+   * inset is keyed on the committed stop, so every millisecond between the panel
+   * setting off and `onStop` being called is a millisecond the board sits at its old
+   * width while the panel slides over it — and it showed: measured from the room on
+   * a trackpad, the panel reached its stop at 399ms and the board did not begin
+   * giving up its width until 2282ms. Handing over immediately costs nothing,
+   * because the inline values written just above are exactly what `data-stop` is
+   * about to resolve to; the panel cannot tell the two apart, and the board and the
+   * panel now move on the same quarter-second.
+   *
+   * The vars are cleared once that quarter-second is up — never before React has the
+   * stop, or the box would jump back to where it came from for a frame.
    */
   const land = (box: HTMLElement, next: Stop) => {
     const state = drag.current;
@@ -270,13 +277,13 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
       "--hi-panel-measure",
       `${measureOf(next, s, state.width, state.panelW)}px`,
     );
+    go(next);
     settling.current = setTimeout(() => {
       settling.current = null;
       // Cleared once the stop has landed, so the next gesture starts from the
       // stylesheet's own resting position rather than from a stale pixel value.
       box.style.removeProperty("--hi-panel-left");
       box.style.removeProperty("--hi-panel-measure");
-      go(next);
     }, PANEL_MS);
   };
 
@@ -342,13 +349,22 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
 
     /** Sideways travel banked before the run takes hold of the edge. */
     let slop = 0;
+    /** The run has done all it can and the frames still arriving are momentum:
+     * swallowed, so the tail cannot grip the edge a second time and walk on to the
+     * stop after the one that was asked for. */
+    let spent = false;
     let resting: ReturnType<typeof setTimeout> | null = null;
+
+    const rest = () => {
+      resting = null;
+      slop = 0;
+      spent = false;
+    };
 
     /** The frames stopped, so the hand is off. */
     const stopped = () => {
-      resting = null;
-      slop = 0;
       const state = drag.current;
+      rest();
       if (!state || state.kind !== "wheel") return;
       land(box, settle(state.left, state.vx, state.from, live.current.shape, state.width, state.panelW));
     };
@@ -356,7 +372,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     const onWheel = (event: WheelEvent) => {
       // A pinch arrives as a wheel with `ctrlKey`, a settle already owns the axis,
       // and a hand on the strip is a hand this one must not fight.
-      if (event.ctrlKey || settling.current) return;
+      if (event.ctrlKey) return;
       if (drag.current && drag.current.kind !== "wheel") return;
 
       const x = rolled(event.deltaX, event.deltaMode);
@@ -364,13 +380,22 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
         // Reading down a conversation is not a half-finished swipe: it ends the run
         // rather than leaving its drift banked against the next one. A run that has
         // already taken hold keeps its grip and is left to the silence to end.
-        if (!drag.current) {
+        if (!drag.current && !spent) {
           if (resting) clearTimeout(resting);
-          resting = null;
-          slop = 0;
+          rest();
         }
         return;
       }
+      // A spent run is still a run: keep taking its frames away from the browser and
+      // keep waiting for them to stop, but do nothing with them. Checked before the
+      // settle guard below, because the settle a spent run just started is its own.
+      if (spent) {
+        event.preventDefault();
+        if (resting) clearTimeout(resting);
+        resting = setTimeout(rest, REST_MS);
+        return;
+      }
+      if (settling.current) return;
       // Asked once, at the start: mid-run the pointer has not moved, and a gesture
       // that has taken hold is not up for reassignment.
       if (!drag.current && scrollsAcross(event, box)) return;
@@ -391,6 +416,27 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
       // hand would drag the edge — so the edge moves against the roll.
       const [floor, ceiling] = reach(state.from, live.current.shape, state.width, state.panelW);
       moveTo(box, state.left - x, event.timeStamp, floor, ceiling);
+
+      // **The edge has run out of reach, so this swipe is already decided** — land it
+      // now instead of sitting on it until the momentum dies. Waiting for silence is
+      // the right way to end a run that stopped somewhere in between, and the wrong
+      // way to end one that has arrived: the panel is visibly at the stop while the
+      // tail burns off, and until the tail stops the board has not been told to give
+      // up its width. Measured before this: the edge was there at 399ms and the stop
+      // was committed at 2282ms.
+      const s = live.current.shape;
+      const forward = advance(s, state.from);
+      const back = retreat(s, state.from);
+      const arrived =
+        state.left <= floor && forward !== state.from
+          ? forward
+          : state.left >= ceiling && back !== state.from
+            ? back
+            : null;
+      if (arrived) {
+        spent = true;
+        land(box, arrived);
+      }
     };
 
     box.addEventListener("wheel", onWheel, { passive: false });

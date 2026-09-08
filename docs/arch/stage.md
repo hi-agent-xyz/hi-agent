@@ -74,7 +74,11 @@ entrance this document had said a desktop does not have. Argued in *The trackpad
 **Amended the same day — and it follows the fingers:** the swipe shipped as a step and is a
 drag now, moving the edge pixel for pixel exactly as the strip does, with what momentum could
 otherwise carry away held back by a range rather than by refusing to track. Argued in the same
-section, which reverses its own paragraph.
+section, which reverses its own paragraph. **Amended the same day — a stop is committed when
+the settle starts:** the board was being told to give up its width only once the panel had
+finished moving, and on a trackpad only once the momentum had finished too, which measured
+1.9 seconds of the panel sitting at its stop over a board that had not moved. Argued in
+*The settle is where the stop is committed*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -357,6 +361,33 @@ open from the room, but it cannot click its way from `panel` to `full`. That is 
 thing the pair could do that the seam cannot, and it is paid rather than answered with a
 second strip: widening is a drag on the seam, or `→`.
 
+### The settle is where the stop is committed
+
+*September 8, 2026.*
+
+**The board was being told to give up its width a quarter of a second after the panel had
+finished taking it, and on a trackpad about two seconds after.** The gesture code held the
+stop back until its own animation was over — `setTimeout(PANEL_MS)`, then `onStop` — for a
+good reason that had stopped applying: handing React the stop while the box still sat at a
+gestured offset would swap the resting geometry underneath it. But the same code has already
+written the *target* geometry inline by then, and inline is what the box is being drawn by, so
+there is nothing left to swap. The panel cannot tell the handover apart.
+
+Measured from the room on a trackpad, before: **the panel edge reached its stop at 399ms and
+the stop was not committed until 2282ms**, because the run does not end until the momentum
+does. The view plane's inset is keyed on the committed stop — that is what makes the middle
+one a push rather than an overlay — so for those 1.9 seconds the panel sat finished over a
+board at its old width, and then the board moved on its own. Three things in a row where the
+person did one: *swipe, panel arrives … board narrows.*
+
+After, with the same swipe: **committed at 405ms, board finished narrowing at 637ms.** The
+panel's `left` and the plane's `right` now run on the same quarter-second, so the seam and the
+edge of the board move together — which is what they are, one line.
+
+Two changes, and the second is the trackpad's alone: the stop is handed over when the settle
+begins rather than when it ends, and a wheel run that has reached the end of its reach lands
+then and there instead of waiting out the tail (*The trackpad's swipe* above).
+
 ### Both measures are composed for
 
 *September 8, 2026.*
@@ -518,6 +549,14 @@ still allowed to cross the whole axis in one go. Nothing in a wheel stream carri
 guarantee, and the asymmetry is the difference between the two hands rather than an
 inconsistency between them.
 
+**A run that has arrived is over, whatever the tail is still doing.** Waiting for silence is
+the right way to end a run that stopped somewhere in between and the wrong way to end one that
+has reached the end of its reach: the edge is visibly at the stop, the outcome cannot change,
+and every frame of momentum after that is a frame the rest of the face has not been told. So
+hitting the detent lands the stop then and there, and the tail is swallowed — which it has to
+be, or it would grip the edge a second time and walk on to the stop after the one that was
+asked for.
+
 **A run has to be taken hold of before it moves anything.** Twenty-four pixels of sideways
 travel are banked before the edge is gripped, so a scroll that leaned is not a swipe — and
 while that slop is unspent the frames are still the browser's, which is where they belong if
@@ -564,10 +603,11 @@ idiom, so it still boots to the room.
   above.
 - **A settle between `panel` and `full` shows the window and the box inside it at different
   sizes for a quarter of a second.** *Two measures, and only the edge moves* above.
-- **A trackpad run ends when the frames stop, which is a beat after the fingers lift.** There
-  is no end event to wait for, so there is ~120ms between letting go and the snap — and after
-  a hard flick, however long the momentum takes to die. The panel is at the detent by then,
-  so what that beat delays is the commit rather than the motion.
+- **A trackpad run that stops short ends when the frames stop, which is a beat after the
+  fingers lift.** There is no end event to wait for, so a swipe that does not reach the detent
+  waits ~120ms before it snaps. A swipe that reaches the detent does not wait at all — see
+  *The settle is where the stop is committed*, which is where the old version of this bullet
+  said the beat cost nothing and was wrong.
 
 ### Open
 
