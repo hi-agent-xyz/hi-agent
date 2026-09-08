@@ -131,15 +131,25 @@ export function Shell() {
     pasteIntoTextInput,
   });
 
-  // The keyboard's half of the axis, and the desktop's answer to having no button.
-  //
   // Escape retreats a stop, in every stop the panel is out in. It defers to
   // whoever already handled it, so clearing a half-typed line closes the line and
-  // leaves the panel where it is. The arrows are the same axis said spatially —
-  // and they are also what a D-pad presses, which is the whole of the television's
-  // way in: `installSpatialNav` claims a key only when it actually moved the focus
-  // (`lib/spatial.ts`), so with nothing focusable in the room a right press finds
-  // nothing, does not claim, and arrives here.
+  // leaves the panel where it is.
+  //
+  // **The arrows are not the host's on a keyboard.** They used to step this axis
+  // as well, and that was the host taking a key agent views have every reason to
+  // want: a deck pages with them, a board moves its selection with them, a player
+  // scrubs with them. A view that binds them on the window hears them only while
+  // nothing inside it holds the focus (`lib/keyboard.ts`) — which is precisely the
+  // case the host was claiming out from under it, and the case a view laid out as
+  // a canvas rather than as controls is always in.
+  //
+  // The television keeps them, and that is not an exception to the rule so much as
+  // the rule arriving somewhere else: there the four arrows are the only
+  // instrument the room has, `installSpatialNav` already owns them, and it claims
+  // a press only when it actually moved the focus — so a right press that reaches
+  // here is one that found nothing to move to and has nowhere else to go
+  // (`lib/spatial.ts`). Every other shape opens the panel by typing into it, by
+  // its edge, by two fingers, or by the strip.
   //
   // Through `onHostKey` rather than a `window` listener, because a key pressed in
   // the panel is chrome's and stops at the document — one node short of the window
@@ -148,18 +158,22 @@ export function Shell() {
   useEffect(() => {
     return onHostKey((event) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-      // Inside a line being written the arrows move the caret. Escape is not
-      // excluded here: the composer clears its own draft and marks the key
-      // handled, and only an empty line lets it through to this.
-      const active = document.activeElement as HTMLElement | null;
-      const typing =
-        active?.tagName === "INPUT" || active?.tagName === "TEXTAREA" || active?.isContentEditable;
 
+      // Escape is not excluded while a line is being written: the composer clears
+      // its own draft and marks the key handled, and only an empty line lets it
+      // through to this.
       if (event.key === "Escape") {
         setStop((at) => retreat(shape, at));
         return;
       }
+      if (shape !== "tv") return;
+
+      // Inside a line being written the arrows move the caret.
+      const active = document.activeElement as HTMLElement | null;
+      const typing =
+        active?.tagName === "INPUT" || active?.tagName === "TEXTAREA" || active?.isContentEditable;
       if (typing) return;
+
       if (event.key === "ArrowRight") {
         setStop((at) => advance(shape, at));
         event.preventDefault();

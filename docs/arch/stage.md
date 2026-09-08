@@ -494,7 +494,7 @@ Zero buttons means the entrances carry the whole load, so they are named:
 | | |
 |---|---|
 | a thumb | drag the panel's own left edge — the window's right-hand side while the panel is away, the seam once it is beside the view. The panel tracks the finger and settles on distance or a flick, the existing rule |
-| a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `→` and `←` move a stop, `Escape` retreats one |
+| a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `Escape` retreats a stop. **Not the arrows** — see *The arrows are the view's* |
 | a D-pad | `→` opens. [`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) calls `preventDefault()` only when it actually moved the focus, so with nothing focusable in the room a right-press finds nothing, falls through, and the shell takes it. Back closes — the depth ladder already exists |
 | a trackpad | two fingers sideways, **anywhere on the screen**. The panel follows them the way it follows a thumb, and one run reaches the neighbouring stop and no further. See *The trackpad's swipe* |
 | a mouse | that same strip takes a **click** as well as a drag, and shows a hairline on hover within it. A click steps toward the room; from the room it steps in |
@@ -574,6 +574,34 @@ down a long conversation are never perfectly vertical, and a face that read ever
 of that drift as an intention would close itself under someone who was reading. Twice as much
 across as down is the line, and a roll that fails it ends the run rather than banking its
 drift against the next one.
+
+### The arrows are the view's
+
+*September 8, 2026.*
+
+`→` and `←` stepped the axis on every shape, and that was the host taking a key it had no
+claim on. **Arrow keys are the most-bound keys an agent view has**: a deck pages with them, a
+board moves its selection with them, a player scrubs with them, a table walks its cells with
+them. The plane rule ([The keyboard follows the planes](#the-keyboard-follows-the-planes))
+hands them to a view the moment the view's own content holds the focus — but a view laid out
+as a canvas rather than as controls has nothing focusable in it, so its keys arrive from the
+room, where the host goes first and a `preventDefault` ends them. That is the only case such
+a view has, and it was the case the host was claiming.
+
+It also settles a disagreement this document was already carrying with itself: *The keyboard
+follows the planes* says of the room's row that **“Space and the arrows … pass through
+untouched”**, which stopped being true the day the axis took them. Removing them makes the
+older sentence true again rather than adding a rule beside it.
+
+**The television keeps them, and that is the same rule arriving somewhere else.** There the
+four arrows are the only instrument in the room, so
+[`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) owns them — and it claims a
+press only when it actually moved the focus, so a right press that reaches the shell is one
+that found nothing to move to and has nowhere else to go. A view with anything focusable in
+it keeps its arrows on a television exactly as it does everywhere else.
+
+Nothing else is lost, because the arrows were never a shape's only way in: the keyboard opens
+the panel by typing into it, and the same screen has the strip, the swipe and the edge.
 
 ### Where it starts
 
@@ -1825,6 +1853,11 @@ agent's plane is below the person's there too.
 The third row is what keeps a deck working: Space and the arrows are not printable by
 start-typing-to-open's test, so with the focus nowhere in particular they pass through
 untouched, and a letter that *does* open the conversation is claimed and stops.
+
+That sentence is load-bearing, and the panel's axis broke it for a while by binding `→` and
+`←` to a stop. It holds again: the arrows are the view's on every shape but the
+television, where they are the D-pad and there is no other instrument — see *The arrows are
+the view's*.
 
 **Enforced once, at the document** ([`lib/keyboard.ts`](../../src/appearance/web/src/lib/keyboard.ts)),
 for the reason `nativeFeel.ts` installs itself there: the code on the other side is
