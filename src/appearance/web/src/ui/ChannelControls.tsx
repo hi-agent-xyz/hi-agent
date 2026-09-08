@@ -58,9 +58,11 @@ interface ChannelControlsProps {
  * not: a file is a handed artifact, and the window already takes one dropped or
  * pasted anywhere on it (`hooks/useHandoff`), so the button was a second door onto
  * something that works everywhere — the same reason `factory/upload` was deleted.
- * The cost is named rather than hidden: a touch device has no drop and no paste, so
- * on a phone there is now no way to hand over a file at all. `/api/handoff` and
- * `/up/<token>` are still standing and still have no caller.
+ * The cost that removal named — a touch device has neither gesture, so on a phone
+ * there was no way to hand over a file at all — is paid at the line being written
+ * (`ui/Composer.tsx`), where a file is an artifact arriving in a conversation
+ * rather than a channel to turn on. `/api/handoff` and `/up/<token>` are still
+ * standing and still have no caller.
  *
  * **Every control here does something, and none of them reports.** The row used to
  * open with a read-only status disc that drew whichever of six activities the agent

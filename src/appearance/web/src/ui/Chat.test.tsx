@@ -133,7 +133,13 @@ describe("the line being written", () => {
   it("stands in the conversation's own foot, under the messages", () => {
     const html = renderToStaticMarkup(
       <Chat messages={[said("1", "帮我看下")]}>
-        <Composer onSend={() => Promise.resolve()} shown onOpen={() => {}} />
+        <Composer
+          onSend={() => Promise.resolve()}
+          shown
+          onOpen={() => {}}
+          onPickFiles={() => {}}
+          filesSending={false}
+        />
       </Chat>,
     );
 
@@ -151,6 +157,56 @@ describe("the line being written", () => {
   it("renders nothing where the shell gives it no foot", () => {
     const html = renderToStaticMarkup(<Chat messages={[said("1", "帮我看下")]} />);
     expect(html).not.toContain("hi-chat-foot");
+  });
+
+  // A drop and a paste are both gestures a phone does not have, so the picker is
+  // the only way a touch device hands over a file. It stands at the head of the
+  // line — the words the file arrives with — and not in the channel row, which is
+  // channels to turn on (`ui/ChannelControls.tsx`).
+  it("carries a file picker at its head", () => {
+    const html = renderToStaticMarkup(
+      <Chat messages={[said("1", "帮我看下")]}>
+        <Composer
+          onSend={() => Promise.resolve()}
+          shown
+          onOpen={() => {}}
+          onPickFiles={() => {}}
+          filesSending={false}
+        />
+      </Chat>,
+    );
+
+    expect(html).toContain('type="file"');
+    const pick = html.indexOf('aria-label="hand over a file"');
+    const line = html.indexOf('aria-label="message the agent"');
+    const send = html.indexOf('aria-label="send"');
+    expect(pick, "the picker is drawn").toBeGreaterThanOrEqual(0);
+    expect(pick, "before the words, where the send button is after them").toBeLessThan(
+      line,
+    );
+    expect(send).toBeGreaterThan(line);
+  });
+
+  // The handoff takes one batch at a time and drops a second in silence, so the
+  // door is shut while one is on the wire rather than opening onto nothing.
+  it("shuts the picker while a batch is being sent", () => {
+    const line = (filesSending: boolean) =>
+      renderToStaticMarkup(
+        <Chat messages={[said("1", "帮我看下")]}>
+          <Composer
+            onSend={() => Promise.resolve()}
+            shown
+            onOpen={() => {}}
+            onPickFiles={() => {}}
+            filesSending={filesSending}
+          />
+        </Chat>,
+      );
+    const shut = (html: string) => html.split('disabled=""').length - 1;
+
+    // One either way is the send button, which an empty line always shuts.
+    expect(shut(line(false))).toBe(1);
+    expect(shut(line(true))).toBe(2);
   });
 });
 

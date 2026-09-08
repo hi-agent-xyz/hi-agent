@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpIcon } from "lucide-react";
+import { ArrowUpIcon, PlusIcon } from "lucide-react";
 
 import { TYPING_PING_INTERVAL_MS, postInTextTyping } from "../channels/in/text";
 import { isEditableTarget } from "../lib/handoff";
@@ -25,6 +25,12 @@ interface ComposerProps {
    * itself owns the writing of them too, and swallowing the keystroke to open a
    * surface that stays down would simply lose the character. */
   onOpen: (() => void) | null;
+  /** Hand files over. The same path a drop takes — `hooks/useHandoff`'s
+   * `sendFiles` — reached through a picker instead of a gesture. */
+  onPickFiles: (files: File[]) => void;
+  /** A batch is already on the wire. The picker is shut while it is, because the
+   * handoff takes one batch at a time and would drop a second pick in silence. */
+  filesSending: boolean;
 }
 
 /**
@@ -40,6 +46,15 @@ interface ComposerProps {
  * which the single-line `<input>` this replaced could not offer at all. Sending
  * leaves it open: it is a channel, not a one-shot.
  *
+ * **The picker at its head is the only way to hand over a file that is not a
+ * gesture.** A drop and a paste both reach `hooks/useHandoff`, and both are
+ * things only a mouse and a keyboard can do — a touch device had no way to hand
+ * over a file at all, which is a cost `ui/ChannelControls.tsx` named when the
+ * attach button left the channel row. It comes back here rather than there
+ * because the row is channels to turn on and a file is not one of those: it is an
+ * artifact handed into *this* conversation, so it stands on the line that adds to
+ * it, at the head of the words it arrives with.
+ *
  * **Any printable key puts the caret in the line and seeds it** — opening the
  * conversation first if it was away — so a keyboard user never has to reach for
  * the control, and, now that the same control puts the whole conversation away,
@@ -47,9 +62,17 @@ interface ComposerProps {
  * *only* things that move the caret here: **the conversation coming up does not
  * focus the line.** See the focus effect.
  */
-export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
+export function Composer({
+  onSend,
+  shown,
+  pastedText,
+  onOpen,
+  onPickFiles,
+  filesSending,
+}: ComposerProps) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const filesRef = useRef<HTMLInputElement | null>(null);
   const lastPasteIdRef = useRef(0);
   const lastTypingPingRef = useRef(0);
   // Whether the conversation was already up a render ago, so the focus effect can
@@ -162,46 +185,80 @@ export function Composer({ onSend, shown, pastedText, onOpen }: ComposerProps) {
   };
 
   return (
-    <InputGroup className="hi-composer">
-      <InputGroupTextarea
-        ref={inputRef}
-        data-hi-base-text-input
-        value={text}
-        rows={1}
-        spellCheck={false}
+    <>
+      {/* Outside the group, not in it: `InputGroup` styles and hunts for a `>input`
+          of its own — an addon's own click handler focuses one — and this field is
+          neither the control nor visible. It is `display: none`, so where it stands
+          costs no layout either way. */}
+      <input
+        ref={filesRef}
+        type="file"
+        multiple
+        hidden
         onChange={(e) => {
-          setText(e.target.value);
-          // Emptying the line is not writing one — backspacing to nothing should
-          // hand the floor straight back rather than hold it for the full window.
-          if (e.target.value.trim()) noteTyping();
+          const picked = Array.from(e.target.files ?? []);
+          // Cleared before the handoff, so picking the same file twice in a row is
+          // still a change the second time.
+          e.target.value = "";
+          if (picked.length > 0) onPickFiles(picked);
         }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            submit();
-          } else if (e.key === "Escape" && text) {
-            // Clear the draft, and stop there: the press is spent. An empty line
-            // lets Escape through to the shell, which is what closes a popover —
-            // so the ladder is "throw away what I typed", then "put it away".
-            e.preventDefault();
-            setText("");
-          }
-        }}
-        placeholder="type to the agent…"
-        aria-label="message the agent"
       />
-      <InputGroupAddon align="inline-end">
-        <InputGroupButton
-          size="icon-xs"
-          variant="ghost"
-          disabled={!text.trim()}
-          onClick={submit}
-          title="send"
-          aria-label="send"
-        >
-          <ArrowUpIcon />
-        </InputGroupButton>
-      </InputGroupAddon>
-    </InputGroup>
+      <InputGroup className="hi-composer">
+        {/* First in the markup as well as on screen — `order-first` is what puts it
+            at the head, and a tab that reached the picker after the words would
+            walk the line in an order nobody sees. */}
+        <InputGroupAddon align="inline-start">
+          <InputGroupButton
+            size="icon-xs"
+            variant="ghost"
+            disabled={filesSending}
+            onClick={() => filesRef.current?.click()}
+            title="hand over a file"
+            aria-label="hand over a file"
+          >
+            <PlusIcon />
+          </InputGroupButton>
+        </InputGroupAddon>
+        <InputGroupTextarea
+          ref={inputRef}
+          data-hi-base-text-input
+          value={text}
+          rows={1}
+          spellCheck={false}
+          onChange={(e) => {
+            setText(e.target.value);
+            // Emptying the line is not writing one — backspacing to nothing should
+            // hand the floor straight back rather than hold it for the full window.
+            if (e.target.value.trim()) noteTyping();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            } else if (e.key === "Escape" && text) {
+              // Clear the draft, and stop there: the press is spent. An empty line
+              // lets Escape through to the shell, which is what closes a popover —
+              // so the ladder is "throw away what I typed", then "put it away".
+              e.preventDefault();
+              setText("");
+            }
+          }}
+          placeholder="type to the agent…"
+          aria-label="message the agent"
+        />
+        <InputGroupAddon align="inline-end">
+          <InputGroupButton
+            size="icon-xs"
+            variant="ghost"
+            disabled={!text.trim()}
+            onClick={submit}
+            title="send"
+            aria-label="send"
+          >
+            <ArrowUpIcon />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </>
   );
 }

@@ -328,14 +328,18 @@ export function useHandoff({
     };
   }, [clearStatusTimer]);
 
-  // No `sendFiles` and no `isSending`: both existed for the attach button's file
-  // picker, and files now arrive only by drop or paste, which this hook handles
-  // itself. What it still hands back is what the host actually renders — the
-  // feedback overlay and its two verbs.
+  // `sendFiles` is handed back because a picker calls it: the drop and the paste
+  // are gestures a touch device does not have, so the line being written carries a
+  // control that opens the system picker and hands what comes out to this same
+  // path (`ui/Composer.tsx`). Everything else here is what the host renders — the
+  // feedback overlay and its two verbs. Whether a batch is in flight is read off
+  // `feedback.state`, not handed back separately: `sendingRef` is a ref and moving
+  // it re-renders nothing.
   return {
     feedback,
     retry,
     dismiss,
+    sendFiles,
     onFileDragEnter,
     onFileDragOver,
     onFileDragLeave,

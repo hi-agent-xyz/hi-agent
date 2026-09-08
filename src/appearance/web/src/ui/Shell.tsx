@@ -323,6 +323,8 @@ export function Shell() {
               shown={chatShown}
               pastedText={pastedInputText}
               onOpen={openConversation}
+              onPickFiles={(files) => void handoff.sendFiles(files)}
+              filesSending={handoff.feedback?.state === "sending"}
             />
           </Chat>
         </Panel>
