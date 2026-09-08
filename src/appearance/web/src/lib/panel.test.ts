@@ -11,13 +11,12 @@ import {
   measureOf,
   opened,
   pushes,
+  reach,
   retreat,
   rolled,
   settle,
   sideways,
   stops,
-  swiped,
-  SWIPE_PX,
 } from "./panel";
 import { PANEL_MS } from "../ui/PanelGesture";
 
@@ -180,32 +179,31 @@ describe("two fingers sideways", () => {
     expect(sideways(0, 0)).toBe(false);
   });
 
-  it("brings the panel in on a roll to the right, the way a drag does", () => {
-    // Scrolling right is fingers moving left, which is the direction the same hand
-    // would drag the edge. A sign flipped here is a gesture that does the opposite
-    // of the one beside it.
-    expect(swiped(SWIPE_PX, "room", "wide")).toBe("panel");
-    expect(swiped(-SWIPE_PX, "panel", "wide")).toBe("room");
+  it("stops one run at the neighbouring stop, however hard it was thrown", () => {
+    // Momentum keeps delivering frames after the fingers have lifted and there is
+    // no honest way to tell those from the ones the hand drove — so the edge is
+    // stopped where the person could have meant to stop it. Out of the room on a
+    // window that is beside the view, never over it.
+    expect(reach("room", "wide", WIDE, MEASURE)).toEqual([WIDE - MEASURE, WIDE]);
+    expect(reach("full", "wide", WIDE, MEASURE)).toEqual([0, WIDE - MEASURE]);
   });
 
-  it("moves one stop however hard it was thrown", () => {
-    // Momentum keeps delivering frames after the hand has lifted, so distance is
-    // not evidence of intent past the first step — and a flick out of the room
-    // that landed on `full` would cover the very thing it was opened beside.
-    expect(swiped(4000, "room", "wide")).toBe("panel");
-    expect(swiped(-4000, "full", "wide")).toBe("panel");
+  it("leaves the middle stop the whole window to move in", () => {
+    // It has a neighbour in both directions, so one run can reach either — and
+    // still no further, because there is nothing further.
+    expect(reach("panel", "wide", WIDE, MEASURE)).toEqual([0, WIDE]);
   });
 
-  it("does nothing under the threshold", () => {
-    expect(swiped(SWIPE_PX - 1, "room", "wide")).toBe("room");
-    expect(swiped(-(SWIPE_PX - 1), "panel", "wide")).toBe("panel");
+  it("gives a phone the one step it has", () => {
+    expect(reach("room", "phone", PHONE, MEASURE)).toEqual([0, PHONE]);
   });
 
-  it("cannot step off the end of the axis", () => {
-    expect(swiped(4000, "full", "wide")).toBe("full");
-    expect(swiped(-4000, "room", "wide")).toBe("room");
-    expect(swiped(4000, "panel", "tv")).toBe("panel");
+  it("cannot be pushed off the end of the axis", () => {
+    // A television has no `full`, so a run out of its middle stop can only come
+    // back to the room.
+    expect(reach("panel", "tv", WIDE, MEASURE)).toEqual([WIDE - MEASURE, WIDE]);
   });
+
 });
 
 // The strip that moves the panel stands on the panel's own left edge — the window's

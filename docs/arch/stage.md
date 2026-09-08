@@ -71,6 +71,10 @@ the view. Argued in *Two measures, and only the edge moves* and *One handle, and
 seam*. **Amended the same day — the trackpad has the edge swipe after all:** two fingers
 sideways move a stop, anywhere on the screen and with nothing to aim at, which is the
 entrance this document had said a desktop does not have. Argued in *The trackpad's swipe*.
+**Amended the same day — and it follows the fingers:** the swipe shipped as a step and is a
+drag now, moving the edge pixel for pixel exactly as the strip does, with what momentum could
+otherwise carry away held back by a range rather than by refusing to track. Argued in the same
+section, which reverses its own paragraph.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -453,7 +457,7 @@ Zero buttons means the entrances carry the whole load, so they are named:
 | a thumb | drag the panel's own left edge — the window's right-hand side while the panel is away, the seam once it is beside the view. The panel tracks the finger and settles on distance or a flick, the existing rule |
 | a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `→` and `←` move a stop, `Escape` retreats one |
 | a D-pad | `→` opens. [`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) calls `preventDefault()` only when it actually moved the focus, so with nothing focusable in the room a right-press finds nothing, falls through, and the shell takes it. Back closes — the depth ladder already exists |
-| a trackpad | two fingers sideways, **anywhere on the screen**. One swipe is one stop, in the direction the same hand would drag the edge. See *The trackpad's swipe* |
+| a trackpad | two fingers sideways, **anywhere on the screen**. The panel follows them the way it follows a thumb, and one run reaches the neighbouring stop and no further. See *The trackpad's swipe* |
 | a mouse | that same strip takes a **click** as well as a drag, and shows a hairline on hover within it. A click steps toward the room; from the room it steps in |
 
 **A plain mouse is the thin one and it is an accepted cost.** A hover-revealed hairline is
@@ -479,13 +483,37 @@ saying they could not work out how to open the panel on a desktop — which is t
 the question [journey 38](../user-journeys/38-read-it-and-say-something-about-it.md) had
 written down as the one only a person could answer, arriving in the only way it could.
 
-**One swipe is one stop, and the drag's live tracking is deliberately not copied.** A finger
-on the edge is holding the panel, so the panel has to follow it; two fingers on a trackpad
-are holding nothing. A `wheel` stream has no end event, it keeps arriving as momentum after
-the hand has lifted, and the browser is free to report it in lines or pages rather than
-pixels. Direction and amount are what can be read off that honestly, and those are one step
-on an axis — the same thing a flick already resolves to. So a hard throw out of the room
-lands beside the view rather than covering it.
+**It follows the fingers, and that sentence replaces the one this section shipped with.**
+
+*The paragraph here used to read "one swipe is one stop, and the drag's live tracking is
+deliberately not copied", and gave three reasons: a `wheel` stream has no end event, it keeps
+arriving as momentum after the hand has lifted, and the browser is free to report it in lines
+or pages rather than pixels. All three are true. None of them argues for a step.* They say
+only that the **end** of a run has to be inferred from silence rather than announced, and
+that the unit has to be normalised before it is believed. What they were used to justify was
+a handler that detects a swipe and then plays a canned animation — which is the thing this
+document says, one section up, that the gesture on the edge deliberately is not. The same
+standard applies here: the panel tracks.
+
+**What momentum must not be allowed to do is carry the panel somewhere nobody asked for**,
+and that is answered with a range instead of with a refusal. A run moves the edge to the
+neighbouring stop and **not one pixel further** ([`reach`](../../src/appearance/web/src/lib/panel.ts)),
+so a hard flick out of the room comes to rest beside the view rather than over it, and the
+surplus is absorbed against the detent instead of being acted on. That is the touch flick's
+*one throw is one step*, written as a clamp because here it has to hold against travel the
+hand did not make — there being no honest way to tell a frame the fingers drove from a frame
+the momentum did.
+
+**The pointer is deliberately not clamped that way.** A finger or a mouse on the edge is
+direct manipulation: every pixel of that travel is the hand's, so a long deliberate drag is
+still allowed to cross the whole axis in one go. Nothing in a wheel stream carries that
+guarantee, and the asymmetry is the difference between the two hands rather than an
+inconsistency between them.
+
+**A run has to be taken hold of before it moves anything.** Twenty-four pixels of sideways
+travel are banked before the edge is gripped, so a scroll that leaned is not a swipe — and
+while that slop is unspent the frames are still the browser's, which is where they belong if
+it turns out to have been a scroll after all.
 
 **A scroller under the pointer keeps its own sideways gesture.** Any board with a wide table
 in it scrolls that way; if anything in the path can scroll across, the roll never reaches the
@@ -528,6 +556,10 @@ idiom, so it still boots to the room.
   above.
 - **A settle between `panel` and `full` shows the window and the box inside it at different
   sizes for a quarter of a second.** *Two measures, and only the edge moves* above.
+- **A trackpad run ends when the frames stop, which is a beat after the fingers lift.** There
+  is no end event to wait for, so there is ~120ms between letting go and the snap — and after
+  a hard flick, however long the momentum takes to die. The panel is at the detent by then,
+  so what that beat delays is the commit rather than the motion.
 
 ### Open
 

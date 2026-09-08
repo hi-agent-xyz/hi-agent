@@ -183,19 +183,15 @@ export function settle(
 // A laptop has no edge to swipe from. The strip answers a mouse, but finding a
 // twenty-point band on a screen with nothing drawn on it is the one entrance this
 // face has never been able to defend (`docs/arch/stage.md` § *The ways in, and the
-// one that is thin*) — and it is defended here by the gesture the platform already
+// one that is thin*) — and it is defended by the gesture the platform already
 // taught: **two fingers sideways, anywhere at all, with nothing to aim at.**
 //
-// It is a step rather than a drag, and that is not a compromise. A finger on the
-// edge is holding the panel, so the panel must follow it; two fingers on a trackpad
-// are holding nothing, and a `wheel` stream has no end event — the deltas simply
-// keep arriving as momentum, in units the browser is free to report in lines or in
-// pages. What can be read off that honestly is a direction and an amount, which is
-// one step on an axis.
+// It moves the same edge the finger does, pixel for pixel, and everything below is
+// what has to be true before a `wheel` event is allowed to be that hand.
 
 /** A wheel delta in px, whatever unit the browser chose to report it in. Lines are
  * a rough text row and pages a rough screenful; both are guesses, and both only
- * have to be close enough to reach a threshold at a human speed. */
+ * have to be close enough to move an edge at a human speed. */
 export function rolled(delta: number, mode: number): number {
   if (mode === 1) return delta * 16;
   if (mode === 2) return delta * 100;
@@ -206,8 +202,8 @@ export function rolled(delta: number, mode: number): number {
  * Whether a wheel event is meant sideways at all.
  *
  * A two-finger scroll down a long conversation is never perfectly vertical, and a
- * face that took every stray pixel of sideways drift as an intention would close
- * itself while someone was reading. Twice as much across as down is the line: a
+ * face that took every stray pixel of sideways drift as an intention would slide
+ * open under someone who was reading. Twice as much across as down is the line: a
  * deliberate sideways swipe is nearly all `deltaX`, and a drifting vertical one is
  * nearly none.
  */
@@ -215,19 +211,35 @@ export function sideways(x: number, y: number): boolean {
   return Math.abs(x) >= 1 && Math.abs(x) > Math.abs(y) * 2;
 }
 
-/** How much sideways travel makes one step. Deliberate enough that a flick of drift
- * cannot reach it, short enough to be one comfortable swipe. */
-export const SWIPE_PX = 60;
-
 /**
- * Which stop a run of sideways travel lands on, and it is never more than one away.
+ * How far one run of the wheel may move the edge: **to the neighbouring stop and
+ * not one pixel further**, in either direction.
  *
- * The sign follows the panel rather than the fingers: the panel lives off the right
- * of the screen, so scrolling **right** — which on a trackpad is fingers moving
- * left — brings it in, the same direction the same hand would drag the edge.
+ * This is the touch flick's *one throw is one step* written as a range instead of
+ * as a rule, and it is here because a trackpad run contains travel the hand did not
+ * make. Momentum keeps delivering frames after the fingers have lifted, and there
+ * is no honest way to tell those frames from the ones the hand drove — so rather
+ * than guess, the edge is simply stopped where the person could have meant to stop
+ * it. A hard flick out of the room comes to rest beside the view instead of
+ * carrying on over it, and the extra momentum is absorbed against the detent
+ * rather than acted on.
+ *
+ * **The pointer is deliberately not clamped this way.** A finger or a mouse on the
+ * edge is direct manipulation: every pixel of that travel is the hand's, so a long
+ * deliberate drag is allowed to cross the whole axis. Nothing in a wheel stream
+ * carries that guarantee.
+ *
+ * Returned low-to-high, which is toward the panel first: advancing shrinks the
+ * left edge and retreating grows it.
  */
-export function swiped(travel: number, from: Stop, shape: Shape): Stop {
-  if (travel >= SWIPE_PX) return advance(shape, from);
-  if (travel <= -SWIPE_PX) return retreat(shape, from);
-  return from;
+export function reach(
+  from: Stop,
+  shape: Shape,
+  width: number,
+  panelW: number,
+): [number, number] {
+  return [
+    leftOf(advance(shape, from), width, panelW),
+    leftOf(retreat(shape, from), width, panelW),
+  ];
 }
