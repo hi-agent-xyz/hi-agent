@@ -462,6 +462,7 @@ fits in a window.
 | Cost sets **the bar**, never **the owner** | A note risks a line and cannot break; a tool risks a session, an install and every future window |
 | **Existing** and **in hand** are separate questions | Whether a tool should exist is judgment over patterns; whether it is carried is arithmetic over use |
 | **Bundled tools may be named in another rung's prompt**; hot and the workshop may not | A rung that cannot look must be told what its hands make — and only the compile-time half is the same on every install |
+| **Driving a machine is a note over what that machine has**, never a capability here | The mechanism multiplies by platform and the judgment does not: capture, input and the accessibility tree are four different things across macOS, X11, Wayland and Windows, each with its own grants, while reading a screenshot is the same code everywhere. `browser` and `phone` bind one binary each and are cheap; a `desktop` shim would be the multiplier wearing a stable name |
 
 ## What this deliberately does not have
 
@@ -470,6 +471,13 @@ attach/loader layer, per-carrier dispatch, declared signatures, dependency keys,
 flags, a taxonomy of failure modes, a stored level per tool, **a middle index tier between hot
 and asking, and any grouping of tools by kind**. Each was designed and cut — in each case
 because it stored something derivable, or gave a wrong answer a place to look right.
+
+One more, cut for a different reason: **a screen-control capability, and the `desktop` shim that
+would stand in front of it.** Both were built for macOS — `hi_look` / `hi_act` over screen
+capture, input synthesis and the accessibility tree — and both are deleted. Not because they
+failed, but because finishing them meant writing the same mechanism again for X11, Wayland,
+Windows and Android while the part that reads the picture stayed identical across all of them.
+See the Decisions row above; the note is `driving-a-desktop.md`.
 
 ## Open
 
@@ -490,8 +498,12 @@ because it stored something derivable, or gave a wrong answer a place to look ri
   answered a question about the body's own image models, with another vendor's model list.
   Naming what the body makes fixes *not knowing*; whether the ambient set should be wiped at boot
   is undecided.
-- **`hi_look` / `hi_act` name the person's screen.** Once the agent has a machine of its own,
-  the same verbs mean two things, and *whose body* becomes something a note must say.
+- **Whose screen, when the agent has one of its own.** `driving-a-desktop.md` answers today's
+  case the way the browser note answers its own — work on your own session if this machine can
+  give you one, and crossing onto the person's screen is a boundary you name once. What it does
+  not answer is the case where *both* exist at once and "the screen" stops picking one out.
+  That is the same question `browser.md` settled by giving the agent its own profile, so the
+  shape of the answer is known; nothing has had to write it down yet.
 
 ## See also
 

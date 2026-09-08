@@ -58,6 +58,13 @@ Read off the capabilities that must move, not from a guess at what a shell might
 | `ax.inspect()` | elements | `accessibility::inspect` |
 | `desktop.context()` | focused app + window | `desktop_context::capture` |
 
+**Four of those six exist for the reflex path and nothing else** — `screen.size`,
+`input.perform`, `ax.inspect`, `desktop.context`. A reflex has no model in its loop, so it is
+the one thing that cannot be told how to drive a machine in a note, which is what every other
+way of doing it now is (`tools.md`, `driving-a-desktop.md`). So this is not a general
+perceive/act surface and must not grow into one: an agent driving an app reaches for what that
+machine already has, and only the grooved, model-less move comes back through here.
+
 **Core → app — state, no reply:** the tray's `flash`, `set_listening`, `set_text`,
 `open_chat`. These are pushes, not questions; nothing waits on them and a dropped one is
 survivable.

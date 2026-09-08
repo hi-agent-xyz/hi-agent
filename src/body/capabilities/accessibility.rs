@@ -1,15 +1,19 @@
 //! Accessibility (AX) capability — read the structured UI tree of the frontmost
-//! app: the labelled, addressable controls behind what [`super::desktop_context`]
-//! sees as flat pixels.
+//! app as a list of elements, each with a role, a label, and a screen rectangle.
 //!
-//! This is the optional *accelerator* over the vision baseline. Where the screen
-//! capture hands back a screenshot the model must read with its eyes, this hands
-//! back the same surface as a list of elements — each with a role, a label, and a
-//! screen rectangle — so a caller can target a control by identity instead of
-//! guessing coordinates. It is deliberately best-effort and *partial*: only apps
-//! that expose an accessibility tree appear here, so the screenshot stays the
-//! spine and this augments it where the tree is good. An app (or platform) that
-//! exposes nothing yields an empty list and the vision path is unaffected.
+//! **This exists for one caller, and that caller has no model in it.** The reflex
+//! recognizer ([`crate::body::reflex::recognize`]) matches a taught field against
+//! this list and fires without waking the LLM, so it cannot read a note — which
+//! is what every *other* way of driving a machine now is
+//! ([`crate::mind::skills`]'s `driving-a-desktop.md`, whose standing advice is
+//! the same one this file embodies: read the tree, do not guess at the picture).
+//! It was also going to back a `look` augmentation; that tool is deleted, because
+//! the tree is a different API on every platform — AX here, UI Automation on
+//! Windows, AT-SPI on Linux — while reading one is the same act everywhere.
+//!
+//! It is deliberately best-effort and *partial*: only apps that expose a tree
+//! appear here, and one that exposes nothing yields an empty list rather than an
+//! error, so recognition abstains instead of failing.
 //!
 //! Like [`super::input`] and [`super::desktop_context`], the "vendor" is the
 //! operating system, so selection is compile-time (`cfg(target_os)`) — there is
@@ -18,15 +22,11 @@
 //! it the frontmost app resolves to nothing and the list comes back empty rather
 //! than erroring.
 //!
-//! Bounds are normalized 0..1 fractions of the main display — the same space
-//! `look`/`act` use — so an element rectangle overlays a screenshot the model is
-//! looking at, and an element's centre is a ready `act` target. The geometry math
+//! Bounds are normalized 0..1 fractions of the main display, so an element's
+//! centre scales straight to the display points [`super::input`] expects — the
+//! step [`crate::body::reflex::fire`] takes. The geometry math
 //! ([`Rect::normalized`]) is a pure function kept here so it stays unit-testable
 //! off-macOS; the macOS vendor is the thin FFI that walks the tree.
-//!
-//! **No caller wires this in yet.** A future `look` augmentation (append the
-//! element list to the screenshot) and `act` extension (target an element by id)
-//! are the callers; wiring them in later is purely additive.
 
 /// One element of the frontmost app's accessibility tree: a labelled control with
 /// a place on screen. `id` is a sequential index within a single [`inspect`]

@@ -1,7 +1,15 @@
 //! Input-actuation capability — synthesize mouse and keyboard input on the
-//! machine this process runs on. The effector twin of [`super::desktop_context`]:
-//! where that *reads* the screen, this *acts* on it, so a session that has
-//! decided where to click (by looking at a screenshot) can actually click.
+//! machine this process runs on.
+//!
+//! **This exists for one caller, and that caller has no model in it.** A reflex
+//! ([`crate::body::reflex::fire`]) clicks a field and types a value without ever
+//! waking the LLM, so it cannot be told how to do that in a note — which is what
+//! every *other* way of driving a machine now is
+//! ([`crate::mind::skills`]'s `driving-a-desktop.md`). It used to back an `act`
+//! tool as well; that pair is deleted, because finishing it meant writing this
+//! same file again for X11, Wayland and Windows while the judgment that decides
+//! where to click stayed identical on all of them. Do not grow this back into a
+//! general actuator: the general path is the note.
 //!
 //! Like `desktop_context`, the "vendor" is the operating system, so selection is
 //! compile-time (`cfg(target_os)`) — there is no `init_from_env` and nothing to
@@ -13,12 +21,10 @@
 //! a target read off a pixel-measured screenshot must be scaled before it is
 //! passed here.
 //!
-//! Scope: mouse + keyboard. System media keys (play/pause a song without finding
-//! its button) are a planned addition — they ride a different event family
-//! (`NSSystemDefined`) and land with the wiring pass.
-//!
-//! **No caller wires this in yet.** A future MCP `act` tool (worker/reaction
-//! surface) is the caller; wiring it in later is purely additive.
+//! Scope: mouse + keyboard, and [`crate::body::reflex::fire`] uses two of the
+//! variants. The rest are reachable and unexercised — kept because a reflex is a
+//! stored move and the next one taught may drag or press a key, not because
+//! anything calls them today.
 
 /// A screen location in global display points (origin = top-left of the main
 /// display), the unit CGEvent expects.

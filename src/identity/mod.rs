@@ -473,7 +473,7 @@ fn abs(data_dir: &Path) -> PathBuf {
 ///   round trip was not once — it was every time, forever.
 /// - **One `core.md` served three rungs with three tool surfaces**, so each was handed
 ///   large sections about jobs it could not do: Cognition read 56 lines on photos and
-///   file-filing, and all three read how to drive a screen none of them has `hi_look` for.
+///   file-filing, and all three read how to drive a screen none of them could reach.
 ///
 /// Each file is now self-contained and carries only what its rung can act on. The cost is
 /// real: ~71 lines of shared character live in three copies, and drift between them is
@@ -1471,10 +1471,11 @@ mod soul_tests {
     }
 
     /// The two halves of the view loop both name the tool that makes them possible.
-    /// Before `hi_review_view` existed, the builder's prompt pointed at `hi_look` — which
-    /// screenshots the *user's screen*, not the view — and the reviewer had no prompt
-    /// at all because it had no way to render. A prompt naming a tool the session does
-    /// not hold is the failure this whole pass is cleaning up, so it is pinned.
+    /// Before `hi_review_view` existed, the builder's prompt pointed at the screen-capture
+    /// tool of the day — which photographs the *user's screen*, not the view — and the
+    /// reviewer had no prompt at all because it had no way to render. A prompt naming a
+    /// tool the session does not hold is the failure this whole pass is cleaning up, so
+    /// it is pinned.
     #[test]
     fn both_halves_of_the_view_loop_name_the_render_tool() {
         assert!(WORKER_VIEW_REVIEWER_BASE.contains("`hi_review_view`"));

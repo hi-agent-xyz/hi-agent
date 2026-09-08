@@ -76,6 +76,17 @@ pub(crate) fn browser_note() -> &'static str {
     BROWSER
 }
 
+/// Seeded skill: how to operate an app on a computer. **A note and not a tool, unlike
+/// its two neighbours** — `browser` and `phone` each bind one binary under one name,
+/// and a desktop has no such binary: capture, input synthesis and the accessibility
+/// tree are a different mechanism on macOS, X11, Wayland and Windows, each with its
+/// own grants. A shim would have to be rewritten per platform, and a capability in
+/// this host would have to be written four times over; the judgment that reads a
+/// screenshot is the same code everywhere, so that is the half that stayed. This
+/// replaced the `hi_look` / `hi_act` tool pair, which had covered exactly one of
+/// those platforms.
+const DRIVING_A_DESKTOP: &str = include_str!("driving-a-desktop.md");
+
 /// Seeded skill: how to equip a tool the workshop does not have yet — the *writing*
 /// half of the workshop, and the only path by which a learnt tool ever exists.
 const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
@@ -397,6 +408,7 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("adding-a-device.md"), ADDING_A_DEVICE)?;
     std::fs::write(dir.join("browser.md"), BROWSER)?;
+    std::fs::write(dir.join("driving-a-desktop.md"), DRIVING_A_DESKTOP)?;
     std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;
     std::fs::write(dir.join("mcp-service.md"), MCP_SERVICE)?;
     std::fs::write(dir.join("phone.md"), PHONE)?;
@@ -738,7 +750,15 @@ mod tests {
         // from it. Emptying it on the installs where completeness is free is how an
         // agent ends up having to *think* to scan — journey 07's live failure.
         let cold = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
-        for seed in ["factory/browser", "factory/mcp-service", "factory/equipping-a-tool"] {
+        for seed in [
+            "factory/browser",
+            "factory/mcp-service",
+            "factory/equipping-a-tool",
+            // The one seed that is a note where a tool used to be. If driving a desktop
+            // ever stops being reachable this way, it is reachable no way at all — there
+            // is no `hi_look` behind it any more.
+            "factory/driving-a-desktop",
+        ] {
             assert!(cold.contains(seed), "a seed nobody ran is still in hand: {cold}");
         }
         // A purpose line is what the entry carries; a note without one degrades to a

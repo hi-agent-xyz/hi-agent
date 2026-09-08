@@ -924,7 +924,7 @@ mod tests {
         let note = json!({
             "method": "item/completed",
             "params": { "item": {
-                "type": "mcpToolCall", "id": "i1", "server": "hi-agent", "tool": "hi_look",
+                "type": "mcpToolCall", "id": "i1", "server": "somewhere-else", "tool": "peer_into",
                 "status": "completed",
                 "result": { "content": [{ "type": "image", "mimeType": "image/png" }] }
             }}
