@@ -278,7 +278,7 @@ export function Chat({ messages, interim, typing, onLoadOlder, children }: ChatP
           />
           <StickToBottom tail={tail} viewportRef={viewportRef} />
           <MessageScrollerViewport ref={viewportRef} preserveScrollOnPrepend className="px-4 py-6">
-            <MessageScrollerContent className="mx-auto w-full max-w-[52rem] gap-6">
+            <MessageScrollerContent className="mx-auto w-full max-w-[var(--hi-read,52rem)] gap-6">
               {/* One group is one item, and the item is a DIRECT child of the content.
                   The scroller reads `data-message-id` off its own children only, so
                   the wrapper div that used to hold the day separator hid every message

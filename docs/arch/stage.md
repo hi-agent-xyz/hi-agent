@@ -62,6 +62,15 @@ pushing the view narrower rather than covering it; the corner cluster is deleted
 with something in it is that thing and nothing else. That reverses the overlay half of *The
 popover*, folds the views page into a tab, and takes back this document's own "every channel
 is one press away wherever you are". Argued in *The panel, and the axis it runs on*.
+**Amended September 8, 2026 — the panel has two measures, and the seam is the handle:** the
+box is laid out at the sidebar's measure or at the screen's and never in between, so a drag
+reveals the panel rather than re-laying every line in it; and the strip a gesture begins in
+moves off the window's two edges onto the panel's own left edge, which *is* those edges at
+the two stops where the panel is away or whole and is the seam at the one where it is beside
+the view. Argued in *Two measures, and only the edge moves* and *One handle, and it is the
+seam*. **Amended the same day — the trackpad has the edge swipe after all:** two fingers
+sideways move a stop, anywhere on the screen and with nothing to aim at, which is the
+entrance this document had said a desktop does not have. Argued in *The trackpad's swipe*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -270,8 +279,9 @@ same way. So they are one box — **the panel** — and where it is, is a number
 
 The panel lives off-screen to the right. Pulling it in is a drag that begins at the right
 edge; pushing it back out is a drag that begins at the left edge, which is the gesture
-[`PageEdge`](../../src/appearance/web/src/ui/PanelEdge.tsx) already implemented, grown a
-forward half and renamed `PanelEdge` for it.
+[`PageEdge`](../../src/appearance/web/src/ui/PanelGesture.tsx) already implemented, grown a
+forward half and renamed for it — it is `PanelGesture` now, having also grown the
+trackpad's swipe.
 
 | Stop | The view gets | The panel is |
 |---|---|---|
@@ -288,6 +298,77 @@ number the rail died of.
 | `phone` | `room` ↔ `full` | the edge drag, and only the edge drag |
 | `wide` | `room` ↔ `panel` ↔ `full` | the edge drag, a click on the edge, a printable key, `←` / `→` |
 | `tv` | `room` ↔ `panel` | `→` opens, Back closes |
+
+### Two measures, and only the edge moves
+
+*September 8, 2026.*
+
+A stop is a position for the panel's left edge, and until now it was **only** that: the box
+ran from that edge to the right-hand side of the screen, so every pixel of a drag changed
+the panel's width and everything inside it re-laid to match. Pulling the conversation in
+from the room wrapped and re-wrapped every line of it — one character wide, then ten, then
+the whole measure — for the length of the gesture.
+
+**The panel is laid out at one of two measures, the sidebar's ~420px or the whole screen,
+and a drag does not change which.** The box holding the head and the body is pinned to the
+right at that measure; the moving edge is a *window* onto it. So a drag reveals the panel
+rather than re-flowing it, and the measure changes once per gesture — at the moment of
+release, together with the position it is settling to, so the one reflow happens while the
+box is already on its way rather than a quarter-second later when it is sitting still.
+
+The room has no measure of its own, being the panel off the side of the screen, so it
+borrows the measure of the stop it opens to: the sidebar's on a window, the screen's on a
+phone. That is what makes pulling the panel in change no width at all.
+
+**What it costs.** For the length of one settle between `panel` and `full`, the window and
+the box inside it are different sizes and the difference shows. Widening hides it — the
+content is already at the screen's measure and the window simply opens onto more of it.
+Narrowing does not: the content is at the sidebar's measure while the window is still wide,
+so a band of the panel's own glass leads it in. A fixed quarter-second of one surface
+against itself, against a reflow that used to run for as long as a finger was down.
+
+### One handle, and it is the seam
+
+*September 8, 2026.*
+
+The gesture began in one of two strips nailed to the window's own edges: the right one
+advanced a stop, the left one retreated one. That pair was the whole mental model and it was
+right at two stops out of three. The third is the desktop's resting arrangement — the panel
+beside the view — where the thing a hand reaches for is the boundary between the two, not
+the far edge of the screen.
+
+**There is one strip, and it stands on the panel's left edge wherever that edge is.** At
+`room` that is the window's right-hand side and at `full` it is the window's left-hand side,
+which is exactly where each of the two strips already was; at `panel` it is the seam.
+Direction is read off the drag rather than off which strip was grabbed, which is what lets
+one handle do both jobs: pulled left it advances a stop, pulled right it retreats one, and
+`settle` was computing that from the position alone all along.
+
+It also gives back the twenty points the pair charged at the middle stop, which this
+document listed as a cost: the panel's right-hand edge is the panel's again.
+
+**A click steps toward the room; from the room, where there is nothing to step back to, it
+steps in.** So a mouse can walk the whole axis out — `full` → `panel` → `room` — and can
+open from the room, but it cannot click its way from `panel` to `full`. That is the one
+thing the pair could do that the seam cannot, and it is paid rather than answered with a
+second strip: widening is a drag on the seam, or `→`.
+
+### Both measures are composed for
+
+*September 8, 2026.*
+
+Two measures are two frames, and everything the panel holds has to be composed for both —
+which the tabs were not, each in its own direction.
+
+- **The conversation.** Its messages were already held to a readable column and centred, but
+  the line at the foot was not, so at the full measure a person wrote into a box the width
+  of the screen under a column a third of that. The line takes the same measure now, from
+  the same token the message list reads.
+- **The views tab.** Its grid at the full measure was written against a phone, where a
+  150px minimum track gives two columns. On a 1512px window `auto-fill` took that number at
+  its word and laid out nine columns of tiles **smaller than the 160px cards the sidebar
+  shows** — a grid whose whole argument is pictures big enough to recognise. The track grows
+  with the screen now and the clamp keeps the phone's two columns under it.
 
 ### Why the rail is allowed back at the middle stop
 
@@ -358,16 +439,54 @@ Zero buttons means the entrances carry the whole load, so they are named:
 
 | | |
 |---|---|
-| a thumb | drag from the right edge; the panel tracks the finger and settles on distance or a flick, the existing rule |
+| a thumb | drag the panel's own left edge — the window's right-hand side while the panel is away, the seam once it is beside the view. The panel tracks the finger and settles on distance or a flick, the existing rule |
 | a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `→` and `←` move a stop, `Escape` retreats one |
 | a D-pad | `→` opens. [`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) calls `preventDefault()` only when it actually moved the focus, so with nothing focusable in the room a right-press finds nothing, falls through, and the shell takes it. Back closes — the depth ladder already exists |
-| a mouse | the right-edge strip takes a **click** as well as a drag, and shows a hairline on hover within it |
+| a trackpad | two fingers sideways, **anywhere on the screen**. One swipe is one stop, in the direction the same hand would drag the edge. See *The trackpad's swipe* |
+| a mouse | that same strip takes a **click** as well as a drag, and shows a hairline on hover within it. A click steps toward the room; from the room it steps in |
 
-**The mouse is the thin one and it is an accepted cost.** A hover-revealed hairline is
-discoverable by a person who happens to travel to the right edge and by nobody else; there is
-no equivalent of the phone's platform-taught edge swipe on a desktop. It is paid because the
-alternative is one permanent disc in a corner, which is the thing being removed, and because
-the desktop has the entrance the phone does not: typing.
+**A plain mouse is the thin one and it is an accepted cost.** A hover-revealed hairline is
+discoverable by a person who happens to travel to the right edge and by nobody else. It is
+paid because the alternative is one permanent disc in a corner, which is the thing being
+removed, and because the desktop has two entrances the phone does not: typing, and — on
+anything with a trackpad, which is most of them — the swipe below.
+
+### The trackpad's swipe
+
+*September 8, 2026.*
+
+The paragraph above used to end *"there is no equivalent of the phone's platform-taught edge
+swipe on a desktop"*, and the whole price of the hover-revealed hairline was argued against
+that sentence. **The sentence was wrong, and it was wrong about the machine most people are
+sitting at.** A trackpad has a sideways two-finger swipe that its owner already performs
+several times a day to go back, and unlike every other way in here it has nothing to aim at:
+it works anywhere on the screen, so the room's entrance stops being a twenty-point band
+somebody has to find on blank paper.
+
+It was not found by re-reading this document. It was found by someone using the face and
+saying they could not work out how to open the panel on a desktop — which is the answer to
+the question [journey 38](../user-journeys/38-read-it-and-say-something-about-it.md) had
+written down as the one only a person could answer, arriving in the only way it could.
+
+**One swipe is one stop, and the drag's live tracking is deliberately not copied.** A finger
+on the edge is holding the panel, so the panel has to follow it; two fingers on a trackpad
+are holding nothing. A `wheel` stream has no end event, it keeps arriving as momentum after
+the hand has lifted, and the browser is free to report it in lines or pages rather than
+pixels. Direction and amount are what can be read off that honestly, and those are one step
+on an axis — the same thing a flick already resolves to. So a hard throw out of the room
+lands beside the view rather than covering it.
+
+**A scroller under the pointer keeps its own sideways gesture.** The views strip scrolls that
+way and so will any board with a wide table in it; if anything in the path can scroll across,
+the roll never reaches the axis. Not conditional on that scroller having room left, either —
+a strip that reaches its end and then hands the next flick to the whole panel is a worse
+surprise than one that simply stops.
+
+**The one that had to be got right is the one that is not a swipe at all.** Two fingers going
+down a long conversation are never perfectly vertical, and a face that read every stray pixel
+of that drift as an intention would close itself under someone who was reading. Twice as much
+across as down is the line, and a roll that fails it ends the run rather than banking its
+drift against the next one.
 
 ### Where it starts
 
@@ -383,16 +502,20 @@ idiom, so it still boots to the room.
 
 ### Accepted, as costs
 
-- **The mouse entrance is a hover-revealed strip.** Above.
+- **A plain mouse's entrance is a hover-revealed strip.** Above. A trackpad has the
+  swipe; a mouse has the strip, the keyboard, and a window that boots showing the panel.
 - **A view reflows when the person pulls the panel to the middle stop.** Above.
 - **Turning the mic on is two acts, not one.** The tax [The phone stacks pages](#the-phone-stacks-pages)
   refused to pay, paid.
-- **A tap in the window's leftmost or rightmost twenty points may do nothing but move the
-  panel** — a strip claims its touches up front, the same trade iOS makes for its own edge.
-  A strip is only mounted when it has somewhere to go, so this is never charged where it
-  would be worst: no left strip stands over a board at the `room` stop, and no right strip
-  stands over the panel at `full`. The one place it is real is a window at `panel`, where
-  the panel's rightmost twenty points are the advance strip.
+- **A tap in twenty points either side of the panel's left edge may do nothing but move the
+  panel** — the strip claims its touches up front, the same trade iOS makes for its own
+  edge. It is charged once rather than twice now that there is one strip: at `room` those
+  points are a board's right-hand edge, at `full` the panel's left-hand edge, and at `panel`
+  they straddle the seam, ten points of each.
+- **A mouse cannot click its way from `panel` to `full`.** *One handle, and it is the seam*
+  above.
+- **A settle between `panel` and `full` shows the window and the box inside it at different
+  sizes for a quarter of a second.** *Two measures, and only the edge moves* above.
 
 ### Open
 
@@ -433,7 +556,7 @@ way under the finger.
 |---|---|
 | What a phone is | narrow **and** coarse — `(max-width: 640px) and (pointer: coarse)`, published as `<html data-shape="phone">` ([`lib/shape.ts`](../../src/appearance/web/src/lib/shape.ts)) |
 | The stack | the **room** (presence, the agent's view, the caption, the controls) with up to two pages on it: the conversation, and the views page over it |
-| Going back | drag from the left twenty points; the page tracks the finger and leaves on distance **or** a flick (`ui/PageEdge.tsx`, now [`ui/PanelEdge.tsx`](../../src/appearance/web/src/ui/PanelEdge.tsx)). The chevron in the page's bar does the same thing without the gesture |
+| Going back | drag from the left twenty points; the page tracks the finger and leaves on distance **or** a flick (`ui/PageEdge.tsx`, now [`ui/PanelGesture.tsx`](../../src/appearance/web/src/ui/PanelGesture.tsx)). The chevron in the page's bar does the same thing without the gesture |
 | The bar | the same six channel controls, laid as the page's head instead of the room's corner. The text control is drawn as the chevron there, because from inside the page that is what it does |
 
 **Width alone cannot say what a phone is, and assuming it could is the defect this closes.**

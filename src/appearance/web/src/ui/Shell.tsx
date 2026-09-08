@@ -18,7 +18,7 @@ import { Composer } from "./Composer";
 import { CameraPreview } from "./CameraPreview";
 import { HandoffOverlay } from "./HandoffOverlay";
 import { Panel, type Tab } from "./Panel";
-import { PanelEdge } from "./PanelEdge";
+import { PanelGesture } from "./PanelGesture";
 
 /**
  * The host chrome — a calm, breathing room — reading the session through
@@ -50,7 +50,7 @@ import { PanelEdge } from "./PanelEdge";
  *
  * **The room keeps no controls.** With the panel away, what is on screen is what
  * the agent put there, edge to edge, with the caption and the camera pip over it
- * and nothing else. Every way back in is listed in `<PanelEdge>` and in the two
+ * and nothing else. Every way back in is listed in `<PanelGesture>` and in the two
  * key ladders below; there is deliberately no button, which is why those ladders
  * are the load-bearing part of this file rather than a convenience.
  *
@@ -85,7 +85,10 @@ export function Shell() {
   const [tab, setTab] = useState<Tab>("messages");
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
-  const panelRef = useRef<HTMLElement | null>(null);
+  // The face's root box, handed to `<PanelGesture>`. The axis is written on it —
+  // `--hi-panel-left` and `--hi-panel-measure` — so the panel and the strip that
+  // moves it read one edge from one place.
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Rotating a phone into landscape makes it `wide`, which has a stop the phone
   // does not — and being at `full` on a shape that no longer offers it would leave
@@ -241,6 +244,7 @@ export function Shell() {
 
   return (
     <div
+      ref={rootRef}
       className="hi-root"
       data-stop={stop}
       data-file-drop={handoff.feedback?.state}
@@ -285,7 +289,6 @@ export function Shell() {
             once at every stop, so the scroller keeps its position and its
             already-fetched scrollback across every open and close. */}
         <Panel
-          ref={panelRef}
           stop={stop}
           tab={tab}
           onTab={setTab}
@@ -310,9 +313,9 @@ export function Shell() {
           </Chat>
         </Panel>
 
-        {/* Last, so the strips are over everything they may have to claim a touch
-            from — including the panel they move. */}
-        <PanelEdge shape={shape} stop={stop} onStop={setStop} panel={panelRef} />
+        {/* Last, so the strip is over everything it may have to claim a touch from
+            — including the panel it moves. */}
+        <PanelGesture shape={shape} stop={stop} onStop={setStop} root={rootRef} />
 
         <HandoffOverlay
           feedback={handoff.feedback}

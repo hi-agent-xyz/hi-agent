@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { ChannelControls } from "./ChannelControls";
 import { Views } from "./Views";
 import type { Stop } from "../lib/panel";
@@ -48,6 +48,15 @@ interface PanelProps {
  * was three planes. The stop moves it; nothing about the stop branches on whether
  * it is here.
  *
+ * **Two boxes, because the panel has two measures and only one of them is where
+ * it is.** The `aside` is the window — it starts at the panel's left edge and runs
+ * to the right-hand side of the screen, and a drag moves that edge pixel by pixel.
+ * The box inside it is laid out at the measure of the stop and is pinned to the
+ * right, so a drag *reveals* the panel rather than re-laying it: a conversation
+ * being pulled in does not re-wrap every line on the way (`lib/panel.ts`
+ * § `measureOf`). At rest the two are exactly the same size, so this split is
+ * invisible except under a finger.
+ *
  * **A head that does not change and a body that does.** The head is the channel
  * row and the tabs, and it is the same at every stop and on every tab — that is
  * the rule left standing where *every channel is one press away wherever you are*
@@ -60,13 +69,9 @@ interface PanelProps {
  * up, so leaving the tab should genuinely stop it — mounting it with the tab is
  * the honest way to say that.
  */
-export const Panel = forwardRef<HTMLElement, PanelProps>(function Panel(
-  { stop, tab, onTab, children, onChose, ...channels },
-  ref,
-) {
+export function Panel({ stop, tab, onTab, children, onChose, ...channels }: PanelProps) {
   return (
     <aside
-      ref={ref}
       className="hi-panel"
       data-stop={stop}
       aria-label="panel"
@@ -76,41 +81,43 @@ export const Panel = forwardRef<HTMLElement, PanelProps>(function Panel(
       aria-hidden={stop === "room" ? true : undefined}
       inert={stop === "room"}
     >
-      <div className="hi-panel-head">
-        <div className="hi-panel-tabs" role="tablist" aria-label="panel">
-          <button
-            type="button"
-            role="tab"
-            className={`hi-panel-tab${tab === "messages" ? " is-on" : ""}`}
-            aria-selected={tab === "messages"}
-            onClick={() => onTab("messages")}
-          >
-            Messages
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className={`hi-panel-tab${tab === "views" ? " is-on" : ""}`}
-            aria-selected={tab === "views"}
-            onClick={() => onTab("views")}
-          >
-            Views
-          </button>
-        </div>
-        <ChannelControls {...channels} />
-      </div>
-
-      <div className="hi-panel-body">
-        {/* Visibility, never a branch: the messages body holds the scroller. */}
-        <div className="hi-panel-pane" data-shown={tab === "messages" ? "true" : "false"}>
-          {children}
-        </div>
-        {tab === "views" && (
-          <div className="hi-panel-pane" data-shown="true">
-            <Views stacked={stop === "full"} onChose={onChose} />
+      <div className="hi-panel-measure">
+        <div className="hi-panel-head">
+          <div className="hi-panel-tabs" role="tablist" aria-label="panel">
+            <button
+              type="button"
+              role="tab"
+              className={`hi-panel-tab${tab === "messages" ? " is-on" : ""}`}
+              aria-selected={tab === "messages"}
+              onClick={() => onTab("messages")}
+            >
+              Messages
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`hi-panel-tab${tab === "views" ? " is-on" : ""}`}
+              aria-selected={tab === "views"}
+              onClick={() => onTab("views")}
+            >
+              Views
+            </button>
           </div>
-        )}
+          <ChannelControls {...channels} />
+        </div>
+
+        <div className="hi-panel-body">
+          {/* Visibility, never a branch: the messages body holds the scroller. */}
+          <div className="hi-panel-pane" data-shown={tab === "messages" ? "true" : "false"}>
+            {children}
+          </div>
+          {tab === "views" && (
+            <div className="hi-panel-pane" data-shown="true">
+              <Views stacked={stop === "full"} onChose={onChose} />
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );
-});
+}

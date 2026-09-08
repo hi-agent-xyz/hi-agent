@@ -3,8 +3,23 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { advance, depth, initial, leftOf, opened, pushes, retreat, settle, stops } from "./panel";
-import { PANEL_MS } from "../ui/PanelEdge";
+import {
+  advance,
+  depth,
+  initial,
+  leftOf,
+  measureOf,
+  opened,
+  pushes,
+  retreat,
+  rolled,
+  settle,
+  sideways,
+  stops,
+  swiped,
+  SWIPE_PX,
+} from "./panel";
+import { PANEL_MS } from "../ui/PanelGesture";
 
 const UI = fileURLToPath(new URL("../ui/", import.meta.url));
 const CSS = readFileSync(join(UI, "global.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -79,6 +94,39 @@ describe("where a stop puts the panel's left edge", () => {
   });
 });
 
+describe("how wide the box behind that edge is", () => {
+  it("has two measures and no third", () => {
+    // The whole of the guarantee: whatever a drag is doing, the panel is being laid
+    // out either at the sidebar's measure or at the screen's. A width that tracked
+    // the finger is what re-wrapped every line of the conversation on the way in.
+    expect(measureOf("panel", "wide", WIDE, MEASURE)).toBe(MEASURE);
+    expect(measureOf("full", "wide", WIDE, MEASURE)).toBe(WIDE);
+  });
+
+  it("lets the room borrow the measure of the stop it opens to", () => {
+    // So pulling the panel in changes no width at all — which is the case the
+    // reflow was worst in, the panel arriving from nothing.
+    expect(measureOf("room", "wide", WIDE, MEASURE)).toBe(MEASURE);
+    expect(measureOf("room", "phone", PHONE, MEASURE)).toBe(PHONE);
+    expect(measureOf("room", "tv", WIDE, MEASURE)).toBe(MEASURE);
+  });
+
+  it("agrees with where the edge is, at every stop the panel is out at", () => {
+    // The two functions are one arrangement said twice, and a drag is the only
+    // thing allowed to pull them apart. If this ever fails at rest, the panel is
+    // drawn either short of the right-hand edge or past it.
+    for (const width of [WIDE, PHONE, 380]) {
+      for (const stop of ["panel", "full"] as const) {
+        expect(leftOf(stop, width, MEASURE) + measureOf(stop, "wide", width, MEASURE)).toBe(width);
+      }
+    }
+  });
+
+  it("is never wider than the window it is in", () => {
+    expect(measureOf("panel", "wide", 380, MEASURE)).toBe(380);
+  });
+});
+
 describe("letting go", () => {
   it("takes the stop the edge is nearest", () => {
     expect(settle(WIDE - 30, 0, "room", "wide", WIDE, MEASURE)).toBe("room");
@@ -111,7 +159,71 @@ describe("letting go", () => {
   });
 });
 
-// The settle's animation is played by the stylesheet and timed by `PanelEdge`: it
+describe("two fingers sideways", () => {
+  it("reads a delta in whatever unit the browser reported it in", () => {
+    // A wheel event is free to arrive in lines or in pages, and a threshold read
+    // against the raw number would take a three-line roll on a mouse for a swipe
+    // and never fire at all on a trackpad reporting pages.
+    expect(rolled(60, 0)).toBe(60);
+    expect(rolled(3, 1)).toBe(48);
+    expect(rolled(1, 2)).toBe(100);
+  });
+
+  it("does not take a vertical scroll that drifted", () => {
+    // The failure this guards is the one that would make the face unusable: a
+    // person reading down a long conversation, whose two fingers are never
+    // perfectly vertical, watching the panel close itself under them.
+    expect(sideways(4, 90)).toBe(false);
+    expect(sideways(30, 20)).toBe(false);
+    expect(sideways(90, 4)).toBe(true);
+    expect(sideways(-90, 4)).toBe(true);
+    expect(sideways(0, 0)).toBe(false);
+  });
+
+  it("brings the panel in on a roll to the right, the way a drag does", () => {
+    // Scrolling right is fingers moving left, which is the direction the same hand
+    // would drag the edge. A sign flipped here is a gesture that does the opposite
+    // of the one beside it.
+    expect(swiped(SWIPE_PX, "room", "wide")).toBe("panel");
+    expect(swiped(-SWIPE_PX, "panel", "wide")).toBe("room");
+  });
+
+  it("moves one stop however hard it was thrown", () => {
+    // Momentum keeps delivering frames after the hand has lifted, so distance is
+    // not evidence of intent past the first step — and a flick out of the room
+    // that landed on `full` would cover the very thing it was opened beside.
+    expect(swiped(4000, "room", "wide")).toBe("panel");
+    expect(swiped(-4000, "full", "wide")).toBe("panel");
+  });
+
+  it("does nothing under the threshold", () => {
+    expect(swiped(SWIPE_PX - 1, "room", "wide")).toBe("room");
+    expect(swiped(-(SWIPE_PX - 1), "panel", "wide")).toBe("panel");
+  });
+
+  it("cannot step off the end of the axis", () => {
+    expect(swiped(4000, "full", "wide")).toBe("full");
+    expect(swiped(-4000, "room", "wide")).toBe("room");
+    expect(swiped(4000, "panel", "tv")).toBe("panel");
+  });
+});
+
+// The strip that moves the panel stands on the panel's own left edge — the window's
+// right-hand side at `room`, the seam at `panel`, the window's left-hand side at
+// `full` — and that is one rule in the stylesheet rather than a position per stop.
+// Nailing it back to the window's edges is the regression this guards: it looks
+// right at two stops out of three, and the one it is wrong at is the desktop's
+// resting arrangement.
+describe("the edge the gesture begins on", () => {
+  it("rides the same variable the panel does", () => {
+    // Anchored, so it is the strip's own rule and not the drag's `transition: none`.
+    const rule = CSS.match(/^\.hi-panel-edge \{[^}]*\}/m)?.[0] ?? "";
+    expect(rule, "the strip declares its position").toMatch(/left:/);
+    expect(rule).toContain("--hi-panel-left");
+  });
+});
+
+// The settle's animation is played by the stylesheet and timed by `PanelGesture`: it
 // hands the panel to CSS at the target position, waits, and only then tells React
 // the stop changed. Those are two numbers for one duration, in two files, and
 // nothing else would notice them drifting — the symptom is a panel that snaps back

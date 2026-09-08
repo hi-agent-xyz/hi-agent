@@ -366,6 +366,24 @@ button,
   user-select: none;
 }
 
+/* The panel's measure at the middle stop, declared so it can be *read*.
+   `ui/PanelGesture.tsx` needs this number in pixels to work out where a stop puts the
+   panel's left edge, and an unregistered custom property's computed value is the
+   token stream it was written as — `getPropertyValue` hands back the literal
+   string `min(420px, …)`, which parses to nothing. Registering it makes the
+   computed value a resolved length, so the drag measures the panel the stylesheet
+   actually drew instead of silently falling back to the whole window and putting
+   the middle stop on top of `full`.
+
+   `initial-value` is the plain number the `min()` is capped at, so a browser
+   without `@property` — where this whole block is ignored — is no worse off than
+   it was. */
+@property --hi-panel-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 420px;
+}
+
 /* --- Root shell ------------------------------------------------------- */
 .hi-root {
   position: relative;
@@ -400,7 +418,7 @@ button,
   /* The panel's measure at the middle stop — a readable line, never a column of
      two-word wraps, and it gives way to the window on anything small enough that a
      fixed 420px would run off the edge. Read by the stylesheet for geometry and by
-     `ui/PanelEdge.tsx` for the drag's arithmetic, which is why it is a token and not
+     `ui/PanelGesture.tsx` for the drag's arithmetic, which is why it is a token and not
      a literal in one rule. */
   --hi-panel-width: min(420px, calc(100vw - 40px));
   /* Where the panel's left edge is, which is the whole of where the panel is.
@@ -408,8 +426,25 @@ button,
      sliding out, widening and narrowing are one motion with different endpoints
      rather than four animations to keep in step. The resting value comes off
      `data-stop` below; a drag in flight overwrites it in px and clears it on
-     release. */
+     release. Written on THIS element rather than on the panel, because two things
+     ride the edge — the panel and the strip that moves it — and they must not be
+     told about it separately. */
   --hi-panel-left: 100%;
+
+  /* How wide the box behind that edge is laid out — **two values and never a
+     third**, the sidebar's measure or the screen's (`lib/panel.ts` § `measureOf`).
+     The edge moves under a finger and this does not, so a drag reveals the panel
+     instead of re-wrapping every line in it on the way in. It changes once a
+     gesture, at the moment of release, together with the position it is settling
+     to. */
+  --hi-panel-measure: var(--hi-panel-width);
+
+  /* A readable measure for anything the panel is asked to show across a whole
+     window: the conversation's column at the `full` stop is this wide and centred,
+     rather than one line of text running the width of a 1512px screen. One number,
+     read by the stylesheet here and by the message list's own `max-w` in
+     `ui/Chat.tsx`. */
+  --hi-read: 52rem;
 }
 
 /* The three stops, and the only place the axis becomes geometry.
@@ -420,10 +455,30 @@ button,
 
 .hi-root[data-stop="panel"] {
   --hi-panel-left: calc(100% - var(--hi-panel-width));
+  --hi-panel-measure: var(--hi-panel-width);
 }
 
 .hi-root[data-stop="full"] {
   --hi-panel-left: 0px;
+  --hi-panel-measure: 100vw;
+}
+
+/* The room has no width of its own — it is the panel off the side of the screen —
+   so it borrows the measure of the stop it opens to, and pulling the panel in
+   changes no width at all. On a window that is the sidebar's; on a phone, which
+   has no middle stop, it is the screen. Same rule as `measureOf`'s first line,
+   said in the only place the stylesheet knows the shape. */
+:root[data-shape="phone"] .hi-root[data-stop="room"] {
+  --hi-panel-measure: 100vw;
+}
+
+/* While a finger has the edge. The transitions are off so the panel and the strip
+   track the pointer one-to-one rather than chasing it a quarter-second behind —
+   the whole of what makes the gesture read as the panel being moved is that it is
+   being moved. */
+.hi-root[data-dragging] .hi-panel,
+.hi-root[data-dragging] .hi-panel-edge {
+  transition: none;
 }
 
 /* --- Planes -----------------------------------------------------------
@@ -649,8 +704,6 @@ button,
   top: 0;
   bottom: 0;
   right: 0;
-  display: flex;
-  flex-direction: column;
   pointer-events: auto;
   overflow: hidden;
   border-left: 1px solid var(--surface-border);
@@ -661,11 +714,28 @@ button,
   transition: left 260ms var(--ease);
 }
 
-/* While a finger has it. The transition is off so the box tracks the pointer
-   one-to-one rather than chasing it a quarter-second behind — the whole of what
-   makes the gesture read as the panel being moved is that it is being moved. */
-.hi-panel[data-dragging] {
-  transition: none;
+/* Everything in the panel, laid out at the measure of the stop rather than at
+   whatever width the drag has uncovered so far.
+
+   **The box above is where the panel is; this is how wide it is**, and the two are
+   the same size at every resting stop — the split shows only under a finger. It is
+   what stops the conversation re-wrapping every line sixty times a second on the
+   way in: the edge moves, the measure does not, so the panel is *revealed*. Pinned
+   to the right and clipped by the window above, because the right-hand side is the
+   side the panel is anchored to at every stop it has.
+
+   Absolutely positioned rather than right-aligned in the flex column it used to
+   be: when the measure is the whole screen and the window is not — the quarter
+   second after a release settling on `full` — the box has to overflow to the LEFT,
+   and an auto margin cannot go negative. */
+.hi-panel-measure {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: var(--hi-panel-measure);
+  display: flex;
+  flex-direction: column;
 }
 
 /* At the full stop it is the window, so the seam and the lift have nothing to sit
@@ -765,23 +835,6 @@ button,
   overflow: hidden;
 }
 
-/* The title line. One row, and it holds only who the conversation is with — see
-   the note in `ui/Chat.tsx` for what deliberately is not in it. */
-.hi-chat-head {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--line);
-}
-
-.hi-chat-title {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  color: var(--fg-dim);
-}
-
 /* `min-height: 0` is what lets the scroller shrink instead of pushing the foot
    off the bottom of the panel: a flex item's default `min-height: auto` is its
    content, and the content here is the whole scrollback. */
@@ -856,6 +909,17 @@ button,
 
 .hi-composer textarea::placeholder {
   color: var(--fg-mute);
+}
+
+/* With the panel across a whole window, the line has to stand under the column it
+   is adding to rather than run the width of the screen. The messages are already
+   held to a readable measure and centred by the list's own `max-w` in
+   `ui/Chat.tsx`; this is the same number, from the same token, for the line at the
+   foot of them. At the sidebar measure the cap is far wider than the panel and the
+   rule does nothing, which is why it is keyed on the stop and not on the shape. */
+.hi-panel[data-stop="full"] .hi-composer {
+  max-width: var(--hi-read);
+  margin-inline: auto;
 }
 
 .hi-speech {
@@ -1168,6 +1232,7 @@ button,
    left standing on paper the agent painted (`docs/arch/stage.md` § *The room keeps
    no controls at all*). */
 .hi-channels {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1240,15 +1305,20 @@ button,
   border-color: var(--scrim-danger);
 }
 
-/* The note itself: one line of plain words above the cluster, in the same scrim
-   the discs wear, for the same reason — it floats over whatever the agent
-   painted. `role="status"` on the element, so it is spoken as well as shown.
-   Absolutely placed against the fixed cluster, so it never widens the row or
-   pushes a control off the corner. */
+/* The note itself: one line of plain words under the row of discs, in the same
+   scrim they wear. `role="status"` on the element, so it is spoken as well as
+   shown. Absolutely placed against the row — which is why the row is positioned —
+   so it never widens the head or pushes a control out of it.
+
+   **It hangs below, and it used to hang above**, from the days the discs were a
+   cluster fixed to the room's bottom-right corner with the whole screen over them.
+   In the panel's head there is nothing above but the top of the window, so a note
+   placed there was a channel's only report of having refused to open, rendered off
+   the top of the screen. */
 .hi-channel-note {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 10px);
+  top: calc(100% + 10px);
   max-width: min(64vw, 320px);
   margin: 0;
   padding: 6px 11px;
@@ -1845,44 +1915,58 @@ button,
   padding-bottom: calc(10px + max(0px, var(--hi-safe-bottom) - var(--hi-keyboard, 0px)));
 }
 
-/* --- The two edges -----------------------------------------------------
-   Where a gesture may begin: the right edge advances a stop, the left edge
-   retreats one. Invisible at rest and deliberately not `aria`-anything — with no
-   button in the room there is nothing for them to be a shortcut *for*, and a strip
-   announced as a control is a control a screen reader cannot operate. The keyboard
-   and D-pad ladders in `ui/Shell.tsx` are the announced way along the axis.
+/* --- The edge ----------------------------------------------------------
+   Where a gesture may begin, and it is the panel's own left edge — pulled left it
+   advances a stop, pulled right it retreats one, and which of those it was is read
+   off the drag rather than off which of two strips was grabbed.
+
+   **It rides `--hi-panel-left`, so it is always the boundary that is actually on
+   screen**: the window's right-hand side at `room`, the seam between the view and
+   the panel at `panel`, the window's left-hand side at `full`. Two of those are
+   exactly where a nailed-down pair of strips used to be; the third is the one that
+   was wrong, and it is the desktop's resting arrangement — with the panel beside
+   the view, a hand goes for the boundary it can see, not the far edge of the
+   window.
+
+   `clamp` keeps the whole strip on screen where the edge is the screen's own: at
+   `room` the twenty points are the window's last twenty rather than ten of them
+   hanging off the side.
+
+   Invisible at rest and deliberately not `aria`-anything — with no button in the
+   room there is nothing for it to be a shortcut *for*, and a strip announced as a
+   control is a control a screen reader cannot operate. The keyboard and D-pad
+   ladders in `ui/Shell.tsx` are the announced way along the axis.
 
    `touch-action: none` up front, because iOS assigns a touch at the moment it
    starts and never reconsiders: a pan that begins over the scrollback belongs to
    the scroller by then, and asking for it afterwards gets nothing. 20px is the
    width the system's own edge gesture claims.
 
-   Fixed rather than absolute, so a strip standing over the panel does not scroll
+   Fixed rather than absolute, so the strip standing over the panel does not scroll
    away with the panel's content. */
 .hi-panel-edge {
   position: fixed;
   top: 0;
   bottom: 0;
   width: 20px;
+  left: clamp(0px, calc(var(--hi-panel-left) - 10px), calc(100vw - 20px));
   touch-action: none;
   pointer-events: auto;
+  transition: left 260ms var(--ease);
 }
 
-.hi-panel-edge[data-edge="left"] {
-  left: 0;
-}
-
-.hi-panel-edge[data-edge="right"] {
-  right: 0;
-}
-
-/* The mouse's entrance, and the only thing either strip ever draws.
+/* The mouse's entrance, and the only thing the strip ever draws.
 
    A desktop has no platform-taught edge swipe, so the strip answers a click as well
    as a drag — and a click on nothing at all is not an entrance anyone finds. This
    hairline is the compromise the zero-button room accepts: nothing at rest, a hint
    once the pointer is already there. Named as a cost in `docs/arch/stage.md`
    § *The ways in, and the one that is thin*, not as a solution.
+
+   Centred in the strip rather than set against one of its sides, because the strip
+   no longer has a side to prefer: it straddles the boundary it moves, and at the
+   two stops where that boundary is the screen's own the clamp above has already put
+   the hairline a comfortable few points inboard.
 
    Fine pointers only. A finger does not hover, and on a phone the swipe is the
    platform's own idiom and needs no hint. */
@@ -1891,21 +1975,14 @@ button,
     content: "";
     position: absolute;
     top: 50%;
+    left: 50%;
     width: 3px;
     height: 46px;
-    margin-top: -23px;
+    margin: -23px 0 0 -1.5px;
     border-radius: 3px;
     background: var(--scrim-ink);
     opacity: 0;
     transition: opacity 160ms var(--ease);
-  }
-
-  .hi-panel-edge[data-edge="left"]::after {
-    left: 4px;
-  }
-
-  .hi-panel-edge[data-edge="right"]::after {
-    right: 4px;
   }
 
   .hi-panel-edge:hover::after {
@@ -1924,7 +2001,13 @@ button,
    the old rule reached it only if the window happened to be a phone. */
 .hi-panel[data-stop="full"] .hi-views-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  /* The track has to answer two very different screens off one rule. A fixed 150px
+     minimum was written against a phone, where it gives two columns; on a 1512px
+     window `auto-fill` took it at its word and laid out nine columns of tiles
+     SMALLER than the 160px cards the sidebar shows — a grid whose whole argument is
+     pictures big enough to recognise. The viewport term grows the tile with the
+     screen and the clamp keeps the phone's two columns at the bottom of it. */
+  grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 18vw, 260px), 1fr));
   gap: 12px;
   padding: 4px 14px 14px;
   overflow-x: visible;
