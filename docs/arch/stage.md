@@ -370,6 +370,17 @@ which the tabs were not, each in its own direction.
   shows** — a grid whose whole argument is pictures big enough to recognise. The track grows
   with the screen now and the clamp keeps the phone's two columns under it.
 
+  **And there is one layout, not two** — *September 8, 2026.* The tab was a grid at the full
+  measure and two sideways-scrolling strips at the panel's, and the sidebar was the loser of
+  that split: two and a bit cards on screen, every other one off the right-hand edge, and
+  most of the tab's body empty beneath them. The room those rows were short of was never
+  across. The tab has the panel's whole body at **every** stop — that is what
+  [One handle, and it is the seam](#one-handle-and-it-is-the-seam) bought when the tab
+  stopped being a short band over the thing it was being compared with — so both rows wrap
+  at both measures and the stop changes nothing but how big a track may get. The strip's
+  arithmetic goes with it: `lib/strip.ts` centred a card by `scrollLeft`, and with one
+  direction to scroll there is one way of doing it.
+
 ### Why the rail is allowed back at the middle stop
 
 At `panel` the view plane insets and the content reflows into what is left. That is the rail,
@@ -476,9 +487,10 @@ pixels. Direction and amount are what can be read off that honestly, and those a
 on an axis — the same thing a flick already resolves to. So a hard throw out of the room
 lands beside the view rather than covering it.
 
-**A scroller under the pointer keeps its own sideways gesture.** The views strip scrolls that
-way and so will any board with a wide table in it; if anything in the path can scroll across,
-the roll never reaches the axis. Not conditional on that scroller having room left, either —
+**A scroller under the pointer keeps its own sideways gesture.** Any board with a wide table
+in it scrolls that way; if anything in the path can scroll across, the roll never reaches the
+axis. (The views tab was the other example and is no longer one — its rows wrap, so a sideways
+roll over them is the axis's.) Not conditional on that scroller having room left, either —
 a strip that reaches its end and then hands the next flick to the whole panel is a worse
 surprise than one that simply stops.
 
@@ -1442,10 +1454,10 @@ agent shows anything.
 well, and because a picture of a text-dense board is the one thing in the band that pays
 for every pixel it gets. 16:9 because the tile is a picture of a screen, and the aspect
 a screen is is the one the eye reads a thumbnail of one against — the old 1.55 was a
-number nothing chose. The band is a fixed 720px wide, so the row now shows four whole
-cards and a sliver of the fifth instead of five and a half — the floor of the four-to-six
-legible at once the strip was sized for, and the right trade for a row whose whole
-argument is that a view is remembered as a picture.
+number nothing chose. Those numbers were a width when the row was a strip; they are a
+floor now that it wraps — the grid's track starts at 150px and spends whatever the
+measure has left on the picture, which is the right trade for a row whose whole argument
+is that a view is remembered as a picture.
 
 
 ## What stays on the wire, and what does not

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
-import { scrollToShow } from "../lib/strip";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
 /**
@@ -36,12 +35,12 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * Kept refs live in the config store, so they are the same on the desktop and the
  * phone — unlike the stop, which is each window's own.
  *
- * **A flat strip rather than a cover flow.** The instinct behind a cover flow is right:
+ * **A flat grid rather than a cover flow.** The instinct behind a cover flow is right:
  * a view is remembered as a picture. But album art is square, uniform and *is* the
  * identity, while these are text-dense boards that at thumbnail size are all a grey
  * rectangle with rows — and a cover flow shows one item well and two in perspective, so
- * reading fifteen of them is a long drag. The strip keeps four or five legible at once
- * and swipes on a phone, where a perspective carousel is unusable.
+ * reading fifteen of them is a long drag. A grid of pictures is legible all at once and
+ * needs no gesture at all to read, on a phone as much as on a window.
  *
  * **Pictures, with the name written on them.** The tile carries a real screenshot,
  * captured server-side by the same headless browser `hi_review_view` drives, at the
@@ -65,51 +64,46 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
  * opening: a show arriving afterwards must not drag a row out from under someone
  * reading it. The stage does follow a show; the row someone is reading does not.
+ * One direction to scroll, so one way of doing it: the tab's body goes down and
+ * `scrollIntoView` moves it there.
  *
  * **The inventory is re-read while the tab is up.** A picture is only taken when
  * someone shows an interest in the view, and the first interest is usually this tab
  * being opened; the shot lands a second or two later, and this is what carries it onto
  * the card the person is already looking at.
  *
- * **`stacked` is how much room the stop gave it, not which device this is.** At the
- * panel's measure the two rows are strips that scroll sideways; with the panel across
- * the whole window they are a grid of pictures big enough to recognise and chips that
- * wrap. That used to be a `phone` branch, which was the same answer arrived at through
- * the wrong question — a window at the full stop wants the grid too.
+ * **One layout, and the stop only says how big a picture gets.** Both rows were strips
+ * that scrolled sideways at the panel's measure and a wrapping grid with the panel
+ * across the whole window, and the sidebar was the loser of that split: four cards on
+ * screen, the rest off the right-hand edge, and two thirds of the tab's body empty
+ * under them. The room the rows were short of was never across — the tab has the
+ * panel's whole body at every stop. So the grid runs at both measures and the
+ * stylesheet changes nothing but the track (`ui/global.css`). Nothing here branches on
+ * the stop any more, which is why there is no prop for it.
  */
-export function Views({ stacked, onChose }: { stacked: boolean; onChose: () => void }) {
+export function Views({ onChose }: { onChose: () => void }) {
   const { trail, live, parked, goTo, openRef } = useViews();
   const [inventory, setInventory] = useState<ListedView[]>([]);
   /** Shots whose `<img>` failed after the state said one existed — a shot pruned out
    * of the cache between the snapshot and the render. Falls back to the mark. */
   const [broken, setBroken] = useState<Set<string>>(() => new Set());
 
-  const strip = useRef<HTMLDivElement>(null);
   const hereCard = useRef<HTMLElement>(null);
-  const chips = useRef<HTMLDivElement>(null);
   const hereChip = useRef<HTMLElement>(null);
-  /** Whether opening has already placed each row. The inventory poll re-renders the band
+  /** Whether opening has already placed each row. The inventory poll re-renders the tab
    * every few seconds, and re-running this would keep hauling a row back. One flag per
    * row because the two are filled from different sources: the trail is in context on the
    * first render, the bookmarks arrive with the first `listViews()`. */
   const placedCards = useRef(false);
   const placedChips = useRef(false);
 
-  // Before paint, so a row is simply *at* the right place rather than seen to jump
-  // there. `scrollLeft` rather than `scrollIntoView`, which would also scroll whatever
-  // ancestor it decided was interesting, and would animate.
+  // Before paint, so the body is simply *at* the right place rather than seen to jump
+  // there. The tab scrolls down and nothing in it scrolls across, so `scrollIntoView`
+  // is the right tool: the ancestor it would otherwise scroll by surprise *is* the
+  // tab's body, which is the box that has to move.
   useLayoutEffect(() => {
-    if (stacked) {
-      // The tab scrolls down, not the rows across, so the same job is a vertical
-      // one and `scrollIntoView` is the right tool for it here: the ancestor it
-      // would otherwise scroll by surprise *is* the tab's body, which is the box
-      // that has to move. Still once, and still for the same reason.
-      show(hereCard.current, placedCards);
-      show(hereChip.current, placedChips);
-      return;
-    }
-    place(strip.current, hereCard.current, placedCards);
-    place(chips.current, hereChip.current, placedChips);
+    show(hereCard.current, placedCards);
+    show(hereChip.current, placedChips);
   });
 
   /** Stars clicked whose write has not come back yet. A re-read that was already in
@@ -181,7 +175,7 @@ export function Views({ stacked, onChose }: { stacked: boolean; onChose: () => v
       {trail.length === 0 ? (
         <p className="hi-views-empty">nothing has been shown yet</p>
       ) : (
-        <div className="hi-views-strip" ref={strip}>
+        <div className="hi-views-strip">
           {trail.map((entry) => {
             const key = destinationOf(entry);
             const isLive = key === live;
@@ -264,7 +258,7 @@ export function Views({ stacked, onChose }: { stacked: boolean; onChose: () => v
         <span className="hi-views-heading">bookmarks</span>
         <span className="hi-views-rule" aria-hidden="true" />
       </div>
-      <div className="hi-views-bookmarks" ref={chips}>
+      <div className="hi-views-bookmarks">
         {bookmarks.map((view) => (
           <span
             className={`hi-views-chip${view.view_ref === here ? " is-here" : ""}`}
@@ -302,25 +296,9 @@ export function Views({ stacked, onChose }: { stacked: boolean; onChose: () => v
   );
 }
 
-/** Scroll one row so the item marked *here* is on screen, once. A row the browser has
- * not measured yet (`clientWidth` 0 — the tab is mounted, layout has not reached it)
- * is left for a later render: `scrollToShow` on a zero-width box answers with a number,
- * and it is the wrong one. */
-function place(
-  row: HTMLDivElement | null,
-  item: HTMLElement | null,
-  done: { current: boolean },
-): void {
-  if (done.current || !row || !item || row.clientWidth === 0) return;
-  done.current = true;
-  const at = scrollToShow(row, item);
-  if (at !== null) row.scrollLeft = at;
-}
-
-/** The stacked version of the same job: bring the item marked *here* onto the
- * screen, once, by scrolling the tab's body down to it. `center` rather than `start`,
- * because a card at the very top of the frame reads as the head of the list and
- * this one is somewhere in the middle of one. */
+/** Bring the item marked *here* onto the screen, once, by scrolling the tab's body
+ * down to it. `center` rather than `start`, because an item at the very top of the
+ * frame reads as the head of the list and this one is somewhere in the middle of one. */
 function show(item: HTMLElement | null, done: { current: boolean }): void {
   if (done.current || !item) return;
   done.current = true;

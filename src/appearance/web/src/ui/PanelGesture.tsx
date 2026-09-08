@@ -104,12 +104,13 @@ import type { Shape } from "../lib/shape";
  * pixels. Direction and amount are what can be read off that honestly, and those are
  * one step on an axis (`lib/panel.ts` § *The trackpad's arithmetic*).
  *
- * **A scroller under the pointer keeps its own sideways gesture.** The views strip
- * scrolls that way, and so will any board with a wide table in it; if anything in
- * the path can scroll across, the roll is theirs and this never sees it. It is not
- * even conditional on their having room left to scroll — a strip that has reached
- * its end and hands the whole panel to the next flick is a worse surprise than one
- * that simply stops.
+ * **A scroller under the pointer keeps its own sideways gesture.** Any board with a
+ * wide table in it scrolls that way; if anything in the path can scroll across, the
+ * roll is theirs and this never sees it. It is not even conditional on their having
+ * room left to scroll — a strip that has reached its end and hands the whole panel to
+ * the next flick is a worse surprise than one that simply stops. The views tab was the
+ * other example and is no longer one: its rows wrap now, so a sideways roll over them
+ * reaches the axis.
  *
  * **One swipe is one stop**, and the rest of the run — every frame of momentum after
  * the step is taken — is swallowed rather than acted on, so a hard flick out of the

@@ -113,7 +113,7 @@ export function Panel({ stop, tab, onTab, children, onChose, ...channels }: Pane
           </div>
           {tab === "views" && (
             <div className="hi-panel-pane" data-shown="true">
-              <Views stacked={stop === "full"} onChose={onChose} />
+              <Views onChose={onChose} />
             </div>
           )}
         </div>

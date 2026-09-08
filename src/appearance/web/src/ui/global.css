@@ -1557,28 +1557,22 @@ button,
   color: var(--fg-mute);
 }
 
-/* Both rows scroll horizontally and hide their bar: the row is the affordance,
-   and a visible scrollbar inside a 16px-radius band reads as a seam. */
-.hi-views-strip,
-.hi-views-bookmarks {
-  display: flex;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
+/* Both rows wrap, at every stop. They were strips that scrolled sideways, and the
+   room they were short of was never across — it was down: the tab has the panel's
+   whole body at every stop, and at the sidebar's measure that meant two and a bit
+   cards on screen, every other one off the right-hand edge, and most of the body
+   empty under them. So the same grid runs at both measures and only the track
+   changes with the stop.
 
-.hi-views-strip::-webkit-scrollbar,
-.hi-views-bookmarks::-webkit-scrollbar {
-  display: none;
-}
-
+   The tile's own size stops being a width and becomes a floor: a track no narrower
+   than 150px, and `1fr` spends whatever the measure has left on the pictures rather
+   than on a fifth card nobody can see. `min(150px, 100%)` so a measure narrower than
+   one tile gives one column instead of an overflow. */
 .hi-views-strip {
-  gap: 9px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+  gap: 10px;
   padding: 2px 14px 12px;
-  /* Positioned so it is the cards' `offsetParent`: opening the band scrolls the card
-     marked *here* into view, and that sum only works if the card's offset and the
-     strip's `scrollLeft` are measured in the same box. Without this the offsets come
-     out relative to the band, which is the fixed one. */
-  position: relative;
 }
 
 /* The card holds two controls — go there, and keep it — so it is a box rather than
@@ -1587,8 +1581,7 @@ button,
    whole of the card's height is the thing that identifies the view. */
 .hi-views-card {
   position: relative;
-  flex: 0 0 auto;
-  width: 160px;
+  width: 100%;
 }
 
 .hi-views-open {
@@ -1619,8 +1612,8 @@ button,
   display: grid;
   place-items: center;
   overflow: hidden;
-  width: 160px;
-  height: 90px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   border-radius: 9px;
 }
 
@@ -1749,12 +1742,10 @@ button,
 }
 
 .hi-views-bookmarks {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 2px 14px 12px;
-  /* Positioned for the same reason the strip above it is: opening the band scrolls the
-     chip marked *here* into view, and that sum needs the chip's offset measured against
-     this row rather than against the fixed band. */
-  position: relative;
 }
 
 /* A kept chip carries a second verb (drop it), so the chip is the frame and the
@@ -1841,19 +1832,6 @@ button,
   .hi-views-drop {
     width: 22px;
     opacity: 1;
-  }
-}
-
-/* Return-to-live carries the dot when a raise landed while the person was away.
-   The dot is the whole of the signal: the alternative is moving them off the
-   thing they went back to read, which is the one thing this must never do. */
-@media (max-width: 640px) {
-  .hi-views-card,
-  .hi-views-tile {
-    width: 128px;
-  }
-  .hi-views-tile {
-    height: 72px;
   }
 }
 
@@ -1991,36 +1969,25 @@ button,
 }
 
 /* --- The views tab, with the panel across the whole window --------------
-   The two rows are strips that scroll sideways at the panel's own measure, which
-   is what they were designed for. Given the whole window they finally get to be
-   what they are: a grid of pictures big enough to recognise, and chips that wrap
-   instead of running off the edge.
+   The grid is the tab's layout at both measures now, so what is left here is what
+   a whole window changes about it and nothing else: how big a track is allowed to
+   get, and hit targets sized for the screen a full-stop panel usually is — a
+   phone, or a window someone has just covered with the panel.
+
+   The track has to answer two very different screens off one rule. A fixed 150px
+   minimum is the sidebar's floor and gives a phone two columns; on a 1512px window
+   `auto-fill` took that number at its word and laid out nine columns of tiles
+   SMALLER than the sidebar's own — a grid whose whole argument is pictures big
+   enough to recognise. The viewport term grows the tile with the screen and the
+   clamp keeps the phone's two columns at the bottom of it.
 
    Keyed on the stop rather than on the shape, which is the same answer arrived at
-   through the right question — a window at the full stop wants the grid too, and
-   the old rule reached it only if the window happened to be a phone. */
+   through the right question — a window at the full stop wants the bigger tiles
+   too, and the old rule reached them only if the window happened to be a phone. */
 .hi-panel[data-stop="full"] .hi-views-strip {
-  display: grid;
-  /* The track has to answer two very different screens off one rule. A fixed 150px
-     minimum was written against a phone, where it gives two columns; on a 1512px
-     window `auto-fill` took it at its word and laid out nine columns of tiles
-     SMALLER than the 160px cards the sidebar shows — a grid whose whole argument is
-     pictures big enough to recognise. The viewport term grows the tile with the
-     screen and the clamp keeps the phone's two columns at the bottom of it. */
   grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 18vw, 260px), 1fr));
   gap: 12px;
   padding: 4px 14px 14px;
-  overflow-x: visible;
-}
-
-.hi-panel[data-stop="full"] .hi-views-card,
-.hi-panel[data-stop="full"] .hi-views-tile {
-  width: 100%;
-}
-
-.hi-panel[data-stop="full"] .hi-views-tile {
-  height: auto;
-  aspect-ratio: 16 / 9;
 }
 
 .hi-panel[data-stop="full"] .hi-views-keep {
@@ -2029,8 +1996,6 @@ button,
 }
 
 .hi-panel[data-stop="full"] .hi-views-bookmarks {
-  flex-wrap: wrap;
-  overflow-x: visible;
   padding: 4px 14px 20px;
 }
 
