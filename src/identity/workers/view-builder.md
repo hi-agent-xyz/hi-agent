@@ -511,6 +511,22 @@ shown is the frame they have *now*, not a promise. Lay out in relative terms —
 of the frame, `clamp()`ed type — so a different size makes your composition breathe
 rather than collide.
 
+**And the frame is your slot, which is not the window.** `@media` and `vw` answer about
+the browser window; your slot is only sometimes the same thing. It is about 380px wide in
+the menu-bar popover, and on a phone turned sideways the host deliberately hands you a
+room *wider* than the glass and draws it scaled down, so the layout is the one you
+composed rather than one guessed from 852 raw pixels. Ask the slot. It is a named
+container and it is always there:
+
+    @container hi-view (min-width: 900px) { ... }    /* not @media */
+    font-size: clamp(1.25rem, 2.5cqi, 2rem);         /* not vw  */
+
+`cqi` is one percent of your slot's width exactly the way `vw` is one percent of the
+window's; everything else is the CSS you would have written anyway. This is not a style
+preference. **A view that asks the window cannot be handed a different room** — not by
+this mechanism and not by any other — so asking the window is what makes a composition
+stop following the frame it was given.
+
 **Render the frame they are in, and don't invent others.** `hi_review_view` with no
 `width`/`height` renders the surface the person is actually reading on, whichever it is —
 the desktop window, a browser tab, the phone. That is the frame worth being right about,

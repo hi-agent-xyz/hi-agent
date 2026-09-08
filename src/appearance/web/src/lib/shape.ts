@@ -63,6 +63,58 @@ export function declaredTv(search: string = window.location.search): boolean {
   return new URLSearchParams(search).get("shape") === TV;
 }
 
+// The room a view is composed for. `view_render`'s `DEFAULT_WIDTH` is this number —
+// the frame a review falls back to when no face has reported one — so it is the width
+// the workshop's output is implicitly aimed at.
+//
+// **A room narrower than this is told this number anyway, and drawn to fit.** The shape
+// flag above already decided that a phone turned sideways stops being a phone and the
+// room is a room again; the host rearranges on it, and the view did not, because the
+// view was reading raw pixels. 852 of them land above 33 of the breakpoints written
+// across this workshop's views and below 37, so which arrangement a person got by
+// turning their phone was a coin flip per view — and the one arrangement they could
+// never get was the one the view was composed for.
+//
+// **The scale is affordable precisely on the devices this applies to**, because they are
+// the dense ones. 1280 CSS px across an iPhone's 2556 device pixels in landscape is
+// still 2 device pixels per CSS pixel — retina density — and a phone is held at about
+// 30cm against a laptop's 50cm, so the text lands within a few percent of the same
+// *angular* size. Nothing is shrunk; it is viewed closer.
+export const VIEW_TARGET = 1280;
+
+// How far the slot may be scaled down before the trade stops paying. The argument for
+// scaling at all is that a phone is dense and held close, so a factor near ⅔ lands within
+// a few percent of a laptop's angular text size — that is a claim about ⅔, not about any
+// factor. Below this the text is simply smaller than the person's screen can justify, and
+// a view laying itself out honestly for the room it really has is the better answer.
+//
+// It is also the only condition that has to name the phone: `0.6` admits a slot of 768px
+// and up, so a portrait phone (393px, and a factor of 0.31) is excluded by arithmetic
+// rather than by a second rule about phones. One rule, one reason.
+const MIN_SCALE = 0.6;
+
+/**
+ * How much to scale a view slot `width` CSS pixels wide so it can be told
+ * [`VIEW_TARGET`] — or `null` to leave it alone, which is most rooms.
+ *
+ * Pure, and exported, because it is the whole of the policy and the only part worth
+ * testing without a browser.
+ *
+ * **`width` is the slot's, not the window's**, and the difference is not academic: with
+ * the panel open beside a view the slot is 432 of an 852px landscape phone. Measured on a
+ * live instance, an earlier version of this took the window's width and scaled a
+ * half-width slot by the whole window's factor, so the view was told 649 rather than
+ * either number meaning anything.
+ *
+ * **Coarse** is the other condition, and it keeps the pointer out of it: a desktop window
+ * dragged narrow is a choice its owner can undo, while a phone's width is the device.
+ */
+export function viewZoom(width: number, coarse: boolean): number | null {
+  if (!coarse || !(width > 0) || width >= VIEW_TARGET) return null;
+  const scale = width / VIEW_TARGET;
+  return scale >= MIN_SCALE ? scale : null;
+}
+
 /** The three arrangements the face knows how to be. */
 export type Shape = "phone" | "tv" | "wide";
 
@@ -100,6 +152,45 @@ export function installShape(): void {
   }
   write(phoneQuery, "data-shape", "phone", "wide");
   write(coarseQuery, "data-pointer", "coarse", "fine");
+}
+
+/**
+ * Keep `slot`'s scale current: measure the slot, ask [`viewZoom`], write the answer onto
+ * the slot. Returns the teardown.
+ *
+ * **On the slot and not on `<html>`, because the question is about the slot.** The two
+ * flags above are facts about the device and belong to the document; this one is a fact
+ * about one box, and the box is not the window — the panel takes 420 of an 852px
+ * landscape phone. A `resize` listener would miss that entirely: the window does not
+ * change when the panel opens.
+ *
+ * `ResizeObserver` rather than a media query for the same reason, and it covers the
+ * rotation and the window drag for free, since both reach the slot as a resize.
+ */
+export function watchViewZoom(slot: HTMLElement): () => void {
+  const apply = () => {
+    const zoom = declaredTv()
+      ? null
+      : viewZoom(slot.clientWidth, coarseQuery?.matches ?? false);
+    if (zoom === null) {
+      slot.removeAttribute("data-view-zoom");
+      slot.style.removeProperty("--hi-view-zoom");
+      return;
+    }
+    slot.setAttribute("data-view-zoom", "");
+    slot.style.setProperty("--hi-view-zoom", String(zoom));
+  };
+  apply();
+  if (typeof ResizeObserver === "undefined") return () => {};
+  const observer = new ResizeObserver(apply);
+  observer.observe(slot);
+  // The pointer can change under a running page — a tablet gains a trackpad, a 2-in-1 is
+  // folded — and that changes the answer without changing the slot's size.
+  coarseQuery?.addEventListener("change", apply);
+  return () => {
+    observer.disconnect();
+    coarseQuery?.removeEventListener("change", apply);
+  };
 }
 
 function write(list: MediaQueryList | null, attr: string, on: string, off: string): void {

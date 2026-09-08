@@ -1223,6 +1223,44 @@ button,
      is a `min-height` on the root and not a stretched grid track. */
   min-height: 100%;
   min-width: 100%;
+
+  /* **The frame a view is handed is a room it can ask about.** A view is a component in
+     a slot, which is what this file has always said — and it was still written like a
+     page, asking `@media` and measuring `vw`, both of which answer about the *window*.
+     Those are the same number only when the slot is the window, and it often is not: a
+     view in the ~380px menu-bar popover matched the phone's rules, and a phone turned
+     sideways handed every view 852 raw pixels to guess an arrangement from.
+
+     So the slot declares itself a container and the view asks it: `@container hi-view`
+     for the arrangement, `cqi` for the measure (`src/identity/workers/view-builder.md`).
+     One number, and the host owns it — which is what lets the rule below exist at all.
+
+     `inline-size` and not `size`: containing the block axis too would require the slot
+     to have a height that does not depend on its content, and a view is allowed to be
+     taller than its frame and scroll. The one thing this does change is that the slot
+     becomes the containing block for a `position: fixed` descendant — which for a
+     full-bleed slot pinned at `inset: 0` is the frame the view was told it owns. */
+  container-type: inline-size;
+  container-name: hi-view;
+}
+
+/* **A room too small to lay a view out in is told a bigger number and drawn to fit.**
+   `lib/shape.ts` decides when and by how much, measuring *this* box — not the window,
+   which is a different number the moment the panel is open beside it.
+
+   It works only because of the container above. `zoom` is a layout scale, so the slot
+   really does become `--hi-view-target` CSS pixels wide and a container query really
+   does see them — measured: at a 852px window with the factor at 0.666, the slot lays
+   out at 1280 and `@container (min-width: 1121px)` matches. What `zoom` does *not* move
+   is `@media` and `vw`, which keep answering about the 852px window. That is not a
+   caveat on this rule, it is the reason the container contract exists: a view that asks
+   the window cannot be handed a different room, by this mechanism or any other.
+
+   `zoom` and not `transform: scale()`, because only `zoom` is a layout scale — a
+   transform would lay the view out in the small room first and then stretch the result,
+   which is the thing being fixed. */
+.hi-view-fill[data-view-zoom] > :only-child {
+  zoom: var(--hi-view-zoom);
 }
 
 

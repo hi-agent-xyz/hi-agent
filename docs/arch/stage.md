@@ -1427,6 +1427,58 @@ candidates are **every named tile the band draws** — the row and the trail —
 trail is where shows land, narrowed to three per read, missing pictures first. A picture that
 is not the tile's shape counts as missing. Age is still not chased there.
 
+## A view is a component in a slot, and it asks the slot
+
+Added September 8, 2026.
+
+**Every view owns the frame it is handed** — this document has said so since the room lost
+its regions, and `ui/ViewSlot.tsx` says it again at the top of the mount. What neither said
+is *how a view is supposed to find out how big that frame is*, and the answer everything in
+the workshop reached for was `@media` and `vw`. Both answer about the browser window.
+
+The window and the slot are the same number often enough to hide it, and then they are not:
+the slot is about 380px in the menu-bar popover, where a view matched the phone's rules —
+the same collision `lib/shape.ts` records for the host's own controls, arriving a second
+time by a different door. And a phone turned sideways hands every view 852 raw pixels, which
+lands above 33 of the `max-width` breakpoints written across this workshop's views and below
+37 of them. **Which arrangement a person got by rotating their phone was a coin flip per
+view**, and the one arrangement they could not get was the one the view was composed for.
+
+So the slot declares itself a container (`container-type: inline-size; container-name:
+hi-view`) and the contract in `src/identity/workers/view-builder.md` is `@container hi-view`
+for the arrangement and `cqi` for the measure. Nothing else about authoring changes; it is
+the same CSS asking a different thing.
+
+**What that buys is a knob the host did not have: it can now tell a view a number.** A room
+too small to lay a view out in is told the room the view was composed for — `VIEW_TARGET`,
+1280, which is `view_render`'s `DEFAULT_WIDTH` and so the width the whole workshop is
+implicitly aimed at — and drawn scaled to fit. On a phone in landscape that is the desktop
+composition on 2556 device pixels at 2 device pixels per CSS pixel, held at 30cm instead of
+50cm, which lands within a few percent of a laptop's *angular* text size. Nothing is shrunk;
+it is viewed closer.
+
+Three conditions gate it, and each excludes something real. A **coarse** pointer, because a
+desktop window dragged narrow is a choice its owner can undo while a phone's width is the
+device. Not the **phone shape**, because 393px would scale to 0.31 and no viewing distance
+rescues that — a portrait phone is a different arrangement and the view's own narrow branch
+is the right answer there. And **narrower than the target**, because telling a screen that
+already fits the layout a bigger number only makes its text smaller for nothing.
+
+**The scale is `zoom` on the slot, and the viewport is never touched.** That is the whole
+reason this shape was chosen over the obvious one. Presenting a wider *viewport* — the
+browser's own "request desktop site" — moves `@media` and `vw` too, and would have been
+retroactive across every view already written; it also scales the host's own controls, and
+this face has already shipped 32px channel discs once on the host where 44 is the floor. It
+also cannot read its own width honestly: the factor is computed from `innerWidth`, and a
+viewport-level answer changes the number it just measured. Scaling the slot touches neither.
+
+*Measured, not reasoned: at an 852px window with the factor at 0.666, the slot lays out at
+1280 — `@container (min-width: 1121px)` matches and `10cqi` is 128px — while `@media` still
+reports the 820–1120 band and `10vw` is 85.2px. `zoom` is a layout scale and viewport units
+are not part of what it scales. **A view that asks the window cannot be handed a different
+room**, by this mechanism or any other, which is what makes the container contract
+load-bearing rather than stylistic.*
+
 **Not amended: what a review renders** — and the gap between the two widened here. A review
 is a bet about the frame the view *will be read on*, and getting that frame right is most of
 whether the view works when someone opens it. A tile is a picture of a *place*, at a size

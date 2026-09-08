@@ -1,6 +1,15 @@
 import { url } from "../lib/base";
-import { Component, useEffect, useState, type ComponentType, type ReactNode } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useViews } from "../core/views";
+import { watchViewZoom } from "../lib/shape";
 
 /**
  * Dynamically import a compiled agent view module and render its default export.
@@ -94,12 +103,31 @@ export function ViewSlot() {
   return (
     <>
       {views.map((v) => (
-        <div key={v.id} className="hi-view-fill">
-          <ViewErrorBoundary>
-            <ViewMount moduleUrl={v.moduleUrl} />
-          </ViewErrorBoundary>
-        </div>
+        <ViewLayer key={v.id} moduleUrl={v.moduleUrl} />
       ))}
     </>
+  );
+}
+
+/**
+ * One layer, holding the size question for the view inside it.
+ *
+ * The layer measures itself rather than the window, because the two are different
+ * numbers whenever the panel is open beside it — 432 of an 852px landscape phone — and
+ * it is the layer the view is laid out in. See [`watchViewZoom`].
+ */
+function ViewLayer({ moduleUrl }: { moduleUrl: string }) {
+  const attach = useCallback((node: HTMLDivElement | null) => {
+    stopRef.current?.();
+    stopRef.current = node ? watchViewZoom(node) : undefined;
+  }, []);
+  const stopRef = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => stopRef.current?.(), []);
+  return (
+    <div ref={attach} className="hi-view-fill">
+      <ViewErrorBoundary>
+        <ViewMount moduleUrl={moduleUrl} />
+      </ViewErrorBoundary>
+    </div>
   );
 }
