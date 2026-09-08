@@ -24,7 +24,8 @@ person**, never many people behind one surface, and never one person split acros
 | The core is headless and location-independent | It already compiles to exactly this shape on Linux/Docker. Making location a parameter costs one field; assuming locality costs a rewrite |
 | An app renders a core; it never *is* one | Identity lives in one place. An app that could be a person would need memory, a handle, and a life |
 | **A platform with no webview cannot run an app** | The face is a web app everywhere on purpose, and an agent-generated view is a compiled ESM module mounted into that page. A platform that cannot render a page can only be given a second face — hand-written, permanently drifting, and still unable to run a view. tvOS is the case that forced this |
-| **An address is a base URL** | `http://localhost:12358` and `https://hi-agent.xyz/ana` are the same kind of thing. Local, relayed and directly-public stop being modes and become values |
+| **An address is a base URL** | `http://localhost:12358` and `https://ana.hi-agent.xyz` are the same kind of thing. Local, relayed and directly-public stop being modes and become values |
+| **One origin per core** | A core is at the root of its own origin in every shape, so "reached from outside" stops being a case. A prefix would otherwise have to be remembered by every path the core hands out, and a shared origin puts one person's agent-generated code inside another person's security boundary |
 | **The core checks auth; the community never does** | In two of the three shapes the community is not in the path at all. Auth at the community would not replace core-side auth, only add to it — two mechanisms to keep in agreement |
 | The community is infrastructure, never a principal | It has no name, cannot be addressed, and signs nothing. The moment it needs a key to speak *as* someone, the model has broken |
 | **A handle is owned by an account, permanently** | An address is only worth handing out if it survives a new laptop and a quiet month. Permanence needs an owner that outlives any one machine, and the only such thing is an account. A lease would put the burden on the person to keep proving they still want their own name |
@@ -102,6 +103,11 @@ and the third is the point:
 - **desktop and mobile run identical face code**, which is what "no architectural
   difference between them" has to mean concretely.
 
+Switching cores now switches *origins*, so a webview never holds two people's sessions at
+once and the app needs no ritual to keep them apart — the browser's own boundary does it.
+That is the practical shape of [one origin per core](#addressing), and it is why an
+attach/detach hook clearing the cookie store is not part of this design.
+
 **Not a local proxy — that was tried and lost.** Until 2026-09-03 this said the face talked
 only to a loopback proxy the app ran (`crates/hi-app`), which forwarded to the attached core
 and attached the credential upstream. Both shapes keep the credential out of the page, and
@@ -151,7 +157,7 @@ services, independent, deliberately not sharing keys:
 | Service | Does | State |
 |---|---|---|
 | **registry** | handle ↔ account; claim, rename | the namespace |
-| **relay** | routes an inbound request by handle into that core's live connection | the routing table |
+| **relay** | routes an inbound request by the handle in its `Host` into that core's live connection | the routing table |
 | **broker** | provider role: LLM credentials and energy | accounts, billing |
 | **post** | push to a surface, on a core's instruction; later, mail for a sleeping core | push tokens |
 
@@ -173,62 +179,96 @@ and the only one it gets.
 
 **A person's address is a base URL.**
 
-| Shape | Address | In the path |
+| Shape | Address | In between |
 |---|---|---|
 | local | `http://localhost:12358` | nobody |
 | directly public | `https://agent.example.com` | nobody |
-| relayed | `https://hi-agent.xyz/ana` | the community |
+| relayed | `https://ana.hi-agent.xyz` | the community |
 
-The community addresses cores by **subpath**: one certificate, no wildcard issuance, no
-per-handle DNS.
+The community addresses cores by **subdomain**, one per handle, under a wildcard
+`*.hi-agent.xyz`.
 
-Two requirements come with that choice, and neither is optional:
+**A core is at the root of its own origin, in all three shapes.** That is the property this
+choice exists for, and everything below is either a consequence of it or a cost of it.
+Nothing the core emits carries a prefix, nothing rebases a path at the edge of the page, and
+"reached from outside" is not a case any code distinguishes.
 
-**Reserved paths.** A handle cannot collide with a community route — `/`, `/healthz`,
-`/api/*`, `/downloads/*` today, and whatever is added later. Because a handle cannot be
-reclaimed once held, the reserved list must be deliberately over-broad from day one
-(`admin`, `settings`, `login`, `help`, `about`, `assets`, `static`, `docs`, `status`, `up`,
-`auth`, …). This is the username-versus-route trap, and it is only cheap before launch.
+### Why not a subpath
 
-**The core is told its public base URL** at registration. Stripping the prefix at the
-community is not enough: the core emits absolute paths for `/assets/*`, `/generated/*` and
-the import map that `index()` injects, and under a subpath those must render as
-`/ana/assets/*` or views will not resolve. `HI_AGENT_BASE_URL` is the precedent.
+This said `hi-agent.xyz/ana` until 2026-09-08. The reasoning then was one certificate, no
+wildcard issuance and no per-handle DNS, accepting a shared origin **with a named trigger to
+revisit it: a browser visiting another person's core.** Working out how a view could be handed
+to someone who is not the owner fired that trigger, and both halves of the original trade then
+turned out worse than they read.
 
-**That holds for a path in a JSON body as well as one in the HTML**, and for the same
-reason — the browser resolves both against the same origin. A field that is *only* an
-address (`shot_url`) is rerooted onto the caller's prefix as it leaves; a field that is
-also an identity (`module_url`, which is how a trail entry with no ref is matched) stays
-canonical and is resolved where it is used as an address. The page's own rebasing seam
-covers what JavaScript requests, never what an attribute or a stylesheet does, so a path
-the core hands out has to arrive usable.
+**A prefix is a standing bug generator, and that is the larger of the two reasons.** The page
+can only rebase what it *initiates* — `fetch` and `EventSource` — so a root-absolute path in
+an `<img src>`, a CSS `url()`, an `<a href>` or a `new Audio()` names the community's root
+rather than the core's. Three shipped surfaces had exactly that bug (`people-review`'s face
+crops and voice clips, the views band's tile pictures, `tasks`' file links), the view-builder
+prompt carries a whole section of discipline that exists only to prevent it, and **grep does
+not find the misses**: the band's was `src={shot}`, a backend-supplied path in a variable,
+indistinguishable from a correct call site. A rule every author must remember, on a failure
+mode no search can enumerate, is not a design — it is a recurring outage with documentation.
+On a phone this is not even the exceptional case: the mobile clients point their webview
+straight at the paired address, so the prefix is the *only* case there and nowhere else.
 
-**One origin is shared, and that is a real property rather than a caveat.** Every relayed
-core lives on `hi-agent.xyz`, so they share storage and a cookie jar; `Path=/ana` decides
-what is *sent* where and is not a boundary. It matters more here than in a typical app
-because a core serves agent-generated code, and the usual mitigation is unavailable: views
-deliberately resolve bare imports through the page's import map to the **host's shared React
-instance**, so they cannot be moved to a sandboxed origin without redesigning that.
+**A shared origin has no boundary inside it, and a core serves agent-generated code.** Cookie
+`Path` decides where a cookie is *sent*, matched against the request's path and never against
+the initiating document — so a page under one handle can call another handle's API and the
+browser attaches that other person's session. The credential is not stolen (it is `HttpOnly`);
+it is *used*, which is worse to reason about and just as total. None of the existing
+mitigations reach it: `SameSite` and the preflight requirement both discriminate cross-site
+requests, and this is same-origin. Nor can views simply be moved to an origin of their own:
+they resolve bare imports through the page's import map to the **host's shared React
+instance**, so separating them would mean redesigning that. Handing a view to someone is what
+makes this concrete — it puts one person's model-authored code in another person's browser on
+one click — but the exposure was never limited to that.
 
-**An app narrows this but no longer removes it, and that is a cost of dropping the proxy.**
-The app holds the long-lived credential and the page never sees it, so what is exposed is a
-session — short-lived, scoped to one core, revocable at the core that issued it. But it *is*
-in the page now, where the proxy design kept it out entirely. Two relayed cores reached from
-one app therefore share a jar exactly as two browser tabs would.
+**And the cost that bought the subpath was overstated.** Wildcard DNS is one record, not one
+per handle. EdgeOne accepts `*.hi-agent.xyz` as an accelerated hostname, so no name has to be
+registered as a handle is claimed. And because the edge terminates TLS while the origin runs
+plain HTTP behind it, **the origin needs no wildcard certificate at all** — the one real cost
+sits at the edge, where a certificate was already being managed.
 
-Stated as a cost rather than a caveat because it is one. It is accepted for two reasons:
-the exposure was already live in both mobile clients, which never implemented the proxy, so
-the proxy was buying this only on the desktop and only by keeping the desktop on a design
-neither phone shared; and the mitigation is cheap and belongs to the app either way — **clear
-the webview's cookie store on detach**, so a jar never holds two cores' sessions at once.
-The remaining window is one core's own agent-generated views against that core's own
-session, which is the same trust boundary a browser pointed straight at `hi-agent.xyz/ana`
-already sits inside.
+### What comes with it
 
-Two smaller consequences: `__Host-` cookies require `Path=/` and are therefore incompatible
-with per-core path scoping (take the scoping), and a LAN address like
-`http://192.168.1.5:12358` is not a secure context, so it gets no microphone or camera —
-`localhost` does.
+**Reserved handles.** A handle cannot collide with a name the community itself needs — `www`,
+the apex, `api`, `app`, `mail`, `admin`, `assets`, `static`, `docs`, `status`, `auth`,
+`shared`, and whatever is added later. Because a handle cannot be reclaimed once held, the
+reserved list must be deliberately over-broad from day one; this is the username-versus-route
+trap, and it is only cheap before launch. Under a wildcard it is sharper than under a subpath:
+an unclaimed name no longer 404s at a site that owns the path space — **it resolves, reaches
+the relay, and is served by something**. The relay answers a name it does not know the way it
+answers a sleeping one, and reserved names are held by the registry rather than by a route.
+
+**Routing is by `Host`.** The relay reads the handle from the request's hostname, not from its
+first path segment. The edge forwards the requested hostname unchanged; nothing rewrites a
+path on the way in or on the way out.
+
+**Cookies are host-only — nothing ever sets `Domain=`.** A `Domain=hi-agent.xyz` cookie is sent
+to every subdomain, which would hand back the shared jar this section exists to remove. This is
+the browser's default and therefore easy to "fix" by accident, which is why it is written down
+rather than assumed.
+
+Two smaller consequences: `__Host-` cookies are usable again (they require `Path=/`, which
+per-core path scoping had made impossible), and a LAN address like `http://192.168.1.5:12358`
+is still not a secure context, so it gets no microphone or camera — `localhost` does.
+
+### The transition
+
+Handles are already claimed and devices are already paired against `hi-agent.xyz/<handle>`,
+and a roster entry *is* a base URL, so the format cannot simply change under them.
+
+- The community serves **both** forms during the transition, `hi-agent.xyz/ana` answering with
+  a `301` to `ana.hi-agent.xyz`.
+- A redirect crosses an origin, so **the session cookie does not survive it**. An app follows
+  the redirect, records the new base URL in its roster entry, and re-presents its long-lived
+  credential at `POST /api/session` on the new origin — which is the ordinary attach path, not
+  a migration path. Nothing needs re-pairing; the credential was never origin-bound.
+- The path form is **dated for deletion, not kept as a compatibility layer** — it goes when the
+  last roster entry has moved, and a redirect that outlives that is the thing this repo has
+  learned to delete rather than deprecate.
 
 ---
 
@@ -240,8 +280,11 @@ A long-lived **credential**, exchanged once for a short session:
 
 ```
 POST /api/session      Authorization: Bearer <credential>
-  → 200, Set-Cookie: hi_surface=<session>; HttpOnly; Secure; SameSite=Lax; Path=/…
+  → 200, Set-Cookie: hi_surface=<session>; HttpOnly; Secure; SameSite=Lax; Path=/
 ```
+
+`Path=/` and no `Domain=`: the cookie covers the whole of this core because the origin *is*
+this core, and it is host-only so it reaches no other one.
 
 Two presentations of one credential, because a header alone cannot carry a browser:
 `EventSource` cannot set headers, browser `WebSocket` cannot set headers, and neither can
@@ -291,6 +334,12 @@ state-changing endpoints additionally require a JSON content type or a custom he
 of which force a preflight a simple cross-site request cannot satisfy. Small, but it will
 not happen unless it is written down.
 
+**These now cover another core, which under a shared origin they could not.** Both defences
+discriminate by site, and two cores on one host were neither cross-site nor cross-origin — so
+a page under one handle reaching another handle's API was indistinguishable, to every layer
+that could have stopped it, from that person's own face. Per-core origins are what make the
+CSRF story apply to the case it most needed to.
+
 ### Nothing behind the gate is `public`
 
 A gated `200` is served *because* a credential checked out, so labelling it `public` invites
@@ -300,8 +349,10 @@ walked around it.
 
 This is not a hypothetical about some future CDN. **Relayed, there is always one**: the
 community terminates TLS, and the origin sits behind an edge besides. An authorized fetch of
-`/<handle>/assets/*` populates that cache; the next fetch of the same path, carrying no
-credential at all, is answered out of it, and the core's `401` never runs.
+`https://ana.hi-agent.xyz/assets/*` populates that cache; the next fetch of the same URL,
+carrying no credential at all, is answered out of it, and the core's `401` never runs. A
+per-core origin does not help here — the edge keys on the URL, and every visitor to that core
+asks for the same one.
 
 So every cacheable response the gate protects is **`private`** — the browser cache, which is
 all it was ever for, without the shared one. Content-addressed names are why a module may be
@@ -506,6 +557,10 @@ Each is testable, and each has a real failure behind it.
 6. **Off-box trust is structural** — decided by which listener accepted the request, never
    by a header and never by an address.
 7. **Host and client are capabilities of an app instance**, never properties of a platform.
+8. **A core's origin is its own.** One handle, one origin, root-relative throughout; no core
+   emits a prefixed path and no cookie sets `Domain=`. The failure behind it is a browser
+   holding two people at once, where the only thing between them is a cookie `Path` — which
+   is a delivery rule and was never a boundary.
 
 ---
 
