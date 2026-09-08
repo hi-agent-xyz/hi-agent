@@ -1525,16 +1525,31 @@ button,
    have the panel's whole body and still cover nothing.
 
    So it draws no box of its own — no float, no corner, no surface, no lift. The
-   panel is the box; this is what is in it. */
+   panel is the box; this is what is in it.
+
+   **It is a column of two sections, and the tab itself does not scroll.** Once the
+   rows wrapped, the trail became as tall as the trail is — twenty-four cards is a
+   dozen rows — and it pushed the bookmarks a screen and a half down, so the ten
+   places a person actually goes were behind a scroll that the sideways strips, for
+   all their faults, never charged. Two sections that both have to be *present* is
+   what the column says: the bookmarks take the height their chips need and no more,
+   the trail takes what is left and scrolls inside it, and the two headings stay put
+   because neither is inside the box that moves.
+
+   The nesting is not a nested scroll in the way that phrase usually means: with the
+   trail holding the only long list, exactly one of these boxes ever has anything to
+   scroll, and neither chains to the other. */
 .hi-views {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
 }
 
 .hi-views-section {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
   padding: 10px 14px 4px;
@@ -1551,6 +1566,7 @@ button,
 }
 
 .hi-views-empty {
+  flex: none;
   margin: 0;
   padding: 2px 14px 12px;
   font-size: 12.5px;
@@ -1571,6 +1587,15 @@ button,
 .hi-views-strip {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+  /* The trail is the long one, so it is the box that scrolls and it takes whatever
+     the bookmarks leave. `align-content: start` because a grid given more room than
+     its rows need stretches them by default, and a stretched row is a card taller
+     than the picture in it. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
   gap: 10px;
   padding: 2px 14px 12px;
 }
@@ -1744,6 +1769,15 @@ button,
 .hi-views-bookmarks {
   display: flex;
   flex-wrap: wrap;
+  /* Exactly as tall as the chips are — `0 0 auto`, so the trail above never squeezes
+     it and it never claims room it isn't using. The cap is the one guess in the
+     column: a person can keep as many views as they like, and past a third of the
+     tab a list of shortcuts has stopped being a foot and started being the content.
+     It scrolls beyond that, which is the only time two boxes here can both scroll. */
+  flex: 0 0 auto;
+  max-height: 34%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   gap: 6px;
   padding: 2px 14px 12px;
 }

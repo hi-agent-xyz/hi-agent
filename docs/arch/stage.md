@@ -385,6 +385,14 @@ which the tabs were not, each in its own direction.
   arithmetic goes with it: `lib/strip.ts` centred a card by `scrollLeft`, and with one
   direction to scroll there is one way of doing it.
 
+  **And the tab is a column of two sections, not one long page.** Wrapping made the trail
+  as tall as the trail is — twenty-four cards is a dozen rows — which pushed the bookmarks
+  a screen and a half down and put the ten places a person actually goes behind a scroll
+  the sideways strips never charged. Both sections have to be *present*: the bookmarks are
+  as tall as their chips and no taller, capped at a third of the tab, and the trail takes
+  what is left and scrolls inside it. The headings do not move, because neither is in a box
+  that scrolls. Order is unchanged — the trail is still the upper section, because opening
+  the tab to compare what is up with what was is still the common reason to open it.
 ### Why the rail is allowed back at the middle stop
 
 At `panel` the view plane insets and the content reflows into what is left. That is the rail,

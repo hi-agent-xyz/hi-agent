@@ -64,8 +64,8 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
  * opening: a show arriving afterwards must not drag a row out from under someone
  * reading it. The stage does follow a show; the row someone is reading does not.
- * One direction to scroll, so one way of doing it: the tab's body goes down and
- * `scrollIntoView` moves it there.
+ * Each row is its own scroller, so *in the row that holds it* is now literal — placing
+ * the trail cannot move the bookmarks, and neither one can move the other's heading.
  *
  * **The inventory is re-read while the tab is up.** A picture is only taken when
  * someone shows an interest in the view, and the first interest is usually this tab
@@ -80,6 +80,13 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * panel's whole body at every stop. So the grid runs at both measures and the
  * stylesheet changes nothing but the track (`ui/global.css`). Nothing here branches on
  * the stop any more, which is why there is no prop for it.
+ *
+ * **Both sections are present before anything is scrolled.** Wrapping the rows made the
+ * trail as tall as the trail is, which put the bookmarks — the ten places a person
+ * actually goes — a screen and a half down. So the tab is a column rather than one long
+ * page: the bookmarks take the height their chips need at the foot, and the trail
+ * scrolls in what is left above them (`ui/global.css`). Nothing in this file arranges
+ * that; it is worth knowing here only because it is why each row scrolls on its own.
  */
 export function Views({ onChose }: { onChose: () => void }) {
   const { trail, live, parked, goTo, openRef } = useViews();
@@ -97,10 +104,10 @@ export function Views({ onChose }: { onChose: () => void }) {
   const placedCards = useRef(false);
   const placedChips = useRef(false);
 
-  // Before paint, so the body is simply *at* the right place rather than seen to jump
-  // there. The tab scrolls down and nothing in it scrolls across, so `scrollIntoView`
-  // is the right tool: the ancestor it would otherwise scroll by surprise *is* the
-  // tab's body, which is the box that has to move.
+  // Before paint, so a row is simply *at* the right place rather than seen to jump
+  // there. `scrollIntoView` is the right tool now that each row is its own scroller
+  // and nothing scrolls across: the ancestor it would otherwise move by surprise *is*
+  // the row that has to move, and the tab around it cannot scroll at all.
   useLayoutEffect(() => {
     show(hereCard.current, placedCards);
     show(hereChip.current, placedChips);
