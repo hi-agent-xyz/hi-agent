@@ -35,20 +35,13 @@
 //! attempt to derive it is what this replaces.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::types::{JournalEntry, Sender};
-
-/// A rolling speech-recognition partial that never settles is presentation noise.
-/// Expire it here, in the authoritative state, rather than independently in every
-/// window.
-const INTERIM_STALE_AFTER: Duration = Duration::from_secs(3);
 
 /// How many messages stay in the live window. Older ones are still in the journal
 /// and are reached by scrolling back, never by growing this.
@@ -143,8 +136,8 @@ pub enum Frame {
         interim: Option<String>,
     },
     Append(Wire),
-    /// The rolling recognition partial, or `None` for its expiry. Not a message —
-    /// it is a preview of one, shown pending at the tail until the line settles.
+    /// The line being recognized, or `None` for none. Not a message — it is a
+    /// preview of one, shown pending at the tail until the line settles.
     Interim(Option<String>),
 }
 
@@ -158,9 +151,6 @@ struct Inner {
 pub struct Transcript {
     inner: Arc<Mutex<Inner>>,
     tx: broadcast::Sender<Frame>,
-    /// Bumped on every interim update so a stale expiry timer knows it lost the
-    /// race and does nothing.
-    interim_generation: Arc<AtomicU64>,
 }
 
 impl Transcript {
@@ -172,7 +162,6 @@ impl Transcript {
                 interim: None,
             })),
             tx,
-            interim_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -209,40 +198,39 @@ impl Transcript {
         let _ = self.tx.send(Frame::Append(frames.1));
     }
 
-    /// Update the rolling recognition partial, and arm its expiry.
+    /// Set the line being recognized — the words heard so far that have not become
+    /// a message yet. Empty means none, which is the only way this clears other
+    /// than [`Self::append`] settling the line it was previewing.
     ///
-    /// The expiry lives here rather than in each window so every surface stops
-    /// showing a dead partial at the same moment, and so a window that connects
-    /// mid-partial does not inherit one that will never settle.
-    pub fn note_interim(&self, text: &str) {
+    /// **It is not on a clock.** It used to expire three seconds after its last
+    /// update, and that was the wrong owner for the question: a rolling partial
+    /// stops updating the moment the person stops talking, but the line it is
+    /// previewing settles later still — after the recognizer calls the endpoint and
+    /// the segmenter cuts. The timer therefore fired *in between*, and the preview
+    /// blanked for the seconds before its own message appeared. What ends a preview
+    /// is the line landing, or the recognition stream ending; both are events, and
+    /// both are reported here.
+    /// Returns whether this changed anything, so a caller does not echo a
+    /// no-op — the segmenter is asked for its tail on every 150 ms tick, and most
+    /// ticks find it exactly as it was.
+    pub fn note_interim(&self, text: &str) -> bool {
         let text = text.trim();
-        if text.is_empty() {
-            return;
-        }
-        let generation = self.interim_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        {
+        let changed = {
             let mut inner = self.inner.lock().expect("transcript mutex poisoned");
-            if inner.interim.as_deref() == Some(text) {
-                return;
+            let next = (!text.is_empty()).then(|| text.to_owned());
+            if inner.interim == next {
+                false
+            } else {
+                inner.interim = next;
+                true
             }
-            inner.interim = Some(text.to_owned());
+        };
+        if changed {
+            let _ = self.tx.send(Frame::Interim(
+                (!text.is_empty()).then(|| text.to_owned()),
+            ));
         }
-        let _ = self.tx.send(Frame::Interim(Some(text.to_owned())));
-
-        let transcript = self.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(INTERIM_STALE_AFTER).await;
-            if transcript.interim_generation.load(Ordering::Relaxed) != generation {
-                return;
-            }
-            let cleared = {
-                let mut inner = transcript.inner.lock().expect("transcript mutex poisoned");
-                inner.interim.take().is_some()
-            };
-            if cleared {
-                let _ = transcript.tx.send(Frame::Interim(None));
-            }
-        });
+        changed
     }
 
     /// The opening frame plus the stream of everything after it, taken together
@@ -344,6 +332,8 @@ pub fn display_text(body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::types::{Channel, Origin, SenderBasis};
 
@@ -456,6 +446,29 @@ mod tests {
             panic!("expected the settled message");
         };
         assert_eq!(m.text, "what day is it?");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_preview_outlives_the_pause_before_its_line_settles() {
+        // The words stop arriving the moment the person stops talking; the line
+        // they were previewing settles seconds later, after the recognizer calls
+        // the endpoint and the segmenter cuts. Nothing may blank the preview in
+        // between — a three-second expiry used to, and the pill went dark right up
+        // until its own message appeared.
+        let t = Transcript::new();
+        t.note_interim("下午三点那个会");
+        let (opening, mut rx) = t.subscribe();
+        assert!(matches!(opening, Frame::Reset { interim: Some(_), .. }));
+
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert!(rx.try_recv().is_err(), "nothing on a clock may clear the preview");
+        let (opening, _) = t.subscribe();
+        let Frame::Reset { interim, .. } = opening else { panic!("expected a reset") };
+        assert_eq!(interim.as_deref(), Some("下午三点那个会"));
+
+        // Empty is how the end of the stream says there is nothing pending.
+        t.note_interim("");
+        assert_eq!(rx.recv().await.unwrap(), Frame::Interim(None));
     }
 
     #[tokio::test]

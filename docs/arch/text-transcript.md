@@ -112,7 +112,7 @@ nothing was missed: the messages are still there.
 |---|---|
 | `{"reset": {"messages": [...], "interim": null}}` | The current window, whole. Always the first frame; sent again only if the list is rebuilt. |
 | `{"append": {"id", "ts", "role", "text", "media"?, "sender"?}}` | One new message at the end. |
-| `{"interim": "..."}` or `{"interim": null}` | The rolling recognition partial, or its expiry. |
+| `{"interim": "..."}` or `{"interim": null}` | The line being recognized, or none. |
 
 `sender` is `{"subject"?: "赵力", "basis": "owner"｜"cluster"｜"stated"｜"unknown"}`. It is
 absent on the agent's own messages, and present-with-no-subject when somebody spoke and
@@ -131,9 +131,30 @@ key — so the live window and the scrollback are the same identifiers and stitc
 merge step. This is an id **on a message**, not a delivery cursor: no client ever sends
 one back to claim progress, and the backend keeps no per-window position.
 
-There is one `interim` slot, and it is not a message. It is the live recognition partial,
-shown pending at the tail and replaced by the settled message when the line lands. It
-expires after 3 seconds without an update.
+There is one `interim` slot, and it is not a message. It is the line being recognized,
+shown pending at the tail and replaced by the settled message when the line lands.
+
+**What it holds is the words that have not become a message yet** — the segmenter's own
+undispatched tail, not the recognizer's rolling partial. The partial still carries the
+sentences that already went out, so publishing it put the person's own last line back on
+the screen a second time, in a preview bubble, directly under the message of it.
+
+**It is republished the instant the line it was previewing lands**, in the same step
+that appends the message — not when the recognizer next says something. `append` clears
+the preview, which is right; what was wrong was leaving it cleared until the next rolling
+partial happened to arrive. Measured on the owner's own audio (2026-09-09, 164 s replayed
+through the recognizer): partials arrive a median 356 ms apart, but the gap after a
+message settles ran to **1.9 s**, three times in ten. That blank, and the fact that the
+preview then came back showing the sentence that had just settled above it, is the
+"内容先消失再出现" reported that day.
+
+**It ends on an event and never on a clock.** A three-second expiry used to sit under it.
+That timer could only ever fire *before* the message it was previewing — a partial stops
+updating the moment the person stops talking, while the line settles later still — so it
+is gone. It was never observed firing in that replay, and it is not what the blanking
+was; it is removed because a preview whose line has not settled is not stale. Two events end a preview now: the line landing (`append` clears it, which is
+the same event as the message appearing), and the recognition stream ending (an empty
+`interim`). Nothing else may.
 
 ## Durability
 

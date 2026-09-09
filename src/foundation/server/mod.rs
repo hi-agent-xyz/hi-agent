@@ -425,9 +425,13 @@ impl AppState {
         let _ = self.input_echo.send(InputEcho { channel, text, is_final: true, ts });
     }
 
-    /// A rolling recognition partial: a preview of a message, not a message.
+    /// The line being recognized: a preview of a message, not a message. Empty
+    /// means nothing is pending — the words either landed as a message or the
+    /// recognition stream ended.
     pub fn note_interim(&self, channel: Channel, text: &str) {
-        self.transcript.note_interim(text);
+        if !self.transcript.note_interim(text) {
+            return;
+        }
         let _ = self.input_echo.send(InputEcho {
             channel,
             text: text.to_owned(),

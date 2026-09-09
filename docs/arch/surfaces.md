@@ -182,6 +182,30 @@ Every seam is a producer handing work to a consumer:
 The verdict is always relative to the consumer. A sentence passes straight into TTS, which
 wants words; the same sentence batches into a thinking layer, which wants a whole turn.
 
+**One finalized utterance is one message.** The unit of what a person said is where they
+stopped, and the recognizer's own endpoint (800 ms of trailing silence) is what reports it;
+everything it has closed leaves together, and only two guards can split one — a size cap
+for a speaker who does not pause, an age cap for a recognizer whose endpoint never comes.
+
+*This is a change, made 2026-09-09, and it is the code catching up to the sentence above
+it.* Speech used to be cut at punctuation instead, just after each sentence-ending mark.
+That is a **transcription** boundary, not a conversational one: the recognizer marks a
+period wherever written Chinese would take one, so an ordinary spoken turn arrived as a
+run of messages nobody would have sent separately. Measured over 164 s of real speech,
+30 of 36 messages were cut that way, median 18 chars, lower quartile 6 — `嗯。`, `然后呢？`,
+`时间嘛。`, `对吧？`. It also threw away the better text: cutting on punctuation means
+emitting from the rolling partial, while the recognizer's second pass and ITN correction
+arrive later with the final (`刚才，刚才我边那你这个就放在右边` from the partial;
+`刚才放在左边，那你这个就放在右边` from the final). On the same recording the new unit gives
+15 messages, median 38 chars.
+
+**Waiting for the endpoint costs nothing where it would matter.** The last message of a
+turn lands at the same instant either way — the person stopped, so the endpoint fires and
+everything settles — and that is when a reply is owed. What it delays is only intermediate
+text appearing on screen mid-turn, which is what the recognition preview is for
+([text-transcript.md](text-transcript.md)): the words show live as a pending line and
+become one whole message when the speaker stops.
+
 **The load-bearing boundary is text → Reaction.** A short quiet-settle timer after the last
 input fragment is what turns a continuous stream into the discrete turn a model needs.
 Everything else — sentence splitting for TTS, VAD before STT — is incidental, justified

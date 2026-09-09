@@ -678,15 +678,14 @@ pub async fn ingest_pcm_stream(
             let cuts = tokio::select! {
                 msg = tr_rx.recv() => match msg {
                     Some(t) => {
-                        // Publish every rolling partial as the conversation's one
-                        // pending line and echo it to observers (`final:false`).
-                        // The interim update is the duck trigger: the client
-                        // stops playback hundreds of ms before a sentence settles.
-                        // The same moment is reported to the barge-in registry,
-                        // whose own clock decides whether the agent's voice was
-                        // probably still sounding (→ "what went unheard" note).
+                        // A rolling partial is the duck trigger: somebody is
+                        // talking, hundreds of ms before the sentence settles. The
+                        // moment is reported to the barge-in registry, whose own
+                        // clock decides whether the agent's voice was probably
+                        // still sounding (→ "what went unheard" note). What the
+                        // partial *says* is not published here — see the pending
+                        // line below.
                         if !t.is_final && !t.text.trim().is_empty() {
-                            relay_state.note_interim(Channel::Text, &t.text);
                             relay_state.floor.note_speech(tokio::time::Instant::now()).await;
                         }
                         // A diarized utterance just finalized. Each segment names a
@@ -814,6 +813,12 @@ pub async fn ingest_pcm_stream(
                 }
                 deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker).await;
             }
+            // The pending line: what has been heard and has not become a message
+            // yet. That is the segmenter's own tail, not the recognizer's rolling
+            // partial — the partial still carries the words of the sentences that
+            // already went out above, so publishing it showed the person their own
+            // last line a second time, in a preview bubble, under the message of it.
+            relay_state.note_interim(Channel::Text, &seg.tail());
         }
         // Flush any trailing words as a final sentence when the session ends.
         if let Some(sentence) = seg.flush() {
@@ -828,6 +833,9 @@ pub async fn ingest_pcm_stream(
             }
             deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker).await;
         }
+        // Nothing can be pending once the recognition stream is over: whatever the
+        // preview held either just landed as that flush, or was never going to.
+        relay_state.note_interim(Channel::Text, "");
     });
 
     // One source is one inbound-audio source: its frames carry a shared `turn` so a
