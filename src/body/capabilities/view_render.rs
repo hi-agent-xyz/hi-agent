@@ -184,6 +184,11 @@ pub struct RenderRequest {
     /// deliberately opt-in rather than swept like the theme.
     pub lang: Option<String>,
     pub viewport: Viewport,
+    /// URL patterns refused for this render. Empty for a review, which is the owner
+    /// looking at their own view with everything this core would give it.
+    pub blocked: Vec<String>,
+    /// Read the settled DOM back as well as the pixels.
+    pub want_html: bool,
 }
 
 /// The stage the view is rendered onto.
@@ -216,6 +221,30 @@ impl RenderRequest {
             theme: None,
             lang: None,
             viewport: stage_frame(),
+            blocked: Vec::new(),
+            want_html: false,
+        }
+    }
+
+    /// A request that renders the view **the way somebody who is not the owner will
+    /// see it**: the core's API refused, and the settled DOM read back.
+    ///
+    /// Both halves are the same decision. A share grants reading one view and never
+    /// `/api/*` ([`docs/arch/sharing.md`]), so a view that fetches its own data comes
+    /// back half-empty to a visitor — and blocking it here is what turns that from
+    /// something the recipient discovers into something the check refuses. The DOM is
+    /// read because the shared page carries its content as HTML; that is the same run,
+    /// so it costs a `Runtime.evaluate` rather than a second render.
+    ///
+    /// The frame is the default rather than [`stage_frame`]: a shared page is opened on
+    /// somebody else's screen, so the window this core happens to have open says
+    /// nothing about it.
+    pub fn for_share(base_url: impl Into<String>, module_url: impl Into<String>) -> Self {
+        Self {
+            viewport: Viewport::default(),
+            blocked: vec!["*/api/*".to_string()],
+            want_html: true,
+            ..Self::new(base_url, module_url)
         }
     }
 
@@ -259,6 +288,10 @@ pub struct RenderedView {
     pub failed: bool,
     /// The page never settled inside the timeout.
     pub timed_out: bool,
+    /// The settled DOM, when the request asked for it.
+    pub html: Option<String>,
+    /// Every URL the page asked for, blocked ones included.
+    pub requested: Vec<String>,
 }
 
 /// Pass or fail, and why. The reason is written for whoever has to fix it.
@@ -331,6 +364,10 @@ pub async fn render(req: &RenderRequest) -> anyhow::Result<RenderedView> {
             height: req.viewport.height,
             scale: req.viewport.scale,
             settle_timeout: DEFAULT_SETTLE,
+            // A review is the owner looking at their own view, so it renders with
+            // everything this core would give it and needs no page back.
+            blocked: req.blocked.clone(),
+            want_html: req.want_html,
         },
     )
     .await
@@ -343,6 +380,8 @@ pub async fn render(req: &RenderRequest) -> anyhow::Result<RenderedView> {
         blank,
         failed: capture.page_failed,
         timed_out: capture.timed_out,
+        html: capture.html,
+        requested: capture.requested,
     })
 }
 
@@ -458,6 +497,8 @@ mod tests {
             blank,
             failed: false,
             timed_out: false,
+            html: None,
+            requested: Vec::new(),
         }
     }
 

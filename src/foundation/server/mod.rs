@@ -52,6 +52,7 @@ pub mod transcript;
 pub mod tools;
 pub mod view;
 pub mod view_bus;
+pub mod view_share;
 pub mod view_shots;
 pub mod view_watch;
 pub mod vision;

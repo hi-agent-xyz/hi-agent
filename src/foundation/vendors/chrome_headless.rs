@@ -66,6 +66,18 @@ pub struct PageRequest {
     pub scale: f64,
     /// Upper bound on waiting for the page to declare itself settled.
     pub settle_timeout: Duration,
+    /// URL patterns refused for the duration of this render, as
+    /// `Network.setBlockedURLs` takes them (`*/api/*`).
+    ///
+    /// **This is how a render is made to see what somebody else will see.** A share
+    /// check renders with the core's API blocked, because a view that fetches its own
+    /// data comes back half-empty to a visitor who has no session — and the owner is
+    /// not the one who finds that out. Blocking at the browser rather than trusting
+    /// the view not to ask is the difference between a check and a hope.
+    pub blocked: Vec<String>,
+    /// Also read the settled DOM back, for a render whose output is a page rather
+    /// than a picture.
+    pub want_html: bool,
 }
 
 /// What the page did and what it said about it.
@@ -78,6 +90,14 @@ pub struct PageCapture {
     pub page_failed: bool,
     /// The page never declared itself settled within `settle_timeout`.
     pub timed_out: bool,
+    /// The settled DOM, when [`PageRequest::want_html`] asked for it.
+    pub html: Option<String>,
+    /// Every URL the page asked for, in the order first seen — including the ones
+    /// that were blocked, because "it tried" is the interesting part.
+    ///
+    /// Read off the run rather than guessed at from the source, which is the only way
+    /// to get it right for a view whose requests are built at runtime.
+    pub requested: Vec<String>,
 }
 
 /// Launch `browser`, load `req.url`, wait for the page to settle, and return the
@@ -181,12 +201,23 @@ async fn drive(profile: &Path, req: &PageRequest) -> anyhow::Result<PageCapture>
         .await
         .with_context(|| format!("connecting to the DevTools socket at {ws_url}"))?;
 
-    let mut session = Session { next_id: 1, problems: Vec::new(), seen: Default::default() };
+    let mut session =
+        Session { next_id: 1, problems: Vec::new(), seen: Default::default(), requested: Vec::new() };
 
     // Enable the reporting domains BEFORE navigating, so nothing the view does on
     // load happens off-camera.
     for domain in ["Runtime", "Log", "Page", "Network"] {
         session.call(&mut socket, &format!("{domain}.enable"), json!({})).await?;
+    }
+    // Before navigating, so the very first request is already subject to it.
+    if !req.blocked.is_empty() {
+        session
+            .call(
+                &mut socket,
+                "Network.setBlockedURLs",
+                json!({ "urls": req.blocked }),
+            )
+            .await?;
     }
     session
         .call(
@@ -241,9 +272,33 @@ async fn drive(profile: &Path, req: &PageRequest) -> anyhow::Result<PageCapture>
             .context("decoding the screenshot base64")?
     };
 
+    // After the screenshot, so the DOM read and the pixels are the same frame.
+    let html = if req.want_html {
+        let out = session
+            .call(
+                &mut socket,
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.documentElement.outerHTML",
+                    "returnByValue": true,
+                }),
+            )
+            .await?;
+        out.get("result").and_then(|r| r.get("value")).and_then(Value::as_str).map(str::to_owned)
+    } else {
+        None
+    };
+
     let _ = socket.close(None).await;
 
-    Ok(PageCapture { png, problems: session.problems, page_failed, timed_out })
+    Ok(PageCapture {
+        png,
+        problems: session.problems,
+        page_failed,
+        timed_out,
+        html,
+        requested: session.requested,
+    })
 }
 
 /// The JS the page is asked to run: resolve once `window.__hiRender.ready`, or
@@ -356,6 +411,7 @@ struct Session {
     next_id: u64,
     problems: Vec<String>,
     seen: std::collections::HashSet<String>,
+    requested: Vec<String>,
 }
 
 impl Session {
@@ -461,6 +517,19 @@ impl Session {
         let method = event.get("method").and_then(Value::as_str).unwrap_or("");
         let null = Value::Null;
         let p = event.get("params").unwrap_or(&null);
+        if method == "Network.requestWillBeSent" {
+            if let Some(url) =
+                p.get("request").and_then(|r| r.get("url")).and_then(Value::as_str)
+            {
+                // Capped and de-duplicated for the same reason `problems` is: this is
+                // read by a person and by a policy, and neither wants a page's every
+                // retry of one asset.
+                let url = url.to_string();
+                if self.requested.len() < 200 && !self.requested.contains(&url) {
+                    self.requested.push(url);
+                }
+            }
+        }
         match method {
             "Runtime.exceptionThrown" => {
                 let d = p.get("exceptionDetails");
@@ -542,7 +611,7 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session { next_id: 1, problems: Vec::new(), seen: Default::default() }
+        Session { next_id: 1, problems: Vec::new(), seen: Default::default(), requested: Vec::new() }
     }
 
     #[test]
@@ -566,6 +635,26 @@ mod tests {
             "params": { "response": { "status": 404, "url": "http://x/views/_compiled/ab.mjs" } }
         }));
         assert_eq!(s.problems, vec!["HTTP 404 for http://x/views/_compiled/ab.mjs"]);
+    }
+
+    /// Every URL the page asks for is recorded — **including a blocked one**, because
+    /// a share check reads this list to answer "what does this view actually want",
+    /// and a request that was refused is the most interesting entry in it.
+    ///
+    /// De-duplicated, so a page that retries one asset does not bury the rest.
+    #[test]
+    fn what_the_page_asked_for_is_recorded_once_each() {
+        let mut s = session();
+        for url in ["http://x/assets/a.js", "http://x/api/tools", "http://x/assets/a.js"] {
+            s.absorb_event(&json!({
+                "method": "Network.requestWillBeSent",
+                "params": { "request": { "url": url } }
+            }));
+        }
+        assert_eq!(s.requested, vec!["http://x/assets/a.js", "http://x/api/tools"]);
+        // Recording a request is not the same as calling it a problem: the block is a
+        // condition of the render, not a defect in the view.
+        assert!(s.problems.is_empty(), "{:?}", s.problems);
     }
 
     #[test]

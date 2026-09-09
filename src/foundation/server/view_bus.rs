@@ -1044,7 +1044,7 @@ mod tests {
     /// and is served as written — the state carries no second, resolved spelling.
     #[test]
     fn a_shows_module_url_is_the_name_its_history_entry_is_matched_by() {
-        let mut state = ViewState {
+        let state = ViewState {
             version: 1,
             views: vec![WireView {
                 id: "v1".into(),
