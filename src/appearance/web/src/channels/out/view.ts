@@ -75,6 +75,11 @@ export interface ListedView {
   /** The person put this one in the row. Never true for a system view, which is in
    * the row by being system. */
   bookmarked: boolean;
+  /** This view is published as a page somebody outside can open. The one state in this
+   * list with consequences off this machine, which is why it is reported rather than
+   * left to be looked up. Optional so an older core reads as "none shared" rather than
+   * as a parse error. */
+  shared?: boolean;
   /** A picture of this surface as it currently stands, or absent until one has been
    * taken. Named views only — an inline view has no ref to file a picture under. This
    * is the fresher of the two answers about a named view's tile, because the band

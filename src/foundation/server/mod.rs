@@ -619,6 +619,7 @@ pub fn build(
         .route("/api/views", get(view::list_views))
         .route("/api/views/open", post(view::open_view))
         .route("/api/views/bookmarks", post(view::bookmark_view))
+        .route("/api/views/share", post(view::share_view))
         // Vision is an input channel that is also observable: the camera streams
         // WebM over the WS, GET plays the live video; POST persists a still frame.
         .route("/api/in/vision", post(vision::post_vision).get(vision::get_vision))

@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
 use chrono::Utc;
@@ -70,6 +71,10 @@ pub struct ListedView {
     /// The person put this one in the row. Always false for a system view, which is
     /// in the row by being system.
     pub bookmarked: bool,
+    /// This view is published as a page somebody outside can open. Reported here so a
+    /// person can see at a glance which of their views are out in the world — the one
+    /// state in this list that has consequences off this machine.
+    pub shared: bool,
     /// A picture of this surface as it currently stands, served from
     /// `/views/_shots/ref/<ref>.png`, **already resolved against the base path this
     /// request arrived on** — so it can go straight into an `<img src>`, which is the
@@ -156,9 +161,11 @@ pub async fn list_views(
     let mut found = Vec::new();
     collect_views(&root, &root, &mut found).await;
     let saved = read_bookmarks(&state.data_dir);
+    let published = super::view_share::read_shares(&state.data_dir);
     for view in &mut found {
         view.system = view.view_ref.starts_with(SYSTEM_PREFIX);
         view.bookmarked = !view.system && saved.iter().any(|r| r == &view.view_ref);
+        view.shared = published.iter().any(|s| s.view_ref == view.view_ref);
         view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref);
     }
     found.sort_by(|a: &ListedView, b: &ListedView| a.view_ref.cmp(&b.view_ref));
@@ -287,6 +294,88 @@ pub async fn bookmark_view(
     axum::http::StatusCode::NO_CONTENT.into_response()
 }
 
+/// What a share request asks for.
+#[derive(serde::Deserialize)]
+pub struct ShareRequest {
+    #[serde(rename = "ref")]
+    pub view_ref: String,
+    /// `true` publishes it, `false` withdraws it.
+    pub on: bool,
+    /// Publish behind a key in the URL rather than openly. Unlisted, not private:
+    /// whoever holds the link holds the access, and that is the whole of what it buys.
+    #[serde(default)]
+    pub unlisted: bool,
+    /// One sentence saying what this is — the page's `description` and its link
+    /// preview. Read by a person deciding whether to open it and by an agent deciding
+    /// whether to read it.
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `POST /api/views/share` — publish a named view as a page, or withdraw it.
+///
+/// **Publishing runs the check and can fail**, which is the difference between this and
+/// its neighbour `bookmark_view`: a bookmark is a preference and always takes, while a
+/// share is a claim about a view that has to be true. A view that reads the API renders
+/// half-empty to somebody with no session, and the whole point of checking here is that
+/// the owner learns that instead of the person they sent it to. `422` carries the
+/// reasons, each naming the thing to fix.
+///
+/// A system view is refused before the browser is even started: `factory/*` is this
+/// core's own dashboard over its own API, so sharing one is a category error rather
+/// than a view that happens to fail. The check would refuse them all anyway; saying so
+/// directly saves a render and gives a better reason.
+pub async fn share_view(
+    State(state): State<Arc<AppState>>,
+    AuthBearer(auth): AuthBearer,
+    axum::Json(body): axum::Json<ShareRequest>,
+) -> impl IntoResponse {
+    let view_ref = body.view_ref.trim().to_string();
+    tracing::info!(auth = ?auth, view_ref = %view_ref, on = body.on, "POST /api/views/share");
+    if !crate::mind::views::valid_ref(&view_ref) {
+        return (StatusCode::BAD_REQUEST, "only a named view can be shared".to_string())
+            .into_response();
+    }
+    if view_ref.starts_with(SYSTEM_PREFIX) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "a system view is this agent's own dashboard over its own API, so it is not a thing to publish".to_string(),
+        )
+            .into_response();
+    }
+
+    if !body.on {
+        if let Err(error) = super::view_share::close(&state.data_dir, &view_ref).await {
+            tracing::warn!(%error, "withdrawing a share");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "could not withdraw it".to_string())
+                .into_response();
+        }
+        return StatusCode::NO_CONTENT.into_response();
+    }
+
+    match super::view_share::open(&state.data_dir, &view_ref, body.unlisted, &body.description)
+        .await
+    {
+        Ok(opened) => (
+            StatusCode::OK,
+            axum::Json(serde_json::json!({ "path": opened.path, "key": opened.key })),
+        )
+            .into_response(),
+        Err(super::view_share::Refused::Name(why)) => {
+            (StatusCode::CONFLICT, why).into_response()
+        }
+        Err(super::view_share::Refused::Check(reasons)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            axum::Json(serde_json::json!({ "refusals": reasons })),
+        )
+            .into_response(),
+        Err(super::view_share::Refused::Broken(why)) => {
+            tracing::warn!(why, "the share check could not run");
+            (StatusCode::INTERNAL_SERVER_ERROR, why).into_response()
+        }
+    }
+}
+
 /// Walk the views tree collecting `<rel>.jsx` as refs. Iterative rather than recursive
 /// because an `async fn` cannot recurse without boxing, and the tree is shallow enough
 /// that a worklist is the plainer of the two.
@@ -326,13 +415,14 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
                 continue;
             }
             let label = crate::foundation::server::view_bus::humanize_ref(&view_ref);
-            // `system`/`bookmarked` are decided by the caller, which is the only place
-            // that has read the store.
+            // `system`/`bookmarked`/`shared` are decided by the caller, which is the
+            // only place that has read the store.
             out.push(ListedView {
                 view_ref,
                 label,
                 system: false,
                 bookmarked: false,
+                shared: false,
                 shot_url: None,
             });
         }
