@@ -305,8 +305,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         child_env.push(("PATH".to_string(), joined.to_string_lossy().into_owned()));
     }
     // `chrome-devtools-mcp` reports usage statistics to Google unless told not to, and
-    // a session may reach for it however it likes — `hi mcp "npx -y
-    // chrome-devtools-mcp@latest …"`, a script, a note yet to be written. A note saying
+    // a session may reach for it however it likes — a script, a skill yet to be
+    // written, a server this agent is pointed at later. A skill saying
     // "remember the flag" leaks the once it is forgotten, so the opt-out lives here
     // instead, where it holds for every spawn. Set for a path nothing exercises yet:
     // harmless if that server is never run, and the wrong thing to discover afterwards.

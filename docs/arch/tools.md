@@ -19,7 +19,7 @@ tokens. A one-line index entry is roughly twelve. So an index is cheap, and **th
 not "keep the tool set small"**.
 
 But an index being cheap is not the binding constraint, because the workshop does not grow one
-learnt tool at a time. [MCP is a command](#carriers), and that makes adding tools nearly free:
+learnt tool at a time. [An MCP server is a skill](#carriers), and that makes adding tools nearly free:
 someone who points at twenty servers contributes hundreds of tools in an afternoon, with no
 learning loop at all. The cheapest way to add a tool is therefore also what forces this doc's
 shape. At a few hundred, an index is affordable to hold. At ten thousand it is not affordable
@@ -238,11 +238,12 @@ The note carries an entry point, never an argument shape. A CLI publishes its ow
 `--help` — so a shim the agent writes into `bin/` needs one. An MCP server publishes its own on
 attach. Hand-copying either into a note is the index-beside-the-file failure one level down.
 
-This is also the real difference between the two: **MCP front-loads every signature; a CLI
-fetches them on demand.** [Residency](#residency) softens that — schemas can arrive when a tool
-enters the hot set rather than at thread open — but does not remove it, because an MCP server
-cannot be attached to a thread that is already running. Progressive disclosure is native to the
-CLI carrier; for MCP it is something the levels have to arrange.
+This is the real difference between the two: **MCP front-loads every signature; a CLI fetches
+them on demand.** That is unchanged and it is why [attaching](#carriers) is per errand rather
+than per install — a server's schemas are resident in the thread that named it, from the moment
+that thread opens, and in no other. Progressive disclosure is native to the CLI carrier; for MCP
+the levels arrange it by choosing which threads pay, and the choice belongs to the rung that
+knows what the errand is.
 
 ## `bin/`
 
@@ -375,28 +376,82 @@ speaking. It constrains Reaction, not the ladder.
 line.** No level owns a carrier: a bundled tool may be a CLI, a hot one may be MCP.
 
 The default ranks rather than forbids: **prefer a CLI**, because a script is something the
-agent can actually author, and because a tool can then be picked up in the middle of an errand
-— an MCP server cannot be added to a thread that is already open. Reach for something else
-where schemas genuinely earn being resident, or where there is no shell to use.
+agent can actually author. Reach for something else where there is no shell to use — which is
+true of exactly one rung, and it is the rung a person talks to.
 
-**MCP is a command, not a carrier class.** A service that speaks only MCP is reached through one
-small program — `hi mcp <endpoint> call <tool> <json>` — which turns every such server into an
-ordinary note. That is a better trade than a loader, a per-carrier dispatch and a
-dead-server-kills-the-thread failure mode.
+**An MCP server is a skill, and the errand that needs it says so.** A service that speaks only
+MCP is written down the way every other tool is — an ordinary skill in
+[`skills/`](#a-tool-is-a-note) whose front matter carries **the server object every MCP client
+already takes**, verbatim. Nothing else about it is stored: no copied schema, no residency level,
+no per-role list, no row in a table. Writing that file is what makes the server exist; deleting
+it is what retires it. The rung dispatching an errand **names the servers that errand needs**,
+and they are attached to that worker's thread and to no other.
 
-Two costs of that, stated rather than discovered later:
+**Verbatim, and that is a decision.** The protocol specifies no config format, but every client
+takes the same object and every server's documentation hands you one, so this is what a person is
+already holding when they say *use this*. The first shape here invented two keys instead — an
+endpoint and one `Authorization` value — and each cost showed up immediately: exactly one header,
+no way at all to express a spawned server's `env`, a person made to translate what they had, and
+this code left sniffing a URL to guess a transport that `url` versus `command` already states.
+Whatever the runtime grows, a pasted object carries it and no key of ours has to be added. The one
+translation kept is `headers` → codex's `http_headers`, because that is the single spelling the
+de-facto object and our runtime disagree on, and getting it wrong is silent: the server answers
+401 and the reason is nowhere.
 
-- **Consent loses its mechanical backstop.** The agent runtime gates MCP calls and does not gate
-  shell commands. That is consistent with [invariant 9](arch.md#invariants) being guidance the
-  agent follows rather than a gate the host enforces, and with there being
-  [no gates at all](foundation.md#judgment-not-gates) inside running work either. It is a real
-  change — and a smaller one than it reads, since the rungs already run with approvals off and
-  answer for themselves what the runtime still asks.
-- **One-shot calls drop the protocol's push half.** A shim is request/response; MCP servers can
-  emit progress and can ask the client for things mid-call. Through a command, none of that
-  arrives. For a system built on continuous-not-batch that is a real amputation, and it is
-  where "reach for something else" has teeth: a server whose value *is* the stream is not
-  served by a note.
+Two shapes were built before this one and both are deleted, so the reasons are here rather than
+in a commit message.
+
+*MCP is a command* put it behind one program on the PATH, `hi mcp <endpoint> call`. It had
+nowhere to put a header, which is not a detail: watched 2026-09-09, a person pasted a bearer
+token into the text channel, the command answered `401`, and the session got the job done by
+writing its own Python against a key that happened to be exported in the shell it inherited.
+A carrier whose credential story is "the shell already had it" is not a carrier.
+
+*MCP through a proxy* kept the skill as the registration but had the host make the call and hand
+the result back through verbs of ours. It reads tidier and it loses the answer: **a proxy has to
+flatten a `tools/call` result into its own reply, and an image flattens to a string.** The
+screenshot verb that most device servers exist *for* would come back as base64 text the model
+cannot look at — so the shape would have been at its worst exactly where it was most wanted.
+That is what settled it: attach, and let the runtime carry the content type it was given.
+
+What attaching buys, beyond the content:
+
+- **The credential still never enters a session's window.** The host reads the front matter and
+  writes the header into the thread config; the rung doing the job never reads the file. That
+  was once a table and a verb of its own, on the theory that a skill is reading material and so
+  must not carry a key. It defended against nobody — the person and this host are both trusted,
+  and the key arrives by being pasted into a channel that keeps every message — while costing a
+  verb, a table and a seam splitting one act across two places.
+- **Who gets what is a property of the job, not of the rung.** This is the whole answer to
+  *which sessions carry which tools*, and it is neither a role table nor a stored level: the rung
+  that dispatched the errand is the only one that knows what the errand is, so it chooses. A
+  worker that will not touch a phone loads no phone schemas. Nothing records the choice, and the
+  next errand makes it again.
+- **Timing stops being a constraint.** `mcp_servers` is fixed when a thread opens, which is fatal
+  for the long-lived rungs and irrelevant for a worker: a worker's thread is opened for the
+  errand, after the person handed the server over. The rung that needs it is the rung that gets
+  it late enough to have it.
+
+Three costs, stated rather than discovered later:
+
+- **Schemas are resident in that thread.** This is the cost [residency](#residency) exists to
+  control, and attaching is the one place the doc's opening arithmetic bites: tens of schemas,
+  thousands of tokens. It is paid per errand rather than per install, so the discipline is on the
+  dispatching rung — naming three servers for a job that needs one is how this gets wasted.
+- **A dead server is now a thread that opened with a tool that will not answer.** Attach does not
+  reach the server, so nothing fails at open; it fails at the call, which is the better of the
+  two but is not nothing. What is *not* reintroduced is a dead server stopping a thread from
+  opening at all — a name nothing registers is skipped with a warning, not refused.
+- **The push half is dropped no matter what.** Progress and sampling reach a codex thread no
+  better than they reached a verb. A server whose value *is* the stream is still the case for
+  reaching for something else.
+- **Consent has no mechanical backstop.** An attached server runs with
+  `default_tools_approval_mode: auto`, as our own surface does and for the same reason: there is
+  nobody on the other end of the question, and a rung that stops to ask is a rung that stops.
+  Consistent with [invariant 9](arch.md#invariants) being guidance the agent follows rather than
+  a gate the host enforces, and with there being [no gates at all](foundation.md#judgment-not-gates)
+  inside running work. Registering the server is where the person consented.
+
 
 ## The Tool Manager
 
@@ -451,7 +506,10 @@ fits in a window.
 | Readiness is **running it**, after reading the note | A stored claim goes stale; but `command not found` names no fix |
 | Signatures come from the **carrier at call time** | A copied schema is a second truth, drifting |
 | **Prefer CLI** | Authorable by the agent, and pickable up mid-errand |
-| **MCP is a command** | One shim turns every MCP server into a note; a carrier class would need a loader |
+| **An MCP server is a skill**, attached to the errand that names it | Registration is one file; who carries it is a property of the job, decided by the rung that knows the job |
+| The skill carries the **standard server object**, not keys of ours | It is what the person already has and what the runtime already takes; a dialect costs a key per feature and makes them translate |
+| **Attach, never proxy** | A proxy flattens a result into its own reply, and an image flattens to a string — the screenshot verb these servers exist for would come back as text |
+| The credential rides the **thread config**, not a store of its own | The host reads the file and the rung never does, so the value stays out of a window without a verb, a table and a split registration |
 | `bin/` is **machine-local and disposable** | A binary is not portable; the note says how to rebuild |
 | **`bin/` nests, learnt first** | `skills/` is path-scoped and `bin/` was flat; deliberate override must outlive an upgrade |
 | **Session state never lives in `bin/`** | Disposable is only true of what a note can put back |
@@ -467,9 +525,12 @@ fits in a window.
 ## What this deliberately does not have
 
 Named so they are not reintroduced as oversights: a `tools/` tree, carriers as a class, an
-attach/loader layer, per-carrier dispatch, declared signatures, dependency keys, readiness
+attach layer, per-carrier dispatch, declared signatures, dependency keys, readiness
 flags, a taxonomy of failure modes, a stored level per tool, **a middle index tier between hot
-and asking, and any grouping of tools by kind**. Each was designed and cut — in each case
+and asking, and any grouping of tools by kind**. MCP having code behind it does not make it a
+class: a server is named on the errand that needs it and written into that one thread's config,
+which is a line of config rather than a loader, a registry or a dispatch — and nothing chooses a
+carrier at runtime. Each was designed and cut — in each case
 because it stored something derivable, or gave a wrong answer a place to look right.
 
 One more, cut for a different reason: **a screen-control capability, and the `desktop` shim that
@@ -481,6 +542,20 @@ See the Decisions row above; the note is `driving-a-desktop.md`.
 
 ## Open
 
+- **The rung that registers a server cannot exercise it.** A thread's tools are fixed when it
+  opens, so the worker that writes the skill has no call it can make to check the endpoint and
+  the credential are right. The first real call happens on the *next* errand, one dispatch later.
+  This is the one place attaching is worse than the proxy it replaced, and it works against
+  `equipping-a-tool.md`'s rule that a tool is not written up until it has been run.
+- **Nothing records which servers an errand was given.** The switchboard keeps a session's title,
+  kind and subject; this list is not among them. So a resumed errand comes back able to talk
+  about the device and not to touch it, and a [duty](agents.md#duties) — re-derived from the
+  ledger every time — can never name one at all. One missing field, two silent failures.
+- **Usage counting cannot see an attached server.** [Hot](#bundled-and-hot) ranks a note by the
+  calls to the command its `use:` names, or failing that by its own filename. An MCP skill names
+  no command, and the calls that happen carry the *server's* verb names (`screenshot`, `tap`) and
+  not the skill's. So it scores zero forever and falls out first once the workshop outgrows its
+  budget — however recently the person used it.
 - **Pruning what stopped paying.** A note nobody has run in a long time still costs its line in
   every session. Reflection is told to notice; nothing acts on it, and no rung deletes a learnt
   note today except the person.

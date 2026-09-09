@@ -83,6 +83,11 @@ pub enum LoopControl {
         /// goes straight back to waiting — a turn handed to it would be one spent on nothing.
         task: Option<String>,
         kind: crate::identity::WorkerType,
+        /// Registered MCP servers this errand needs, by skill name. Empty for most work.
+        /// The dispatching rung chooses, because it is the one that knows what the job is
+        /// — see [`crate::foundation::agent`]'s thread config for why that is the whole of
+        /// "which sessions get which tools".
+        servers: Vec<String>,
         owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
@@ -489,6 +494,7 @@ mod tests {
                     title: format!("errand-{id}"),
                     task: Some(format!("task-{id}")),
                     kind: crate::identity::WorkerType::default(),
+                    servers: Vec::new(),
                     owner: None,
                     resume: None,
                     subject: None,

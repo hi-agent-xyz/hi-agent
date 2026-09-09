@@ -36,3 +36,19 @@ _机制:能力 = effector 可达(config / env)+ 按需技能(怎么用)+ drive �
 
 - ✅ 没把密钥念出口(口播只说"记下了,以后用这个端点");能力知识(端点/用法)有记录。
 - 🟠 **密钥进了脑子**:明文 `sk-fake-…` 被写进 self.md。违"密钥永不进脑子,笔记只记它在哪(env 变量名)"。根因:drive 笔记本/调用时解密未建,agent 把一切(含密钥)塞进 self.md。修复方向 = 建 drive 笔记本 + 一条 prompt 硬规矩(secret 永不入 memory 文件,只记 env 变量名)。
+
+## 复测 2026-09-09 · mcp-as-skill —— 只测 MCP 这一种形状
+
+先是同一天早上的真实失败,它才是这次改动的起因。用户在文字频道贴了一台远程 Android 的 MCP 端点和 bearer token,说"你可以试试能不能用"。当时的形状是 `hi mcp <endpoint>` 这条命令,而**它没有任何地方能放一个 header**:cognition 14:47 跑 `hi mcp https://abacad.ai/mcp list`,拿回 `401 missing bearer token`(`data/memory/raw/sessions/fcd9520cc9a1/cognition.jsonl`)。它随后绕开产品路径,手写 python + `urllib` 打通,靠的是这台机器 shell 里恰好 export 了 `ABACAD_KEY`。**成功了,但不可复用**:什么都没注册,换台机器就没了。
+
+改后的形状:MCP server 是一篇 skill(front matter 里的 `mcp:` 端点 + `mcp_auth:`),**由派活的 rung 在 `hi_create_worker` 上点名,挂进那一个 worker 的线程**。
+
+- ✅ **对 `https://abacad.ai/mcp` 真实拿到过工具清单**:`list_devices` / `screenshot`(带 accessibility 树)/ `tap` / `swipe` / `input_text` / `back` / `home` / `recents`,以及桌面端 `click` / `press_keys` / `composite`、浏览器 `execute`、`send_file` / `get_file`、`screen_recording`。**但这次观察走的是中途被推翻的那条 proxy 路径**(hi-agent 自己发 JSON-RPC),不是现在这条 attach 路径。端点、凭证和这台 server 的真实能力是实的;**现在这条链路的实测是零。**
+- ✅ 注册就是写一篇 skill,`mcp:` 解析、按名字查、名字对不上跳过而不致命、非 URL 端点当命令 spawn——都有单测(`a_named_server_is_attached_to_the_thread_that_asked_for_it`)。
+- ✅ **没点名的活一个 server 都不带**,有断言钉住。这是"哪些 session 拿到哪些工具"的全部答案:不是 role 表,不是存下来的等级,是派活那一刻的选择。
+- 🟠 **完整链路从没跑过。** 没有人看过 cognition 派一个 worker 去注册、报告回来、再派第二个带着 `servers:` 的 worker 真的点亮那台手机的屏幕。从"人贴一个端点"到"屏幕被点了一下"这条路**一次都没走完**。
+- 🟠 **注册的那个 worker 自己用不了它。** 线程的工具在打开时定死,所以写下 skill 的 worker 没有任何调用可以验证端点和密钥是对的——第一次真实调用发生在下一次派活。这直接顶撞 `equipping-a-tool.md` § 6"没跑过就别写下来"那条规矩,是 attach 相对 proxy 唯一更差的地方。
+- 🟠 **2026-06-18 那条 🟠 只算部分解决。** 那次的病是明文 key 被写进 `self.md`(模型的记忆文件),根因"没有别的地方可放"。现在 key 有了确定的落点(skill 的 front matter),host 读它、干活的 rung 不读那个文件——但它**仍然是一个明文文件**,只是不再进记忆。中间我建过一张单独的密钥表把它藏得更深,被判定为过度设计删掉了:人和 host 都是可信的,而 key 本来就是人明文贴进一个逐条留存的频道的。
+- 🟠 **一次调用一个回答**,progress / sampling 收不到。abacad 的 `screen_recording` 正是价值在流上的那种,只能 start / stop / poll。
+
+_机制:MCP server = 一篇带 `mcp:` 的 skill(注册)+ `hi_create_worker { servers: […] }`(组织)+ `thread_config` 写进 codex 的 `mcp_servers`(加载)。可行性:**未验证**——真实 server 的能力已证实,这条链路未走通。成熟度:有单测,零实测。_

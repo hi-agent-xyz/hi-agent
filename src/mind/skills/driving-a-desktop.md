@@ -62,12 +62,10 @@ restarted before a new grant takes. Screen capture and input synthesis are usual
 separate grants, so ask for both at once rather than discovering the second one later.
 
 There are also signed helpers that expose a whole desktop — tree, capture and input — over
-MCP, some of which can drive an app *in the background* without taking the pointer. When one
-of those is available it is worth the install, because it removes the boundary in the
-section above rather than asking you to be careful around it. `mcp-service.md` is how to
-reach one; note its warning about a stateful server, which applies here — a tree read and
-the click that uses its element ids have to be the same session, so batch them in a script
-rather than one call at a time.
+MCP, some of which can drive an app *in the background* without taking the pointer. One of
+those would remove the boundary in the section above rather than asking you to be careful
+around it. You have no way to reach one today: nothing in this agent speaks MCP outward.
+Say so plainly if a job wants one, rather than reaching for a workaround that looks like it.
 
 ## Check your own work
 

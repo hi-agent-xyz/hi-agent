@@ -227,12 +227,14 @@ impl WorkerRegistry {
         title: String,
         task: Option<String>,
         kind: WorkerType,
+        servers: Vec<String>,
         owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
         ahead: bool,
     ) -> anyhow::Result<SessionSlug> {
-        self.spawn_inner(reaction, id, title, task, kind, owner, resume, subject, ahead).await
+        self.spawn_inner(reaction, id, title, task, kind, servers, owner, resume, subject, ahead)
+            .await
     }
 
     /// The one construction path for a working session: open it, record it, drive it.
@@ -252,6 +254,7 @@ impl WorkerRegistry {
         title: String,
         task: Option<String>,
         kind: WorkerType,
+        servers: Vec<String>,
         owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
@@ -295,7 +298,16 @@ impl WorkerRegistry {
             (Some(task), None) => Some(task),
         };
         let (session, mail) = self
-            .open_working_session(reaction, id.clone(), &title, kind, owner.clone(), resume, subject)
+            .open_working_session(
+                reaction,
+                id.clone(),
+                &title,
+                kind,
+                servers,
+                owner.clone(),
+                resume,
+                subject,
+            )
             .await?;
 
         let observatory = reaction.inner.observatory.clone();
@@ -350,6 +362,7 @@ impl WorkerRegistry {
         id: SessionSlug,
         title: &str,
         kind: WorkerType,
+        servers: Vec<String>,
         owner: Option<SessionSlug>,
         resume: Option<String>,
         subject: Option<String>,
@@ -387,6 +400,9 @@ impl WorkerRegistry {
                     // [`could_not_put_back`], which is the code that would be unreachable
                     // if the fallback the old comment described existed.
                     resume,
+                    // Resolved into the thread's `mcp_servers` by the agent layer: the
+                    // errand's own tools, chosen by the rung that dispatched it.
+                    mcp_servers: servers,
                     ..Default::default()
                 },
             )
@@ -1249,6 +1265,14 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
             title: title.clone(),
             task: handed.clone(),
             kind,
+            // **A resumed errand comes back without the servers it was dispatched with.**
+            // Nothing records them: the registry keeps a session's title, kind and subject,
+            // and this list is not among them. So an errand that was driving a phone
+            // reopens able to talk about it and not to touch it. It is written here rather
+            // than left to be discovered because the failure is quiet — the thread opens,
+            // the brief still mentions the device, and the tool is simply absent. The fix
+            // is to record the list beside the subject; it is not done.
+            servers: Vec::new(),
             owner: Some(owner.clone()),
             resume: Some(thread),
             subject: end.subject.clone(),

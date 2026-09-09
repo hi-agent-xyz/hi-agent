@@ -297,6 +297,13 @@ async fn dispatch(
             task.title.clone(),
             Some(brief),
             WorkerType::General,
+            // **A duty handler names no MCP server, and that is a gap rather than a
+            // decision.** A standing job is exactly the shape that would want one — a duty
+            // watching a device, say — but a duty is re-derived from the ledger and the
+            // ledger has no field for this. Adding one is the same missing record that
+            // keeps a resumed errand from getting its servers back
+            // ([`super::workers::reopen_interrupted`]); both wait on the same fix.
+            Vec::new(),
             owner,
             None,
             Some(task.subject.clone()),

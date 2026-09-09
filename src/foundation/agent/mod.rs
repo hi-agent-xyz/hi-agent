@@ -208,7 +208,7 @@ impl AgentLayer {
             anyhow::bail!("shutting down; not opening a new {} session", role.as_str());
         }
 
-        let SessionOpts { system_prompt, cwd, resume, .. } = opts;
+        let SessionOpts { system_prompt, cwd, resume, mcp_servers, .. } = opts;
 
         // Never let a session root at the process cwd. An unset cwd falls through to
         // `std::env::current_dir()`, which for a Finder-launched `.app` is `/` and in dev
@@ -246,9 +246,12 @@ impl AgentLayer {
             cwd,
             sandbox: role.sandbox(),
             permission_profile: permission_profile(role),
-            config: self.thread_config(&cfg, role, slug.clone()),
+            config: self.thread_config(&cfg, role, slug.clone(), &mcp_servers),
             // Consumed above; it is this function's parameter, not the wire's.
             resume: None,
+            // Consumed above, into this thread's `mcp_servers` config — like `resume`, it
+            // is this function's parameter and not the wire's.
+            mcp_servers: Vec::new(),
         };
 
         // **The resume policy is these two lookups, and the difference between them is what
@@ -362,6 +365,7 @@ impl AgentLayer {
         cfg: &AgentConfig,
         role: Role,
         slug: Option<crate::foundation::registry::SessionSlug>,
+        servers: &[String],
     ) -> serde_json::Map<String, serde_json::Value> {
         let mut headers = serde_json::Map::new();
         headers.insert(HEADER_ROLE.to_string(), json!(role.as_str()));
@@ -370,20 +374,54 @@ impl AgentLayer {
         }
 
         let mut config = cfg.thread_config();
-        config.insert(
-            "mcp_servers".into(),
+        let mut attached = serde_json::Map::new();
+        attached.insert(
+            "hi-agent".into(),
             json!({
-                "hi-agent": {
-                    "url": format!("{}/mcp", self.inner.server_base_url),
-                    "http_headers": headers,
-                    // These are hi-agent's *own* tools, served by this very process —
-                    // there is nobody to ask about them. Without this codex gates every
-                    // call behind an approval, which showed up live as `say` failing
-                    // with "user rejected MCP tool call" and Reaction going silent.
-                    "default_tools_approval_mode": "auto",
-                }
+                "url": format!("{}/mcp", self.inner.server_base_url),
+                "http_headers": headers,
+                // These are hi-agent's *own* tools, served by this very process —
+                // there is nobody to ask about them. Without this codex gates every
+                // call behind an approval, which showed up live as `say` failing
+                // with "user rejected MCP tool call" and Reaction going silent.
+                "default_tools_approval_mode": "auto",
             }),
         );
+        // **A registered MCP server is attached here, by name, for this thread only.**
+        // `docs/arch/tools.md`: a server is an ordinary skill whose front matter carries
+        // its endpoint, and the rung dispatching an errand names the ones that errand
+        // needs. That is the whole of "which sessions get it" — not a role table and not
+        // a stored level, but a choice made per job by the rung that knows what the job
+        // is. A worker that does not need a phone loads no phone schemas.
+        //
+        // Attaching here rather than proxying through our own `/mcp` is what lets the
+        // model see real schemas and — the reason it is not merely tidier — get real
+        // content back. A proxy has to flatten a `tools/call` result into our own reply,
+        // and an image flattens to a base64 string: the screenshot verb that most of
+        // these servers are *for* would come back as text the model cannot look at.
+        for name in servers {
+            let Some(mut entry) = crate::mind::skills::mcp_server(&self.inner.data_dir, name)
+            else {
+                // Not fatal, and not silent. The errand was dispatched naming this
+                // server; opening the thread without it beats refusing to open at all,
+                // but the reason has to be findable when the worker reports it had no
+                // such tool.
+                tracing::warn!(server = %name, "no skill carries an `mcp:` server by that name");
+                continue;
+            };
+            // **The object goes through as it was written.** It is the same object every
+            // MCP client takes, which is the point of keeping it verbatim: whatever the
+            // runtime supports — several headers, a spawned server's `env`, a timeout —
+            // works without a key of ours to carry it, and `url` versus `command` already
+            // says which transport it is, so nothing here has to guess.
+            //
+            // Approval is the one thing added, and only when the object is silent: a rung
+            // that stops to ask has nobody to ask, exactly as with our own surface above.
+            // Registering the server is where the person consented.
+            entry.entry("default_tools_approval_mode").or_insert(json!("auto"));
+            attached.insert(name.clone(), serde_json::Value::Object(entry));
+        }
+        config.insert("mcp_servers".into(), serde_json::Value::Object(attached));
         // **Steering is asked for on every thread, and it is the host that needs it.**
         // `turn/steer` is what lets a message reach a rung that is already working
         // ([`AgentSession::steer`](crate::foundation::codex::AgentSession::steer)); without
@@ -546,13 +584,18 @@ mod tests {
     }
 
     fn layer_with(shutdown: crate::foundation::shutdown::Shutdown) -> AgentLayer {
+        layer_at(PathBuf::from("/tmp/hi-agent-test"), shutdown)
+    }
+
+    /// A layer rooted at a real directory, for the tests that need the workshop on disk.
+    fn layer_at(data_dir: PathBuf, shutdown: crate::foundation::shutdown::Shutdown) -> AgentLayer {
         AgentLayer::new(
             SpawnConfig {
                 program: PathBuf::from("/bin/false"),
                 args: Vec::new(),
                 env: Vec::new(),
             },
-            PathBuf::from("/tmp/hi-agent-test"),
+            data_dir,
             WireTap::new(),
             "http://127.0.0.1:12358".to_string(),
             crate::foundation::privacy::PrivacyBoundary::open(&PathBuf::from(format!(
@@ -574,9 +617,82 @@ mod tests {
         )
     }
 
+    /// **Naming a server on the errand is the whole of "which sessions get it".**
+    /// `docs/arch/tools.md`: a server is a skill whose front matter carries its endpoint,
+    /// and the rung dispatching an errand names the ones that errand needs — so a worker
+    /// that was not given one carries none of its schemas, and no table anywhere records
+    /// who may have what.
+    #[test]
+    fn a_named_server_is_attached_to_the_thread_that_asked_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = crate::mind::skills::skills_dir(dir.path());
+        std::fs::create_dir_all(&skills).unwrap();
+        // Written the way a person pastes it out of a server's own documentation.
+        std::fs::write(
+            skills.join("relay.md"),
+            "---\npurpose: a handset\nmcp: {\"url\":\"https://relay.example/mcp\",\
+             \"headers\":{\"Authorization\":\"Bearer k\",\"X-Device\":\"study\"}}\n---\n\nhow\n",
+        )
+        .unwrap();
+        std::fs::write(
+            skills.join("spawned.md"),
+            "---\npurpose: a local server\nmcp: {\"command\":\"npx\",\"args\":[\"-y\",\"@scope/pkg\"],\
+             \"env\":{\"TOKEN\":\"t\"}}\n---\n\nhow\n",
+        )
+        .unwrap();
+        std::fs::write(
+            skills.join("broken.md"),
+            "---\npurpose: a typo\nmcp: https://not-json.example/mcp\n---\n\nhow\n",
+        )
+        .unwrap();
+        let layer =
+            layer_at(dir.path().to_path_buf(), crate::foundation::shutdown::Shutdown::new());
+        let role = Role::Worker(WorkerType::General);
+
+        let asked = layer.thread_config(
+            &config(),
+            role,
+            Some(1.into()),
+            &[
+                "relay".to_string(),
+                "spawned".to_string(),
+                "broken".to_string(),
+                "nobody".to_string(),
+            ],
+        );
+        let servers = &asked["mcp_servers"];
+        assert_eq!(servers["relay"]["url"], "https://relay.example/mcp");
+        // **`headers` reaches codex as `http_headers`** — the one spelling difference
+        // between the object people paste and the runtime we feed it to. Every header
+        // survives, not just an `Authorization` a key of ours could have carried.
+        assert_eq!(servers["relay"]["http_headers"]["Authorization"], "Bearer k");
+        assert_eq!(servers["relay"]["http_headers"]["X-Device"], "study");
+        // Approval-free for the same reason our own surface is: there is nobody to ask,
+        // and a rung that stops to ask is a rung that stops.
+        assert_eq!(servers["relay"]["default_tools_approval_mode"], "auto");
+        // A spawned server says so itself — nothing here sniffs a transport — and its
+        // `env` rides through, which no key of ours ever expressed.
+        assert_eq!(servers["spawned"]["command"], "npx");
+        assert_eq!(servers["spawned"]["args"], json!(["-y", "@scope/pkg"]));
+        assert_eq!(servers["spawned"]["env"]["TOKEN"], "t");
+        // A name nothing claims, and a line that is not an object, are both skipped
+        // rather than fatal — the thread still opens, and the warning is what says why
+        // the tool is missing.
+        assert!(servers.get("nobody").is_none(), "attached a server nothing registers");
+        assert!(servers.get("broken").is_none(), "attached a malformed `mcp:` line");
+        // Ours is still there beside them.
+        assert!(servers["hi-agent"]["url"].is_string());
+
+        // And the errand that asked for nothing carries nothing.
+        let plain = layer.thread_config(&config(), role, Some(2.into()), &[]);
+        let only: Vec<_> =
+            plain["mcp_servers"].as_object().expect("object").keys().cloned().collect();
+        assert_eq!(only, vec!["hi-agent".to_string()], "an errand got a server it never asked for");
+    }
+
     #[test]
     fn a_worker_thread_attaches_mcp_with_its_routing_headers() {
-        let config = layer().thread_config(&config(), Role::Worker(WorkerType::General), Some(42.into()));
+        let config = layer().thread_config(&config(), Role::Worker(WorkerType::General), Some(42.into()), &[]);
         let server = &config["mcp_servers"]["hi-agent"];
         assert_eq!(server["url"], "http://127.0.0.1:12358/mcp");
         assert_eq!(server["http_headers"][HEADER_ROLE], "worker");
@@ -586,7 +702,7 @@ mod tests {
 
     #[test]
     fn a_session_without_an_id_still_names_its_role() {
-        let config = layer().thread_config(&config(), Role::Reaction, None);
+        let config = layer().thread_config(&config(), Role::Reaction, None, &[]);
         let headers = &config["mcp_servers"]["hi-agent"]["http_headers"];
         assert_eq!(headers[HEADER_ROLE], "reaction");
         assert!(
@@ -599,7 +715,7 @@ mod tests {
     fn the_model_wire_rides_the_same_thread_config() {
         // One object carries both halves, so a thread cannot come up attached to our
         // tools but pointed at the wrong endpoint.
-        let config = layer().thread_config(&config(), Role::Cognition, Some(1.into()));
+        let config = layer().thread_config(&config(), Role::Cognition, Some(1.into()), &[]);
         assert_eq!(config["model"], "gpt-5.1-codex");
         assert!(config.contains_key("model_providers"));
         assert!(config.contains_key("mcp_servers"));
@@ -629,7 +745,7 @@ mod tests {
     #[test]
     fn only_the_voice_opens_with_the_agents_own_tools_off() {
         let (name, _) = reaction_permissions();
-        let reaction = layer().thread_config(&config(), Role::Reaction, Some(1.into()));
+        let reaction = layer().thread_config(&config(), Role::Reaction, Some(1.into()), &[]);
         assert_eq!(reaction["features"]["shell_tool"], false);
         assert_eq!(reaction["tools"]["web_search"], false);
         assert_eq!(reaction["permissions"][name]["default_tools_enabled"], false);
@@ -642,7 +758,7 @@ mod tests {
         assert!(reaction.contains_key("mcp_servers"));
 
         for role in Role::ALL.iter().filter(|r| **r != Role::Reaction) {
-            let config = layer().thread_config(&config(), *role, Some(1.into()));
+            let config = layer().thread_config(&config(), *role, Some(1.into()), &[]);
             assert!(
                 !config.contains_key("permissions"),
                 "{role:?} works under its full-access sandbox"
@@ -664,7 +780,7 @@ mod tests {
     #[test]
     fn every_rung_opens_steerable() {
         for role in Role::ALL {
-            let config = layer().thread_config(&config(), *role, Some(1.into()));
+            let config = layer().thread_config(&config(), *role, Some(1.into()), &[]);
             assert_eq!(config["features"]["steer"], true, "{role:?} must be reachable mid-turn");
         }
     }
@@ -697,7 +813,7 @@ mod tests {
     #[test]
     fn every_worker_type_attaches_the_one_worker_surface() {
         for t in WorkerType::ALL {
-            let config = layer().thread_config(&config(), Role::Worker(*t), Some(7.into()));
+            let config = layer().thread_config(&config(), Role::Worker(*t), Some(7.into()), &[]);
             assert_eq!(
                 config["mcp_servers"]["hi-agent"]["http_headers"][HEADER_ROLE],
                 "worker",

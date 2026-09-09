@@ -14,7 +14,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test docker dmg app ios android android-apk exe win-app installer linux-app deb bump-version version
+.PHONY: help check-version build dev run test test-live docker dmg app ios android android-apk exe win-app installer linux-app deb bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -43,6 +43,18 @@ run: ## run the release binary
 test: ## run rust + web tests
 	cargo test
 	$(MAKE) test-web
+
+test-live: ## run the tests that need a real server (see each test for its env)
+# Kept out of `test` rather than skipped inside it: these reach a third party over the
+# network, so what they answer is whether a mechanism has ever been watched running —
+# and that is a question someone asks deliberately, not one a test sweep answers by
+# accident. Findings go in `docs/user-journeys/`.
+#
+# `--nocapture` is not a debugging flag here. What these tests answer is what a real
+# server actually did, and cargo swallows a passing test's output — so without it the
+# run reports "ok" and shows nothing, which is the same green this repo has been
+# burned by. The observation is the point; it has to reach the person who asked.
+	cargo test -- --ignored --nocapture
 
 # The face's half on its own. Not a shortcut for the impatient: the client shells
 # under `app/` change the face without touching a line of Rust, and the hosts they

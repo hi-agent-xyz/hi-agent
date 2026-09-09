@@ -57,6 +57,16 @@ pub struct SessionOpts {
     /// Working directory for the thread. Codex requires an absolute path.
     pub cwd: Option<PathBuf>,
 
+    /// Names of registered MCP servers to attach to this thread, as
+    /// [`AgentLayer::session`](crate::foundation::agent::AgentLayer::session) resolves
+    /// them — each is a skill whose front matter carries an `mcp:` endpoint.
+    ///
+    /// **Consumed by the agent layer, not sent on the wire** — the same standing as
+    /// `resume` below. It is a list of *skill names* because that is what the rung
+    /// dispatching the work knows; turning one into a URL is a lookup against the
+    /// workshop, and the workshop is not this layer's business.
+    pub mcp_servers: Vec<String>,
+
     /// Sandbox mode for the thread's own tools, as codex spells it: `read-only`,
     /// `workspace-write`, or `danger-full-access`.
     ///

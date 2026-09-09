@@ -14,8 +14,6 @@
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
 //! reaction loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
-pub mod client;
-
 use serde_json::{Value, json};
 
 use base64::Engine as _;
@@ -148,6 +146,11 @@ fn create_worker_tool() -> Value {
         json!({
             "type": "object",
             "properties": {
+                "servers": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Registered MCP servers this errand needs, by skill name —                                     the name you see on its line in your workshop. A skill                                     carrying an `mcp:` endpoint is a service reachable as                                     real tools, and naming it here attaches it to this                                     worker's session: it gets that server's own verbs, with                                     their real schemas, alongside its usual toolset. Name                                     only what this job needs — a worker that will not touch                                     a phone should not carry a phone's tools. Omit for most                                     work.",
+                },
                 "title": {
                     "type": "string",
                     "description": "What this errand is, in **one short line** — how you would \
@@ -1713,6 +1716,13 @@ async fn dispatch_tool(
                     title,
                     task: Some(task),
                     kind,
+                    servers: args
+                        .get("servers")
+                        .and_then(|v| v.as_array())
+                        .map(|xs| {
+                            xs.iter().filter_map(|x| x.as_str()).map(str::to_string).collect()
+                        })
+                        .unwrap_or_default(),
                     owner: Some(owner),
                     // Nothing this tool can ask for. An errand a restart interrupted is
                     // reopened by the host on its own thread before anyone is asked — see

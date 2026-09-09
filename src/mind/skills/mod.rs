@@ -91,11 +91,6 @@ const DRIVING_A_DESKTOP: &str = include_str!("driving-a-desktop.md");
 /// half of the workshop, and the only path by which a learnt tool ever exists.
 const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
 
-/// Seeded **tool**: `hi mcp`, which turns a service that speaks only MCP into an
-/// ordinary command. The note is the whole of *MCP is a command, not a carrier class*
-/// as far as the agent is concerned.
-const MCP_SERVICE: &str = include_str!("mcp-service.md");
-
 /// Seeded **tool**: an Android handset under a stable name. Carries `purpose:` and
 /// `use: phone`, bound by the shim [`install_tool_bin`] writes.
 ///
@@ -127,6 +122,27 @@ pub struct FrontMatter {
     /// The command to run, when the note names one. Absent on most notes, including
     /// every learnt one so far — see the type doc.
     pub run: Option<String>,
+    /// This skill's MCP server, as **the server object every MCP client already
+    /// takes** — one line of JSON: `{"url": …, "headers": {…}}`, or
+    /// `{"command": …, "args": [...], "env": {…}}`.
+    ///
+    /// **The whole registration.** `docs/arch/tools.md`: an MCP server is an ordinary
+    /// skill whose front matter carries this object, and nothing else about it is stored
+    /// anywhere — no copied schema, no residency level, no per-role list, no row in a
+    /// table. Writing this line makes the server exist; deleting the file retires it.
+    ///
+    /// **Verbatim, rather than exploded into keys of our own.** The protocol specifies
+    /// no config format, but every client takes the same object and every server's docs
+    /// hand you one, so this is what a person already has. An earlier shape here had
+    /// `mcp:` for a bare endpoint and `mcp_auth:` for one header, which could express
+    /// exactly one header, could not express a spawned server's `env` at all, made the
+    /// person translate what they were holding, and left this code sniffing a URL to
+    /// guess a transport that `url` versus `command` already states. Every one of those
+    /// is the cost of a dialect.
+    ///
+    /// Stored as text and parsed where it is used: a malformed line is one unusable
+    /// server named in a warning, not a skill that fails to read.
+    pub mcp: Option<String>,
 }
 
 /// Split a note into its front matter and its body.
@@ -164,12 +180,69 @@ pub fn split_front_matter(note: &str) -> (FrontMatter, &str) {
             described = non_empty(v);
         } else if let Some(v) = line.strip_prefix("use:") {
             fm.run = non_empty(v);
+        } else if let Some(v) = line.strip_prefix("mcp:") {
+            fm.mcp = non_empty(v);
         }
     }
     // `purpose` wins when a note carries both, since it is the key this design asked
     // for; `description` is the fallback rather than an equal.
     fm.purpose = fm.purpose.or(described);
     (fm, body)
+}
+
+/// The MCP server object the skill called `name` carries, or `None` when no skill by
+/// that name carries one — or when what it carries is not a JSON object.
+///
+/// **Resolved from the tree at call time, never from a registry.** The skill *is* the
+/// registration (`docs/arch/tools.md`), so a server that was retired by deleting its
+/// skill is gone the moment the file is, with nothing left holding a stale endpoint.
+///
+/// A bare name matches a skill at any depth — `abacad` finds `abacad.md` and
+/// `vendors/abacad.md` alike — because the name a session reaches for is the one it
+/// read off the inventory line, which is the note's own last segment. An exact path
+/// wins over a suffix match, so a learnt skill deliberately shadowing a factory one is
+/// still addressable in full.
+pub fn mcp_server(data_dir: &Path, name: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut suffix_match = None;
+    for note in notes(data_dir).unwrap_or_default() {
+        // One unreadable note must not answer for the whole workshop: `?` here would
+        // report "no such server" for a permissions error three files away.
+        let Ok(text) = std::fs::read_to_string(&note.path) else { continue };
+        let (fm, _) = split_front_matter(&text);
+        let Some(raw) = fm.mcp else { continue };
+        let exact = note.id == name;
+        if !exact && (note.id.rsplit('/').next() != Some(name) || suffix_match.is_some()) {
+            continue;
+        }
+        // **`headers` is accepted as codex's `http_headers`.** The two spellings are the
+        // one place the de-facto object and the runtime we feed it to disagree, and the
+        // spelling in every published example is the one that would silently do nothing:
+        // the server answers 401 and the reason is nowhere. Aliasing costs a line; not
+        // aliasing costs the case this whole shape exists to serve.
+        let server = match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(serde_json::Value::Object(mut o)) => {
+                if let Some(h) = o.remove("headers") {
+                    o.entry("http_headers").or_insert(h);
+                }
+                o
+            }
+            // Named in a warning rather than swallowed: a server that is registered and
+            // unreachable because of a typo is exactly the failure that gets blamed on
+            // the server.
+            _ => {
+                tracing::warn!(
+                    skill = %note.id,
+                    "`mcp:` is not a JSON object; expected one line like                      {{\"url\": \"https://…\"}}"
+                );
+                continue;
+            }
+        };
+        if exact {
+            return Some(server);
+        }
+        suffix_match = Some(server);
+    }
+    suffix_match
 }
 
 /// The filename the agent runtime's own skills feature uses for the note inside a
@@ -296,12 +369,12 @@ pub const HOT_BUDGET_BYTES: usize = 1536;
 /// name matches nothing scores zero and sorts on freshness, which is the right answer:
 /// nobody has run it.
 ///
-/// **Known over-credit: one binary hosting several tools shares one count.** `use: hi
-/// mcp` is credited with every `hi` invocation, because the counter records the program
-/// and not its subcommand — observed live, where `hi` ran three times and the MCP note
-/// took all three. Harmless while `hi` is nearly always `hi mcp`, and it grows into a
-/// real distortion if `hi` gains unrelated subcommands. Fixing it means recording argv[1]
-/// for known multi-tool hosts, which is a special case waiting for a second example.
+/// **Known over-credit: one binary hosting several tools shares one count.** A note
+/// whose `use:` names a multi-tool program is credited with every invocation of that
+/// program, because the counter records argv[0] and not the subcommand — observed live
+/// on a since-deleted note. Nothing on the PATH is shaped that way today; fixing it
+/// means recording argv[1] for known multi-tool hosts, which is a special case waiting
+/// for a second example.
 ///
 /// A zero ranks last; it does not exclude. Note what the arithmetic can and cannot
 /// see: a note naming no command can never accrue a count, so once a workshop outgrows
@@ -405,12 +478,19 @@ pub fn skills_dir(data_dir: &Path) -> PathBuf {
 pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     let dir = skills_dir(data_dir).join("factory");
     crate::mind::views::factory::rename_legacy_dir(&skills_dir(data_dir).join("_builtin"), &dir);
+    // **Cleared, not just overwritten.** Everything under `factory/` is ours and is
+    // rewritten here every boot; the agent's own notes live one level up, where
+    // [`factory_bin_dir`] draws the same line for shims. Writing the seeds over
+    // whatever was there left a retired one on disk forever — a note describing a
+    // mechanism the binary no longer has, which is the failure this repo keeps paying
+    // for. Removing the directory makes a deleted seed disappear by construction,
+    // rather than by a list of past names that would itself go stale.
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("adding-a-device.md"), ADDING_A_DEVICE)?;
     std::fs::write(dir.join("browser.md"), BROWSER)?;
     std::fs::write(dir.join("driving-a-desktop.md"), DRIVING_A_DESKTOP)?;
     std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;
-    std::fs::write(dir.join("mcp-service.md"), MCP_SERVICE)?;
     std::fs::write(dir.join("phone.md"), PHONE)?;
     tracing::info!(dir = %dir.display(), "installed bundled skills");
     Ok(())
@@ -481,39 +561,8 @@ pub fn install_tool_bin(data_dir: &Path) -> io::Result<()> {
     let exe = std::env::current_exe()?;
     write_browser_shim(&dir, &exe)?;
     write_phone_shim(&dir, &exe)?;
-    write_hi_shim(&dir, &exe)?;
     tracing::info!(dir = %dir.display(), "installed tool shims");
     Ok(())
-}
-
-/// `hi` — the agent's own binary under a short name, so a note can say
-/// `use: hi mcp <endpoint> call <tool> <json>`.
-///
-/// This is the whole of *MCP is a command*: one program on the PATH turns a service
-/// that speaks only MCP into an ordinary note, with no loader and no carrier class.
-/// It is a shim rather than a rename because the binary's real path is wherever this
-/// install put it, and a note must not have to know that.
-#[cfg(not(windows))]
-fn write_hi_shim(dir: &Path, exe: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let script = format!(
-        "#!/bin/sh\n\
-         # Written by hi-agent at every start. `hi` is this agent's own binary — see\n\
-         # `hi mcp --help`. Everything you pass goes straight through.\n\
-         exec {exe} \"$@\"\n",
-        exe = sh_quote(exe)
-    );
-    let path = dir.join("hi");
-    std::fs::write(&path, script)?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-}
-
-/// **Never exercised** — same standing as the browser shim beside it.
-#[cfg(windows)]
-fn write_hi_shim(dir: &Path, exe: &Path) -> io::Result<()> {
-    let script = format!("@echo off\r\n\"{exe}\" %*\r\n", exe = exe.display());
-    std::fs::write(dir.join("hi.cmd"), script)
 }
 
 /// Single-quote a path for `sh`, so a space or a `$` in it cannot be re-read as
@@ -684,6 +733,39 @@ mod tests {
         assert_eq!(fm.run, None);
     }
 
+    /// The skill **is** the registration: an `mcp:` endpoint in front matter is the
+    /// whole of what makes a server reachable, and `mcp_endpoint` resolves it from the
+    /// tree rather than from anything stored beside it.
+    #[test]
+    fn an_mcp_endpoint_is_read_off_the_skill_that_declares_it() {
+        let (fm, _) = split_front_matter(
+            "---\npurpose: drive a remote handset\nmcp: {\"url\":\"https://example.com/mcp\"}\n---\n\nprose\n",
+        );
+        assert_eq!(fm.mcp.as_deref(), Some("{\"url\":\"https://example.com/mcp\"}"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let skills = skills_dir(dir.path());
+        std::fs::create_dir_all(skills.join("vendors")).unwrap();
+        std::fs::write(
+            skills.join("vendors/relay.md"),
+            "---\npurpose: a handset relay\nmcp: {\"url\":\"https://relay.example/mcp\"}\n---\n\nhow\n",
+        )
+        .unwrap();
+        std::fs::write(skills.join("plain.md"), "---\npurpose: just a procedure\n---\n\nhow\n")
+            .unwrap();
+
+        // Reached by the name the inventory line shows — the note's last segment —
+        // and by its full path alike.
+        let found = mcp_server(dir.path(), "relay").expect("reached by its bare name");
+        assert_eq!(found["url"], "https://relay.example/mcp");
+        assert_eq!(mcp_server(dir.path(), "vendors/relay"), Some(found));
+        // A skill with no endpoint is not a server, and a name nobody claims is not one
+        // either. Both answer `None`, which is what makes the verb's miss a work order
+        // ("write that skill") rather than a not-found.
+        assert_eq!(mcp_server(dir.path(), "plain"), None);
+        assert_eq!(mcp_server(dir.path(), "nobody"), None);
+    }
+
     /// **`description:` is read as `purpose:`.** Watched 2026-08-27: asked to build a
     /// capability, a worker wrote the agent runtime's own skill shape — a directory
     /// with `SKILL.md` carrying `name:`/`description:` — and our reader saw no purpose
@@ -752,7 +834,6 @@ mod tests {
         let cold = hot_inventory(dir.path(), HOT_BUDGET_BYTES, &Default::default());
         for seed in [
             "factory/browser",
-            "factory/mcp-service",
             "factory/equipping-a-tool",
             // The one seed that is a note where a tool used to be. If driving a desktop
             // ever stops being reachable this way, it is reachable no way at all — there
@@ -936,8 +1017,7 @@ mod tests {
             let path = entry.unwrap().path();
             let text = std::fs::read_to_string(&path).unwrap();
             let (fm, _) = split_front_matter(&text);
-            // `use:` may name a command with arguments (`hi mcp …`); the shim is the
-            // first word.
+            // `use:` may name a command with arguments; the shim is the first word.
             let Some(name) = fm.run.as_deref().and_then(|r| r.split_whitespace().next()) else {
                 continue;
             };

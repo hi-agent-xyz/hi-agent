@@ -1308,6 +1308,7 @@ async fn apply_control(
             title,
             task,
             kind,
+            servers,
             owner,
             resume,
             subject,
@@ -1315,7 +1316,9 @@ async fn apply_control(
             ready,
         } => {
             let spawned = workers
-                .spawn_with_id(reaction, id, title, task, kind, owner, resume, subject, ahead)
+                .spawn_with_id(
+                    reaction, id, title, task, kind, servers, owner, resume, subject, ahead,
+                )
                 .await;
             if let Err(err) = &spawned {
                 tracing::warn!(error = %format!("{err:#}"), "failed to create a working session");
