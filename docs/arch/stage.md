@@ -2123,6 +2123,7 @@ is one sentence to teach and has no silently-wrong shape in it.
 ## See also
 
 [`text-transcript.md`](text-transcript.md) for what the conversation *is* ·
+[`sharing.md`](sharing.md) for what happens when a view is handed to somebody else ·
 [`surfaces.md`](surfaces.md#carriers) for `hi_show` and why it is a call ·
 [`view_bus.rs`](../../src/foundation/server/view_bus.rs) for the two slots and why the
 write path decides which.

@@ -326,6 +326,7 @@ passwords — this is a different thing, and the reason belongs in a comment or 
 | off-box (relayed or directly public) | gated |
 | `/up/{token}`, `/api/up/{token}` | own one-time token, stays open |
 | `/healthz`, `POST /api/session`, pairing | open by definition |
+| a shared view, and only the paths its share derives | its own grant, public or keyed — [`sharing.md`](sharing.md) |
 
 Off-box HTML navigation without a session serves a small "enter your pairing code" page
 rather than a bare 401 — which is also how browser-direct onboarding starts.
@@ -571,6 +572,7 @@ Each is testable, and each has a real failure behind it.
 ## See also
 
 [`arch.md`](arch.md) for the layers inside a core ·
+[`sharing.md`](sharing.md) for the one thing a non-owner may be given, and why it is a page ·
 [`surfaces.md`](surfaces.md) for how the world reaches it once a wire exists ·
 [`text-transcript.md`](text-transcript.md) for why reconnection needs nothing ·
 [`foundation.md`](foundation.md) for the mechanism/policy split an app inherits
