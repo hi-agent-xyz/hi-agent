@@ -60,11 +60,7 @@ pub async fn post_session(
     };
     tracing::info!(surface = %id, paired = minted.is_some(), "surface session opened");
 
-    let cookie = surfaces::session_cookie(
-        &session,
-        &cookie_path(&headers),
-        surfaces::over_tls(&headers),
-    );
+    let cookie = surfaces::session_cookie(&session, surfaces::over_tls(&headers));
     let payload = serde_json::json!({ "id": id, "credential": minted });
     (
         StatusCode::OK,
@@ -134,7 +130,7 @@ pub(crate) async fn public_base_url(
         let host =
             headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
         let scheme = if surfaces::over_tls(headers) { "https" } else { "http" };
-        format!("{scheme}://{host}{}", surfaces::base_path(headers))
+        format!("{scheme}://{host}")
     });
     url::Url::parse(&raw).map(|u| u.to_string()).unwrap_or(raw)
 }
@@ -248,9 +244,8 @@ mod pairing_url_tests {
     use super::{HeaderMap, header, pairing_app_url, public_base_url};
 
     /// A core with no account cannot ask the community where it is, so it names
-    /// itself off the request — and the root case keeps its trailing slash while
-    /// a prefixed one does not, because those are the two strings a person is
-    /// handed.
+    /// itself off the request: scheme and host, and nothing after them — a core
+    /// is the whole of its own origin, so there is no path to carry.
     #[tokio::test]
     async fn with_no_name_the_pairing_address_is_what_the_request_says() {
         let dir = std::env::temp_dir().join(format!("hi-pair-{}", uuid::Uuid::new_v4()));
@@ -261,13 +256,12 @@ mod pairing_url_tests {
         assert_eq!(public_base_url(&dir, &headers).await, "http://127.0.0.1:12358/");
 
         headers.insert("x-forwarded-proto", "https".parse().unwrap());
-        headers.insert("x-forwarded-prefix", "/ana".parse().unwrap());
-        assert_eq!(public_base_url(&dir, &headers).await, "https://127.0.0.1:12358/ana");
+        assert_eq!(public_base_url(&dir, &headers).await, "https://127.0.0.1:12358/");
     }
 
     #[test]
-    fn the_app_pairing_url_round_trips_a_prefixed_core_and_code() {
-        let app_url = pairing_app_url("https://hi-agent.xyz/ana", "code-with_-symbols");
+    fn the_app_pairing_url_round_trips_a_core_address_and_code() {
+        let app_url = pairing_app_url("https://ana.hi-agent.xyz", "code-with_-symbols");
         let parsed = url::Url::parse(&app_url).expect("app URL");
         assert_eq!(parsed.scheme(), "hiagent");
         assert_eq!(parsed.host_str(), Some("pair"));
@@ -275,7 +269,7 @@ mod pairing_url_tests {
         let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
         assert_eq!(
             query.get("url").map(String::as_str),
-            Some("https://hi-agent.xyz/ana")
+            Some("https://ana.hi-agent.xyz")
         );
         assert_eq!(
             query.get("code").map(String::as_str),
@@ -290,16 +284,6 @@ pub async fn get_healthz() -> Response {
     ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], "ok\n").into_response()
 }
 
-/// The cookie's `Path` — [`surfaces::base_path`] as a path, so the root case is
-/// `/` rather than the empty string a URL wants.
-///
-/// `Path=/ana` limits transmission between cores on the shared origin, which is a
-/// scoping, not a security boundary (see `topology.md`).
-fn cookie_path(headers: &HeaderMap) -> String {
-    let prefix = surfaces::base_path(headers);
-    if prefix.is_empty() { "/".to_string() } else { prefix }
-}
-
 fn bearer(headers: &HeaderMap) -> Option<String> {
     let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let rest = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))?;
@@ -307,27 +291,3 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
     (!rest.is_empty()).then(|| rest.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::HeaderValue;
-
-    #[test]
-    fn the_cookie_path_takes_a_prefix_and_refuses_nonsense() {
-        let mut h = HeaderMap::new();
-        assert_eq!(cookie_path(&h), "/");
-
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana"));
-        assert_eq!(cookie_path(&h), "/ana");
-
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana/"));
-        assert_eq!(cookie_path(&h), "/ana");
-
-        // A prefix is a path, and a relative or climbing one is not one we will
-        // scope a cookie to.
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("ana"));
-        assert_eq!(cookie_path(&h), "/");
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/../admin"));
-        assert_eq!(cookie_path(&h), "/");
-    }
-}

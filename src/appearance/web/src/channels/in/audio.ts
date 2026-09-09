@@ -1,4 +1,3 @@
-import { url } from "../../lib/base";
 // Client for the inbound audio channel.
 //
 // "Audio is audio": the inbound audio channel carries audio bytes, not text. Live
@@ -34,7 +33,7 @@ export async function* subscribeInAudioTurns(opts: {
   signal: AbortSignal;
 }): AsyncGenerator<AudioInTurn, void, void> {
   while (!opts.signal.aborted) {
-    const res = await fetch(url("/api/in/audio"), {
+    const res = await fetch("/api/in/audio", {
       method: "GET",
       headers: { Accept: "audio/*" },
       signal: opts.signal,
@@ -54,7 +53,7 @@ export async function postAudio(opts: {
   mime: string;
   signal?: AbortSignal;
 }): Promise<{ transcript: string; media_path: string }> {
-  const res = await fetch(url("/api/in/audio"), {
+  const res = await fetch("/api/in/audio", {
     method: "POST",
     headers: {
       "Content-Type": opts.mime,

@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { url } from "../lib/base";
 import { usePath } from "./router";
 import { EventsView } from "./EventsView";
 import { ConversationView } from "./ConversationView";
@@ -51,7 +50,7 @@ export function Inspect() {
             </button>
           ))}
         </nav>
-        <a className="exit" href={url("/")} title="back to the agent">✕</a>
+        <a className="exit" href={"/"} title="back to the agent">✕</a>
       </header>
       <main className="inspect-main">{active.render()}</main>
     </div>

@@ -4,7 +4,7 @@
 // per-modality clip strips right/below. Naming onto an existing name merges. Every
 // action posts to /api/people/*; the store is global.
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
-import { url, useLive, TEMPO } from "@hi/core";
+import { useLive, TEMPO } from "@hi/core";
 
 const api = {
   list: () => fetch("/api/people").then((r) => r.json()),
@@ -20,13 +20,8 @@ const api = {
     fetch("/api/people/owner", { method: "POST", headers: J, body: JSON.stringify({ subject }) }).then((r) => r.json()),
 };
 const J = { "Content-Type": "application/json" };
-// `url()`, not a bare path: the `fetch` calls above are rewritten for us when this
-// core is served under the community's subpath, but a crop goes into a
-// `background-image` and a clip into `new Audio(…)` — neither passes through that
-// seam. Without it `/api/people/…` names the *community's* root on a phone, which is
-// exactly the shape where every face and every clip came back empty.
 const clipUrl = (subject, modality, stem) =>
-  url(`/api/people/${encodeURIComponent(subject)}/${modality}/${encodeURIComponent(stem)}`);
+  `/api/people/${encodeURIComponent(subject)}/${modality}/${encodeURIComponent(stem)}`;
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. This view is about people, not about this

@@ -1,4 +1,3 @@
-import { url } from "../../lib/base";
 // Client for the inbound vision channel (the live camera).
 //
 // "Vision is video": the camera streams continuously as WebM over the WS (see
@@ -22,7 +21,7 @@ export async function* subscribeInVideo(opts: {
   signal: AbortSignal;
 }): AsyncGenerator<VideoInTurn, void, void> {
   while (!opts.signal.aborted) {
-    const res = await fetch(url("/api/in/vision"), {
+    const res = await fetch("/api/in/vision", {
       method: "GET",
       headers: { Accept: "video/*" },
       signal: opts.signal,
@@ -42,7 +41,7 @@ export async function postVision(opts: {
   mime: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  const res = await fetch(url("/api/in/vision"), {
+  const res = await fetch("/api/in/vision", {
     method: "POST",
     headers: {
       "Content-Type": opts.mime,
@@ -66,7 +65,7 @@ export async function postPresenceStill(opts: {
   blob: Blob;
   signal?: AbortSignal;
 }): Promise<void> {
-  const res = await fetch(url("/api/in/vision/presence"), {
+  const res = await fetch("/api/in/vision/presence", {
     method: "POST",
     headers: {
       "Content-Type": "image/jpeg",

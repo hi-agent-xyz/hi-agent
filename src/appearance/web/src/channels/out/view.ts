@@ -1,4 +1,3 @@
-import { url } from "../../lib/base";
 // Client for the outbound view channel — the conversation's retained appearance state.
 //
 // GET /api/out/view serves the conversation's whole appearance (active views in
@@ -88,7 +87,7 @@ export interface ListedView {
  * is the two of those together; the rest of the tree is the agent's working files and
  * is deliberately not a place a person is offered. */
 export async function listViews(): Promise<ListedView[]> {
-  const res = await fetch(url("/api/views"), {
+  const res = await fetch("/api/views", {
     method: "GET",
     headers: { Accept: "application/json" },
     cache: "no-store",
@@ -121,7 +120,7 @@ export interface Destination {
  * Rejects on a ref that no longer resolves or no longer compiles. Nothing else here
  * throws: going back to an artifact and going live cannot fail. */
 export async function goToView(dest: Destination): Promise<void> {
-  const res = await fetch(url("/api/views/open"), {
+  const res = await fetch("/api/views/open", {
     method: "POST",
     // `X-HI-Surface: 1` is the CSRF marker and always that constant.
     headers: {
@@ -147,7 +146,7 @@ export async function goToView(dest: Destination): Promise<void> {
  * bookmarked: an inline view is only ever the disposable artifact it compiled to, and
  * a system view is in the row already. */
 export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
-  const res = await fetch(url("/api/views/bookmarks"), {
+  const res = await fetch("/api/views/bookmarks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ref: viewRef, on }),
@@ -165,7 +164,7 @@ export async function* subscribeViewState(
   let since: number | undefined;
   while (!opts.signal.aborted) {
     const query = since === undefined ? "" : `?since=${since}`;
-    const res = await fetch(url(`/api/out/view${query}`), {
+    const res = await fetch(`/api/out/view${query}`, {
       method: "GET",
       headers: { Accept: "application/json" },
       signal: opts.signal,
@@ -188,7 +187,7 @@ export async function clearViewState(): Promise<void> {
   // A bodyless DELETE carries no content type, which is indistinguishable
   // here from `text/plain`; the header is how it says it is not a
   // cross-site form. See the note in `in/text.ts`.
-  const res = await fetch(url("/api/out/view"), {
+  const res = await fetch("/api/out/view", {
     method: "DELETE",
     headers: { "X-HI-Surface": "1" },
   });

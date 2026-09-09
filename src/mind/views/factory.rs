@@ -469,48 +469,6 @@ mod tests {
         }
     }
 
-    /// **A path in an attribute goes through `url()`.** Served under the community's
-    /// subpath this page is at `/ana`, and a bare `src="/views/…"` then asks the
-    /// community for the file and renders a broken image. `fetch` is covered by the
-    /// host (`lib/base.ts`, `installBase`); an attribute has no such seam, so the
-    /// bundled views have to say it, and the guidance in
-    /// `identity/workers/view-builder.md` tells authored views the same.
-    ///
-    /// Matched on the literal attribute openers rather than every `"/` in the file:
-    /// a path inside a `fetch` is fine, and flagging it would teach the wrong rule.
-    ///
-    /// **What it cannot see is a path in a variable**, and that is not hypothetical:
-    /// `home.jsx` read `shot_url` off `GET /api/views` and rendered `src={view.shot}`,
-    /// which is the shape of every correct call site, so it passed here and was blank
-    /// on every phone. Reading provenance needs a parser this test does not have — so
-    /// a green run here means no *literal* bare path, not that the class is closed.
-    #[test]
-    fn no_bundled_view_puts_a_bare_absolute_path_in_an_attribute() {
-        let dir = tempfile::tempdir().unwrap();
-        install_factory_views(dir.path()).unwrap();
-        let builtin = dir.path().join("views").join("factory");
-        let mut names: Vec<&str> = vec!["people-review", "welcome", "vendor-outage"];
-        names.extend(REVIEW_VIEWS.iter().map(|(n, _)| *n));
-        for name in names {
-            let source = std::fs::read_to_string(builtin.join(format!("{name}.jsx"))).unwrap();
-            // `url(/` is the CSS function with a raw path — a `background-image` the
-            // people-review comment has always named as uncovered. Unambiguous only
-            // without a quote after the paren: `url("/…")` and `url(`/…`)` are the
-            // `@hi/core` helper doing the right thing, and share the CSS one's name.
-            for bare in
-                ["src=\"/", "href=\"/", "src={\"/", "href={\"/", "src={`/", "href={`/", "url(/"]
-            {
-                assert!(
-                    !source.contains(bare),
-                    "{name}.jsx has a bare `{bare}…` — wrap the path in url() from @hi/core"
-                );
-            }
-        }
-
-        // And the one this was written for: the welcome poster's mark.
-        assert!(WELCOME.contains(r#"url("/views/factory/hi-mark.svg")"#));
-    }
-
     /// The Tools surface has to have a word for every rung the endpoint serves. A role
     /// with no entry in the view's own table falls back to printing its bare id — which
     /// is how `worker`, the first rung listed and the only one that does the work, sat
@@ -575,11 +533,9 @@ mod tests {
         );
         // Compared with the whitespace removed, because the property is the *binding* and
         // not the layout. This previously pinned `{url}\n      </a>` — six spaces of JSX
-        // indentation — and went red when the local was renamed to `href`. The rename was
-        // right and is argued for at the call site: `url()` is imported from `@hi/core`, so
-        // a local of that name shadows the one function that must never rebase an outside
-        // address onto this core. The property never lapsed; only its spelling moved, and a
-        // reformat would have broken the assertion in exactly the same way.
+        // indentation — and went red when the local was renamed to `href`. The property
+        // never lapsed; only its spelling moved, and a reformat would have broken the
+        // assertion in exactly the same way.
         let compact: String = tasks.split_whitespace().collect();
         assert!(
             compact.contains("href={href}") && compact.contains("{href}</a>"),

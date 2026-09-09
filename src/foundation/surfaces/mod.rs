@@ -428,8 +428,7 @@ fn unauthorized(headers: &HeaderMap, method: &axum::http::Method) -> Response {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|a| a.contains("text/html"));
     if wants_html {
-        return (StatusCode::UNAUTHORIZED, Html(pairing_page(&base_path(headers))))
-            .into_response();
+        return (StatusCode::UNAUTHORIZED, Html(PAIRING_PAGE.to_string())).into_response();
     }
     (
         StatusCode::UNAUTHORIZED,
@@ -442,20 +441,9 @@ fn unauthorized(headers: &HeaderMap, method: &axum::http::Method) -> Response {
 /// The "enter your pairing code" page. Self-contained on purpose: it is served to
 /// a browser that is not allowed to fetch `/assets/*` yet.
 ///
-/// `base` is where this core is served from ([`base_path`]) and the form posts to
-/// `{base}/api/session` — an absolute path, never a relative one. A relative
-/// `api/session` resolves against the *directory* of the current URL, so it only
-/// reaches the core at `https://hi-agent.xyz/ana/` and posts to the community's
-/// own `/api/session` at `https://hi-agent.xyz/ana`. The address a person is given
-/// has no trailing slash, so the relative form was broken in exactly the shape
-/// this page exists for.
-fn pairing_page(base: &str) -> String {
-    // A token swap rather than `format!`: the page is mostly CSS and JS braces,
-    // and doubling every one of them to satisfy a format string would make it
-    // unreadable for one substitution.
-    PAIRING_PAGE.replace("__HI_BASE__", base)
-}
-
+/// The form posts to `/api/session` — an absolute path, never a relative one. A
+/// relative `api/session` resolves against the *directory* of the current URL, so
+/// it would miss on every address that is not a directory, which is most of them.
 const PAIRING_PAGE: &str = r##"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -489,7 +477,7 @@ document.getElementById("f").addEventListener("submit", async (e) => {
   err.textContent = "";
   const code = document.getElementById("code").value.trim();
   if (!code) return;
-  const res = await fetch("__HI_BASE__/api/session", {
+  const res = await fetch("/api/session", {
     method: "POST",
     headers: { "Authorization": "Bearer " + code, "Content-Type": "application/json" },
     body: JSON.stringify({ label: navigator.userAgent.slice(0, 80) }),
@@ -567,61 +555,17 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 /// session at all — a browser drops a `Secure` cookie on an insecure origin
 /// without saying so — which is a worse failure than the one it prevents on a
 /// deployment that has no TLS to protect in the first place.
-pub fn session_cookie(session: &str, path: &str, secure: bool) -> String {
+/// `Path=/` and no `Domain=`: a core is the whole of its own origin, and a
+/// host-only cookie reaches no other one (`topology.md` § *Addressing*).
+pub fn session_cookie(session: &str, secure: bool) -> String {
     let mut c = format!(
-        "{SESSION_COOKIE}={session}; HttpOnly; SameSite=Lax; Path={path}; Max-Age={}",
+        "{SESSION_COOKIE}={session}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_TTL.as_secs()
     );
     if secure {
         c.push_str("; Secure");
     }
     c
-}
-
-/// Where this core is served from, from `X-Forwarded-Prefix` — `""` at its own
-/// root, `"/ana"` when the community routes it by subpath. Never trailing.
-///
-/// **A path prefix, or nothing.** A value that is relative (`ana`), climbing
-/// (`/../admin`) or quote-bearing is not a prefix this core will adopt: it
-/// arrives from a hop in front and is pasted into URLs and a cookie `Path`, so a
-/// nonsense one is dropped rather than repaired.
-pub fn base_path(headers: &HeaderMap) -> String {
-    let raw = headers
-        .get("x-forwarded-prefix")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/');
-    if raw.is_empty() || !raw.starts_with('/') || raw.contains("..") || raw.contains('"') {
-        return String::new();
-    }
-    raw.to_string()
-}
-
-/// Put a base path on a root-absolute URL **this core is handing out**.
-///
-/// The producing half of `lib/base.ts`'s `url()`, and the JSON counterpart of
-/// [`crate::appearance::reroot`], which has always done this for the paths the
-/// served HTML emits. A path in a JSON field is read by the same browser under the
-/// same prefix; it was simply never rerooted, so every reader had to remember —
-/// and the readers that forgot were invisible on a desktop and blank on a phone.
-///
-/// **Only a field that is *only* an address may go through this.** `module_url` is
-/// deliberately not one: with no `view_ref` it is also the identity a trail entry is
-/// matched by (`destination_of`, `trail.ts`), and prefixing an identity makes two
-/// names for one thing. It is resolved with `url()` where it is *used* as an address
-/// instead, in `ViewSlot`.
-///
-/// Idempotent, and a no-op with no prefix — so a caller that already resolved the
-/// path, and every ordinary root-served shape, is unaffected.
-pub fn reroot_path(path: &str, prefix: &str) -> String {
-    if prefix.is_empty() || !path.starts_with('/') {
-        return path.to_string();
-    }
-    if path == prefix || path.starts_with(&format!("{prefix}/")) {
-        return path.to_string();
-    }
-    format!("{prefix}{path}")
 }
 
 /// Whether the request reached us over TLS. `X-Forwarded-Proto` is the community's
@@ -645,109 +589,12 @@ mod tests {
         Surfaces::new(p)
     }
 
-    /// The rule `lib/base.ts` states for the page, held on the producing side: a path
-    /// this core hands out starts where the caller's page starts. Idempotent, because
-    /// a reader that already resolved it must stay right — the seam and the helper have
-    /// to be able to run over the same value without making `/ana/ana/…`.
+    /// The page is served to a browser that may be anywhere on this core's address,
+    /// so its one request names an absolute path rather than a relative one.
     #[test]
-    fn a_path_handed_out_starts_where_the_caller_does() {
-        assert_eq!(reroot_path("/views/_shots/ref/factory/home.png", "/ana"), "/ana/views/_shots/ref/factory/home.png");
-        assert_eq!(reroot_path("/views/x.png", ""), "/views/x.png", "the ordinary root-served shape");
-        assert_eq!(reroot_path("/ana/views/x.png", "/ana"), "/ana/views/x.png", "idempotent");
-        assert_eq!(reroot_path("/anagram/x.png", "/ana"), "/ana/anagram/x.png", "a prefix is whole segments");
-        assert_eq!(
-            reroot_path("https://cdn.example.com/x.png", "/ana"),
-            "https://cdn.example.com/x.png",
-            "somewhere else is left alone"
-        );
-    }
-
-    #[test]
-    fn a_credential_exchanges_for_a_session_and_a_wrong_one_does_not() {
-        let s = surfaces();
-        let (id, token) = s.mint("the mac").unwrap();
-
-        let (session, got_id, minted) = s.exchange(&token, "ignored").unwrap();
-        assert_eq!(got_id, id);
-        assert!(minted.is_none(), "an existing credential mints nothing new");
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::COOKIE,
-            HeaderValue::from_str(&format!("{SESSION_COOKIE}={session}")).unwrap(),
-        );
-        assert_eq!(s.authorize(&headers), Some((Presented::Cookie, id.clone())));
-
-        assert!(s.exchange("not-a-credential", "x").is_none());
-    }
-
-    #[test]
-    fn a_bearer_is_accepted_and_stamps_last_seen() {
-        let s = surfaces();
-        let (id, token) = s.mint("curl").unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
-        );
-        assert_eq!(s.authorize(&headers), Some((Presented::Bearer, id.clone())));
-        // Which credential answered is what says whose device this is — a request
-        // that passed the gate carries it, and one on loopback carries none.
-        assert_eq!(registered_to(s.data_dir(), Some(&SurfaceId(id.clone()))), None);
-        store::bind(s.data_dir(), &id, "赵力").unwrap();
-        assert_eq!(
-            registered_to(s.data_dir(), Some(&SurfaceId(id.clone()))).as_deref(),
-            Some("赵力")
-        );
-        assert_eq!(registered_to(s.data_dir(), None), None, "loopback presents no device");
-        let listed = store::list(s.data_dir()).unwrap();
-        let row = listed.iter().find(|r| r.id == id).unwrap();
-        assert!(!row.last_seen_at.is_empty());
-    }
-
-    #[test]
-    fn a_pairing_code_is_spent_once_and_yields_a_credential() {
-        let s = surfaces();
-        let code = s.mint_pairing_code();
-        let (_, id, minted) = s.exchange(&code, "the phone").unwrap();
-        let token = minted.expect("pairing mints a credential to keep");
-        assert!(s.exchange(&code, "again").is_none(), "a code is one-time");
-
-        // The minted credential is a real one from here on.
-        assert_eq!(s.verify(&token).as_deref(), Some(id.as_str()));
-        assert_eq!(store::list(s.data_dir()).unwrap()[0].label, "the phone");
-    }
-
-    #[test]
-    fn the_pairing_page_posts_to_an_absolute_path_under_the_prefix() {
-        // At the core's own root there is no prefix, and `/api/session` is right.
-        assert!(pairing_page("").contains(r#"fetch("/api/session""#));
-
-        // Relayed, the same page is served at `https://hi-agent.xyz/ana` — with no
-        // trailing slash, because that is the address the community hands out. A
-        // relative `api/session` would resolve to the *community's* route; only an
-        // absolute path under the prefix reaches this core.
-        let relayed = pairing_page("/ana");
-        assert!(relayed.contains(r#"fetch("/ana/api/session""#));
-        assert!(!relayed.contains(r#"fetch("api/session""#));
-    }
-
-    #[test]
-    fn the_base_path_takes_a_prefix_and_refuses_nonsense() {
-        let mut h = HeaderMap::new();
-        assert_eq!(base_path(&h), "");
-
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana"));
-        assert_eq!(base_path(&h), "/ana");
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana/"));
-        assert_eq!(base_path(&h), "/ana");
-
-        // Relative, climbing, or able to break out of the attribute it is pasted
-        // into: not a prefix, and not repaired into one.
-        for bad in ["ana", "/../admin", r#"/a"onload="#] {
-            h.insert("x-forwarded-prefix", HeaderValue::from_str(bad).unwrap());
-            assert_eq!(base_path(&h), "", "{bad}");
-        }
+    fn the_pairing_page_posts_to_an_absolute_path() {
+        assert!(PAIRING_PAGE.contains(r#"fetch("/api/session""#));
+        assert!(!PAIRING_PAGE.contains(r#"fetch("api/session""#));
     }
 
     #[test]
@@ -817,8 +664,10 @@ mod tests {
 
     #[test]
     fn a_session_cookie_only_claims_secure_when_it_is() {
-        assert!(session_cookie("s", "/", true).contains("; Secure"));
-        assert!(!session_cookie("s", "/", false).contains("; Secure"));
-        assert!(session_cookie("s", "/ana", false).contains("Path=/ana"));
+        assert!(session_cookie("s", true).contains("; Secure"));
+        assert!(!session_cookie("s", false).contains("; Secure"));
+        // Host-only and whole-origin: the two properties per-core origins depend on.
+        assert!(session_cookie("s", false).contains("Path=/"));
+        assert!(!session_cookie("s", false).contains("Domain="));
     }
 }

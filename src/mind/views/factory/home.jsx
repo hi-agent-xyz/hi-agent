@@ -1288,13 +1288,6 @@ export default function Home() {
     setProjects((dimension?.subjects || []).slice(0, PROJECTS_READ).map((s) => s.subject));
   }, []);
 
-  // `shot_url` goes straight into an `<img src>`, and it is safe to: the core resolves it
-  // against the base path the request arrived on before it hands it over (`list_views`,
-  // `foundation::surfaces::reroot_path`). That is deliberately the producer's job and not
-  // this file's — an `<img src>` is not carried by the `fetch` seam that rebases everything
-  // else, and asking each reader to remember is how this surface shipped a broken picture on
-  // every phone while the desktop looked fine. A path this view builds *itself* still needs
-  // `url()`; there are none here.
   const loadViews = useCallback(async () => {
     const list = await api.views().catch(() => null);
     if (!Array.isArray(list)) return;

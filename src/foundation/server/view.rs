@@ -31,7 +31,6 @@ pub async fn get_out_view(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ViewQuery>,
     AuthBearer(auth): AuthBearer,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     // A held view long-poll = a screen is attached; counted until this handler returns.
     let _attached = state.attachments.connect(crate::body::attachments::OutChannel::View);
@@ -42,12 +41,7 @@ pub async fn get_out_view(
     // process + session + upstream cache are hot before the first utterance.
     state.warm();
 
-    // Read per request, because the same core answers on loopback and through the
-    // community and only the caller knows which. `base_path` is the core's one parse.
-    let prefix = crate::foundation::surfaces::base_path(&headers);
-    let mut appearance = state.views.wait_state(query.since).await;
-    appearance.reroot_shots(&prefix);
-    axum::Json(appearance)
+    axum::Json(state.views.wait_state(query.since).await)
 }
 
 /// DELETE /api/out/view — clear the appearance (close all views, back
@@ -156,10 +150,8 @@ fn read_bookmarks(data_dir: &std::path::Path) -> Vec<String> {
 pub async fn list_views(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
-    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     tracing::debug!(auth = ?auth, "GET /api/views");
-    let prefix = crate::foundation::surfaces::base_path(&headers);
     let root = state.data_dir.join("views");
     let mut found = Vec::new();
     collect_views(&root, &root, &mut found).await;
@@ -167,8 +159,7 @@ pub async fn list_views(
     for view in &mut found {
         view.system = view.view_ref.starts_with(SYSTEM_PREFIX);
         view.bookmarked = !view.system && saved.iter().any(|r| r == &view.view_ref);
-        view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref)
-            .map(|shot| crate::foundation::surfaces::reroot_path(&shot, &prefix));
+        view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref);
     }
     found.sort_by(|a: &ListedView, b: &ListedView| a.view_ref.cmp(&b.view_ref));
 

@@ -103,7 +103,6 @@ import {
   type PdfPluginOptions,
   type PreviewOptions,
 } from "@open-file-viewer/core";
-import { url } from "../lib/base";
 
 // The stylesheet, as a string, injected on first use rather than linked from the
 // page. A view is transformed and never bundled, so it cannot `import` a CSS file
@@ -118,16 +117,10 @@ import ofvStyles from "@open-file-viewer/core/style.css?inline";
 // and keeps the pdfjs version in one place — package.json.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 
-// `url()` and not a bare path: on a phone the core is served under a subpath
-// (`https://hi-agent.xyz/ana`), so `/assets/…` lands on the community's routes
-// instead. `installBase()` patches `fetch`, which covers the CMap and font reads,
-// but **not** the worker — that is `new Worker(src)` inside pdfjs, which no seam
-// intercepts. Prefixing all three here is uniform and `url()` is idempotent.
-//
 // The trailing slashes matter: pdfjs concatenates, it does not join.
-const WORKER_SRC = () => url(pdfWorkerUrl);
-const CMAP_URL = () => url("/pdfjs/cmaps/");
-const STANDARD_FONT_URL = () => url("/pdfjs/standard_fonts/");
+const WORKER_SRC = () => pdfWorkerUrl;
+const CMAP_URL = () => "/pdfjs/cmaps/";
+const STANDARD_FONT_URL = () => "/pdfjs/standard_fonts/";
 
 /**
  * `pdfPlugin` with every remote default replaced by a same-origin one.

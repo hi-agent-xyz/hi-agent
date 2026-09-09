@@ -287,25 +287,6 @@ pub struct ViewState {
 }
 
 impl ViewState {
-    /// Put the caller's base path on the pictures, on the way out.
-    ///
-    /// The state is kept canonical — a shot is `/views/_shots/…` in memory and in the
-    /// journal, because the same core answers on loopback *and* under the community's
-    /// subpath and only the request knows which. So the prefix goes on at the edge,
-    /// once, rather than being remembered by each of the readers.
-    ///
-    /// `module_url` is not touched here on purpose: it is this entry's identity as well
-    /// as its address — see [`crate::foundation::surfaces::reroot_path`].
-    pub fn reroot_shots(&mut self, prefix: &str) {
-        if prefix.is_empty() {
-            return;
-        }
-        for entry in &mut self.history {
-            if let Some(shot) = entry.shot_url.take() {
-                entry.shot_url = Some(crate::foundation::surfaces::reroot_path(&shot, prefix));
-            }
-        }
-    }
 }
 
 impl ViewBus {
@@ -1056,13 +1037,13 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
 mod tests {
     use super::*;
 
-    /// **The picture is rerooted; the identity is not.** A history entry with no
-    /// `view_ref` is matched against `live` by its `module_url` (`destination_of` here,
-    /// `destinationOf` in `trail.ts`), so prefixing that field would give one show two
-    /// names and the trail would stop marking the live one. The shot has no such second
-    /// job, and is the field an `<img src>` reads.
+    /// **`module_url` is an identity, not just an address.** A history entry with no
+    /// `view_ref` is matched against `live` by it (`destination_of` here, `destinationOf`
+    /// in `trail.ts`), so anything that rewrote that field would give one show two names
+    /// and the trail would stop marking the live one. Every path here is the core's own
+    /// and is served as written — the state carries no second, resolved spelling.
     #[test]
-    fn rerooting_moves_the_picture_and_leaves_the_identity_alone() {
+    fn a_shows_module_url_is_the_name_its_history_entry_is_matched_by() {
         let mut state = ViewState {
             version: 1,
             views: vec![WireView {
@@ -1081,8 +1062,7 @@ mod tests {
             cursor: None,
             live: Some("/views/_compiled/abc.mjs".into()),
         };
-        state.reroot_shots("/ana");
-        assert_eq!(state.history[0].shot_url.as_deref(), Some("/ana/views/_shots/abc.png"));
+        assert_eq!(state.history[0].shot_url.as_deref(), Some("/views/_shots/abc.png"));
         assert_eq!(state.history[0].module_url, "/views/_compiled/abc.mjs");
         assert_eq!(state.views[0].module_url, "/views/_compiled/abc.mjs");
         assert_eq!(

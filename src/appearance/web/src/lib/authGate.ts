@@ -10,7 +10,6 @@
 // single full-page navigation to the login flow (which bounces through the IdP
 // and back). Public-face fetches never 401, so the appearance page is never
 // bounced. It is a no-op when auth is disabled (no 401s are ever produced).
-import { url } from "./base";
 
 let redirecting = false;
 
@@ -23,7 +22,7 @@ export function installAuthGate(): void {
       // `next` is a browser path (it is handed back to the browser); the login
       // route is the core's, so it takes the subpath.
       const next = encodeURIComponent(location.pathname + location.search);
-      location.assign(`${url("/auth/login")}?next=${next}`);
+      location.assign(`${"/auth/login"}?next=${next}`);
     }
     return res;
   };

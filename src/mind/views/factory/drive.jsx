@@ -48,7 +48,7 @@
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useEffect, useRef, useState } from "react";
-import { url, useLive, TEMPO } from "@hi/core";
+import { useLive, TEMPO } from "@hi/core";
 // `@open-file-viewer/core` is NOT imported here — see `Preview`. A static import at the
 // top of a view module loads when the module loads, which is when the page is opened,
 // which would make every look at the list pay for a viewer it may never use.
@@ -124,7 +124,7 @@ const L = words();
 
 /** The bytes endpoint for one drive entry, prefix-correct on a phone. */
 function fileUrl(path) {
-  return url(`/api/drive/file/${path.split("/").map(encodeURIComponent).join("/")}`);
+  return `/api/drive/file/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 /** The skin this window is actually in — the same read `lib/stageReport.ts` makes. */
@@ -311,7 +311,7 @@ export default function Drive() {
   // there is nothing to keep and the skeleton has to end somewhere.
   useLive(
     () =>
-      fetch(url(`/api/drive${at ? `?under=${encodeURIComponent(at)}` : ""}`))
+      fetch(`/api/drive${at ? `?under=${encodeURIComponent(at)}` : ""}`)
         .then((r) => r.json())
         .then((d) => setEntries(d.entries || []))
         .catch(() => setEntries((prev) => (prev === null ? [] : prev))),

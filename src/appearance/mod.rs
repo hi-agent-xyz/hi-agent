@@ -184,69 +184,11 @@ fn inject_lang(html: String) -> String {
     html.replacen("<html lang=\"en\"", &format!("<html lang=\"{lang}\""), 1)
 }
 
-/// The path this core is served under, from `X-Forwarded-Prefix`.
-///
-/// Empty for every ordinary shape — a core at its own root, or reached through an
-/// app's proxy. `"/ana"` when the community routes it by subpath, which is the
-/// one case where the absolute paths this page emits do not start where the page
-/// does.
-///
-/// Read per request rather than stored, because the same core answers on
-/// loopback *and* through the community, and the answer differs.
-///
-/// One parse for the whole core — [`crate::foundation::surfaces::base_path`] —
-/// because the page, the cookie and the QR must agree on where here is.
-fn forwarded_prefix(headers: &axum::http::HeaderMap) -> String {
-    crate::foundation::surfaces::base_path(headers)
-}
-
-/// Rewrite the root-absolute URLs a built page emits so they start at `prefix`.
-///
-/// Targeted at `src="/…"`, `href="/…"` and the import map's `": "/…"` rather
-/// than every `"/` in the document: a blunt replace would also hit strings
-/// inside inline scripts, and the failure would be silent and weird.
-///
-/// `//` is left alone — that is a protocol-relative URL to somewhere else, not a
-/// path on this origin.
-fn reroot(html: &str, prefix: &str) -> String {
-    if prefix.is_empty() {
-        return html.to_string();
-    }
-    let mut out = html.to_string();
-    for (pattern, kept) in [("src=\"/", "src=\""), ("href=\"/", "href=\""), ("\": \"/", "\": \"")] {
-        out = out.replace(pattern, &format!("{kept}{prefix}/"));
-    }
-    // A protocol-relative URL (`//somewhere/x`) is another origin, not a path
-    // here, and must not be given ours.
-    out.replace(&format!("{prefix}//"), "//")
-}
-
-/// Tell the page where it is, so its own fetches can start there too. Read by
-/// `lib/base.ts`; absent (and therefore empty) in every unprefixed shape.
-fn inject_base(html: String, prefix: &str) -> String {
-    if prefix.is_empty() {
-        return html;
-    }
-    let needle = "<script type=\"importmap\">";
-    let tag = format!("<script>window.__HI_BASE__ = \"{prefix}\";</script>\n    ");
-    match html.find(needle) {
-        Some(idx) => {
-            let mut out = String::with_capacity(html.len() + tag.len());
-            out.push_str(&html[..idx]);
-            out.push_str(&tag);
-            out.push_str(&html[idx..]);
-            out
-        }
-        None => html,
-    }
-}
-
 /// `GET /` — serve index.html with OG tags injected before `</head>`.
 ///
 /// If the embedded `index.html` is missing (debug builds before the SPA is
 /// built), respond with a small dev placeholder pointing at Vite on :12359.
-async fn index(headers: axum::http::HeaderMap) -> Response {
-    let prefix = forwarded_prefix(&headers);
+async fn index() -> Response {
     let tags = og::OgTags::default_for_agent();
 
     match embed::get("index.html") {
@@ -274,11 +216,6 @@ async fn index(headers: axum::http::HeaderMap) -> Response {
             // module resolve `react` / `@hi/core` / `motion/react` to the same
             // shared chunks the host loaded (see web/vite.config.ts).
             let injected = inject_importmap(injected);
-            // Then the subpath, if the community put us under one: every
-            // absolute path this page emits has to start there, and the page
-            // has to be told so its own fetches do too. A no-op otherwise.
-            let injected = inject_base(injected, &prefix);
-            let injected = reroot(&injected, &prefix);
             // Last, so the `lang` swap sees the final opening tag.
             let injected = inject_lang(injected);
 
@@ -388,9 +325,6 @@ const VIEW_PRELOAD_SPECIFIERS: [&str; 3] = ["react/jsx-runtime", "react", "@hi/c
 /// the community and back down the core's tunnel, and the face's cold path
 /// already runs six of them end to end. This deletes one of the last two,
 /// after which a shown view's module is the only thing still outstanding.
-///
-/// Emitted as root-absolute paths so `reroot` moves them under the community's
-/// subpath along with everything else the page emits.
 fn view_preload_links(map_json: &str) -> String {
     let Ok(map) = serde_json::from_str::<serde_json::Value>(map_json) else {
         return String::new();
@@ -520,59 +454,6 @@ fn dev_placeholder() -> String {
 }
 
 #[cfg(test)]
-mod prefix_tests {
-    use super::*;
-    use axum::http::{HeaderMap, HeaderValue};
-
-    #[test]
-    fn a_prefix_is_a_path_or_it_is_nothing() {
-        let mut h = HeaderMap::new();
-        assert_eq!(forwarded_prefix(&h), "");
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana"));
-        assert_eq!(forwarded_prefix(&h), "/ana");
-        h.insert("x-forwarded-prefix", HeaderValue::from_static("/ana/"));
-        assert_eq!(forwarded_prefix(&h), "/ana");
-        // Not a path, or a path that climbs, is not a prefix — it is about to be
-        // spliced into a page.
-        for bad in ["ana", "/../admin", "/a\"onload=x"] {
-            h.insert("x-forwarded-prefix", HeaderValue::from_str(bad).unwrap());
-            assert_eq!(forwarded_prefix(&h), "", "{bad}");
-        }
-    }
-
-    #[test]
-    fn the_pages_own_paths_start_where_the_page_does() {
-        let html = r#"<link href="/favicon.ico"><script type="module" src="/assets/i.js"></script>"#;
-        let out = reroot(html, "/ana");
-        assert!(out.contains(r#"href="/ana/favicon.ico""#), "{out}");
-        assert!(out.contains(r#"src="/ana/assets/i.js""#), "{out}");
-        // And unprefixed is byte-for-byte what it was.
-        assert_eq!(reroot(html, ""), html);
-    }
-
-    #[test]
-    fn the_import_map_is_rerooted_too_and_other_origins_are_not() {
-        let html = r#"<script type="importmap">{"imports":{"react": "/assets/r.js"}}</script>
-<script src="//cdn.example/x.js"></script>"#;
-        let out = reroot(html, "/ana");
-        assert!(out.contains(r#""react": "/ana/assets/r.js""#), "{out}");
-        assert!(out.contains(r#"src="//cdn.example/x.js""#), "a protocol-relative URL was claimed: {out}");
-    }
-
-    #[test]
-    fn the_page_is_told_where_it_is_only_when_it_is_somewhere() {
-        let html = r#"<head><script type="importmap">{}</script></head>"#;
-        let out = inject_base(html.to_string(), "/ana");
-        assert!(out.contains(r#"window.__HI_BASE__ = "/ana";"#), "{out}");
-        assert!(
-            out.find("__HI_BASE__").unwrap() < out.find("importmap").unwrap(),
-            "the page must know before it loads anything"
-        );
-        assert_eq!(inject_base(html.to_string(), ""), html);
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -638,21 +519,6 @@ mod tests {
         let link_pos = out.find("modulepreload").expect("preload present");
         let mod_pos = out.find("type=\"module\"").expect("module script present");
         assert!(map_pos < link_pos && link_pos < mod_pos, "{out}");
-    }
-
-    /// The preloads are root-absolute like everything else the page emits, so
-    /// the community's subpath moves them with the rest. A link left at `/assets`
-    /// under `/ana` asks the *community* for the shim and preloads a 404 — which
-    /// is silent, and costs exactly the round trip the link was added to save.
-    #[test]
-    fn a_preload_follows_the_page_under_a_subpath() {
-        let map = r#"{"imports":{"react":"/assets/share-react.js"}}"#;
-        let html = r#"<head><script type="module" src="/x.js"></script></head>"#;
-        let out = reroot(&splice_importmap(html, map), "/ana");
-        assert!(
-            out.contains(r#"<link rel="modulepreload" crossorigin href="/ana/assets/share-react.js">"#),
-            "{out}"
-        );
     }
 
     /// A debug build's map, or a malformed one, must cost the page nothing more

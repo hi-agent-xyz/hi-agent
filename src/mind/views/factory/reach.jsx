@@ -14,7 +14,7 @@
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).
 import { useState, useCallback } from "react";
-import { url, useLive, TEMPO } from "@hi/core";
+import { useLive, TEMPO } from "@hi/core";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // TODO(i18n): en + zh are hand-written. Further languages are meant to be authored at
@@ -107,7 +107,7 @@ export default function Reach() {
 
   const loadDevices = useCallback(
     () =>
-      fetch(url("/api/surfaces"))
+      fetch("/api/surfaces")
         .then((r) => r.json())
         .then((d) => {
           setDevices(d.surfaces || []);
@@ -121,7 +121,7 @@ export default function Reach() {
   // than by typing a name that may match nobody.
   const loadPeople = useCallback(
     () =>
-      fetch(url("/api/people"))
+      fetch("/api/people")
         .then((r) => r.json())
         .then((d) => setPeople((d.people || []).map((p) => p.subject)))
         .catch(() => {}),
@@ -132,7 +132,7 @@ export default function Reach() {
     () =>
       // Always answers: a core with no name is a normal core, and the reason it
       // has none (no account yet, no community reachable) rides in `why`.
-      fetch(url("/api/handle"))
+      fetch("/api/handle")
         .then((r) => r.json())
         .then(setHandle)
         .catch(() => setHandle((prev) => prev ?? { handles: [] })),
@@ -175,7 +175,7 @@ function Name({ state, onChanged }) {
     setBusy(true);
     setRefused("");
     try {
-      const r = await fetch(url("/api/handle"), {
+      const r = await fetch("/api/handle", {
         method: "POST",
         headers: WRITE,
         body: JSON.stringify({ handle: name }),
@@ -259,7 +259,7 @@ function Devices({ list, people, settable, reload, reloadPeople }) {
   async function register(id, subject) {
     setBusy(id);
     try {
-      await fetch(url(`/api/surfaces/${id}/subject`), {
+      await fetch(`/api/surfaces/${id}/subject`, {
         method: "POST",
         headers: WRITE,
         body: JSON.stringify({ subject }),
@@ -273,7 +273,7 @@ function Devices({ list, people, settable, reload, reloadPeople }) {
   async function addDevice() {
     setBusy("pair");
     try {
-      const r = await fetch(url("/api/pair"), { method: "POST", headers: WRITE });
+      const r = await fetch("/api/pair", { method: "POST", headers: WRITE });
       setPairing(r.ok ? await r.json() : null);
     } catch {
       setPairing(null);
@@ -285,7 +285,7 @@ function Devices({ list, people, settable, reload, reloadPeople }) {
   async function revoke(id) {
     setBusy(id);
     try {
-      await fetch(url(`/api/surfaces/${id}`), { method: "DELETE", headers: WRITE });
+      await fetch(`/api/surfaces/${id}`, { method: "DELETE", headers: WRITE });
       reload();
     } finally {
       setBusy("");
@@ -362,7 +362,7 @@ function Devices({ list, people, settable, reload, reloadPeople }) {
               <img
                 style={S.qr}
                 alt=""
-                src={url(`/api/qr?data=${encodeURIComponent(pairing.app_url || pairing.url)}`)}
+                src={`/api/qr?data=${encodeURIComponent(pairing.app_url || pairing.url)}`}
               />
               <div style={S.hint}>{L.pairAt}</div>
             </>

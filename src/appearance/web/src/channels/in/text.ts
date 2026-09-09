@@ -1,4 +1,3 @@
-import { url } from "../../lib/base";
 // Client for the inbound text channel.
 //
 // `postInText` sends a typed line to the agent (POST /api/in/text). The server
@@ -18,7 +17,7 @@ export async function postInText(opts: {
   body: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  const res = await fetch(url("/api/in/text"), {
+  const res = await fetch("/api/in/text", {
     method: "POST",
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
@@ -51,7 +50,7 @@ export const TYPING_PING_INTERVAL_MS = 800;
  * and nothing else — never a message, and never an error worth showing.
  */
 export function postInTextTyping(): void {
-  void fetch(url("/api/in/text/typing"), {
+  void fetch("/api/in/text/typing", {
     method: "POST",
     headers: { "X-HI-Surface": "1" },
     keepalive: true,

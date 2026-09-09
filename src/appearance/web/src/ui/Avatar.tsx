@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { url } from "../lib/base";
 import type { Sender } from "../channels/out/text";
 
 /**
@@ -30,7 +29,7 @@ const SIZE_CLASS = "size-7 shrink-0 self-start overflow-hidden rounded-full";
 
 /** `/api/people/<subject>/avatar` — the one crop that stands for a person. */
 function avatarUrl(subject: string): string {
-  return url(`/api/people/${encodeURIComponent(subject)}/avatar`);
+  return `/api/people/${encodeURIComponent(subject)}/avatar`;
 }
 
 /**
@@ -123,7 +122,7 @@ function AgentMark() {
       className={`${SIZE_CLASS} flex items-center justify-center bg-secondary`}
       aria-hidden
     >
-      <img src={url("/icon.svg")} alt="" className="size-4 object-contain" />
+      <img src={"/icon.svg"} alt="" className="size-4 object-contain" />
     </div>
   );
 }

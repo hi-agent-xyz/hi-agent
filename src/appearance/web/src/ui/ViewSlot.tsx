@@ -1,4 +1,3 @@
-import { url } from "../lib/base";
 import {
   Component,
   useCallback,
@@ -29,7 +28,7 @@ function ViewMount({ moduleUrl }: { moduleUrl: string }) {
     // It comes from the backend as a root-absolute path, which is the core's
     // root — not necessarily this page's, when the community serves the core
     // under a subpath.
-    import(/* @vite-ignore */ url(moduleUrl))
+    import(/* @vite-ignore */ moduleUrl)
       .then((mod) => {
         if (!alive) return;
         setComp(() => mod.default as ComponentType);

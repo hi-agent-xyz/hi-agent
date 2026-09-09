@@ -1,4 +1,3 @@
-import { url } from "./base";
 // Dev-seam backstop for `<html lang>`.
 //
 // **The server is authoritative.** In prod, `appearance::index()` rewrites
@@ -24,7 +23,7 @@ import { url } from "./base";
 /** The stored language value (`system` / `en` / `zh-Hans`), or null if unreadable. */
 async function storedLanguage(): Promise<string | null> {
   try {
-    const r = await fetch(url("/api/settings"));
+    const r = await fetch("/api/settings");
     if (!r.ok) return null;
     const s = (await r.json()) as { appearance?: { language?: { value?: string } } };
     return s.appearance?.language?.value ?? null;

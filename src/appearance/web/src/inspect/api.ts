@@ -1,4 +1,3 @@
-import { url } from "../lib/base";
 // Inspect data layer — typed views over the endpoints the Rust backend exposes:
 //   GET  /api/sessions                    → live snapshot of Reaction (JSON)
 //   GET  /api/sessions/events             → SSE of every lifecycle event ("session")
@@ -52,7 +51,7 @@ export interface SessionEvent {
 
 /** Fetch the live snapshot of Reaction. Throws on network/HTTP error. */
 export async function fetchSessions(signal?: AbortSignal): Promise<AgentView> {
-  const res = await fetch(url("/api/sessions"), { signal });
+  const res = await fetch("/api/sessions", { signal });
   if (!res.ok) throw new Error(`GET /api/sessions → ${res.status}`);
   return (await res.json()) as AgentView;
 }
