@@ -47,6 +47,13 @@ fn in_scope(path: &str, view_ref: &str, module_url: &str) -> bool {
     if path.starts_with("/assets/") {
         return true;
     }
+    // This view's own picture. It is what `og:image` points at, and a link preview is
+    // scraped by something holding no cookie — so leaving it out meant every preview
+    // 401'd while the page itself opened fine, which is the failure that looks like the
+    // chat app being broken rather than like us.
+    if path == format!("/views/_shots/ref/{view_ref}.png") {
+        return true;
+    }
     // The view's own folder: `badminton-top10/leader` owns `/views/badminton-top10/`.
     // A single-segment ref owns nothing under `/views/`, because it has no folder of
     // its own to own — its files would be siblings of every other view's.
@@ -520,10 +527,15 @@ mod tests {
         assert!(in_scope(m, r, m));
         assert!(in_scope("/assets/share-react.js", r, m));
         assert!(in_scope("/views/badminton-top10/leader.jpg", r, m));
+        // Its own picture, for the link preview.
+        assert!(in_scope("/views/_shots/ref/badminton-top10/leader.png", r, m));
 
         // Another view's folder, another view's module, and the workshop at large.
         assert!(!in_scope("/views/autumn-milk-tea/cup.jpg", r, m));
         assert!(!in_scope("/views/_compiled/ff99.mjs", r, m));
+        // Somebody else's picture is somebody else's.
+        assert!(!in_scope("/views/_shots/ref/autumn-milk-tea/cup.png", r, m));
+        assert!(!in_scope("/views/_shots/", r, m));
         assert!(!in_scope("/views/", r, m));
         assert!(!in_scope("/api/views", r, m));
     }
@@ -667,6 +679,7 @@ mod tests {
         let m = "/views/_compiled/ab12.mjs";
         assert!(in_scope(m, "agent-arch", m));
         assert!(in_scope("/assets/x.css", "agent-arch", m));
+        assert!(in_scope("/views/_shots/ref/agent-arch.png", "agent-arch", m));
         assert!(!in_scope("/views/agent-arch.jpg", "agent-arch", m));
         assert!(!in_scope("/views/anything.jpg", "agent-arch", m));
     }

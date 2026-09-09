@@ -110,10 +110,11 @@ That single run answers three questions that would otherwise need three mechanis
    is refused. `window.__hiRender` already collects failed loads and console errors, and *a
    blank screenshot with an empty error list means the view really did render blank* — which is
    the case that most needs catching, because it is the one that looks fine in source.
-2. **What is the page's HTML?** `document.documentElement.outerHTML` after settle, with images
-   inlined as data URIs. This is what an agent reads and what a link preview scrapes. Inlining
-   also removes the sub-resource problem for the static half entirely: no key to propagate, no
-   gated asset for an edge to cache.
+2. **What is the page's HTML?** `document.documentElement.outerHTML` after settle. This is what
+   an agent reads without running anything, and what a link preview scrapes. The pictures stay
+   as paths rather than being inlined: the view's own folder is in the share's scope, and the
+   whole views tree is already served `no-store` or `private`, so there is no gated asset for an
+   edge to hold and nothing a data URI would buy but weight.
 3. **What does it legitimately request?** Whatever it asked for during the run *is* the
    `connect-src` list. Nothing has to be guessed, and a view needing nothing gets `'none'`.
 
