@@ -393,6 +393,19 @@ pub async fn gate(
         return next.run(req).await;
     }
 
+    // A published view, and the files that view needs to render. Read before the
+    // throttle so a visitor who was never asked for a credential cannot spend one
+    // person's failure budget, and only for `GET`: a share is something to look at.
+    if method == axum::http::Method::GET
+        && crate::foundation::server::view_share::grants(
+            surfaces.data_dir(),
+            req.uri(),
+            req.headers(),
+        )
+    {
+        return next.run(req).await;
+    }
+
     if surfaces.throttled() {
         return (StatusCode::TOO_MANY_REQUESTS, "too many failed attempts\n").into_response();
     }

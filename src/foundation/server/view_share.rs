@@ -169,6 +169,11 @@ fn page_path(data_dir: &std::path::Path, view_ref: &str) -> std::path::PathBuf {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Share {
     pub view_ref: String,
+    /// The compiled module this share published. Kept because the scope is enforced on
+    /// every request and [`in_scope`] is written in terms of it — re-compiling to find
+    /// out would also mean a recompile could quietly widen what a share serves.
+    #[serde(default)]
+    pub module_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_hash: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -307,6 +312,7 @@ pub async fn open(
     let key = unlisted.then(crate::foundation::surfaces::random_token);
     let share = Share {
         view_ref: view_ref.to_string(),
+        module_url: module_url.clone(),
         key_hash: key.as_deref().map(hex_hash),
         created_at: chrono::Utc::now(),
         description: description.trim().to_string(),
@@ -333,6 +339,162 @@ pub async fn close(data_dir: &std::path::Path, view_ref: &str) -> anyhow::Result
     write_shares(data_dir, &shares)?;
     let _ = tokio::fs::remove_file(page_path(data_dir, view_ref)).await;
     Ok(())
+}
+
+/// The cookie an unlisted share's key is carried in once the page has been opened.
+///
+/// **The page's sub-resources are why this exists.** A browser asks for the module and
+/// the pictures without the query string, so a key that only ever lived in the URL
+/// would open the page and nothing on it. Same seam as `POST /api/session`, different
+/// scope: a session says *this surface may reach me*, this says *this caller may read
+/// these paths*.
+pub const SHARE_COOKIE: &str = "hi_share";
+
+/// The key a request is presenting, from the query string or the cookie.
+fn presented_key(uri: &axum::http::Uri, headers: &axum::http::HeaderMap) -> Option<String> {
+    let from_query = uri.query().and_then(|q| {
+        q.split('&').find_map(|pair| pair.strip_prefix("key=").map(|v| v.to_string()))
+    });
+    from_query.or_else(|| {
+        headers.get_all(axum::http::header::COOKIE).iter().find_map(|h| {
+            h.to_str().ok()?.split(';').find_map(|pair| {
+                pair.trim().strip_prefix(SHARE_COOKIE)?.strip_prefix('=').map(str::to_string)
+            })
+        })
+    })
+}
+
+/// Whether an **uncredentialed** request may have this path, because a share grants it.
+///
+/// Read by the gate, so it answers for the page *and* everything the page pulls: a
+/// shared view whose pictures 401 is not shared. The scope is still the derived one —
+/// this view's module, this view's folder, `/assets/*` — so a share opens exactly what
+/// the check watched it use and nothing else.
+pub fn grants(
+    data_dir: &std::path::Path,
+    uri: &axum::http::Uri,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    let path = uri.path();
+    let key = presented_key(uri, headers);
+    read_shares(data_dir).iter().any(|share| {
+        if !share.opened_by(key.as_deref()) {
+            return false;
+        }
+        path.trim_end_matches('/') == format!("/{}", share.view_ref)
+            || in_scope(path, &share.view_ref, &share.module_url)
+    })
+}
+
+/// `<`, `&` and `"` in a value about to sit inside an HTML attribute.
+fn escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The page a visitor gets: the checked HTML, plus the tags that make it legible to
+/// something that is not a browser.
+///
+/// The captured document is the render page's, and that is the right page rather than a
+/// convenient one — it mounts exactly one view and deliberately does **not** mount
+/// `SessionProvider`, so it opens no microphone, no camera and no channel long-poll and
+/// registers as nobody. That is what a shared page has to be anyway.
+fn page_with(share: &Share, label: &str, html: &str, shot_url: Option<&str>) -> String {
+    let mut tags = format!(
+        "<meta name=\"description\" content=\"{d}\">\n\
+         <meta property=\"og:type\" content=\"website\">\n\
+         <meta property=\"og:title\" content=\"{t}\">\n\
+         <meta property=\"og:description\" content=\"{d}\">\n",
+        d = escape(&share.description),
+        t = escape(label),
+    );
+    if let Some(shot) = shot_url {
+        tags.push_str(&format!("<meta property=\"og:image\" content=\"{}\">\n", escape(shot)));
+    }
+    match html.find("</head>") {
+        Some(at) => format!("{}{tags}{}", &html[..at], &html[at..]),
+        // No head to inject into means the capture is not a document we recognise.
+        // Serve it anyway — the content is the point, and the tags are the garnish.
+        None => html.to_string(),
+    }
+}
+
+/// `GET /<ref>` — a shared view, to somebody who is not the owner.
+///
+/// Reached from the router's fallback rather than a route of its own, so a share can
+/// never shadow something this core serves. `RESERVED` refuses those names at creation
+/// too; this is the half that cannot be got wrong by adding a route later.
+pub async fn serve(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<super::AppState>>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let view_ref = uri.path().trim_start_matches('/').trim_end_matches('/');
+    let Some(share) = find(&state.data_dir, view_ref) else {
+        return (axum::http::StatusCode::NOT_FOUND, "not found\n").into_response();
+    };
+    let key = presented_key(&uri, &headers);
+    if !share.opened_by(key.as_deref()) {
+        // Deliberately the same answer an unshared name gets. A 401 here would confirm
+        // the name is real, which is the one thing an unlisted share is hiding.
+        return (axum::http::StatusCode::NOT_FOUND, "not found\n").into_response();
+    }
+
+    let Ok(html) = tokio::fs::read_to_string(page_path(&state.data_dir, view_ref)).await else {
+        // The record says shared and the page is gone: the check has to run again. Say
+        // so rather than serving an empty mount point.
+        tracing::warn!(view_ref, "a share has no page on disk");
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "this page needs to be published again\n",
+        )
+            .into_response();
+    };
+
+    let label = view_ref.rsplit('/').next().unwrap_or(view_ref).replace(['-', '_'], " ");
+    let shot = super::view_shots::url_for_ref(&state.data_dir, view_ref);
+    let body = page_with(&share, &label, &html, shot.as_deref());
+
+    let connect = if share.connect_src.is_empty() {
+        "'none'".to_string()
+    } else {
+        share.connect_src.join(" ")
+    };
+    let mut headers_out = axum::http::HeaderMap::new();
+    headers_out.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    // The same list the gate enforces, said again to the browser. One allow-list, two
+    // places it is applied, so a view that grows an appetite fails visibly rather than
+    // reaching further.
+    if let Ok(v) = axum::http::HeaderValue::from_str(&format!("connect-src {connect}")) {
+        headers_out.insert(axum::http::header::CONTENT_SECURITY_POLICY, v);
+    }
+    // An unlisted page is not for a shared cache to keep; a public one may be, and the
+    // short life is the whole of what withdrawing it can promise.
+    let cache = if share.key_hash.is_some() { "private, max-age=60" } else { "public, max-age=60" };
+    if let Ok(v) = axum::http::HeaderValue::from_str(cache) {
+        headers_out.insert(axum::http::header::CACHE_CONTROL, v);
+    }
+    // Hand the key to the browser so the page's own requests carry it. `SameSite=Lax`
+    // and no `Domain=`: this is one page on one core, and it travels no further.
+    if share.key_hash.is_some() {
+        if let Some(key) = key {
+            let secure = if crate::foundation::surfaces::over_tls(&headers) { "; Secure" } else { "" };
+            if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+                "{SHARE_COOKIE}={key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600{secure}"
+            )) {
+                headers_out.insert(axum::http::header::SET_COOKIE, v);
+            }
+        }
+    }
+    (axum::http::StatusCode::OK, headers_out, body).into_response()
 }
 
 #[cfg(test)]
@@ -391,6 +553,7 @@ mod tests {
     fn a_key_is_what_opens_an_unlisted_share() {
         let public = Share {
             view_ref: "agent-arch".into(),
+            module_url: "/views/_compiled/ab12.mjs".into(),
             key_hash: None,
             created_at: chrono::Utc::now(),
             description: String::new(),
@@ -411,6 +574,7 @@ mod tests {
     fn the_key_is_stored_as_a_hash_and_never_as_itself() {
         let share = Share {
             view_ref: "agent-arch".into(),
+            module_url: "/views/_compiled/ab12.mjs".into(),
             key_hash: Some(hex_hash("s3cret")),
             created_at: chrono::Utc::now(),
             description: "a picture of the architecture".into(),
@@ -424,6 +588,76 @@ mod tests {
         // later reads as "there is a key and it is empty".
         let public = Share { key_hash: None, ..share };
         assert!(!serde_json::to_string(&public).unwrap().contains("key_hash"));
+    }
+
+    /// The key arrives in the URL the first time and in the cookie thereafter, because
+    /// the page's own requests carry no query string. The query wins when both are
+    /// present: it is what the person just clicked, and a stale cookie should not
+    /// decide what a fresh link opens.
+    #[test]
+    fn a_key_is_read_from_the_url_or_the_cookie() {
+        use axum::http::{HeaderMap, HeaderValue, Uri, header};
+        let empty = HeaderMap::new();
+        let with_cookie = {
+            let mut h = HeaderMap::new();
+            h.insert(header::COOKIE, HeaderValue::from_static("a=1; hi_share=fromcookie; b=2"));
+            h
+        };
+        let uri = |s: &str| s.parse::<Uri>().unwrap();
+
+        assert_eq!(presented_key(&uri("/x?key=fromurl"), &empty).as_deref(), Some("fromurl"));
+        assert_eq!(presented_key(&uri("/x"), &with_cookie).as_deref(), Some("fromcookie"));
+        assert_eq!(
+            presented_key(&uri("/x?key=fromurl"), &with_cookie).as_deref(),
+            Some("fromurl"),
+        );
+        assert_eq!(presented_key(&uri("/x"), &empty), None);
+        // A query that carries something else is not a key.
+        assert_eq!(presented_key(&uri("/x?monkey=no"), &empty), None);
+    }
+
+    /// The description and the title go into attributes, so anything that could close
+    /// one has to stop being able to. The page is assembled from a person's sentence
+    /// and a view's own name, and neither is trusted markup.
+    #[test]
+    fn the_tags_cannot_break_out_of_their_attributes() {
+        let share = Share {
+            view_ref: "agent-arch".into(),
+            module_url: "/views/_compiled/ab12.mjs".into(),
+            key_hash: None,
+            created_at: chrono::Utc::now(),
+            description: r#"a "chart" of <b>everything</b> & more"#.into(),
+            connect_src: Vec::new(),
+        };
+        let out = page_with(&share, "agent arch", "<html><head></head><body>x</body></html>", None);
+        assert!(!out.contains(r#"content="a "chart""#), "the quote was not escaped: {out}");
+        assert!(out.contains("&quot;chart&quot;"), "{out}");
+        assert!(out.contains("&lt;b&gt;"), "{out}");
+        assert!(out.contains("&amp; more"), "{out}");
+    }
+
+    /// The tags land inside the head, ahead of `</head>`, and the body is untouched —
+    /// the content is the check's output and this only garnishes it.
+    #[test]
+    fn the_tags_go_in_the_head_and_the_content_is_left_alone() {
+        let share = Share {
+            view_ref: "agent-arch".into(),
+            module_url: "/views/_compiled/ab12.mjs".into(),
+            key_hash: None,
+            created_at: chrono::Utc::now(),
+            description: "the shape of it".into(),
+            connect_src: Vec::new(),
+        };
+        let html = "<html><head><title>t</title></head><body><div id=\"root\">real</div></body></html>";
+        let out = page_with(&share, "agent arch", html, Some("/views/_shots/ref/agent-arch.png"));
+        let head_end = out.find("</head>").expect("still a head");
+        assert!(out.find("og:description").unwrap() < head_end);
+        assert!(out.find("og:image").unwrap() < head_end);
+        assert!(out.contains(">real</div>"), "the content was disturbed: {out}");
+
+        // A capture that is not a document we recognise is served as it is: the
+        // content is the point and the tags are the garnish.
+        assert_eq!(page_with(&share, "l", "just text", None), "just text");
     }
 
     /// A single-segment ref has no folder of its own, so it owns nothing under

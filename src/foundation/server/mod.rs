@@ -7,7 +7,6 @@ use std::sync::atomic::AtomicU64;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::http::StatusCode;
 use axum::routing::{get, patch, post, put};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -763,9 +762,15 @@ pub fn build(
                 .route("/views/{*path}", get(generated::views_file))
                 .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6))),
         )
+        // A shared view is answered here rather than from a route of its own, so a
+        // published name can never shadow something this core serves — whatever is
+        // added to the router later wins by existing. `view_share::RESERVED` refuses
+        // those names at creation as well; this is the half that cannot go stale.
+        //
+        // Before `with_state`, because it is the one fallback that needs the state.
+        .fallback(view_share::serve)
         .with_state(state.clone())
-        .merge(crate::appearance::router())
-        .fallback(not_found);
+        .merge(crate::appearance::router());
 
     // Mount the owner sign-in routes (`/auth/*`) when OIDC is configured. There is
     // no access gate — every route is public; sign-in is an opt-in action that only
@@ -820,6 +825,3 @@ pub struct ServerSeams {
     pub state: Arc<AppState>,
 }
 
-async fn not_found() -> (StatusCode, &'static str) {
-    (StatusCode::NOT_FOUND, "not found\n")
-}
