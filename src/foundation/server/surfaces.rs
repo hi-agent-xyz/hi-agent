@@ -89,6 +89,27 @@ pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -
     .into_response()
 }
 
+/// The address the community gave this core, or `None` if it has no name it is
+/// serving.
+///
+/// **The name this core *serves*, not the first one the account ever took**: an address
+/// carrying a name nothing is dialling reaches "asleep" on the other device, which reads
+/// as the thing being broken.
+///
+/// Separated out because two callers need it and only one of them has a request to fall
+/// back on — a share is published without anybody asking for it, so there is no `Host`
+/// header to name this core by.
+pub(crate) async fn named_base_url(data_dir: &std::path::Path) -> Option<String> {
+    let names = community::current(data_dir).await.ok()?;
+    let serving = crate::foundation::tunnel::choose(data_dir, &names.handles)?;
+    names
+        .handles
+        .iter()
+        .find(|h| h.handle == serving)
+        .map(|h| h.base_url.trim().trim_end_matches('/').to_string())
+        .filter(|base| !base.is_empty())
+}
+
 /// The address to hand another device — the one a phone should dial, not the one
 /// the asking request happened to arrive on.
 ///
@@ -116,16 +137,7 @@ pub(crate) async fn public_base_url(
     // The name this core *serves*, not the first one the account ever took: a QR
     // carrying a name nothing is dialling is a pairing that fails with "asleep"
     // on the other device, which reads as the app being broken.
-    let named = community::current(data_dir).await.ok().and_then(|names| {
-        let serving = crate::foundation::tunnel::choose(data_dir, &names.handles)?;
-        names
-            .handles
-            .iter()
-            .find(|h| h.handle == serving)
-            .map(|h| h.base_url.trim().trim_end_matches('/').to_string())
-            .filter(|base| !base.is_empty())
-    });
-    let raw = named.unwrap_or_else(|| {
+    let raw = named_base_url(data_dir).await.unwrap_or_else(|| {
         let host =
             headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
         let scheme = if surfaces::over_tls(headers) { "https" } else { "http" };

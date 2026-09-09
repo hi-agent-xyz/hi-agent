@@ -419,6 +419,43 @@ fn review_view_tool() -> Value {
     )
 }
 
+/// `hi_share_view` — publish a saved view as a page somebody outside can open, or
+/// withdraw one.
+///
+/// **Publishing can fail, and that is the point of it.** A view that reads the agent's
+/// own API renders half-empty to a visitor with no session, and it looks entirely fine
+/// in its source — so this renders it first with the API refused and refuses to publish
+/// what comes back broken. See `docs/arch/sharing.md`.
+///
+/// The `description` is not decoration: it is what a person sees in a link preview and
+/// what another agent reads instead of running the page. It is asked for here rather
+/// than derived, because only the session that made the view knows what it is *for*.
+fn share_view_tool() -> Value {
+    tool(
+        "hi_share_view",
+        "Publish one of your saved views as an ordinary web page, so a person or another \
+         agent can open it with a link. The view is rendered first, with your API refused, \
+         exactly as a stranger will see it — if it needs data it fetches while rendering, \
+         it will come back empty for them and this refuses to publish it, telling you \
+         what it reached for. Only what that one view needs is ever served: its own \
+         module, its own folder, nothing else of yours. Use `unlisted` for a link that \
+         carries a key, when it should not be findable by guessing the name. Set `on` to \
+         false to withdraw it — the link stops working, though a copy already cached at \
+         the edge can outlive that by a minute. Show the person what it looks like before \
+         you hand the link over.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
+                "description": { "type": "string", "description": "One sentence saying what this is. It becomes the page's description and its link preview — what somebody reads before deciding to open it, and what an agent reads instead of running it." },
+                "unlisted": { "type": "boolean", "description": "Put a key in the link so the name cannot be guessed. Whoever holds the link still holds the access — this defeats guessing, not sharing." },
+                "on": { "type": "boolean", "description": "Omit or true to publish. False withdraws a view you published before." },
+            },
+            "required": ["ref"],
+        }),
+    )
+}
+
 /// Brokered HTTP: the model chooses an operation and a drive-file reference; the
 /// trusted host resolves and injects the value at the destination boundary.
 fn http_request_tool() -> Value {
@@ -475,6 +512,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         Some("worker") => vec![
             send_message_tool(),
             review_view_tool(),
+            share_view_tool(),
             http_request_tool(),
             image_text_to_text_tool(),
             // **Driving a screen is not a tool here, and is not meant to become one.**
@@ -1218,6 +1256,7 @@ async fn dispatch_tool(
         "hi_text_to_video" => return do_text_to_video(data_dir, slug, args).await,
         "hi_image_to_video" => return do_image_to_video(data_dir, slug, args).await,
         "hi_review_view" => return do_review_view(data_dir, args).await,
+        "hi_share_view" => return do_share_view(data_dir, args).await,
         "hi_http_request" => {
             return match crate::foundation::privacy::broker::http_request(privacy, args).await {
                 Ok(response) => match serde_json::to_string_pretty(&response) {
@@ -1909,6 +1948,88 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
         }));
     }
     json!({ "content": content, "isError": false })
+}
+
+/// `hi_share_view`: check the view the way a stranger will see it, and publish it if it
+/// survives that.
+async fn do_share_view(data_dir: &std::path::Path, args: &Value) -> Value {
+    use crate::foundation::server::view_share;
+
+    let Some(view_ref) = args.get("ref").and_then(Value::as_str).map(str::trim) else {
+        return tool_error("hi_share_view requires a `ref`");
+    };
+    if view_ref.is_empty() {
+        return tool_error("hi_share_view requires a `ref`");
+    }
+    let on = args.get("on").and_then(Value::as_bool).unwrap_or(true);
+
+    if !on {
+        return match view_share::close(data_dir, view_ref).await {
+            Ok(()) => json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "`{view_ref}` is no longer published. A copy already cached at the \
+                         edge can answer for up to a minute after this."
+                    ),
+                }],
+                "isError": false,
+            }),
+            Err(e) => tool_error(&format!("could not withdraw `{view_ref}`: {e:#}")),
+        };
+    }
+
+    let unlisted = args.get("unlisted").and_then(Value::as_bool).unwrap_or(false);
+    let description = args.get("description").and_then(Value::as_str).unwrap_or_default();
+
+    match view_share::open(data_dir, view_ref, unlisted, description).await {
+        Ok(opened) => {
+            // A core with no name is reachable only from the machine it runs on, so say
+            // that rather than handing back a localhost URL somebody will send to a
+            // friend.
+            let base = crate::foundation::server::surfaces::named_base_url(data_dir).await;
+            let link = match (&base, &opened.key) {
+                (Some(base), Some(key)) => format!("{base}{}?key={key}", opened.path),
+                (Some(base), None) => format!("{base}{}", opened.path),
+                (None, _) => opened.path.clone(),
+            };
+            let where_it_is = if base.is_some() {
+                format!("It is at {link}")
+            } else {
+                format!(
+                    "This agent has no name on the community yet, so {link} is only \
+                     reachable on this machine — claim a handle before handing it out"
+                )
+            };
+            let keyed = if opened.key.is_some() {
+                " The key is in that link and is not shown again; whoever holds the link can open it."
+            } else {
+                " Anybody with the address can open it."
+            };
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!(
+                        "`{view_ref}` is published — it rendered with your API refused, so \
+                         what a stranger sees is what you just checked. {where_it_is}.{keyed} \
+                         Show the person what it looks like before you hand the link over."
+                    ),
+                }],
+                "isError": false,
+            })
+        }
+        Err(view_share::Refused::Name(why)) => tool_error(&why),
+        Err(view_share::Refused::Check(reasons)) => tool_error(&format!(
+            "`{view_ref}` cannot be published as it is:\n- {}\n\nThis is not a broken \
+             view — it is one that needs something a shared page is never given. A view \
+             that carries its own data can be published; one that reads it while rendering \
+             cannot.",
+            reasons.join("\n- ")
+        )),
+        Err(view_share::Refused::Broken(why)) => {
+            tool_error(&format!("could not check `{view_ref}`: {why}"))
+        }
+    }
 }
 
 /// `hi_record_episode`: file the first `count` unconsolidated signals as one episode
