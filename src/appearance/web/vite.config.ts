@@ -54,6 +54,7 @@ const SHARED_SPECIFIERS: Record<string, string> = {
 // resolves — see the shim's header for why shadowing beat renaming.
 const LIBRARY_SPECIFIERS: Record<string, string> = {
   "src/shared/d3-hierarchy.ts": "d3-hierarchy",
+  "src/shared/d3-flextree.ts": "d3-flextree",
   "src/shared/ofv.ts": "@open-file-viewer/core",
 };
 
@@ -331,6 +332,7 @@ export default defineConfig({
         "share-motion": r("src/shared/motion.ts"),
         "share-core": r("src/shared/core.ts"),
         "lib-d3-hierarchy": r("src/shared/d3-hierarchy.ts"),
+        "lib-d3-flextree": r("src/shared/d3-flextree.ts"),
         "lib-ofv": r("src/shared/ofv.ts"),
         ...Object.fromEntries(
           Object.keys(SHADCN_SPECIFIERS).map((file) => {

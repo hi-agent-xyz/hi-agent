@@ -136,50 +136,55 @@
 //
 // ── the frame ───────────────────────────────────────────────────────────────
 //
-// **Lanes, because a canvas that is only relaxed is a canvas nobody can read.** Two earlier
-// cuts placed the topics by physics — seed them on an ellipse, push overlapping boxes apart,
-// stop. Both looked scattered, and the reason is not that the solver was weak: it had no
-// objective at all. It halts the moment nothing overlaps, so every cluster ends up at whatever
-// coordinate one particular iteration produced and no two gaps are the same. The canvases that
-// read as deliberate are not better simulated; **their contents share edges**. So the placement
-// is a small number of equal-width lanes with the hub at the centre of the middle one, and each
-// topic goes whole into the lane where it costs least.
+// **The row is the node.** The hub is the root of a tidy tree, and every open row hangs
+// directly off it — no rank in between, no column that a topic has to be flattened into. The
+// tree is d3-flextree, whose contour walk takes each node's own height, so a 28px chip run and a
+// 240px picture card pack against each other without either being padded to the other's size.
 //
-// **The hub is not special-cased**: it is a fixed box that takes part in the packing, so the
-// clearing in the middle is space it occupies rather than space reserved for it.
+// Three cuts got here and the first two are worth the space. **Physics does not read as
+// deliberate**: seed the topics on an ellipse, push overlapping boxes apart, stop — both early
+// cuts did this and both looked scattered, because a relaxation halts the moment nothing
+// overlaps and so no two gaps are ever the same. **Nor do lanes.** The cut after that packed
+// each topic whole into one of 3, 5 or 7 equal-width columns and hand-routed orthogonal wires
+// between them, and its trouble was that a topic is not one size: the store carries one deep
+// topic and four with a card apiece, so one lane ran the height of the canvas while three held
+// a single card, and the hub sat in a clearing with nothing in it.
 //
-// **What is optimised is how big everything ends up.** The lane count is chosen by running the
-// packing at 3, 5 and 7 and keeping whichever yields the largest final scale — odd only, since
-// an even count puts the centre line between two lanes and leaves the hub without one. An
-// earlier cut optimised for a canvas whose proportions matched the frame, which is a proxy and
-// pointed the wrong way: it chose five lanes, five lanes exactly filled the width, the scale was
-// pinned at 1 and a third of the height went empty. Once the count is settled, the width still
-// spare goes into the gutters — into air, never into bigger cards, because a card's size is
-// decided by what it holds and must not drift with the window.
+// Handing those same columns to a library changes nothing — a depth-1 star whose leaves carry
+// area is one column per side however it is laid out, and six independent tidy-tree
+// implementations agreed on that to within a percent. What moved it was untying the columns.
 //
-// **A wire travels in a gutter**, because a gutter is the only space the packing guarantees is
-// empty — it keeps the lanes from overlapping each other and says nothing about what stands
-// between a wire's two ends. Leaving the hub radially, straight at the cluster it is going to,
-// crosses whatever lane is in between by construction. So a side-entering wire leaves the hub
-// level, turns up or down a gutter, and comes in level with the label.
+// **No junction rank.** The tree would rather each topic had a node of its own to gather its
+// rows under, and that node is a whole layer of horizontal depth on a diagram whose width is
+// otherwise fixed by the card. Under a name it reads as *that topic's branch*; under nothing —
+// which is what the continued half of a split topic gets — it is a fork in mid-air. So there is
+// none, and the heading does the grouping instead.
 //
-// **And where it has to pass a lane, it passes through a gap in it.** `corridor` takes the boxes
-// of every cluster standing between the hub and the one being wired and picks the height that
-// is clear of all of them for the least detour — a gap between two cards, or the air past the
-// end of the stack. One turn could not do that: a wire two lanes out ran at the hub's own
-// height the whole way across, and the hub's height is exactly where the lane in between
-// centres its stack, so a five-lane chart drew that line into a card and out the other side.
-// The heading's paper ground went with the crossings it was there for: painted in a 34px box,
-// a gradient starts over, so it was a lighter chip laid on the page in every skin whose two
-// paper stops differ.
+// **A heading stands on the rows it names, in height that row reserved for it.** Both ranks
+// work this way: a topic's name is charged to the first row of its run, a sub-topic's to the
+// row that follows it. The alternative — let the tree place the name and re-seat it afterwards
+// — puts the name wherever the packing left room, which is not necessarily above its own cards.
+//
+// **The heaviest topic is cut in two, and both halves are named.** No dealing of whole topics
+// balances one nine-row topic against four one-row topics, so the heavy one stops being one
+// run; how many ways is chosen by laying it out at one, two and three and keeping whichever
+// ends up biggest on screen, the same measure-do-not-guess the lane count used. Leaving the
+// second half unnamed costs nothing in pixels and everything in reading — four cards under no
+// name beside the hub are an orphan run, not more of the topic across the way — so it carries
+// the name again, quieter, marked as continued.
 //
 // **The canvas is whatever the content grew to, and the frame then scales it to fit.** That
 // order is the whole idea; sizing the layout to the frame first is what produced a sparse ring
-// with a hole in it.
+// with a hole in it, twice.
 //
-// Below 960px wide (or 520px tall) it stops being a canvas — lanes need width and a phone has
-// one lane's worth — and the same model renders as sections down the page, same four shapes,
-// same thumbnails, same controls, no geometry.
+// **A wire is a cubic from the hub to a row's title.** The orthogonal routes, the corridor
+// search, the bend radius and the clearance all existed because a wire had to cross lanes it
+// did not belong to and go around what stood in them. Nothing stands between the hub and a row
+// now: the gap the wires run in is the only empty space on the canvas, by construction.
+//
+// Below 960px wide (or 520px tall) it stops being a canvas — this shape needs a column of width
+// either side of the hub and a phone has one column at all — and the same rows render as
+// sections down the page, same four shapes, same headings, same controls, no geometry.
 //
 // **Twelve branches, not a hundred and forty-nine.** The store this was designed against
 // carries 149 rows — 3 todo, 5 doing, 4 serving, 108 done, 25 cancelled — so 8% of the ledger
@@ -218,12 +223,15 @@
 //     a view's own arrows are its own and this view binds none. The cards are now real buttons,
 //     so a D-pad has something to land on the day that plane reaches a view — but nothing has
 //     been read from across a room.
-//   - The four corners still carry air, and the lane count is coarse: 3, 5, 7 and nothing
-//     between. Both are quantities to tune, not structure to redo.
-//   - **Two wires down the same gutter lie on top of each other.** `corridor` keeps a wire off
-//     the cards and knows nothing about the other wires, so two clusters reached past the same
-//     lane share that gutter's x for as far as they both run. Splitting a gutter into tracks
-//     is the fix, and it is worth doing when it is seen rather than because it follows.
+//   - **The width is fixed and the frame is not.** Hub plus one card column either side comes
+//     to about 900px whatever the store holds, so a wide window banks the whole surplus as air
+//     at the left and right edges while the scale stays pinned by the height. A third rank —
+//     sub-topics as branches of their own rather than headings inside a run — is the shape that
+//     would spend it, and it is a change to what is drawn, not a number to tune.
+//   - **Only the heaviest topic is ever cut.** Two heavy topics against three light ones is a
+//     split this cannot balance, because the search only varies one of them. Nothing on the
+//     live store has hit that yet; when it does, the fix is to search the cut across topics
+//     rather than to raise the cap on one.
 //   - **Nothing in the host decides when it goes up**, and nothing should: `stage.md` refuses
 //     a host gate on what is on the screen. It is a view like any other — reachable from the
 //     bookmarks row, shown by `hi_show`. When Reaction reaches for it is guidance, and it
@@ -239,6 +247,7 @@
 // sizes and four weights, which is not a hierarchy but a hierarchy per element.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLive, useViews, TEMPO } from "@hi/core";
+import { flextree } from "d3-flextree";
 
 // ── words ─────────────────────────────────────────────────────────────────────
 // English is the default and the fallback. Task is 任务 and Sessions is 会话 — plain words,
@@ -858,8 +867,29 @@ function model(tasks, workers, projects, views) {
 }
 
 // ── the canvas ────────────────────────────────────────────────────────────────
-// Nothing here but numbers. Every cluster position, every wire endpoint and every card height
-// is read off what this returns, so a label and the line reaching it cannot drift apart.
+// Nothing here but numbers. Every node position, every wire endpoint and every card height is
+// read off what this returns, so a heading and the line reaching its rows cannot drift apart.
+//
+// **The row is the node, and the tidy tree is `d3-flextree`'s.** This used to pack whole
+// *columns* — one topic, one 320-wide stack, dealt onto lanes by a hand-written scorer, with
+// hand-routed orthogonal wires and a corridor search to keep them off the cards. What that
+// shape cost is on the record: a chart whose one deep topic set the height of everything, four
+// lanes holding a card each, and a hub that was the centre of a radial diagram with nothing in
+// it. Feeding the same five topics to any tidy tree as five tall columns is no better — a
+// depth-1 star of area-carrying leaves is one column per side whoever lays it out, and six
+// independent libraries agreed to within a percent.
+//
+// Untying the columns is what moved it: a topic's *rows* are the nodes, so the tree finally has
+// something to fan. Measured on the live shape, at the frame a maximised window gives, the cards
+// come out 0.67 of full size against 0.65 for the lanes — call that even. What changed is not
+// the size, it is that the wires are short, the hub is where every line goes, and a heading
+// stands on the rows it names instead of at the end of a wire across the canvas.
+//
+// **No junction rank.** An intermediate node per topic is what a tree wants — it holds a group
+// together and gives the branch one fan point — and it is a whole layer of horizontal depth for
+// a diagram whose width is otherwise fixed. Drawn under a name it reads as *that topic's
+// branch*; drawn under nothing, which is what the continued half of a split topic gets, it is a
+// fork in mid-air. Both go: every row hangs off the hub, and the heading does the grouping.
 
 const W = 320;
 // **Four shapes, and they are told apart by what goes in them, not by what state the row is in.**
@@ -870,17 +900,20 @@ const W = 320;
 const BOX = { P: 240, T: 152, R: 64 }; // picture card / text card / one row
 const LABEL_H = 34;
 const SUB_H = 28;
-// **Two gaps, because they say different things.** Between the cards inside a cluster, and
-// between two clusters sharing a lane. One constant doing both jobs makes them the same width,
-// and since a card has no outer frame, that space is the only thing on the surface saying
-// *these are two separate things* — so the grouping stops reading at all.
+// A heading and the air under it, charged to the row it stands on. Reserving the height *in the
+// node* is the whole trick: hand the tree a bare row and re-seat the heading above it afterwards
+// and the heading lands on whatever the tree packed into that space.
+const HEAD_H = LABEL_H + 6;
+const SUB_HEAD_H = SUB_H + 4;
+// Between two rows on the same side. There is only one gap now — the lane gap died with the
+// lanes, and what used to separate two topics sharing a lane is a heading.
 const GAP = 9;
-const LANE_GAP = 46;
 // A chip is a fixed height in the stylesheet rather than whatever its contents come to, so the
 // row arithmetic below is exact instead of nearly right — and so a run of them reads as a run.
 const CHIP_H = 28;
 const CHIP_GAP = 6;
-const GUT = 34;
+// How far the cards stand off the hub. The wires live in this gap and nothing else does.
+const SIDE_GAP = 132;
 const PAD = 34;
 // The hub is not special-cased in the packing: it is a fixed box that takes part in it, so the
 // clearing in the middle is space it *occupies* rather than space left for it.
@@ -908,8 +941,8 @@ const shapeOf = (leaf) =>
 // **How wide a chip will be, measured rather than counted.** It was `title.length * 7.4`, which
 // is wrong by a whole row the moment a title is CJK — one em a character, not half — and it
 // left out the timestamp beside the name entirely, which is most of a chip's width. A row out is
-// a cluster 30px shorter than the one on the screen, and on a cluster whose label sits at the
-// bottom that ended the wire above its own name, leaving a stub of line over the word.
+// a run 30px shorter than the one on the screen, and since a run's height is charged to the node
+// the tree packs, that is a node the tree believes is smaller than it is.
 //
 // `measureText` is the same engine that will lay the chip out, so it cannot disagree with it.
 // The ruler is made once, and only where there is a document; without one the old character
@@ -958,288 +991,213 @@ function chipRows(list) {
   return rows;
 }
 
-/** A topic, flattened into the blocks that draw it: its cards top to bottom, a small heading
- *  wherever a sub-topic earned a rank, and everything parked collected into one run of chips at
- *  the foot. **A cluster is one column of fixed width**, which is what makes the packing a
- *  one-dimensional problem and what lets anything line up at all. */
-function cluster(node) {
-  const blocks = [];
+/**
+ * A topic, flattened into the rows that draw it, **in the order the column used to stack them**:
+ * its own cards, then each sub-topic that earned a rank with its cards behind it, then everything
+ * parked collected into one run of chips at the foot.
+ *
+ * A sub-topic's name is not a row of its own — it is a heading charged to the row that follows
+ * it, the same mechanism the topic's own name uses one rank up. That is what keeps a name and
+ * its rows from ever being separated by the packing: there is nothing to separate, the name is
+ * inside the node.
+ *
+ * **The chip run stays one node.** A chip is 28px of a pill, and giving each its own 320-wide
+ * node would have the tree reserve a full row's width for a word — and would break the run,
+ * which is the thing that says *these are the parked ones* at a glance.
+ */
+function rowsOf(node) {
+  const rows = [];
   const chips = [];
+  let pending = [];
+  const push = (row) => {
+    if (pending.length) {
+      row.heads = pending;
+      pending = [];
+    }
+    rows.push(row);
+  };
   const walk = (n, sub) => {
-    if (sub) blocks.push({ t: "sub", id: `sub-${n.key}`, label: n.label, h: SUB_H });
+    if (sub) pending.push({ label: n.label, rank: 2 });
     for (const leaf of n.leaves) {
       if (leaf.kind === "note") {
         chips.push({ id: leaf.id, title: leaf.title });
         continue;
       }
       const k = shapeOf(leaf);
-      if (k === "XS") chips.push({ id: leaf.id, title: leaf.title, view: leaf.view });
-      else blocks.push({ t: "card", id: leaf.id, leaf, k, h: BOX[k] });
+      if (k === "XS") {
+        chips.push({ id: leaf.id, title: leaf.title, view: leaf.view });
+        continue;
+      }
+      push({ id: leaf.id, t: "card", leaf, k, baseH: BOX[k], h: BOX[k], w: W, tone: leaf.tone });
     }
     for (const child of n.children) walk(child, true);
   };
   walk(node, false);
-
-  // **The height the browser will stack, not an estimate of it.** The column is the label, each
-  // block, and the chip run, with one GAP between every pair. The old sum charged a gap to every
-  // block and none to the chips, so a cluster stood 4 to 9px taller than the layout believed —
-  // and on a cluster whose label is at the *bottom* that put the wire's endpoint above its own
-  // label, leaving a stub of line poking out over the word. Every part of the column is now a
-  // fixed height in the stylesheet, which is what lets this be arithmetic rather than a guess.
-  const parts = [LABEL_H, ...blocks.map((b) => b.h)];
   if (chips.length > 0) {
-    const rows = chipRows(chips);
-    parts.push(rows * CHIP_H + (rows - 1) * CHIP_GAP);
+    const n = chipRows(chips);
+    const h = n * CHIP_H + (n - 1) * CHIP_GAP;
+    push({ id: `${node.key}-chips`, t: "chips", chips, baseH: h, h, w: W, tone: node.tone });
   }
-  const h = parts.reduce((n, x) => n + x, 0) + (parts.length - 1) * GAP;
-  return { key: node.key, label: node.label, tone: node.tone, blocks, chips, w: W, h: Math.max(h, LABEL_H) };
+  // A sub-topic whose rows were all chips leaves its heading with nothing to stand on; it rides
+  // the chip run above, which is where its chips went.
+  if (pending.length && rows.length) {
+    const last = rows[rows.length - 1];
+    last.heads = [...(last.heads || []), ...pending];
+  }
+  for (const row of rows) charge(row);
+  return rows;
 }
 
-/** Deal the clusters onto lanes. Each one goes whole into the lane where it costs least:
- *  **the extent it adds beyond the centre line**, plus a small premium for sitting further out
- *  so the hot ones land near the hub.
- *
- *  The extent is the point. A lane that is not the hub's is centred as a whole, so a cluster
- *  there reaches half its height either way; the hub's lane grows from the middle block outward,
- *  so a cluster there reaches its full height. Comparing a whole stack against a one-way reach
- *  makes the hub lane look half as tall as it is, and it becomes a magnet — on the live store
- *  five of seven clusters fell into it, the canvas grew to 974px, and the scorer had to retreat
- *  to more lanes and spread everything into one flat band. */
-function assign(cs, C) {
-  const m = (C - 1) / 2;
-  const lanes = Array.from({ length: C }, (_, i) => ({ i, up: [], down: [], hub: i === m }));
-  const reach = (lane, dir) => {
-    let n = lane.hub ? HUB_H / 2 : 0;
-    for (const c of lane[dir]) n += c.h + LANE_GAP;
-    return n;
-  };
-  for (const c of cs) {
-    let pick = null;
-    for (const lane of lanes) {
-      // Only the hub's lane has two directions. Treating an ordinary lane as two stacks here and
-      // one stack when drawing makes its second cluster look free, so a tall cluster always ends
-      // up with a passenger while other lanes stand empty.
-      for (const dir of lane.hub ? ["up", "down"] : ["down"]) {
-        const after = reach(lane, dir) + c.h + (lane[dir].length || lane.hub ? LANE_GAP : 0);
-        const cost = (lane.hub ? after : after / 2) + Math.abs(lane.i - m) * 30;
-        if (!pick || cost < pick.cost) pick = { lane, dir, cost };
-      }
-    }
-    pick.lane[pick.dir].push(c);
-  }
-  return { C, m, lanes };
+/** A row's height is what it holds plus the headings standing on it. **The one place that
+ *  addition happens**, because the height is recomputed every time the arrangement is searched
+ *  again and adding to `h` in place would compound: a row that gained a topic heading at one
+ *  cut would carry it into the next as if it were part of the card. */
+function charge(row) {
+  row.h = row.baseH + (row.heads || []).reduce((n, hd) => n + (hd.rank === 1 ? HEAD_H : SUB_HEAD_H), 0);
+  return row;
 }
 
-/** Lay one lane plan out in coordinates whose origin is the hub. */
-function put({ m, lanes }, gut) {
-  for (const lane of lanes) {
-    const cx = (lane.i - m) * (W + gut);
-    if (lane.hub) {
-      let y = -HUB_H / 2;
-      lane.up.forEach((c, i) => {
-        y -= LANE_GAP + c.h;
-        c.cx = cx;
-        c.cy = y + c.h / 2;
-        c.hubLane = true;
-        c.slot = i;
-      });
-      y = HUB_H / 2;
-      lane.down.forEach((c, i) => {
-        c.cx = cx;
-        c.cy = y + LANE_GAP + c.h / 2;
-        y += LANE_GAP + c.h;
-        c.hubLane = true;
-        c.slot = i;
-      });
-    } else {
-      const all = [...lane.up.slice().reverse(), ...lane.down];
-      const h = all.reduce((n, c) => n + c.h + LANE_GAP, -LANE_GAP);
-      let y = -h / 2;
-      for (const c of all) {
-        c.cx = cx;
-        c.cy = y + c.h / 2;
-        y += c.h + LANE_GAP;
-        c.hubLane = false;
-        c.slot = 0;
-      }
+/** How much of a row's height its headings take — what the card below them does not get. */
+const headsH = (row) =>
+  (row.heads || []).reduce((n, hd) => n + (hd.rank === 1 ? HEAD_H : SUB_HEAD_H), 0);
+
+/** How tall a run of rows stands, gaps included — the number every choice below is measured in. */
+const spanOf = (rows) => rows.reduce((n, r) => n + r.h + GAP, -GAP);
+
+/**
+ * Cut a topic's rows into `k` runs of roughly equal height, on row boundaries and in order.
+ *
+ * **Why a topic is ever cut.** One topic routinely outweighs all the others put together — on
+ * the live store `no project` is nine rows against one apiece — and no way of dealing whole
+ * topics to two sides can balance `{1000, 250, 160, 90, 60}`. The answer is not which side the
+ * big one goes to; it is that the big one stops being one run. Leaving it whole costs about a
+ * twentieth of the scale, which is the difference between this chart and the lanes it replaced.
+ *
+ * **Every run says whose it is**, the continued ones marked as continued. Leaving the second half
+ * bare costs nothing in pixels and everything in reading: four cards under no name beside the
+ * hub are an orphan run, not more of the topic above them.
+ */
+function cut(rows, k) {
+  if (k <= 1) return [rows];
+  const target = spanOf(rows) / k;
+  const runs = [[]];
+  let run = 0;
+  for (const row of rows) {
+    if (runs.length < k && run > 0 && run + (row.h + GAP) / 2 > target) {
+      runs.push([]);
+      run = 0;
     }
+    runs[runs.length - 1].push(row);
+    run += row.h + GAP;
   }
-  // **The x a wire runs along on its way here.** The packing guarantees exactly one kind of
-  // empty space — the column between two lanes — so that is where a wire travels: the gutter
-  // between this cluster's lane and the hub's. A cluster sharing the hub's lane and coming in
-  // from the side goes around through the gutter beside it, which is the same rule seen from
-  // the inside; one straight above or below the hub has nothing to go around and runs down the
-  // hub's own line.
-  const half = (W + gut) / 2;
-  for (const lane of lanes) {
-    for (const c of [...lane.up, ...lane.down]) {
-      const a = anchorOf(c);
-      // Half a lane pitch, carried on the cluster because a route two lanes out turns into the
-      // gutter beside the *hub's* lane before it turns into the one beside its own.
-      c.half = half;
-      if (a === "top" || a === "bottom") c.gx = c.cx;
-      else if (c.cx) c.gx = c.cx - Math.sign(c.cx) * half;
-      else c.gx = (a === "right" ? 1 : -1) * half;
-    }
-  }
+  return runs.filter((r) => r.length);
 }
 
-/** Choose the lane count, then spend what is left over on air.
+/** Deal whole runs to the lighter side, heaviest first. Runs stay contiguous and in order, so a
+ *  topic reads down the page wherever it lands. */
+function deal(runs) {
+  const sides = [[], []];
+  const load = [0, 0];
+  for (const run of [...runs].sort((a, b) => spanOf(b.rows) - spanOf(a.rows))) {
+    const s = load[0] <= load[1] ? 0 : 1;
+    sides[s].push(run);
+    load[s] += spanOf(run.rows);
+  }
+  return sides;
+}
+
+/** One side, laid out by the tree. The hub is the root and every row is a child of it: there is
+ *  no rank in between, so the tree is doing exactly one job — stacking boxes of unequal height
+ *  into a column that does not overlap. `d3-hierarchy`'s own `tree()` would need the heights
+ *  smuggled through `separation`, which holds only while nothing is three deep. */
+function laySide(side, dir) {
+  const rows = side.flatMap((run) => run.rows);
+  if (rows.length === 0) return [];
+  const layout = flextree({ nodeSize: (n) => [n.data.h + GAP, n.data.w + SIDE_GAP], spacing: 0 });
+  const root = layout.hierarchy({ w: HUB_W / 2, h: HUB_H, children: rows });
+  layout(root);
+  const out = [];
+  for (const n of root.children || []) {
+    const row = n.data;
+    row.left = dir > 0 ? n.y : -n.y - row.w;
+    row.top = n.x - row.h / 2;
+    row.dir = dir;
+    out.push(row);
+  }
+  return out;
+}
+
+/**
+ * Arrange the whole chart, and **choose how far to cut by measuring rather than by a rule**.
  *
- *  **The thing being optimised is how big everything ends up**, so that is what is measured. An
- *  earlier cut optimised for a canvas whose proportions matched the frame, which is a proxy, and
- *  it pointed the wrong way: it chose five lanes, five lanes exactly filled the width, the scale
- *  was pinned at 1 by the width and a third of the height went empty.
+ * The one topic worth cutting is the one that outweighs the rest; whether to cut it at all is
+ * answered the way the lane count used to be — lay it out both ways and keep whichever ends up
+ * biggest on screen. Nothing here reads a topic's name.
  *
- *  Once the count is settled and the scale is held by the height, whatever width is still spare
- *  goes into the gutters — into air, not into bigger cards, because a card's size is decided by
- *  what it holds and must not drift with the window. */
-function place(cs, fw, fh) {
+ * **Two pieces, because there are two sides.** A cut exists to give the lighter side something
+ * to carry; past two pieces there is no third side for the third piece to go to, and what a
+ * third buys in balance is small while what it costs is fixed — the topic's name said a third
+ * time, in a third place on the canvas. Searched at three on the live ledger it does win on
+ * scale, and the win is not worth three headings reading `no project` at three points around
+ * the hub. This is the one number here chosen by eye rather than by measure, and that is the
+ * reason.
+ */
+function arrange(trunks, fw, fh) {
+  const weights = trunks.map((t) => spanOf(rowsOf(t)));
+  const heaviest = weights.indexOf(Math.max(...weights));
   let best = null;
-  for (const C of [3, 5, 7]) {
-    // Odd only: with an even count the centre line falls between two lanes and the hub has none.
-    const plan = assign(cs, C);
-    put(plan, GUT);
-    let top = 0;
-    let bottom = 0;
-    for (const c of cs) {
-      top = Math.min(top, c.cy - c.h / 2);
-      bottom = Math.max(bottom, c.cy + c.h / 2);
-    }
-    const ch = bottom - top + PAD * 2;
-    const scale = Math.min(fw / (C * W + (C - 1) * GUT + PAD * 2), fh / ch);
-    if (!best || scale > best.scale) best = { scale, plan };
+  for (const k of [1, 2]) {
+    // **Fresh rows every time.** A row is what the tree writes coordinates onto, so reusing one
+    // across two cuts leaves the losing arrangement's left and top on the winner's boxes; and
+    // its heading is charged into its height, so reusing one compounds that too.
+    const runs = [];
+    trunks.forEach((trunk, t) => {
+      cut(rowsOf(trunk), t === heaviest ? k : 1).forEach((rows, i) => {
+        // The heading is charged to the run's first row, above any sub-topic heading it already
+        // carries, so the topic reads above the rank inside it.
+        const first = rows[0];
+        first.heads = [
+          { label: trunk.label, rank: 1, cont: i > 0 },
+          ...(first.heads || []).filter((hd) => hd.rank !== 1),
+        ];
+        charge(first);
+        runs.push({ rows, tone: trunk.tone });
+      });
+    });
+    const placed = deal(runs).flatMap((side, s) => laySide(side, s === 0 ? 1 : -1));
+    const x0 = Math.min(...placed.map((r) => r.left), -HUB_W / 2) - PAD;
+    const y0 = Math.min(...placed.map((r) => r.top), -HUB_H / 2) - PAD;
+    const cw = Math.max(...placed.map((r) => r.left + r.w), HUB_W / 2) + PAD - x0;
+    const ch = Math.max(...placed.map((r) => r.top + r.h), HUB_H / 2) + PAD - y0;
+    const scale = Math.min(fw / cw, fh / ch);
+    if (!best || scale > best.scale) best = { scale, placed, x0, y0, cw, ch };
   }
-  const { plan, scale } = best;
-  const want = (fw / scale - PAD * 2 - plan.C * W) / Math.max(plan.C - 1, 1);
-  put(plan, Math.min(Math.max(GUT, want), 250));
-  return cs;
+  for (const row of best.placed) {
+    row.x = row.left - best.x0;
+    row.y = row.top - best.y0;
+  }
+  return { rows: best.placed, cw: best.cw, ch: best.ch, hub: { x: -best.x0, y: -best.y0 } };
 }
 
-/** Which edge of a cluster the wire lands on — **and the label moves to that edge**, so the line
- *  always arrives at the name rather than at the corner furthest from it.
- *
- *  The edge follows from which lane the cluster is in, not from the shape of its box. Reading it
- *  off the box's proportions is what sent a short wide cluster in the left lane a wire "through
- *  the top", which then crossed the card above it and came out the other side. The wire always
- *  arrives from the hub's direction: off the hub's lane that is sideways, on it that is vertical.
- *
- *  The one exception is a cluster that is not first in its stack: its own sibling stands between
- *  it and the hub, so a vertical arrival is guaranteed to be hidden. Those come in from the side,
- *  which is what sends their wire around the sibling through the gutter beside the lane. */
-function anchorOf(c) {
-  if (!c.hubLane) return c.cx < 0 ? "right" : "left";
-  if (!c.slot) return c.cy < 0 ? "bottom" : "top";
-  return c.slot % 2 ? "right" : "left";
+/** How far down a row its title sits — under whatever headings it carries. The wire ends here
+ *  rather than at the box's corner, so a line arrives at the name of the thing it points to. */
+function titleY(row) {
+  return headsH(row) + Math.min(row.baseH / 2, LABEL_H / 2);
 }
 
-// **A wire is a polyline with its corners taken off.** Every turn it makes is a turn into a
-// gutter or out of one — a right angle in the data — and the curve is only so that the three
-// legs read as one line. A corner takes `BEND` of radius, or half of the shorter leg it sits
-// between, so a turn never eats past the leg that follows it.
-const BEND = 30;
-// The air a wire keeps between itself and a card it passes.
-const CLEAR = 14;
-
-function wire(raw) {
-  const pts = [];
-  for (const p of raw) {
-    const last = pts[pts.length - 1];
-    if (last && Math.abs(last[0] - p[0]) < 0.5 && Math.abs(last[1] - p[1]) < 0.5) continue;
-    pts.push(p);
-  }
-  // A point in line with both its neighbours is not a corner, and rounding it would put a dent
-  // in a straight run. This is what collapses the general route into the short ones: a cluster
-  // one lane out, or one with nothing in the way, is the same six points with legs of zero.
-  for (let i = pts.length - 2; i > 0; i -= 1) {
-    const [ax, ay] = pts[i - 1];
-    const [bx, by] = pts[i];
-    const [cx, cy] = pts[i + 1];
-    if (Math.abs(ax - bx) + Math.abs(bx - cx) < 0.5 || Math.abs(ay - by) + Math.abs(by - cy) < 0.5) {
-      pts.splice(i, 1);
-    }
-  }
+/** One wire, hub to row. **A cubic, not a polyline.** The old orthogonal routes existed because
+ *  a wire had to cross lanes it did not belong to and go around what stood in them — a corridor
+ *  search, a bend radius and a clearance, all in service of a packing that no longer exists.
+ *  Nothing stands between the hub and a row now: the gap the wires run in is the only empty
+ *  space on the canvas, by construction. */
+function wire(hub, row) {
+  const right = row.dir > 0;
+  const sx = hub.x + (right ? HUB_R : -HUB_R);
+  const ex = right ? row.x : row.x + row.w;
+  const ey = row.y + titleY(row);
+  const mx = (sx + ex) / 2;
   const at = (n) => Math.round(n * 10) / 10;
-  let d = `M ${at(pts[0][0])} ${at(pts[0][1])}`;
-  for (let i = 1; i < pts.length - 1; i += 1) {
-    const [px, py] = pts[i - 1];
-    const [x, y] = pts[i];
-    const [nx, ny] = pts[i + 1];
-    const back = Math.hypot(x - px, y - py) || 1;
-    const on = Math.hypot(nx - x, ny - y) || 1;
-    const r = Math.min(BEND, back / 2, on / 2);
-    d += ` L ${at(x + ((px - x) / back) * r)} ${at(y + ((py - y) / back) * r)}`;
-    d += ` Q ${at(x)} ${at(y)}, ${at(x + ((nx - x) / on) * r)} ${at(y + ((ny - y) / on) * r)}`;
-  }
-  const end = pts[pts.length - 1];
-  return `${d} L ${at(end[0])} ${at(end[1])}`;
-}
-
-/** The height at which a wire crosses the lanes between the hub and the cluster it is wired to.
- *
- *  A gutter is empty by construction and a lane is not, so the one leg of a side route that can
- *  hit anything is the one crossing from gutter to gutter. This reads what stands in the way —
- *  every cluster in a lane between the two, on the same side of the hub — and answers with a
- *  height clear of all of them: a gap between two of them, the air past either end of the stack,
- *  or the hub's own height when nothing is in the way. Whichever of those costs the least detour
- *  from a route that went straight across wins, so the line bends as little as the lane allows. */
-function corridor(c, all, hub, ey) {
-  const dir = Math.sign(c.cx);
-  const bars = [];
-  if (dir) {
-    for (const o of all) {
-      if (o === c || Math.sign(o.cx) !== dir || Math.abs(o.cx) >= Math.abs(c.cx)) continue;
-      bars.push([hub.y + o.cy - o.h / 2 - CLEAR, hub.y + o.cy + o.h / 2 + CLEAR]);
-    }
-  }
-  if (bars.length === 0) return hub.y;
-  bars.sort((a, b) => a[0] - b[0]);
-  const blocks = [bars[0].slice()];
-  for (const bar of bars.slice(1)) {
-    const held = blocks[blocks.length - 1];
-    if (bar[0] <= held[1]) held[1] = Math.max(held[1], bar[1]);
-    else blocks.push(bar.slice());
-  }
-  const want = [hub.y, ey, blocks[0][0], blocks[blocks.length - 1][1]];
-  for (let i = 1; i < blocks.length; i += 1) want.push((blocks[i - 1][1] + blocks[i][0]) / 2);
-  let best = null;
-  for (const y of want) {
-    if (blocks.some(([top, bottom]) => y > top && y < bottom)) continue;
-    const cost = Math.abs(y - hub.y) + Math.abs(y - ey);
-    if (!best || cost < best.cost) best = { y, cost };
-  }
-  return best ? best.y : hub.y;
-}
-
-/** One branch, as a path. **A wire travels in a gutter**, for the reason `c.gx` is computed at
- *  all: the packing keeps the lanes from overlapping each other and says nothing about what
- *  stands between a wire's two ends. Leaving the hub radially — straight at the cluster it is
- *  going to — crosses whatever lane is in between by construction, whatever curve is then
- *  fitted to it.
- *
- *  So a side-entering wire leaves the hub level, turns into the gutter beside the hub's own
- *  lane, crosses the lanes in between at the height `corridor` found clear of them, turns into
- *  the gutter beside its own lane, and comes in level with the label. Nothing in the way is the
- *  same path with its middle legs at zero length: the crossing is at the hub's own height and
- *  the two turns fall together into one. One straight above or below the hub runs straight,
- *  having nothing to go around. */
-function route(c, all, hub, ex, ey) {
-  const a = anchorOf(c);
-  if (a === "top" || a === "bottom") {
-    return wire([[hub.x, hub.y + (a === "top" ? 1 : -1) * HUB_R], [hub.x, ey], [ex, ey]]);
-  }
-  const dir = Math.sign(c.gx) || 1;
-  const near = hub.x + dir * c.half;
-  const gx = hub.x + c.gx;
-  const cross = corridor(c, all, hub, ey);
-  return wire([
-    [hub.x + dir * HUB_R, hub.y],
-    [near, hub.y],
-    [near, cross],
-    [gx, cross],
-    [gx, ey],
-    [ex, ey],
-  ]);
+  return `M ${at(sx)} ${at(hub.y)} C ${at(mx)} ${at(hub.y)}, ${at(mx)} ${at(ey)}, ${at(ex)} ${at(ey)}`;
 }
 
 // ── the surface ───────────────────────────────────────────────────────────────
@@ -1341,14 +1299,15 @@ export default function Home() {
   );
 
   const wide = box.w >= 960 && box.h >= 520;
-  const clusters = trunks.length > 0 ? trunks.map(cluster) : [];
-  if (wide && clusters.length > 0) place(clusters, box.w, box.h);
+  // A canvas needs a column of width either side of the hub and a phone has one column at all,
+  // so below this the same rows go down the page instead — see `Flow`.
+  const chart = wide && trunks.length > 0 ? arrange(trunks, box.w, box.h) : null;
 
   return (
     <div className="hi-home" ref={frame}>
       <style>{CSS}</style>
-      {wide && clusters.length > 0 ? (
-        <Canvas clusters={clusters} box={box} root={root} onOpen={openRef} />
+      {chart ? (
+        <Canvas {...chart} box={box} root={root} onOpen={openRef} />
       ) : (
         <>
           {root}
@@ -1365,75 +1324,56 @@ export default function Home() {
 
 // ── the canvas, drawn ─────────────────────────────────────────────────────────
 
-function Canvas({ clusters, box, root, onOpen }) {
+function Canvas({ rows, hub, cw, ch, box, root, onOpen }) {
   // The canvas is whatever the content grew to; the frame then scales it to fit. That order is
   // the whole idea — sizing the layout to the frame first is what produced a sparse ring with a
   // hole in the middle, twice.
-  const x0 = Math.min(...clusters.map((c) => c.cx - c.w / 2)) - PAD;
-  const x1 = Math.max(...clusters.map((c) => c.cx + c.w / 2)) + PAD;
-  const y0 = Math.min(...clusters.map((c) => c.cy - c.h / 2)) - PAD;
-  const y1 = Math.max(...clusters.map((c) => c.cy + c.h / 2)) + PAD;
-  const cw = x1 - x0;
-  const ch = y1 - y0;
   const scale = Math.min(box.w / cw, box.h / ch, 1.6);
-  const hub = { x: -x0, y: -y0 };
-
-  const edge = (c) => {
-    const left = c.cx - c.w / 2 - x0;
-    const top = c.cy - c.h / 2 - y0;
-    const a = anchorOf(c);
-    if (a === "left") return [left, top + LABEL_H / 2];
-    if (a === "right") return [left + c.w, top + LABEL_H / 2];
-    if (a === "bottom") return [left + c.w / 2, top + c.h];
-    return [left + c.w / 2, top];
-  };
 
   return (
     <div className="hi-home__canvas" style={{ width: cw, height: ch, transform: `scale(${scale})` }}>
       <svg className="hi-home__wires" width={cw} height={ch} aria-hidden>
-        {clusters.map((c) => (
-          <path key={c.key} className="hi-home__wire" style={{ "--tone": TONE[c.tone] }}
-            d={route(c, clusters, hub, ...edge(c))} />
+        {rows.map((row) => (
+          <path key={row.id} className="hi-home__wire" style={{ "--tone": TONE[row.tone] }}
+            d={wire(hub, row)} />
         ))}
       </svg>
       <div className="hi-home__rootnode" style={{ left: hub.x, top: hub.y }}>{root}</div>
-      {clusters.map((c) => {
-        const a = anchorOf(c);
-        const head = (
-          <h2 className="hi-home__trunk">
-            <span className="hi-home__trunk-name">{c.label}</span>
-          </h2>
-        );
-        return (
-          <section key={c.key} className="hi-home__cluster" data-anchor={a}
-            style={{
-              left: c.cx - c.w / 2 - x0,
-              top: c.cy - c.h / 2 - y0,
-              width: c.w,
-              "--tone": TONE[c.tone],
-            }}>
-            {a !== "bottom" && head}
-            {c.blocks.map((b) =>
-              b.t === "sub" ? (
-                <h3 key={b.id} className="hi-home__sub">
-                  <span>{b.label}</span>
-                </h3>
-              ) : (
-                <Card key={b.id} block={b} onOpen={onOpen} />
-              ),
-            )}
-            {c.chips.length > 0 && (
-              <div className="hi-home__chips">
-                {c.chips.map((chip) => (
-                  <Chip key={chip.id} chip={chip} onOpen={onOpen} />
-                ))}
-              </div>
-            )}
-            {a === "bottom" && head}
-          </section>
-        );
-      })}
+      {rows.map((row) => (
+        <Row key={row.id} row={row} onOpen={onOpen} />
+      ))}
     </div>
+  );
+}
+
+/** One row, wherever the tree put it — and its headings, which stand in height the row itself
+ *  reserved for them. Nothing here computes a position: `arrange` decided every number, so a
+ *  heading cannot end up over a card that is not its own. */
+function Row({ row, onOpen }) {
+  return (
+    <section className="hi-home__row" data-side={row.dir > 0 ? "right" : "left"}
+      style={{ left: row.x, top: row.y, width: row.w, "--tone": TONE[row.tone] }}>
+      {(row.heads || []).map((head) =>
+        head.rank === 1 ? (
+          <h2 key={head.label} className="hi-home__trunk" data-cont={head.cont || undefined}>
+            <span className="hi-home__trunk-name">{head.cont ? `${head.label} ⋯` : head.label}</span>
+          </h2>
+        ) : (
+          <h3 key={head.label} className="hi-home__sub">
+            <span>{head.label}</span>
+          </h3>
+        ),
+      )}
+      {row.t === "chips" ? (
+        <div className="hi-home__chips">
+          {row.chips.map((chip) => (
+            <Chip key={chip.id} chip={chip} onOpen={onOpen} />
+          ))}
+        </div>
+      ) : (
+        <Card block={row} onOpen={onOpen} />
+      )}
+    </section>
   );
 }
 
@@ -1508,9 +1448,13 @@ function Card({ block, onOpen }) {
       </div>
     </>
   );
-  if (!view) return <article className="hi-home__bx" data-k={k} style={{ height: block.h }}>{body}</article>;
+  // The box is the row's own height, not the row's: `h` also carries whatever headings stand on
+  // it, so reading that would make every headed card as much taller as its heading is tall.
+  // Undefined down the page, where a card is as tall as what it holds.
+  const height = block.baseH;
+  if (!view) return <article className="hi-home__bx" data-k={k} style={{ height }}>{body}</article>;
   return (
-    <article className="hi-home__bx" data-k={k} data-open="true" style={{ height: block.h }}>
+    <article className="hi-home__bx" data-k={k} data-open="true" style={{ height }}>
       <button type="button" onClick={() => onOpen(view.ref)} title={view.ref}>{body}</button>
     </article>
   );
@@ -1531,34 +1475,39 @@ function Chip({ chip, onOpen }) {
 }
 
 // ── the narrow one ────────────────────────────────────────────────────────────
-// A canvas needs width per lane and a phone has one lane's worth. Same model, same shapes, no
-// geometry — the topics become sections down the page.
+// A canvas needs a column of width either side of the hub and a phone has one column at all.
+// Same model, same rows, no geometry — the topics become sections down the page.
+//
+// It reads the same `rowsOf` the canvas does, so a sub-topic's heading arrives here the way it
+// arrives there: attached to the row it stands over. Nothing is cut and nothing is dealt — a
+// page scrolls, so there is no second side to balance against and no height to fit into.
 
 function Flow({ trunks, onOpen, rank = 1 }) {
   return (
     <div className="hi-home__flow" data-rank={rank}>
-      {trunks.map((trunk) => {
-        const c = cluster(trunk);
-        return (
-          <section key={trunk.key} style={{ "--tone": TONE[trunk.tone] }}>
-            <h2 className="hi-home__trunk">
-              <span className="hi-home__trunk-name">{trunk.label}</span>
-            </h2>
-            {c.blocks.map((b) =>
-              b.t === "sub" ? (
-                <h3 key={b.id} className="hi-home__sub"><span>{b.label}</span></h3>
+      {trunks.map((trunk) => (
+        <section key={trunk.key} style={{ "--tone": TONE[trunk.tone] }}>
+          <h2 className="hi-home__trunk">
+            <span className="hi-home__trunk-name">{trunk.label}</span>
+          </h2>
+          {rowsOf(trunk).map((row) => (
+            <div key={row.id} className="hi-home__flowrow">
+              {(row.heads || [])
+                .filter((head) => head.rank === 2)
+                .map((head) => (
+                  <h3 key={head.label} className="hi-home__sub"><span>{head.label}</span></h3>
+                ))}
+              {row.t === "chips" ? (
+                <div className="hi-home__chips">
+                  {row.chips.map((chip) => <Chip key={chip.id} chip={chip} onOpen={onOpen} />)}
+                </div>
               ) : (
-                <Card key={b.id} block={{ ...b, h: undefined }} onOpen={onOpen} />
-              ),
-            )}
-            {c.chips.length > 0 && (
-              <div className="hi-home__chips">
-                {c.chips.map((chip) => <Chip key={chip.id} chip={chip} onOpen={onOpen} />)}
-              </div>
-            )}
-          </section>
-        );
-      })}
+                <Card block={{ ...row, baseH: undefined, heads: undefined }} onOpen={onOpen} />
+              )}
+            </div>
+          ))}
+        </section>
+      ))}
     </div>
   );
 }
@@ -1566,7 +1515,7 @@ function Flow({ trunks, onOpen, rank = 1 }) {
 // The only stylesheet in the file. A style prop cannot express a breakpoint, a pseudo-class
 // or a descendant rule, and this surface wants all three; everything a prop *can* say that
 // the geometry decides — a left, a top, a width — is still a prop, because it comes out of
-// place() and belongs to the node it positions.
+// arrange() and belongs to the row it positions.
 //
 // NOTE: no backticks anywhere below, not even inside a comment. One ends the template early
 // and the file stops being JavaScript — see no_bundled_view_has_a_backtick_inside_its_css.
@@ -1631,8 +1580,10 @@ const CSS = `
   opacity: .42;
 }
 
-.hi-home__cluster { position: absolute; box-sizing: border-box; display: flex;
-  flex-direction: column; align-items: stretch; gap: 9px; }
+/* One row, placed absolutely by the tree, with whatever headings it reserved height for. The
+   gap is the heading's air, not the packing's: the tree spaces the rows, flow never does. */
+.hi-home__row { position: absolute; box-sizing: border-box; display: flex;
+  flex-direction: column; align-items: stretch; }
 /* **A heading is as wide as its words and hangs off the edge the wire arrives at.** It used to
    be a stretched row with a paper ground behind the name alone, to keep a wire that passed
    behind it from reading as a strikethrough through the word. The ground is gone with the reason
@@ -1653,12 +1604,14 @@ const CSS = `
 }
 .hi-home__trunk { height: ${LABEL_H}px; }
 .hi-home__sub { height: ${SUB_H}px; }
-.hi-home__cluster[data-anchor="right"] .hi-home__trunk,
-.hi-home__cluster[data-anchor="right"] .hi-home__sub { flex-direction: row-reverse; align-self: flex-end; }
-.hi-home__cluster[data-anchor="top"] .hi-home__trunk,
-.hi-home__cluster[data-anchor="top"] .hi-home__sub,
-.hi-home__cluster[data-anchor="bottom"] .hi-home__trunk,
-.hi-home__cluster[data-anchor="bottom"] .hi-home__sub { align-self: center; }
+/* A heading hangs off the edge the wire arrives at, which on this canvas is simply the side of
+   the hub the row is on. */
+.hi-home__row[data-side="left"] .hi-home__trunk,
+.hi-home__row[data-side="left"] .hi-home__sub { flex-direction: row-reverse; align-self: flex-end; }
+/* **A continued run still says whose it is**, and says that it is continued. Bare, the second
+   half of a split topic reads as an orphan run of cards beside the hub rather than as more of
+   the topic across the way. Quieter than the first, because it is the same name said again. */
+.hi-home__trunk[data-cont] .hi-home__trunk-name { font-weight: 400; opacity: .55; }
 .hi-home__trunk-name, .hi-home__sub > span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
@@ -1817,12 +1770,10 @@ const CSS = `
   60% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent); }
 }
 
-/* A cluster is one column of fixed width, so its chips have to live inside it: one chip whose
-   title runs longer than the column would otherwise push the whole cluster out past its lane. */
+/* A run of chips is one node of fixed width, so its chips have to live inside it: one chip whose
+   title runs longer than the node would otherwise push the run out past the wire that reaches it. */
 .hi-home__chips { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; min-width: 0; }
-.hi-home__cluster[data-anchor="right"] .hi-home__chips { justify-content: flex-end; }
-.hi-home__cluster[data-anchor="top"] .hi-home__chips,
-.hi-home__cluster[data-anchor="bottom"] .hi-home__chips { justify-content: center; }
+.hi-home__row[data-side="left"] .hi-home__chips { justify-content: flex-end; }
 .hi-home__chip {
   display: inline-flex;
   align-items: center;
@@ -1849,6 +1800,7 @@ button.hi-home__chip:focus-visible { outline: 2px solid var(--accent); outline-o
 /* ── the narrow one ── */
 .hi-home__flow { margin-top: 22px; display: flex; flex-direction: column; gap: 26px; }
 .hi-home__flow section { display: flex; flex-direction: column; gap: 9px; }
+.hi-home__flowrow { display: flex; flex-direction: column; gap: 9px; }
 .hi-home__flow .hi-home__bx { height: auto; }
 .hi-home__flow .hi-home__fig { height: 158px; }
 `;
