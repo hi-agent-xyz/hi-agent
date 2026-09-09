@@ -9,6 +9,7 @@
 /data/
 src/appearance/web/node_modules/
 src/appearance/web/dist/
+src/appearance/web/tsconfig.tsbuildinfo
 .DS_Store
 .env
 .env.local
