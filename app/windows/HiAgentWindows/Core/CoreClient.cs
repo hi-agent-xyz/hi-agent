@@ -81,7 +81,7 @@ internal static partial class CoreClient
         }
 
         // Query and fragment are dropped and the path reduced to canonical form,
-        // so `https://hi-agent.xyz/ana` and `https://hi-agent.xyz/ana/?x=1` are
+        // so `https://ana.hi-agent.xyz` and `https://ana.hi-agent.xyz/?x=1` are
         // one roster entry rather than two.
         var builder = new UriBuilder(url)
         {
@@ -267,9 +267,10 @@ internal static partial class CoreClient
     }
 
     /// <summary>
-    /// Append a path to the core's base, keeping any subpath the base carries —
-    /// a core lives at `https://hi-agent.xyz/ana`, so its session endpoint is
-    /// `/ana/api/session` and not `/api/session`.
+    /// Append a path to the core's base. A core is at the root of its own origin,
+    /// so this is ordinary joining — but a self-hosted one may sit behind
+    /// somebody's own reverse proxy at a path, and a base that carries one keeps
+    /// it.
     /// </summary>
     internal static Uri Endpoint(Uri baseUrl, string path)
     {

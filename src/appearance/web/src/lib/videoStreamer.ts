@@ -76,10 +76,8 @@ export class VideoStreamer {
     const actualMime = this.recorder.mimeType || mime;
 
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    // Built by hand from `location`, so the community's subpath has to be put on
-    // by hand too — a WebSocket has no interception seam the way fetch does.
     const endpoint =
-      `${proto}://${location.host}${"/api/in/vision/stream"}` +
+      `${proto}://${location.host}/api/in/vision/stream` +
       `?mime=${encodeURIComponent(actualMime)}`;
     this.ws = new WebSocket(endpoint);
     this.ws.binaryType = "arraybuffer";

@@ -121,7 +121,7 @@ fun PairCoreSheet(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
                 label = { Text("Core address") },
-                placeholder = { Text("https://hi-agent.xyz/ana") },
+                placeholder = { Text("https://ana.hi-agent.xyz") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(

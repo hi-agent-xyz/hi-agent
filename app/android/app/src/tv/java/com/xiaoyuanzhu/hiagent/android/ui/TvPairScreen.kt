@@ -94,7 +94,7 @@ fun TvPairScreen(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
                 label = "Core address",
-                placeholder = "https://hi-agent.xyz/ana",
+                placeholder = "https://ana.hi-agent.xyz",
                 focusRequester = addressField,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(

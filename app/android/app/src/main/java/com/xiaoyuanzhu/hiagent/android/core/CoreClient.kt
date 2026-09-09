@@ -113,8 +113,8 @@ object CoreClient {
         }
 
         // Query and fragment are dropped, and the path is reduced to its
-        // canonical form, so `https://hi-agent.xyz/ana` and
-        // `https://hi-agent.xyz/ana/?x=1` are one roster entry rather than two.
+        // canonical form, so `https://ana.hi-agent.xyz` and
+        // `https://ana.hi-agent.xyz/?x=1` are one roster entry rather than two.
         return url.newBuilder()
             .query(null)
             .fragment(null)
@@ -253,9 +253,10 @@ object CoreClient {
     }
 
     /**
-     * Append a path to the core's base, keeping any subpath the base carries —
-     * a core lives at `https://hi-agent.xyz/ana`, so its session endpoint is
-     * `/ana/api/session` and not `/api/session`.
+     * Append a path to the core's base. A core is at the root of its own origin,
+     * so this is ordinary joining — but a self-hosted one may sit behind
+     * somebody's own reverse proxy at a path, and a base that carries one keeps
+     * it.
      */
     fun endpoint(baseUrl: HttpUrl, path: String): HttpUrl {
         val base = baseUrl.encodedPath.trim('/')

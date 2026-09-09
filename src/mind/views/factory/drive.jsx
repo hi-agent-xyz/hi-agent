@@ -42,8 +42,7 @@
 // before the first row, `notes` capitalised into "Notes" beside `medical` and `family`,
 // and a folder date that wrapped every folder row onto two lines. The drive it read was
 // still planted rather than lived-in, and the **preview has not been opened against a
-// live core**; nothing at all has been seen on a phone, where the subpath prefix is the
-// ordinary case and `fileUrl()` above is what has to survive it. This is the recall half
+// live core**; nothing at all has been seen on a phone. This is the recall half
 // of journey 19 ("呈现(投成 view)"); it has no 实测 yet.
 //
 // Colour comes from the host theme tokens (see tasks.jsx for the vocabulary).

@@ -206,11 +206,9 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
 
         val manager = CookieManager.getInstance()
         // Empty the jar before filling it, so it never holds two cores' sessions at once.
-        // Relayed cores share one origin — `hi-agent.xyz/ana` and `hi-agent.xyz/bob` are
-        // the same site to a cookie store, and `Path=` decides only what is *sent* where,
-        // not what is readable. Leaving the previous core's cookie behind would put it
-        // inside the next core's agent-generated views. Required by the App section of
-        // `docs/arch/topology.md`, which is what lets the session live in the page at all.
+        // Each core has its own origin now (`ana.hi-agent.xyz`), and a host-only cookie
+        // already cannot reach another one — so this is no longer what stands between two
+        // people's sessions. It stays as hygiene.
         //
         // Everything, not just the session cookie: this WebView shows one core and the face
         // keeps its state server-side, so nothing here is worth carrying across a switch.

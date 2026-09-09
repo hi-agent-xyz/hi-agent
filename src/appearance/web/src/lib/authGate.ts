@@ -19,10 +19,8 @@ export function installAuthGate(): void {
     const res = await original(input, init);
     if (res.status === 401 && !redirecting) {
       redirecting = true;
-      // `next` is a browser path (it is handed back to the browser); the login
-      // route is the core's, so it takes the subpath.
       const next = encodeURIComponent(location.pathname + location.search);
-      location.assign(`${"/auth/login"}?next=${next}`);
+      location.assign(`/auth/login?next=${next}`);
     }
     return res;
   };

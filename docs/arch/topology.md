@@ -261,7 +261,11 @@ Handles are already claimed and devices are already paired against `hi-agent.xyz
 and a roster entry *is* a base URL, so the format cannot simply change under them.
 
 - The community serves **both** forms during the transition, `hi-agent.xyz/ana` answering with
-  a `301` to `ana.hi-agent.xyz`.
+  a `308` to `ana.hi-agent.xyz` — never proxying, because a second way in is a second thing to
+  keep in agreement. **`308` and not `301`**: this path carries `POST /api/session`, the first
+  call an already-paired app makes, and `301` is the redirect browsers historically rewrite to
+  `GET`. That would drop the body and turn an attach into a silent failure, which is the one
+  outcome a transition mechanism must not have.
 - A redirect crosses an origin, so **the session cookie does not survive it**. An app follows
   the redirect, records the new base URL in its roster entry, and re-presents its long-lived
   credential at `POST /api/session` on the new origin — which is the ordinary attach path, not

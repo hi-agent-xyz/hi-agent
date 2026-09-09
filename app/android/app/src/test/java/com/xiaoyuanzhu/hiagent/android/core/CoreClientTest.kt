@@ -16,8 +16,8 @@ class CoreClientTest {
     @Test
     fun `https is accepted for any host`() {
         assertEquals(
-            "https://hi-agent.xyz/ana",
-            CoreClient.normalizeBaseUrl("https://hi-agent.xyz/ana").toString(),
+            "https://ana.hi-agent.xyz",
+            CoreClient.normalizeBaseUrl("https://ana.hi-agent.xyz").toString(),
         )
     }
 
@@ -74,24 +74,34 @@ class CoreClientTest {
      */
     @Test
     fun `query, fragment and trailing slash are normalised away`() {
-        val canonical = CoreClient.normalizeBaseUrl("https://hi-agent.xyz/ana").toString()
+        val canonical = CoreClient.normalizeBaseUrl("https://ana.hi-agent.xyz").toString()
         listOf(
-            "https://hi-agent.xyz/ana/",
-            "https://hi-agent.xyz/ana?x=1",
-            "https://hi-agent.xyz/ana#top",
-            "  https://hi-agent.xyz/ana  ",
+            "https://ana.hi-agent.xyz/",
+            "https://ana.hi-agent.xyz?x=1",
+            "https://ana.hi-agent.xyz#top",
+            "  https://ana.hi-agent.xyz  ",
         ).forEach { variant ->
             assertEquals(canonical, CoreClient.normalizeBaseUrl(variant).toString(), variant)
         }
     }
 
-    /** A core at a subpath keeps it: its session endpoint is `/ana/api/session`. */
+    /**
+     * A relayed core is at the root of its own origin, but a self-hosted one may
+     * sit behind somebody's own reverse proxy at a path — so a base that carries
+     * one keeps it.
+     */
     @Test
-    fun `endpoints keep the core's subpath`() {
-        val base = CoreClient.normalizeBaseUrl("https://hi-agent.xyz/ana")
+    fun `endpoints keep a path the base carries`() {
+        val relayed = CoreClient.normalizeBaseUrl("https://ana.hi-agent.xyz")
         assertEquals(
-            "https://hi-agent.xyz/ana/api/session",
-            CoreClient.endpoint(base, "api/session").toString(),
+            "https://ana.hi-agent.xyz/api/session",
+            CoreClient.endpoint(relayed, "api/session").toString(),
+        )
+
+        val behindAProxy = CoreClient.normalizeBaseUrl("https://example.com/agent")
+        assertEquals(
+            "https://example.com/agent/api/session",
+            CoreClient.endpoint(behindAProxy, "api/session").toString(),
         )
 
         val root = CoreClient.normalizeBaseUrl("http://192.168.1.24:12358")

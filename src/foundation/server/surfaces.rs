@@ -97,7 +97,7 @@ pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -
 /// opened from the app on this one, over loopback — so the request's own `Host` is
 /// `127.0.0.1`, which is the one address that cannot work anywhere else. The
 /// community says where this core is (`Handle::base_url`, e.g.
-/// `https://hi-agent.xyz/ana`), and the name on the same screen is read from the
+/// `https://ana.hi-agent.xyz`), and the name on the same screen is read from the
 /// same place, so the QR and the address a person can see now agree.
 ///
 /// The request falls back to naming itself when there is no name yet, no account,
@@ -106,10 +106,9 @@ pub async fn post_pair(State(state): State<Arc<AppState>>, headers: HeaderMap) -
 /// is not loopback. That address is the best guess available, not a good one — a
 /// core with no name has nothing better to say about where it is.
 ///
-/// Never a trailing slash except on a root address, because `https://hi-agent.xyz/ana`
-/// is what a person reads off the screen and what they scan should be the same
-/// string, while a bare `https://host` is a stranger thing to hand someone than
-/// `https://host/`. Both come out of `Url`'s own normalisation.
+/// A relayed address is `https://ana.hi-agent.xyz`, which is what a person reads
+/// off the screen, and what they scan should be the same string. `Url`'s own
+/// normalisation gives the trailing slash a bare host wants.
 pub(crate) async fn public_base_url(
     data_dir: &std::path::Path,
     headers: &HeaderMap,

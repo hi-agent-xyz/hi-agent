@@ -22,7 +22,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, model: Rc<AppModel>) {
     let group = adw::PreferencesGroup::builder()
         .description(
             "A core's address is a URL — http://localhost:12358 for one on this machine, \
-             or https://hi-agent.xyz/name for one you reach from anywhere. The pairing \
+             or https://name.hi-agent.xyz for one you reach from anywhere. The pairing \
              code comes from that core.",
         )
         .build();

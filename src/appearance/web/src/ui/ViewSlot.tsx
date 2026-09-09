@@ -25,9 +25,8 @@ function ViewMount({ moduleUrl }: { moduleUrl: string }) {
     setComp(null);
     setFailed(false);
     // The URL is only known at runtime; tell Vite not to try to analyze it.
-    // It comes from the backend as a root-absolute path, which is the core's
-    // root — not necessarily this page's, when the community serves the core
-    // under a subpath.
+    // It comes from the backend as a root-absolute path, which is this page's
+    // root too: a core is at the root of its own origin in every shape.
     import(/* @vite-ignore */ moduleUrl)
       .then((mod) => {
         if (!alive) return;

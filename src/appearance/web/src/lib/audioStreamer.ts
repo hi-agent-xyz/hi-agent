@@ -66,7 +66,6 @@ const loaded = new WeakSet<BaseAudioContext>();
 
 async function ensureWorklet(ctx: BaseAudioContext): Promise<void> {
   if (loaded.has(ctx)) return;
-  // `addModule` is neither fetch nor EventSource, so the subpath goes on here.
   await ctx.audioWorklet.addModule(workletUrl);
   loaded.add(ctx);
 }
@@ -102,8 +101,7 @@ export class AudioStreamer {
 
   private constructor(ctx: AudioContext, source: AudioNode) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    // Built by hand from `location`, so the community's subpath goes on by hand.
-    this.url = `${proto}://${location.host}${"/api/in/audio/stream"}`;
+    this.url = `${proto}://${location.host}/api/in/audio/stream`;
     this.open();
 
     this.node = new AudioWorkletNode(ctx, "pcm-stream", {

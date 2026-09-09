@@ -8,9 +8,9 @@
         <StackPanel Spacing="14">
             <TextBlock Style="{ThemeResource SubtitleTextBlockStyle}" Text="Add a core" />
             <TextBlock TextWrapping="Wrap" Opacity="0.7"
-                       Text="A core's address is a URL — http://localhost:12358 for one on this machine, or https://hi-agent.xyz/name for one you reach from anywhere. The pairing code comes from that core." />
+                       Text="A core's address is a URL — http://localhost:12358 for one on this machine, or https://name.hi-agent.xyz for one you reach from anywhere. The pairing code comes from that core." />
 
-            <TextBox x:Name="AddressBox" Header="Address" PlaceholderText="https://hi-agent.xyz/name" />
+            <TextBox x:Name="AddressBox" Header="Address" PlaceholderText="https://name.hi-agent.xyz" />
             <TextBox x:Name="CodeBox" Header="Pairing code" />
             <TextBox x:Name="LabelBox" Header="Call it" PlaceholderText="Home" />
 

@@ -85,7 +85,7 @@ pub fn normalize_base_url(raw: &str) -> Result<String, CoreError> {
     }
 
     // Query and fragment are dropped and the path reduced to canonical form, so
-    // `https://hi-agent.xyz/ana` and `https://hi-agent.xyz/ana/?x=1` are one
+    // `https://ana.hi-agent.xyz` and `https://ana.hi-agent.xyz/?x=1` are one
     // roster entry rather than two.
     Ok(glib::Uri::join(
         glib::UriFlags::NONE,
@@ -155,9 +155,10 @@ fn normalized_path(path: &str) -> String {
     }
 }
 
-/// Append a path to the core's base, keeping any subpath the base carries — a
-/// core lives at `https://hi-agent.xyz/ana`, so its session endpoint is
-/// `/ana/api/session` and not `/api/session`.
+/// Append a path to the core's base. A core is at the root of its own origin, so
+/// this is ordinary joining — but the base is still allowed to carry a path (a
+/// directly-public core behind somebody's own reverse proxy), and keeping it is
+/// free.
 pub fn endpoint(base_url: &str, path: &str) -> String {
     let base = base_url.trim_end_matches('/');
     format!("{base}/{}", path.trim_matches('/'))
@@ -279,10 +280,16 @@ mod tests {
     }
 
     #[test]
-    fn a_subpath_core_keeps_its_subpath() {
+    fn a_base_that_carries_a_path_keeps_it() {
         assert_eq!(
-            endpoint("https://hi-agent.xyz/ana", "api/session"),
-            "https://hi-agent.xyz/ana/api/session"
+            endpoint("https://ana.hi-agent.xyz", "api/session"),
+            "https://ana.hi-agent.xyz/api/session"
+        );
+        // Relayed cores are at a root, but a self-hosted one may sit behind
+        // somebody's own reverse proxy at a path.
+        assert_eq!(
+            endpoint("https://example.com/agent", "api/session"),
+            "https://example.com/agent/api/session"
         );
         assert_eq!(
             endpoint("http://127.0.0.1:12358/", "healthz"),

@@ -172,11 +172,11 @@ mod tests {
     #[test]
     fn a_claim_carries_where_the_core_now_is_and_no_expiry() {
         let h: Handle = serde_json::from_str(
-            r#"{"handle":"ana","base_url":"https://hi-agent.xyz/ana",
+            r#"{"handle":"ana","base_url":"https://ana.hi-agent.xyz",
                 "claimed_at":"2026-08-13T00:00:00Z"}"#,
         )
         .expect("parse");
-        assert_eq!(h.base_url, "https://hi-agent.xyz/ana");
+        assert_eq!(h.base_url, "https://ana.hi-agent.xyz");
         assert!(!h.claimed_at.is_empty());
     }
 

@@ -216,12 +216,11 @@ impl CoreWebView {
                 .and_then(|network| network.cookie_manager());
             if let Some(manager) = manager {
                 // Empty the jar before filling it, so it never holds two cores'
-                // sessions at once. Relayed cores share one origin —
-                // `hi-agent.xyz/ana` and `hi-agent.xyz/bob` are the same site to
-                // a cookie store, and `Path=` decides only what is *sent* where,
-                // not what is readable. Required by the App section of
-                // `docs/arch/topology.md`, which is what lets the session live
-                // in the page at all.
+                // sessions at once. Each core has its own origin now, so this is
+                // no longer what stands between two people's sessions — it is
+                // hygiene: this webview shows one core, the face keeps its state
+                // server-side, and nothing in here is worth carrying across a
+                // switch.
                 //
                 // One at a time, because WebKitGTK 6.0 has no bulk delete —
                 // `webkit_cookie_manager_delete_all_cookies` was dropped with
