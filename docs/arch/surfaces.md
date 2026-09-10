@@ -182,13 +182,59 @@ Every seam is a producer handing work to a consumer:
 The verdict is always relative to the consumer. A sentence passes straight into TTS, which
 wants words; the same sentence batches into a thinking layer, which wants a whole turn.
 
-**One finalized utterance is one message.** The unit of what a person said is where they
-stopped, and the recognizer's own endpoint (800 ms of trailing silence) is what reports it;
-everything it has closed leaves together, and only two guards can split one — a size cap
-for a speaker who does not pause, an age cap for a recognizer whose endpoint never comes.
+**One finished thought is one message.** The unit of what a person said is where they
+finished saying it. The recognizer's endpoint (800 ms of trailing silence) is where it
+*looks* for that, and how the recognizer punctuated what it closed is how it tells the two
+apart: a tail ending in `。？！` is a whole thing to say and leaves; one ending in `，` — or
+in no mark at all — is somebody who paused mid-sentence, and is kept until the rest of the
+sentence arrives and goes out with it. Only two guards can split one — a size cap for a
+speaker who does not pause, an age cap for a recognizer whose endpoint never comes — and a
+hold bounds the keeping, so a speaker who genuinely stops mid-sentence still gets those
+words out.
 
-*This is a change, made 2026-09-09, and it is the code catching up to the sentence above
-it.* Speech used to be cut at punctuation instead, just after each sentence-ending mark.
+*The holding half is a change, made 2026-09-10.* Cutting on the bare endpoint gave a
+finished sentence and a hesitation the same weight, and a person thinking mid-sentence
+produces 800 ms of silence constantly. Measured over one 5-minute briefing: **11 of 22
+messages were ragged** — 5 ending in `，`, 6 in no mark at all, several of them 2–4 chars
+(`就是`, `然后这个`) — and every one of those 11 had its own continuation delivered as a
+separate message 1.4–2.8 s later. **Every message that ended a turn ended in `。` or `？`**,
+which is why holding the others costs nothing at the moment a reply is owed.
+
+That last sentence is measured, not argued. Replaying 221.7 s of that speech through the
+recognizer and cutting the 358 frames it returned with both policies
+(`tests/speech_segmentation_replay.rs`): **20 messages, median 39 chars, 10 of them ragged →
+11 messages, median 45, 1 ragged**. And sweeping the hold from 0.15 s to 8 s, **the turn's
+last message landed at the same 0.15 s at every value** — the hold is paid entirely out of
+mid-turn text, which is what the preview is for.
+
+**A revisable transcript is preview, and preview is never a message.** A recognizer's
+rolling partial has two honest uses — showing the speaker their own words, and proving
+somebody is still talking — and neither of them is *being cut into a message*. Letting it
+be one is what made this hard: a cut taken from text the recognizer had not finished
+writing has to be reconciled with the rewrite that follows, which cost an edit-distance
+alignment of every revision against everything already sent. Cutting committed text only
+removes the question. The buffer went from four strings to two, the alignment and a
+`max_segment` age cap went with it (that guard could only ever act on uncommitted text, so
+it could no longer do the job it documented), and the replay got **better**, not worse:
+2 ragged messages became 1, and the two places the two policies disagreed about *which
+words* the person said became zero.
+
+What bounds a run-on is now the size cap alone — a bound in the unit the consumer cares
+about, landing on a phrase boundary — and **the only thing shaping an ordinary conversation
+is the one rule that should: did they finish?**
+
+**What changed is not the recognizer but what being early is worth.** The cut used to be
+made as early as it could be, because early was a faster reply. It is not any more: a reply
+composed off half a thought is refused at the mouth ([host.md](host.md#the-floor)) and
+re-composed by the turn the rest of the sentence drives. Measured the same day, **7 of 23
+replies were generated and then discarded**, 5 of them inside that one briefing. Early
+bought no speech at all — it bought wasted generations, and errands dispatched off half a
+request that Cognition then had to cancel. A cut that is late and whole costs strictly less
+than one that is early and ragged.
+
+*The unit itself changed a day earlier, on 2026-09-09, and that was the code catching up
+to the sentence above it.* Speech used to be cut at punctuation, just after every
+sentence-ending mark — every one of them, not only the ones that ended something.
 That is a **transcription** boundary, not a conversational one: the recognizer marks a
 period wherever written Chinese would take one, so an ordinary spoken turn arrived as a
 run of messages nobody would have sent separately. Measured over 164 s of real speech,
