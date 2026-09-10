@@ -458,7 +458,7 @@ async fn face_note(
 }
 
 /// Persist one wall-clock minute of camera media as
-/// `vision/<date>/<HH>/<MM>.<ext>` (ext follows the stream's container —
+/// `vision/<date>/<HH>/stream/<MM>-<SS>.<ext>` (ext follows the stream's container —
 /// `mp4`/`webm`), prefixed with the init segment so the file decodes standalone,
 /// then perceive it (a face-gated ambient signal; no caption). Best-effort: a store
 /// failure is logged and perception is skipped.
@@ -527,7 +527,7 @@ async fn stream_video_in(
     let mut started = false;
 
     // Persist the camera on a wall-clock-minute grid: media chunks accumulate per
-    // minute and flush to `vision/<date>/<HH>/<MM>.<ext>` at each rollover (and at
+    // minute and flush to `vision/<date>/<HH>/stream/<MM>-<SS>.<ext>` at each rollover (and at
     // close). The init segment prefixes every minute file so each is independently
     // decodable. Each flushed minute is also perceived.
     //

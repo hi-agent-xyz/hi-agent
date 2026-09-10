@@ -192,9 +192,17 @@ struct GridFile {
     start: DateTime<Utc>,
 }
 
-/// The day's **input** grid blobs (`<HH>/<MM>.<ext>` minutes and `<HH>/<MM>-<SS>.<ext>`
-/// one-offs), sorted by start. Skips `output/`, `keep/`, and the day-log — keepsakes
-/// preserve the perceived world, not the agent's own output.
+/// The day's **input** grid blobs — one-offs at `<HH>/<MM>-<SS>.<ext>` and streamed
+/// stretches at `<HH>/stream/<MM>-<SS>.<ext>` — sorted by start. Skips `output/`,
+/// `keep/`, and the day-log: keepsakes preserve the perceived world, not the agent's
+/// own output.
+///
+/// **The `stream/` descent is load-bearing, and it is where this nearly shipped a
+/// leak.** Streamed audio and video used to sit directly in `<HH>/`; when they moved
+/// under `stream/` (2026-09-10, so a reconnect could stop overwriting the minute it
+/// landed in) a sweep that only read files *directly* inside the hour would have
+/// stopped seeing them — every mic minute and every camera minute kept forever,
+/// silently, while everything else around them still faded.
 async fn input_grid(dir: &Path, day0: DateTime<Utc>) -> anyhow::Result<Vec<GridFile>> {
     let mut grid = Vec::new();
     let mut hrd = tokio::fs::read_dir(dir).await?;
@@ -207,29 +215,38 @@ async fn input_grid(dir: &Path, day0: DateTime<Utc>) -> anyhow::Result<Vec<GridF
         if hh > 23 {
             continue;
         }
-        let mut frd = tokio::fs::read_dir(hh_ent.path()).await?;
-        while let Some(f) = frd.next_entry().await? {
-            if !f.file_type().await?.is_file() {
-                continue;
+        for sub in [hh_ent.path(), hh_ent.path().join("stream")] {
+            let Ok(mut frd) = tokio::fs::read_dir(&sub).await else { continue };
+            while let Some(f) = frd.next_entry().await? {
+                if !f.file_type().await?.is_file() {
+                    continue;
+                }
+                let Ok(fname) = f.file_name().into_string() else { continue };
+                let Some((mm, ss)) = parse_minute_file(&fname) else { continue };
+                let start = day0 + Duration::hours(hh as i64) + Duration::minutes(mm as i64)
+                    + Duration::seconds(ss.unwrap_or(0) as i64);
+                grid.push(GridFile { path: f.path(), start });
             }
-            let Ok(fname) = f.file_name().into_string() else { continue };
-            let Some((mm, ss)) = parse_minute_file(&fname) else { continue };
-            let start = day0 + Duration::hours(hh as i64) + Duration::minutes(mm as i64)
-                + Duration::seconds(ss.unwrap_or(0) as i64);
-            grid.push(GridFile { path: f.path(), start });
         }
     }
     grid.sort_by_key(|g| g.start);
     Ok(grid)
 }
 
-/// Parse a grid filename stem into `(minute, Some(second))` for a one-off or
-/// `(minute, None)` for a streamed minute. `16.mp3` → `(16, None)`, `16-45.mp3`
-/// → `(16, Some(45))`. `None` for anything that isn't `MM[-SS].ext`.
+/// Parse a grid filename stem into `(minute, Some(second))`, or `(minute, None)` for
+/// the bare-minute names streams used to carry. `16.mp3` → `(16, None)`, `16-45.mp3`
+/// → `(16, Some(45))`. `None` for anything that isn't `MM[-SS][-N].ext`.
+///
+/// **A `-N` collision suffix must still parse** (`16-45-2.wav` → `(16, Some(45))`).
+/// `media::claim` hands one out whenever two writers want the same name, and a file
+/// this cannot read is a file the sweep never sees — which is a leak, not a no-op.
 fn parse_minute_file(name: &str) -> Option<(u32, Option<u32>)> {
     let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
     match stem.split_once('-') {
-        Some((mm, ss)) => Some((mm.parse().ok()?, Some(ss.parse().ok()?))),
+        Some((mm, rest)) => {
+            let ss = rest.split_once('-').map(|(s, _)| s).unwrap_or(rest);
+            Some((mm.parse().ok()?, Some(ss.parse().ok()?)))
+        }
         None => Some((stem.parse().ok()?, None)),
     }
 }
@@ -367,6 +384,37 @@ mod tests {
     use super::*;
     use crate::mind::memory::journal::Journal;
     use uuid::Uuid;
+
+    /// The sweep must see a streamed stretch where it now lives, and must still
+    /// read a name that took a collision suffix. Either miss is a leak that looks
+    /// exactly like nothing happening.
+    #[test]
+    fn a_streamed_name_parses_with_and_without_a_collision_suffix() {
+        assert_eq!(parse_minute_file("16-45.wav"), Some((16, Some(45))));
+        assert_eq!(parse_minute_file("16-45-2.wav"), Some((16, Some(45))));
+        assert_eq!(parse_minute_file("16.mp3"), Some((16, None)));
+        assert_eq!(parse_minute_file("keep"), None);
+        assert_eq!(parse_minute_file("frames.jsonl"), None);
+    }
+
+    #[tokio::test]
+    async fn the_sweep_descends_into_stream() {
+        let tmp = tempfile::tempdir().unwrap();
+        let day = tmp.path().join("09");
+        tokio::fs::create_dir_all(day.join("stream")).await.unwrap();
+        tokio::fs::write(day.join("16-05.wav"), b"oneoff").await.unwrap();
+        tokio::fs::write(day.join("stream").join("17-00.wav"), b"mic").await.unwrap();
+        tokio::fs::write(day.join("stream").join("17-00-2.wav"), b"mic2").await.unwrap();
+
+        let day0 = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+        let grid = input_grid(tmp.path(), day0).await.unwrap();
+        let names: Vec<String> =
+            grid.iter().map(|g| g.path.file_name().unwrap().to_string_lossy().into()).collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert_eq!(names[0], "16-05.wav", "sorted by start: {names:?}");
+        assert!(names.contains(&"17-00.wav".to_string()), "{names:?}");
+        assert!(names.contains(&"17-00-2.wav".to_string()), "{names:?}");
+    }
 
     /// Append `n` text signals "now" and record one episode covering them, so the
     /// cursor sits on today — the precondition for fading any earlier day.

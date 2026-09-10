@@ -9,7 +9,7 @@
 //! ```text
 //! <data_dir>/memory/raw/
 //!   ├── text/<YYYY-MM-DD>/text.jsonl
-//!   ├── audio/<YYYY-MM-DD>/{ audio.jsonl, <HH>/<MM>-<SS>.<ext>, output/<HH>/<MM>.<ext> … }
+//!   ├── audio/<YYYY-MM-DD>/{ audio.jsonl, frames.jsonl, <HH>/<MM>-<SS>.<ext>, <HH>/stream/<MM>-<SS>.<ext> … }
 //!   ├── vision/<YYYY-MM-DD>/{ vision.jsonl, <HH>/<MM>-<SS>.<ext> … }
 //!   └── sessions/<run>/<session>.jsonl        (frame logs — see `session_frames_path`)
 //! ```
@@ -26,13 +26,29 @@ use crate::types::Channel;
 
 /// Where a signal's media bytes sit within its channel-day folder. Input is the
 /// default (bare); output lives under `output/`. A one-off capture (a posted
-/// clip, a still) gets a second-precision name so it never collides with a
-/// streamed minute file; a streamed chunk owns the bare `<HH>/<MM>` minute slot.
+/// clip, a still) sits in the hour folder; a streamed chunk sits in `stream/`
+/// under it. Both are named to the second, and **no name is ever reused** — see
+/// [`create_blob`](super::media::create_blob).
 #[derive(Debug, Clone, Copy)]
 pub enum MediaSlot {
     /// A discrete one-off capture (posted clip / still): `<HH>/<MM>-<SS>.<ext>`.
     InputOneOff,
-    /// A minute of an open input stream (mic, camera): `<HH>/<MM>.<ext>`.
+    /// A stretch of an open input stream (mic, camera), at most a wall-clock minute
+    /// long: `<HH>/stream/<MM>-<SS>.<ext>`, named by where the stretch **starts**.
+    ///
+    /// *It was `<HH>/<MM>.<ext>` — one name per minute — and that lost audio.* A
+    /// stream is flushed at each minute rollover **and at every socket close**, and
+    /// the mic socket self-heals, so one reconnect inside a minute wrote the second
+    /// fragment over the first. Measured 2026-09-10: `05/47.wav` held 14.1 s of a
+    /// minute the speaker talked all the way through, and six files held 221.7 s of a
+    /// ~320 s stretch — **~30 % of the only replayable record of what was heard,
+    /// gone.** The camera writes through this slot too and had the same hole.
+    ///
+    /// Naming by start second also lets two sources overlap without colliding.
+    /// Appending into one file per minute was the other candidate and would have
+    /// interleaved them — worse than a gap, because noise in an audit log misleads.
+    /// Nothing resolves these by path ([`parse_ref`](super::media::parse_ref) rejects
+    /// the shape outright), so the rename broke no reader.
     InputStream,
     /// A minute of an output stream (TTS, generated frames): `output/<HH>/<MM>.<ext>`.
     OutputStream,
@@ -214,7 +230,7 @@ pub fn media_rel_path(ts: DateTime<Utc>, slot: MediaSlot, ext: &str) -> String {
     let mm = ts.format("%M");
     match slot {
         MediaSlot::InputOneOff => format!("{hh}/{mm}-{}.{ext}", ts.format("%S")),
-        MediaSlot::InputStream => format!("{hh}/{mm}.{ext}"),
+        MediaSlot::InputStream => format!("{hh}/stream/{mm}-{}.{ext}", ts.format("%S")),
         MediaSlot::OutputStream => format!("output/{hh}/{mm}.{ext}"),
     }
 }

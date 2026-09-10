@@ -2,7 +2,7 @@
 //!
 //! A blob lives inside the channel-day folder that holds the channel's log, on a
 //! wall-clock grid (see [`super::layout::media_rel_path`]): a one-off capture is
-//! `<HH>/<MM>-<SS>.<ext>`, a streamed minute `<HH>/<MM>.<ext>`. The day-log
+//! `<HH>/<MM>-<SS>.<ext>`, a streamed stretch `<HH>/stream/<MM>-<SS>.<ext>`. The day-log
 //! records only the path (relative to the channel-day folder) and metadata; the
 //! bytes never enter the JSONL stream (which would blow up readers and bloat
 //! snapshots).
@@ -42,6 +42,9 @@ use super::layout::{self, MediaSlot};
 ///
 /// The file is returned **unsynced**: durability is the caller's to declare, at
 /// the point it knows it has written everything it meant to.
+///
+/// **The returned path is the one that was actually claimed**, which is not always
+/// the one the grid names — see [`claim`].
 pub async fn create_blob(
     data_dir: &Path,
     channel: Channel,
@@ -51,12 +54,41 @@ pub async fn create_blob(
 ) -> anyhow::Result<(String, tokio::fs::File)> {
     let dir = layout::channel_day_dir(data_dir, channel, ts);
     let rel = layout::media_rel_path(ts, slot, ext);
-    let path = dir.join(&rel);
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = dir.join(&rel).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let f = tokio::fs::File::create(&path).await?;
-    Ok((rel, f))
+    claim(&dir, &rel).await
+}
+
+/// Take `rel` inside `dir`, or the next free `-2`, `-3`, … beside it.
+///
+/// **Nothing this store writes ever takes a name that is already taken.** Two things
+/// can want one: two mic sources flushing the same minute, a rollover and a socket
+/// close landing in the same second, two images generated in one second. `File::create`
+/// truncates, so the first one's bytes would simply be gone.
+///
+/// That is not hypothetical for either half. Overwriting a per-minute name is how
+/// ~30 % of one day's mic audio was lost (2026-09-10; [`MediaSlot::InputStream`]'s
+/// grid was renamed in the same change so collisions are rare as well as harmless).
+/// And [`store_artifact`] had already met it from the other side and grown its own
+/// suffix loop — a `try_exists` check followed by a create, which is the same idea
+/// said twice and racy the second time. It says it here now, once, and atomically:
+/// `create_new` is what makes two callers racing for one name resolve instead of
+/// one of them silently winning.
+async fn claim(dir: &Path, rel: &str) -> anyhow::Result<(String, tokio::fs::File)> {
+    let (stem, ext) = match rel.rsplit_once('.') {
+        Some((s, e)) => (s, format!(".{e}")),
+        None => (rel, String::new()),
+    };
+    for n in 1..=64u32 {
+        let candidate = if n == 1 { rel.to_string() } else { format!("{stem}-{n}{ext}") };
+        match tokio::fs::File::create_new(dir.join(&candidate)).await {
+            Ok(f) => return Ok((candidate, f)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    anyhow::bail!("no free name beside {rel} after 64 tries")
 }
 
 /// Persist `bytes` inside the channel-day folder for `ts` — the same
@@ -287,8 +319,8 @@ pub fn content_type(path: &str) -> &'static str {
 /// "artifacts and bytes it produced or was given".
 ///
 /// `slug` is free text (a prompt) and is reduced to something filename-safe; a
-/// same-second collision takes a `-2`, `-3` suffix rather than overwriting, because two
-/// images generated in one second is an ordinary batch, not an error.
+/// same-second collision takes a `-2`, `-3` suffix rather than overwriting ([`claim`]),
+/// because two images generated in one second is an ordinary batch, not an error.
 pub async fn store_artifact(
     data_dir: &Path,
     ts: DateTime<Utc>,
@@ -301,16 +333,7 @@ pub async fn store_artifact(
     tokio::fs::create_dir_all(&dir).await?;
 
     let stem = format!("{}-{}", ts.format("%H%M%S"), slugify(slug));
-    let mut name = format!("{stem}.{ext}");
-    for n in 2..100 {
-        if !tokio::fs::try_exists(dir.join(&name)).await.unwrap_or(false) {
-            break;
-        }
-        name = format!("{stem}-{n}.{ext}");
-    }
-
-    let path = dir.join(&name);
-    let mut f = tokio::fs::File::create(&path).await?;
+    let (name, mut f) = claim(&dir, &format!("{stem}.{ext}")).await?;
     f.write_all(bytes).await?;
     f.flush().await?;
     f.sync_data().await?;
@@ -469,6 +492,47 @@ mod tests {
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"one", "the first was overwritten");
     }
 
+    /// The bug this whole change is about, at the layer it actually lives in: a
+    /// stream flushed twice inside one minute — a rollover, then a socket close —
+    /// must not write the second fragment over the first. Before 2026-09-10 it did,
+    /// and ~30 % of that day's mic audio went with it.
+    #[tokio::test]
+    async fn a_second_flush_in_one_minute_keeps_the_first_one_s_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputStream, "wav", b"one")
+            .await
+            .unwrap();
+        let b = store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputStream, "wav", b"two")
+            .await
+            .unwrap();
+
+        assert_ne!(a, b, "the second flush took the first one's name");
+        let day = layout::channel_day_dir(dir.path(), Channel::Audio, ts());
+        assert_eq!(tokio::fs::read(day.join(&a)).await.unwrap(), b"one");
+        assert_eq!(tokio::fs::read(day.join(&b)).await.unwrap(), b"two");
+    }
+
+    /// A streamed stretch is named by where it starts, and lives under `stream/` so a
+    /// posted clip landing in the same second cannot address the same file.
+    #[tokio::test]
+    async fn a_streamed_stretch_and_a_clip_in_one_second_do_not_share_a_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let stream =
+            store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputStream, "wav", b"mic")
+                .await
+                .unwrap();
+        let clip =
+            store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputOneOff, "wav", b"clip")
+                .await
+                .unwrap();
+
+        assert!(stream.contains("/stream/"), "{stream}");
+        assert_ne!(stream, clip);
+        let day = layout::channel_day_dir(dir.path(), Channel::Audio, ts());
+        assert_eq!(tokio::fs::read(day.join(&stream)).await.unwrap(), b"mic");
+        assert_eq!(tokio::fs::read(day.join(&clip)).await.unwrap(), b"clip");
+    }
+
     /// A slug is derived from a prompt, and a prompt is whatever the person said. A
     /// Chinese one must still name its file — dropping to ASCII would leave every
     /// Chinese generation called `image`.
@@ -537,7 +601,7 @@ mod tests {
 
         // Original present → returns it.
         let got = resolve(dir, Channel::Audio, when, &rel).await.unwrap();
-        assert!(got.ends_with("09/16.wav"));
+        assert!(got.ends_with("09/stream/16-00.wav"), "{}", got.display());
 
         // Original gone, a keepsake left → falls back to the keepsake.
         let day = layout::channel_day_dir(dir, Channel::Audio, when);

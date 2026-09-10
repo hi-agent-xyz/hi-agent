@@ -678,6 +678,9 @@ pub async fn ingest_pcm_stream(
             let cuts = tokio::select! {
                 msg = tr_rx.recv() => match msg {
                     Some(t) => {
+                        // Every frame the recognizer sent, exactly as it arrived and
+                        // before anything here decides what to do with it.
+                        log_frame(&relay_state.data_dir, &t).await;
                         // A rolling partial is the duck trigger: somebody is
                         // talking, hundreds of ms before the sentence settles. The
                         // moment is reported to the barge-in registry, whose own
@@ -844,7 +847,7 @@ pub async fn ingest_pcm_stream(
     let mut started = false;
 
     // Persist the live mic on a wall-clock-minute grid: PCM accumulates per
-    // minute and flushes to `audio/<date>/<HH>/<MM>.wav` at each rollover (and
+    // minute and flushes to `audio/<date>/<HH>/stream/<MM>-<SS>.wav` at each rollover (and
     // at close). The bytes are the raw signal; utterance lines (journaled by
     // `deliver_transcript`) stay media-less and correlate to a minute by ts.
     let mut cap_minute: Option<String> = None;
@@ -1128,7 +1131,56 @@ fn resolve_speaker(
 }
 
 /// Persist one wall-clock minute of live mic PCM as a WAV under
-/// `audio/<date>/<HH>/<MM>.wav`. Best-effort: a failure is logged, never fatal.
+/// `audio/<date>/<HH>/stream/<MM>-<SS>.wav`. Best-effort: a failure is logged, never fatal.
+/// Append one recognizer frame to `audio/<date>/frames.jsonl`.
+///
+/// **What this exists for.** Twice now — 2026-09-09 and 2026-09-10 — a question
+/// about how spoken input was cut could only be answered by *replaying the stored
+/// audio through the recognizer at realtime pace*, because the frames it returned
+/// were kept nowhere: `channel_log` is a tracing tap, the journal holds settled
+/// messages, and `/api/channels` is presence with no history. Both times that meant
+/// a live API call and several minutes to recover something the process had already
+/// been told. The second time the audio itself turned out to be lossy, and the
+/// measurement had to carry a caveat it could not remove.
+///
+/// The rolling partials are the part that matters and the part that was missing: a
+/// settled message says what was decided, and only the frames say what it was decided
+/// *from*. That includes text that never became a message — a half sentence the
+/// speaker abandoned, a reading the recognizer corrected. That is the point, and it is
+/// strictly less than the raw audio sitting beside it already reveals.
+///
+/// Best-effort and unsynced: this is a record for reading afterwards, not a durable
+/// signal, and it must never slow the path a person is waiting on. A failure is
+/// logged once at debug and dropped.
+///
+/// **It fades with the day it belongs to**, deliberately rather than incidentally: it
+/// sits in the channel-day folder, so the forgetting pass drops it along with the
+/// audio it describes. What it answers — *how was this cut, and out of what* — is a
+/// question about recent speech; nobody asks it of a day whose sound is already gone.
+async fn log_frame(data_dir: &std::path::Path, t: &Transcript) {
+    let line = serde_json::json!({
+        "ts": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "final": t.is_final,
+        "text": t.text,
+        "speaker": t.speaker_id,
+    });
+    let path = crate::mind::memory::layout::channel_day_dir(data_dir, Channel::Audio, Utc::now())
+        .join("frames.jsonl");
+    let write = async {
+        if let Some(dir) = path.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let mut f = tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await?;
+        let mut buf = serde_json::to_vec(&line)?;
+        buf.push(b'\n');
+        tokio::io::AsyncWriteExt::write_all(&mut f, &buf).await?;
+        anyhow::Ok(())
+    };
+    if let Err(err) = write.await {
+        tracing::debug!(error = %format!("{err:#}"), "persisting an STT frame failed");
+    }
+}
+
 async fn flush_mic_minute(state: &AppState, ts: DateTime<Utc>, pcm: &[u8]) {
     let wav = pcm16_mono_16k_to_wav(pcm);
     if let Err(err) =
