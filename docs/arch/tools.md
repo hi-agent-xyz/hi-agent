@@ -505,8 +505,13 @@ journey 07 with an extra hop.
 
 In an earlier shape of this doc it was the last piece to build: a convenience over a registry
 any session could scan for itself. [Residency](#residency) makes it the only route to anything
-outside the hot set, so it is load-bearing instead. Until it exists, the workshop is whatever
-fits in a window.
+outside the hot set, so it is load-bearing instead.
+
+**It is a worker type**, not a fourth standing rung — `skills-manager`, dispatched like any
+other and kept rather than remade, since a working session is never reclaimed for being idle. So
+lookup costs a message round trip rather than a subprocess start, which is what makes the fast
+half affordable in the first place. It is handed no inventory of its own: the one rung that must
+not be given a partial list is the one whose answer decides whether anyone goes looking further.
 
 ## Decisions
 
@@ -561,11 +566,6 @@ See the Decisions row above; the note is `driving-a-desktop.md`.
 
 ## Open
 
-- **Reflection still straightens the shelf, on loan.** The [Skills Manager](#the-skills-manager)
-  holds the pen in this design and does not exist, so `reflection.md` keeps telling Reflection to
-  merge and retire notes — and now carries the inventory, so it can at least see what it is being
-  asked to tidy. The item that takes the loan back is the Skills Manager's first build; until
-  then this is a rung doing a job its window is the wrong shape for.
 - **The rung that registers a server cannot exercise it.** A thread's tools are fixed when it
   opens, so the worker that writes the skill has no call it can make to check the endpoint and
   the credential are right. The first real call happens on the *next* errand, one dispatch later.

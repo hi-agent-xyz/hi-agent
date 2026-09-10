@@ -64,6 +64,7 @@ const WORKER_DECISION_MAKER_BASE: &str = include_str!("workers/decision-maker.md
 const WORKER_DRIVE_ORGANIZER_BASE: &str = include_str!("workers/drive-organizer.md");
 const WORKER_PERSON_READER_BASE: &str = include_str!("workers/person-reader.md");
 const WORKER_TASK_MANAGER_BASE: &str = include_str!("workers/task-manager.md");
+const WORKER_SKILLS_MANAGER_BASE: &str = include_str!("workers/skills-manager.md");
 
 /// Every prompt, for the cross-tree test in [`crate::mind::skills`]. **The list is of
 /// all of them rather than of the ones that see the workshop**, and the test picks its
@@ -77,7 +78,7 @@ const WORKER_TASK_MANAGER_BASE: &str = include_str!("workers/task-manager.md");
 /// two that happened to be open, leaving three specialists still telling the hands to
 /// leave a note behind. An enumerated list of subjects would have shipped that.
 #[cfg(test)]
-pub(crate) fn all_bases() -> [(&'static str, &'static str); 10] {
+pub(crate) fn all_bases() -> [(&'static str, &'static str); 11] {
     [
         ("reaction", REACTION_BASE),
         ("cognition", COGNITION_BASE),
@@ -89,6 +90,7 @@ pub(crate) fn all_bases() -> [(&'static str, &'static str); 10] {
         ("worker/drive-organizer", WORKER_DRIVE_ORGANIZER_BASE),
         ("worker/person-reader", WORKER_PERSON_READER_BASE),
         ("worker/task-manager", WORKER_TASK_MANAGER_BASE),
+        ("worker/skills-manager", WORKER_SKILLS_MANAGER_BASE),
     ]
 }
 
@@ -145,6 +147,15 @@ pub enum WorkerType {
     /// may write a task's `status`. Split out of Cognition because the rung that hands
     /// work out is the worst-placed one to rule that its own errand ended.
     TaskManager,
+    /// Answers *"here is what I want to do"* out of the workshop, and holds the pen for
+    /// what goes on the shelf (`docs/arch/tools.md#the-skills-manager`).
+    ///
+    /// **It exists because of a window, not an authority.** Every other rung carries a
+    /// cut of the workshop — the recently-used end, capped at a budget — so no other rung
+    /// can see a duplicate or judge where a new note belongs. This one goes and reads all
+    /// of it, which is affordable exactly once: inside a session of its own, answering
+    /// the asker in one message.
+    SkillsManager,
 }
 
 impl WorkerType {
@@ -158,6 +169,7 @@ impl WorkerType {
             Self::DriveOrganizer => "drive-organizer",
             Self::PersonReader => "person-reader",
             Self::TaskManager => "task-manager",
+            Self::SkillsManager => "skills-manager",
         }
     }
 
@@ -171,6 +183,7 @@ impl WorkerType {
         Self::DriveOrganizer,
         Self::PersonReader,
         Self::TaskManager,
+        Self::SkillsManager,
     ];
 
     /// Parse a wire name. `None` for anything unknown — the caller turns that into a
@@ -205,7 +218,7 @@ impl WorkerType {
     /// that flag. A phrase that fires on a session which can never satisfy it is a phrase
     /// the reader learns to skip — including on the line where it means something.
     pub fn expects_a_subject(self) -> bool {
-        !matches!(self, Self::PersonReader | Self::TaskManager)
+        !matches!(self, Self::PersonReader | Self::TaskManager | Self::SkillsManager)
     }
 
     /// The embedded base for this type's layer.
@@ -218,6 +231,7 @@ impl WorkerType {
             Self::DriveOrganizer => WORKER_DRIVE_ORGANIZER_BASE,
             Self::PersonReader => WORKER_PERSON_READER_BASE,
             Self::TaskManager => WORKER_TASK_MANAGER_BASE,
+            Self::SkillsManager => WORKER_SKILLS_MANAGER_BASE,
         }
     }
 }
@@ -275,6 +289,7 @@ impl Role {
         Self::Worker(WorkerType::DriveOrganizer),
         Self::Worker(WorkerType::PersonReader),
         Self::Worker(WorkerType::TaskManager),
+        Self::Worker(WorkerType::SkillsManager),
     ];
 
     /// The wire name — the `X-HI-Role` header, `tools_for_role`, and the `role` field on
@@ -313,6 +328,7 @@ impl Role {
             Self::Worker(WorkerType::DriveOrganizer) => "workers/drive-organizer",
             Self::Worker(WorkerType::PersonReader) => "workers/person-reader",
             Self::Worker(WorkerType::TaskManager) => "workers/task-manager",
+            Self::Worker(WorkerType::SkillsManager) => "workers/skills-manager",
         }
     }
 

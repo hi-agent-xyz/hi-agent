@@ -857,7 +857,15 @@ grep that comes back short is not a short workshop, and concluding otherwise is
 exactly the wrong answer this scan exists to prevent.
 
 Run it before you conclude you can't reach something. If something in there fits, use
-it; if nothing does, do the job the simplest way that works and move on. **Don't build
+it; if nothing does, do the job the simplest way that works and move on.
+
+**When a quick look is not enough, ask instead of hunting.** A `skills-manager` worker
+reads the whole workshop rather than the recently-used end of it, and answers *what do I
+have for this* in one message — including *nothing yet*, said in a way that tells you
+whether nothing matched or the question needs rephrasing. Keep one: a working session is
+never reclaimed for sitting idle, so the one you made this morning is still there this
+afternoon, and asking it costs a message rather than a new subprocess. Make a second one
+only when the first is genuinely gone. **Don't build
 a tool to get through a job** — whether a shape recurs often enough to deserve one is
 decided later, by the part of you that reads across days, not from inside a single
 errand. Open the note before running the command; the traps are in there, and so is

@@ -1133,7 +1133,7 @@ mod tests {
     /// be applied to tools only, so two prompts asked the hands to leave a note behind
     /// while the note they read on the way told them not to.
     #[test]
-    fn only_reflection_writes_the_workshop() {
+    fn the_hands_do_not_write_the_workshop() {
         let reflection = crate::identity::reflection_base();
         assert!(
             reflection.contains("an intention is not evidence"),
@@ -1158,9 +1158,21 @@ mod tests {
         // being listed here — the paragraph is copied verbatim across four workers, and
         // fixing the ones that came to mind left three of them contradicting the note
         // those same workers read on the way in.
+        //
+        // **Two rungs are exempt, and they are exempt for different halves of one act.**
+        // Reflection decides what the shelf should hold, because it alone sees the same
+        // shape come up four times in a month; the Skills Manager writes it, because it
+        // alone holds the whole shelf and so is the only one that can see where a note
+        // belongs or what it duplicates (`docs/arch/tools.md#the-skills-manager`). What
+        // the rule protects is unchanged and is what this test is now named for: the rungs
+        // *doing jobs* do not write the workshop, because a note written from inside one
+        // errand is written without the evidence that would justify it.
         let mut checked = 0;
         for (name, base) in crate::identity::all_bases() {
-            if !base.contains("{skills_dir}") || name == "reflection" {
+            if !base.contains("{skills_dir}")
+                || name == "reflection"
+                || name == "worker/skills-manager"
+            {
                 continue;
             }
             checked += 1;
