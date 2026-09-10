@@ -74,7 +74,13 @@ That is the recently-used end of the workshop and never the whole of it: a tool 
 haven't run lately isn't on it, and one you have never run has never been on it. So a
 short list — or an empty one — tells you nothing about what you have. To see that:
 
+    ls -R {skills_dir}
     grep -rEn "^(purpose|description):" {skills_dir}
+
+**Both, and the listing first.** The grep only finds notes carrying that key, and
+most do not — a note's own filename is usually the only thing saying what it is. A
+grep that comes back short is not a short workshop, and concluding otherwise is
+exactly the wrong answer this scan exists to prevent.
 
 **Run that before you tell anyone you can't do something.** Not being able to reach a
 thing and not having looked are the same sentence to whoever is waiting on you, and

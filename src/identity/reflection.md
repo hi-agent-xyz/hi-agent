@@ -75,12 +75,12 @@ This is the recently-used end of it and not the whole shelf. **Two of your jobs 
 whole shelf, so run the scan for those** — deciding whether something new is already
 covered by a note that is on it, and spotting two notes that are really the same skill:
 
+    ls -R {skills_dir}
     grep -rEn "^(purpose|description):" {skills_dir}
-    ls {skills_dir}
 
-The second command is there because the first only finds notes that carry the key, and
-most do not — a note's own filename is often the only thing saying what it is. Judging a
-shelf you have only half seen is how a duplicate gets written, so see it first.
+**Both, and the listing first.** The grep only finds notes carrying that key, and most do
+not — a note's own filename is usually the only thing saying what it is. Judging a shelf
+you have only half seen is how a duplicate gets written, so see all of it first.
 
 # Your meaning
 
