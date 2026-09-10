@@ -45,7 +45,7 @@ costs to hold, cut wherever the budget falls:
 |---|---|---|
 | **Bundled** | full schema | **authored** — ships with the role, static, per-role |
 | **Hot** | full schema | **derived** — actual use over a recent window, per install |
-| **Inventory** | nothing | everything else; reached by [asking](#the-tool-manager) |
+| **Inventory** | nothing | everything else; reached by [asking](#the-skills-manager) |
 
 A tool has no level of its own and nothing stores one. Hot is a *ranking* — one number per
 tool, cut at a budget — so a tool used yesterday climbs on its own and one untouched for a
@@ -318,7 +318,7 @@ a missed entry reads as *never built* while the file sits right there, so the wo
 get less trustworthy the more it accumulated. Derived from the tree, a missing line degrades to
 a bare filename. It never becomes a confident wrong answer.
 
-**It is read by the [Tool Manager](#the-tool-manager), not by every session.** That is what
+**It is read by the [Skills Manager](#the-skills-manager), not by every session.** That is what
 [residency](#residency) buys: the scan can be as long, as slow, or as paged as it needs to be,
 because it runs inside an agent with its own window and reaches the asking session as one
 question and one answer. Flat therefore stays right at any size — grouping was only ever a way
@@ -453,17 +453,36 @@ Three costs, stated rather than discovered later:
   inside running work. Registering the server is where the person consented.
 
 
-## The Tool Manager
+## The Skills Manager
 
 Takes *"here is what I want to do"* and answers with a tool or with **"nothing serves that
 yet"**. It reads the same derived registry — not a second index — so a miss is a judgment error
 you can recover from by asking differently, never a coverage hole.
 
-Its second job is why it is worth having: **it owns the pen for new notes.** It is the only rung
-holding both halves of the question — what was wanted, and that nothing serves it — so *nothing
-yet* is a work order rather than a dead end. That is how the workshop grows without a human
-curating each entry, and it gives the learnt layer a designated writer the way
-[`person-reader`](agents.md#reflection--background) owns the `people` dimension.
+Its second job is why it is worth having: **it holds the pen — but not the decision.** Those are
+different jobs and they are split by *what has to be in the window*, which is the axis this whole
+doc runs on:
+
+| Act | Whose | What its window must hold |
+|---|---|---|
+| Getting hold of what a job needs — install, configure, exercise a real call | the **asking worker** | the job |
+| Deciding the workshop should hold it at all | [**Reflection**](agents.md#reflection--background) | the recurrence, across days |
+| Where it goes, how it is phrased, what it duplicates, what retires | **this rung** | the whole shelf |
+
+The middle one is Reflection's because nothing else can see the same shape come up four times in a
+month. The last one is not, and the reason is measurable rather than theoretical: Reflection is
+told to *"merge two notes that are really the same skill"* while being the one rung whose prompt
+carries no inventory at all — on one install, 68 skills on the shelf and the scan it would have to
+fall back on finding six of them. Deduplicating a shelf you cannot see is not a job.
+
+**And the duplicate signal is a by-product of lookup, not a sweep.** The rung answering *"do I
+have something for this?"* all day is the one that keeps landing on two notes that answer the same
+question. That is a sharper instrument than a periodic tidy, and it costs nothing extra — which is
+the argument for putting the pen where the queries already are.
+
+One pen, one decider, and workers still write nothing — so the worry that retired the old wording
+is still met: two rules for one act is what puts four worker prompts at odds with a note they
+read, and this is one rule with two named halves.
 
 ### Two jobs, two tempos
 
@@ -502,7 +521,7 @@ fits in a window.
 | **Three residency levels**, nothing between hot and asking | A partial list is a surface that can be consulted and found empty |
 | The cut line is **derived per session**, never stored | A stored level is bookkeeping kept by judgment, and it drifts |
 | The registry is **derived** | An index kept by judgment drifts silently and reads as "never built" |
-| The registry is read **inside the Tool Manager** | A scan in an agent's own window costs the asker one question — so flat scales |
+| The registry is read **inside the Skills Manager** | A scan in an agent's own window costs the asker one question — so flat scales |
 | Readiness is **running it**, after reading the note | A stored claim goes stale; but `command not found` names no fix |
 | Signatures come from the **carrier at call time** | A copied schema is a second truth, drifting |
 | **Prefer CLI** | Authorable by the agent, and pickable up mid-errand |
@@ -516,7 +535,7 @@ fits in a window.
 | Lookup and authorship are **separate tempos** | Lookup is in every job's critical path; installing software is not |
 | Residency is **economy, not permission** | Everything reaches everything; only *in hand* differs |
 | A tool is **an investment reflection decides**, not a job-time reflex | Only the rung reading across days can see recurrence; inside one job the guess always resolves to build |
-| **Reflection writes the whole workshop** — notes as much as tools | The same blindness applies to both; two rules for one act put four worker prompts at odds with a note they read |
+| **Reflection decides what the workshop should hold; the Skills Manager writes it** | Split by window, not authority: recurrence is only visible across days, and duplication is only visible from the whole shelf |
 | Cost sets **the bar**, never **the owner** | A note risks a line and cannot break; a tool risks a session, an install and every future window |
 | **Existing** and **in hand** are separate questions | Whether a tool should exist is judgment over patterns; whether it is carried is arithmetic over use |
 | **Bundled tools may be named in another rung's prompt**; hot and the workshop may not | A rung that cannot look must be told what its hands make — and only the compile-time half is the same on every install |
@@ -542,6 +561,11 @@ See the Decisions row above; the note is `driving-a-desktop.md`.
 
 ## Open
 
+- **Reflection still straightens the shelf, on loan.** The [Skills Manager](#the-skills-manager)
+  holds the pen in this design and does not exist, so `reflection.md` keeps telling Reflection to
+  merge and retire notes — and now carries the inventory, so it can at least see what it is being
+  asked to tidy. The item that takes the loan back is the Skills Manager's first build; until
+  then this is a rung doing a job its window is the wrong shape for.
 - **The rung that registers a server cannot exercise it.** A thread's tools are fixed when it
   opens, so the worker that writes the skill has no call it can make to check the endpoint and
   the credential are right. The first real call happens on the *next* errand, one dispatch later.

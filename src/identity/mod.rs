@@ -904,6 +904,12 @@ mod soul_tests {
         for text in [cognition_prompt(dir.path()).await, reflection_prompt(dir.path()).await] {
             assert!(!text.contains("{skills_dir}"), "an unresolved placeholder reached the rung");
             assert!(!text.contains("{conversation_memory}"));
+            // Reflection carries this one too, and needs it: it is the rung told to merge
+            // duplicate notes, and it was the one rung whose prompt showed it none of the
+            // shelf. A placeholder that reached the model raw would read as an empty shelf,
+            // which is the same confusion — absent entry versus absent tool — that the
+            // inventory exists to prevent.
+            assert!(!text.contains("{in_hand}"), "an unresolved placeholder reached the rung");
             let skills = crate::mind::skills::skills_dir(dir.path());
             assert!(skills.is_absolute());
             assert!(text.contains(&skills.display().to_string()));
