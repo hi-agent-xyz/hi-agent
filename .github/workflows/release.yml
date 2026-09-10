@@ -129,6 +129,18 @@ jobs:
   # keychain. make-dmg.sh normally reads the two selector names from a
   # gitignored .env, which a CI checkout does not have — hence the secrets. The
   # key itself never travels; only the name of the identity to look up.
+  #
+  # Both of those live in that machine's `ci.keychain`, and the machine has no
+  # auto-login — a deliberate choice, since auto-login would store the account
+  # password in /etc/kcpassword. So the runner has no desktop session and every
+  # keychain is locked when a job starts, which is why the unlock step below
+  # comes before the build.
+  #
+  # NOTARY_PROFILE names a notarytool profile in that keychain, and notarization
+  # is per-team, not per-app: any profile holding credentials for team
+  # R3845XW5FZ notarizes anything signed with that team's Developer ID. The Mac
+  # mini currently carries one such profile, `abacad-notary`, so that is the
+  # value to set until a hi-agent-named profile is stored beside it.
   # ---------------------------------------------------------------------------
   macos:
     name: macOS .dmg
@@ -149,6 +161,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Unlock the signing keychain
+        shell: bash
+        # Without this, codesign fails with a bare `errSecInternalComponent`
+        # that names neither the keychain nor the lock. The password is a random
+        # throwaway that exists only on this machine (mode 600) — deliberately
+        # not a GitHub secret, so no signing material ever leaves the box.
+        run: |
+          set -euo pipefail
+          pw=~/.config/ci-keychain.pw
+          [ -r "$pw" ] || { echo "$pw is missing on this runner — the signing keychain cannot be unlocked, so the .dmg would be ad-hoc signed and unnotarized" >&2; exit 1; }
+          security unlock-keychain -p "$(cat "$pw")" ci.keychain
+          security set-keychain-settings ci.keychain   # no auto-lock while we build
 
       - name: Report free disk
         shell: bash

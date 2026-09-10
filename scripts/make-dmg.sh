@@ -59,6 +59,22 @@ env_get() {  # env_get KEY -> value from .env with one layer of quotes stripped
 IDENTITY="${CODESIGN_IDENTITY:-$(env_get CODESIGN_IDENTITY)}"
 IDENTITY="${IDENTITY:--}"                    # default ad-hoc
 NOTARY_PROFILE="${NOTARY_PROFILE:-$(env_get NOTARY_PROFILE)}"
+
+# Which keychain holds that profile. notarytool reads the DEFAULT (login)
+# keychain unless told otherwise, but on the CI Mac the profile lives in
+# ci.keychain alongside the Developer ID identity — and that box has no desktop
+# session, so the login keychain stays locked and notarytool dies with
+# `keychainLocked(keychainName: "default")` even though signing just succeeded.
+# Point it at ci.keychain when that keychain exists; a dev Mac has none, so the
+# flag is omitted there and the default keychain is used as before. The
+# expansion below is written `${a[@]+"${a[@]}"}` because macOS ships bash 3.2,
+# where a bare `${a[@]}` on an empty array trips `set -u`.
+CI_KEYCHAIN="$HOME/Library/Keychains/ci.keychain-db"
+if [ -f "$CI_KEYCHAIN" ]; then
+  NOTARY_KEYCHAIN=(--keychain "$CI_KEYCHAIN")
+else
+  NOTARY_KEYCHAIN=()
+fi
 ENT="$ROOT/app/apple/macos/hi-agent.entitlements"
 VERSION="$(cat VERSION)"
 
@@ -247,8 +263,8 @@ APPLESCRIPT
 }
 
 styled=false
-if [ -n "${SSH_CONNECTION:-}" ]; then
-  echo ">> styled DMG skipped (headless / SSH — no window server); building plain image."
+if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${CI:-}" ]; then
+  echo ">> styled DMG skipped (headless / SSH / CI — no window server); building plain image."
 elif [ ! -f "$BG_DIR/background.png" ] || [ ! -f "$BG_DIR/background@2x.png" ]; then
   echo ">> styled DMG skipped (missing app/apple/macos/dmg/background*.png); building plain image."
 elif build_styled_dmg; then
@@ -261,7 +277,7 @@ $styled || build_plain_dmg
 
 if $notarize; then
   echo ">> notarizing $DMG (profile: $NOTARY_PROFILE)…"
-  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" ${NOTARY_KEYCHAIN[@]+"${NOTARY_KEYCHAIN[@]}"} --wait
   xcrun stapler staple "$DMG"
   xcrun stapler staple "$APP"
 else
