@@ -859,6 +859,17 @@ exactly the wrong answer this scan exists to prevent.
 Run it before you conclude you can't reach something. If something in there fits, use
 it; if nothing does, do the job the simplest way that works and move on.
 
+**Some skills are a service rather than a procedure**, and those you have to hand over
+deliberately. A note whose front matter carries an `mcp:` line is a server — a remote
+handset, a vendor's tools — and naming it in `servers:` when you create a worker is what
+puts its verbs in that worker's hands. Nothing else does: a session's tools are fixed when
+it opens, so a worker you dispatched without it cannot pick it up later however clearly it
+asks. When one reports that it registered a server and could not use it, that report *is*
+the request — the errand continues in a new worker carrying the name.
+
+Name only what the errand needs. Those verbs cost their room in the window whether or not
+the job touches them.
+
 **When a quick look is not enough, ask instead of hunting.** A `skills-manager` worker
 reads the whole workshop rather than the recently-used end of it, and answers *what do I
 have for this* in one message — including *nothing yet*, said in a way that tells you

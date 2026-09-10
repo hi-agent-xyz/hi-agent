@@ -116,6 +116,14 @@ So a browser profile, a session store, a device pairing, an auth cache: those li
 A key or token is different: it goes in a secret file, and the note records **where it is and
 what it opens** — never the value, which does not get pasted into a note, a log, or a message.
 
+**One named exception: an MCP server's own object (§ 4b).** That line is config the host
+parses, not prose anyone reads, and the rung doing the job never opens the file — the host
+resolves it and attaches the server. Keeping the key out of it was tried and cost a verb, a
+table and a registration split across two places, to defend against nobody: the person and this
+host are both trusted, and the key arrived by being pasted into a channel that keeps every
+message. So the object goes in whole. Everything else in this section stands — including that
+the value still does not belong in a log, a message, or your report.
+
 ## 6. Actually make a real call
 
 **Do not write the note yet.** Run the thing, on the real target, and get a real result back.
