@@ -55,13 +55,48 @@ To cut a release from an up-to-date branch, run `make version`. It proposes the
 next patch version, then updates the version files, commits `release v<version>`,
 tags it, and pushes the commit and tag to `origin`.
 
-Published desktop artifacts use the same platform-explicit convention as
-Abacad:
+Pushing that tag is the whole trigger.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) picks it up,
+builds every platform, and publishes a GitHub Release carrying all of them.
+Published artifacts use the same platform-explicit convention as Abacad:
 
 ```text
-hi-agent-<version>-macos-apple-silicon.dmg
-hi-agent-<version>-windows-x64.exe
+hi-agent-<version>-macos-apple-silicon.dmg     signed + notarized
+hi-agent-<version>-windows-x64.exe             NSIS installer, unsigned
+hi-agent_<version>_amd64.deb                   Debian 13 / Ubuntu 26.04
+hi-agent-<version>-android.apk                 handset, unsigned
+hi-agent-<version>-android-tv.apk              television, unsigned
 ```
+
+iPhone and iPad are not in that list: they ship through TestFlight
+([`ios-testflight.yml`](.github/workflows/ios-testflight.yml)), and an `.ipa` is
+not something anyone can download and install.
+
+Beside them the workflow attaches **`manifest.json`** — every artifact of that
+release with its URL, size and SHA-256, plus the version, tag and commit. The
+filename carries no version on purpose, because that is the one form GitHub will
+resolve permanently:
+
+```sh
+curl -sL https://github.com/hi-agent-xyz/hi-agent/releases/latest/download/manifest.json
+```
+
+That URL is what a download page should read. `make manifest DIST=<dir>` builds
+the same file locally from a directory of artifacts; it derives the names it
+expects from `VERSION` and fails on any that is missing or empty, which is what
+catches a packaging step that reported success and produced nothing.
+
+Running the workflow by hand (`workflow_dispatch`) with **publish** left off
+builds all five artifacts and the manifest as run artifacts without creating a
+tag or a release — the way to exercise a build without spending a version.
+
+Two repository secrets matter, both read by
+[`scripts/make-dmg.sh`](scripts/make-dmg.sh) on the Mac mini, where a CI
+checkout has no `.env`: `CODESIGN_IDENTITY` (the Developer ID Application
+identity to look up) and `NOTARY_PROFILE` (the `notarytool` keychain profile).
+Neither is a key — both name something the machine's keychain holds. Without
+them the `.dmg` still builds, ad-hoc signed and unnotarized, and the manifest
+reports it as unsigned rather than pretending otherwise.
 
 ### Verify it's alive
 

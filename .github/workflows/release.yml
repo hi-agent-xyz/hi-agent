@@ -1,0 +1,525 @@
+# Everything that happens after `make version`.
+#
+# `make version` bumps every committed stamp, commits, tags `v<x.y.z>` and
+# pushes. Until now that was the end of it: the artifacts were built by hand on
+# whichever machine could build them, only macOS ever got that far, and the
+# .dmg was copied to hi-agent.xyz manually. This workflow takes the tag and
+# produces the rest — every downloadable platform, one GitHub Release, and a
+# manifest.json that says what the current version is and where its files are.
+#
+# The manifest is attached under that exact unversioned name because GitHub
+# resolves `releases/latest/download/<name>` only for a filename that does not
+# change. That URL is the seam a download page reads instead of hardcoding an
+# artifact name.
+#
+# iOS is not here. It ships through TestFlight (ios-testflight.yml) and an .ipa
+# is not something anyone can download and install, so this workflow would have
+# nothing to attach.
+#
+# Every build step goes through a `make` target, per CLAUDE.md: the targets do
+# setup the raw commands don't (`check-version` first, the SPA built before the
+# binary that embeds it, the cross-compile shim). Where CI needed a build this
+# repo could not already express — a native Windows engine build — the fix was
+# to teach `make exe` about a Windows host, not to write cargo invocations here.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create the tag and publish the release. Leave off for a build-only dry run."
+        type: boolean
+        default: false
+
+# Never two releases at once, and never cancel one halfway: a cancelled run
+# leaves a tag with no release behind it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # What version are we releasing, and is the repo actually consistent with it.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and verify the version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '\r\n' < VERSION)"
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            # The tag already exists — `make version` made it. Our job is to
+            # check that it agrees with the tree it points at, not to re-create
+            # it. A tag whose VERSION says something else would publish
+            # artifacts named after one version under a release named after
+            # another.
+            tag="$GITHUB_REF_NAME"
+            if [[ "$tag" != "v$version" ]]; then
+              echo "tag $tag does not match VERSION $version — re-run 'make bump-version' before tagging" >&2
+              exit 1
+            fi
+            publish=true
+          else
+            tag="v$version"
+            publish="${{ inputs.publish }}"
+          fi
+
+          # The ten committed stamps that cannot read VERSION at build time.
+          # Every packaging target runs this too; running it here means a drift
+          # is caught in seconds rather than forty minutes into a Mac build.
+          ./scripts/check-version.sh
+
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "sha=$GITHUB_SHA"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Releasing \`$version\`"
+            echo
+            echo "- Tag: \`$tag\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Publish: \`$publish\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create the tag
+        # Only on a manual publish. The tag-push path already has one, and a dry
+        # run must not leave a tag behind — that is the whole point of it.
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.resolve.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "tag $tag already exists; leaving it alone"
+            exit 0
+          fi
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "$tag"
+
+  # ---------------------------------------------------------------------------
+  # macOS. Must be the Mac mini: `make dmg` guards on Apple Silicon, and the
+  # Developer ID private key and notary credentials live in that machine's
+  # keychain. make-dmg.sh normally reads the two selector names from a
+  # gitignored .env, which a CI checkout does not have — hence the secrets. The
+  # key itself never travels; only the name of the identity to look up.
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS .dmg
+    needs: prepare
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - macmini
+    timeout-minutes: 150
+    outputs:
+      notarized: ${{ steps.dmg.outputs.notarized }}
+    env:
+      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+      NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Report free disk
+        shell: bash
+        # This box has run out of disk mid-build before, and the failure shape
+        # is the bad one: the packaging step reports success and produces
+        # nothing. make-manifest.sh catches the result; this catches the cause.
+        run: df -h /
+
+      - name: Build the .dmg
+        id: dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          make dmg
+
+          version="${{ needs.prepare.outputs.version }}"
+          dmg="target/dmg/hi-agent-$version-macos-apple-silicon.dmg"
+          [ -s "$dmg" ] || { echo "make dmg reported success but $dmg is missing or empty" >&2; exit 1; }
+
+          # Ask the artifact, don't assume. With no Developer ID the script
+          # falls back to ad-hoc signing and skips notarization, which is a
+          # perfectly good local build and a thing the manifest must not
+          # describe as signed.
+          if xcrun stapler validate "$dmg" >/dev/null 2>&1; then
+            echo "notarized=1" >> "$GITHUB_OUTPUT"
+            echo "notarized and stapled"
+          else
+            echo "notarized=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::the .dmg is not notarized — set CODESIGN_IDENTITY and NOTARY_PROFILE to publish a signed build"
+          fi
+
+          mkdir -p target/dist
+          cp "$dmg" target/dist/
+
+      - name: Upload the .dmg
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-macos
+          path: target/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Linux, and the test gate for the whole release.
+  #
+  # Debian 13 in a container rather than bare ubuntu-latest, and that is forced
+  # rather than stylistic: app/linux/Cargo.toml pins gtk4 v4_18, libadwaita v1_7
+  # and webkit6 v2_52, and Ubuntu 24.04 ships GTK 4.14 / libadwaita 1.5. Trixie
+  # is the documented target floor (docs/platforms/linux.md) and is also what
+  # the development box runs, so this job builds what a developer builds.
+  #
+  # `make test` and `make linux-test` run here, before the packaging, so a
+  # failing test fails this job, the release job needs this job, and nothing is
+  # published. That is why there is no separate test job: it would cost a second
+  # full Linux build to buy the same guarantee.
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Linux .deb
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 120
+    steps:
+      - name: Install build dependencies
+        # Before checkout: the container starts bare, and actions/checkout wants
+        # git. The GUI packages are the four docs/platforms/linux.md names; the
+        # rest is what the engine needs (cmake + libclang for the ONNX and
+        # ffmpeg bindings, unzip for the browser provisioner's .zip).
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            cmake libclang-dev unzip xz-utils dpkg-dev \
+            libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libsecret-1-dev
+          rm -rf /var/lib/apt/lists/*
+          # The container runs as root over a workspace the runner owns, which
+          # git calls dubious and refuses to read.
+          git config --global --add safe.directory '*'
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `--default-toolchain none` because rust-toolchain.toml pins 1.97.1
+          # and the first cargo invocation installs exactly that. Letting rustup
+          # pick stable first would download a toolchain nothing uses.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build the engine and the SPA
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - name: Build the shell
+        run: make linux-app
+
+      - name: Test the shell
+        run: make linux-test
+
+      - name: Package the .deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          # SKIP_BUILD because the two halves are already built above — and
+          # deliberately so: it means the .deb carries exactly the binaries the
+          # tests just ran against, rather than a second build of the same
+          # source.
+          SKIP_BUILD=1 make deb
+
+          version="${{ needs.prepare.outputs.version }}"
+          deb="target/linux/hi-agent_${version}_amd64.deb"
+          [ -s "$deb" ] || { echo "make deb reported success but $deb is missing or empty" >&2; exit 1; }
+          mkdir -p target/dist
+          cp "$deb" target/dist/
+
+      - name: Upload the .deb
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-linux
+          path: target/dist/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Windows — and the first compiler this half of the repo has ever met.
+  #
+  # Neither the engine's MSVC target natively nor app/windows at all has been
+  # built before: there is no Windows machine and no .NET SDK on any host this
+  # repo is developed from, which is why HiAgentWindows.csproj's package
+  # references are wildcards nothing has ever restored. Expect this job to find
+  # real errors in code written blind. That is the job working.
+  #
+  # `make` is installed rather than avoided: the repo's rule is that packaging
+  # goes through a target, and make-installer.sh's two payload tiers (with or
+  # without the shell) are exactly the logic that should not be re-implemented
+  # in YAML.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows installer
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
+      - name: Install make and NSIS
+        shell: bash
+        run: |
+          set -euo pipefail
+          choco install -y --no-progress make nsis
+          # NSIS installs outside PATH. make-installer.sh looks for `makensis`
+          # and stops if it cannot find one, so put it there rather than let
+          # that check fire.
+          echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
+
+      - name: Publish the WinUI shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          make win-app
+
+          # make-installer.sh treats a missing shell as its normal lower tier —
+          # correct on a Mac, wrong here, where a shell-less installer would
+          # mean an install with no app in it. Assert rather than let the
+          # installer quietly drop to the engine-only tier.
+          shell_exe="app/windows/HiAgentWindows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/HiAgent.exe"
+          [ -f "$shell_exe" ] || { echo "make win-app produced no $shell_exe" >&2; exit 1; }
+
+      - name: Build the installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Builds the engine .exe natively (see the `exe` target) and wraps
+          # both halves with NSIS.
+          make installer
+
+          version="${{ needs.prepare.outputs.version }}"
+          setup="target/installer/hi-agent-$version-windows-x64.exe"
+          [ -s "$setup" ] || { echo "make installer reported success but $setup is missing or empty" >&2; exit 1; }
+          mkdir -p target/dist
+          cp "$setup" target/dist/
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-windows
+          path: target/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Android: the handset and the television, one build each.
+  #
+  # Both APKs are unsigned. docs/platforms/android.md records that no signing
+  # config is committed and that the intended first channel is a signed APK
+  # hosted beside the site rather than Play; until that key exists these are
+  # sideload-with-a-warning builds, and the manifest says so rather than
+  # implying otherwise.
+  # ---------------------------------------------------------------------------
+  android:
+    name: Android APKs
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Accept Android SDK licences
+        shell: bash
+        # compileSdk 37 is newer than the runner image's preinstalled
+        # platforms, so Gradle downloads it — which it will only do against
+        # accepted licences.
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+
+      - name: Build both APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          make android-apk
+          make android-tv-apk
+
+          version="${{ needs.prepare.outputs.version }}"
+          mkdir -p target/dist
+          # Gradle names its output after the module, the flavor and the build
+          # type; the release is named after the product. Glob rather than spell
+          # out `app-mobile-release-unsigned.apk`, which is a name Gradle owns.
+          mobile=$(ls app/android/app/build/outputs/apk/mobile/release/*.apk | head -n1)
+          tv=$(ls app/android/app/build/outputs/apk/tv/release/*.apk | head -n1)
+          cp "$mobile" "target/dist/hi-agent-$version-android.apk"
+          cp "$tv" "target/dist/hi-agent-$version-android-tv.apk"
+
+      - name: Upload the APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-android
+          path: target/dist/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Collect, describe, publish.
+  #
+  # `needs` every build job, so one platform failing means no release rather
+  # than a half one. Re-run the failed job, then re-run this one.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish
+    needs: [prepare, macos, linux, windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Download every artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: target/dist
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Write the manifest
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.sha }}
+          MACOS_NOTARIZED: ${{ needs.macos.outputs.notarized }}
+        run: |
+          set -euo pipefail
+          ls -l target/dist
+          make manifest
+          cat target/dist/manifest.json
+
+      - name: Upload the manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: manifest
+          path: target/dist/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish the release
+        if: needs.prepare.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "## Downloads"
+            echo
+            echo "| Platform | File |"
+            echo "| --- | --- |"
+            echo "| macOS (Apple Silicon) | \`hi-agent-$VERSION-macos-apple-silicon.dmg\` |"
+            echo "| Windows (x64) | \`hi-agent-$VERSION-windows-x64.exe\` |"
+            echo "| Debian / Ubuntu (amd64) | \`hi-agent_${VERSION}_amd64.deb\` |"
+            echo "| Android (handset) | \`hi-agent-$VERSION-android.apk\` |"
+            echo "| Android (TV) | \`hi-agent-$VERSION-android-tv.apk\` |"
+            echo
+            echo "The Android packages are unsigned; Windows is not Authenticode-signed."
+            echo "iPhone and iPad ship through TestFlight, not from this page."
+            echo
+            echo "\`manifest.json\` lists every file with its size and SHA-256."
+            echo "The latest release's copy is always at"
+            echo "<https://github.com/$GITHUB_REPOSITORY/releases/latest/download/manifest.json>."
+          } > "$notes"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # A re-run after a partial failure: replace the files rather than
+            # fail on an existing release.
+            gh release upload "$TAG" target/dist/* --clobber
+          else
+            gh release create "$TAG" target/dist/* \
+              --title "Hi Agent $VERSION" \
+              --notes-file "$notes" \
+              --generate-notes
+          fi
+
+          {
+            echo "### Published [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)"
+            echo
+            cat "$notes"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run — nothing published
+        if: needs.prepare.outputs.publish != 'true'
+        shell: bash
+        run: |
+          {
+            echo "### Dry run"
+            echo
+            echo "Every platform built and the manifest was generated. No tag was created and no release was published."
+            echo "Both are attached to this run as workflow artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -14,7 +14,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test test-live docker dmg app ios android android-apk exe win-app installer linux-app deb bump-version version
+.PHONY: help check-version build dev run test test-live docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -103,23 +103,41 @@ android-tv: check-version ## build + unit-test the Android TV client (debug APK;
 android-tv-apk: check-version ## build the unsigned Android TV release APK for self-hosted distribution
 	cd app/android && ./gradlew --no-daemon assembleTvRelease
 
-# `make exe` is a Windows *build check*: it cross-compiles the binary from a
-# mac/linux host (proving the Windows code paths compile + link) without running
-# it. One-time toolchain on the host:
+# `make exe` builds the Windows engine binary. What that means depends on the
+# host, and the target hides the difference on purpose — `installer` asks for
+# the .exe, not for a particular way of producing one.
+#
+# On a **Windows host** (the release CI runner) it is an ordinary native build:
+# the MSVC toolchain is already the host toolchain, so none of the cross-compile
+# scaffolding below applies.
+#
+# Everywhere else it is a cross-compile, and a *build check*: it proves the
+# Windows code paths compile and link from a mac/linux box without running them.
+# One-time toolchain on such a host:
 #   rustup target add x86_64-pc-windows-msvc
 #   cargo install cargo-xwin        # fetches the MSVC CRT + Windows SDK on first build
 #   brew install llvm ninja         # macOS: clang-cl/lld-link/llvm-lib + ninja (knf-rs's cmake)
 #                                    # Linux: install clang, lld, llvm + ninja from your distro
-# Workaround baked in below: upstream knf-rs-sys's build.rs picks the C++ stdlib by
-# *host* cfg!() — a bug under cross-compile that emits `-lc++` (libc++) even for the
-# MSVC target. The MSVC CRT already auto-links the C++ runtime, so we satisfy the
-# spurious reference with an empty c++.lib placed on the linker search path.
-exe: check-version ## cross-compile a Windows .exe build check (see WIN_TARGET; needs cargo-xwin)
+# Workaround baked into the cross branch: upstream knf-rs-sys's build.rs picks the
+# C++ stdlib by *host* cfg!() — a bug under cross-compile that emits `-lc++`
+# (libc++) even for the MSVC target. The MSVC CRT already auto-links the C++
+# runtime, so we satisfy the spurious reference with an empty c++.lib placed on
+# the linker search path. Natively there is no such reference to satisfy.
+#
+# Windows is the one OS that announces itself in the environment (`OS=Windows_NT`,
+# set by the OS itself, not by a shell), which is why the branch reads that rather
+# than shelling out to `uname` — under a Git Bash `make` the latter says MINGW64
+# and under a cmd-hosted one it says nothing at all.
+exe: check-version ## build the Windows engine .exe (native on Windows, cross-compiled elsewhere)
 	@test -d src/appearance/web/dist || (cd src/appearance/web && npm ci && npm run build)
+ifeq ($(OS),Windows_NT)
+	cargo build --release --target $(WIN_TARGET)
+else
 	@mkdir -p $(WIN_SHIM)
 	PATH="$(WIN_LLVM_BIN):$$PATH" llvm-lib /llvmlibempty "/out:$(WIN_SHIM)/c++.lib"
 	PATH="$(WIN_LLVM_BIN):$$PATH" RUSTFLAGS="-Lnative=$(WIN_SHIM)" XWIN_ACCEPT_LICENSE=1 \
 		cargo xwin build --release --target $(WIN_TARGET)
+endif
 	@echo "built target/$(WIN_TARGET)/release/hi-agent.exe"
 
 # The Windows shell — the app, as opposed to `exe`, which is the engine. Unlike
@@ -151,6 +169,22 @@ linux-test: ## run the Linux shell's tests
 
 deb: check-version ## package shell + engine as hi-agent_<version>_<arch>.deb
 	./scripts/make-deb.sh
+
+# The published release's index: one JSON file naming every artifact of this
+# version with its URL, size and SHA-256, attached to the GitHub Release under
+# the unversioned name `manifest.json` so that
+# https://github.com/<owner>/<repo>/releases/latest/download/manifest.json is a
+# permanent address for "what is current and where do I get it".
+#
+# DIST is a directory holding the already-built artifacts — the release workflow
+# fills it from the per-platform build jobs. The script derives the filenames it
+# expects from VERSION and fails on any that is missing or empty, so this is also
+# the check that a packaging step which reported success actually produced
+# something.
+DIST ?= target/dist
+
+manifest: ## write manifest.json describing the built artifacts (usage: make manifest DIST=dir)
+	@DIST="$(DIST)" ./scripts/make-manifest.sh
 
 bump-version: ## set the committed version everywhere (usage: make bump-version V=x.y.z)
 	@test -n "$(BUMP_VERSION)" || { echo "usage: make bump-version V=x.y.z" >&2; exit 1; }
