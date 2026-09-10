@@ -225,6 +225,18 @@
 - 🔴 **"只认屏不认字"原样成立。** 整个 38 分钟里 `out-text.log` **零输出**:最后一句话停在 22:50:58,outage view 22:51:08 上屏,然后就没有然后了。文字通道一直挂着,一个字也没得到。`docs/arch/surfaces.md` 说每条通道应降级而非失败——降级的仍然只有屏。
 - ✅ **恢复收 view 仍然对**:02:05:40 服务恢复后 `id=vendor-outage op=Dismiss`。本轮它是**靠重启才恢复的**——但那次 `Pause` 停得是对的(见 #21 撤回),所以这不构成缺口。
 
+**改动 2026-09-10 · `fix/surface-upstream-outage` — 只走 view 那一半有代码了,但没在真机上看过。**
+
+起因是一次通用故障(不是 402):`responseStreamDisconnected` 连续打挂 cognition / reflection / reaction,老板 10:39:12 打进来一句 "pls help deploy KTV from local",10:41:45 那一轮失败,**之后再没有任何东西发生**——屏上没有 view(通用故障从来就没有 view),文字通道没有一个字,连那句话本身都被丢了。
+
+三件事落地:
+
+- **gate 现在往文字通道发状态**。发的是 `condition`(`unreachable` / `out_of_energy` / `rejected`),不是一句话——它和 `interim` 一样是当前状态:只发变化、随 `reset` 一起下发给中途连上的窗口、恢复时自己消失。理由写在 [`host.md`](../arch/host.md#vendor-gate):一句"抱歉"会滚出可视区却仍然为真,而且会变成 [`text-transcript.md`](../arch/text-transcript.md) 明确只允许三种的第四种 message。
+- **通用故障第一次有了告知**。此前只有 402 有 view,`note_unreachable()` 那个"翻转时通知一次"的返回值在每个调用点都是 `let _ =` ——**声明了但没有接收者**,所以本条的"只认屏"其实还更窄:通用故障连屏都不认。
+- **老板那句话不再被丢**。conversation loop 过去在"vendor 还没被判定 down"时 `batch.clear()`,注释说"已经在 run_turn 里道过歉了"——`run_turn` 里从来没有任何道歉代码。
+
+🔴 **未复测。** 上面三条全部只跑过 `make test`。要复测的是:通用故障期间文字通道确实出现 `condition`、恢复后确实消失、以及那条被 hold 住的 mail 确实在恢复后被回答。
+
 ---
 
 ## 7 · 屏上的东西只增不减(开场 view 永不退场)🟡
@@ -872,6 +884,14 @@ loop {
 **为什么记一笔。** `a05b734` 的账算的是"每次尝试都要花一次子进程 spawn:run-b 在 16 小时里花了 487 次"。**那 487 次里的绝大多数正是 Cognition 花的**(run-b 一夜 538 次 cognition wake,几乎全部 402 失败)——也就是说,**这笔账主要发生在没被这次修复覆盖的那条路上**。本轮 10 次是因为窗口只有 38 分钟。
 
 **涉及。** 所有 journey 的失败路径。
+
+**改动 2026-09-10 · `fix/surface-upstream-outage` — 三个 rung 现在共用一个 gate,未复测。**
+
+Cognition 和 Reflection 各自那套只认 402 的 `energy_state` 订阅 + `energy_paused` 标志**删掉了**,换成共享的 `Vendor::turn_gate()`:开 session 前先问 gate(`wait_for_vendor`),失败后向 gate 报告(`note_turn_failed`)。删而不是留,因为一个只认三分之一原因的旁路 gate 正是本条记的这件事。
+
+顺带:`VendorState::Backoff` 的 `silent` 字段也删了——两个构造点都写 `false`,没有任何读取者,它想抑制的那个通知并不存在。它代表的规则("单次限流不值一提,连续失败才值")本来就是 `down_after`。
+
+🔴 **未复测。** 要看的是:真实故障期间 `cognition turn failed` 不再每两分钟出现一次,且 `spawning codex subprocess role="cognition"` 在故障窗口内归零。
 
 ---
 

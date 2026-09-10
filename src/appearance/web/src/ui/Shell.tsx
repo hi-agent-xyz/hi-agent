@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePresence, useMessages, useChannels, useSendText } from "../core";
+// Straight from the session module, not through `@hi/core`: the upstream's state is
+// the host's to draw, and the condition notice is deliberately not in the inventory a
+// view authors against (`docs/arch/stage.md`).
+import { useCondition } from "../core/session";
 import { useViews } from "../core/views";
 import { stage as composeStage } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
@@ -68,6 +72,7 @@ import { PanelGesture } from "./PanelGesture";
 export function Shell() {
   const presence = usePresence();
   const { messages, interim, loadOlder } = useMessages();
+  const condition = useCondition();
   const ch = useChannels();
   const sendText = useSendText();
   const { views, clear } = useViews();
@@ -316,6 +321,7 @@ export function Shell() {
             messages={messages}
             interim={interim}
             typing={presence.state === "typing"}
+            condition={condition}
             onLoadOlder={loadOlder}
           >
             <Composer

@@ -304,14 +304,53 @@ rung — Reaction, Cognition, Reflection and every worker share one upstream.
 
 - **It gates the turn, not the reply.** During an outage no generation starts at all;
   incoming mail is held rather than answered badly or dropped.
+- **Every rung reports, and every rung asks.** One upstream means one gate: a rung that
+  fails tells it, and a rung about to open a session asks it first. The alternative was
+  tried by accident — the classifier grew on the conversation loop alone, so through a
+  real 38-minute outage Cognition bought a fresh subprocess every two minutes to
+  rediscover the same wall, ten times, while Reaction sat correctly parked beside it.
 - **Backoff, absorbed and capped.** A blip is absorbed before anything is declared down; from
   there the retry gap doubles to a ceiling. A rate limit is not an outage worth mentioning; a
-  string of failures is.
-- **One apology, once.** The transition — not each failed turn — is what earns a word to the
-  person. N rungs × M retries must never become N × M apologies, and recovery is likewise
-  announced once.
+  string of failures is — and the absorb count *is* that sentence, so nothing else needs to
+  encode it.
+- **One apology, once — and it is a state, not a sentence.** The transition, not each
+  failed turn, is what earns a word to the person. What the gate publishes is therefore
+  the **condition** — one of *unreachable* (still retrying), *out of energy*, *refused
+  credentials* — which every surface renders and which comes off by itself on recovery.
+  N rungs × M retries collapse to one publish because a repeat of the same condition is
+  dropped where it is stored, not by each writer remembering.
+
+  **It is not a message.** A host apologizing into the conversation would be a fourth
+  thing that becomes one ([`text-transcript.md`](text-transcript.md) allows three), and
+  the apology would then scroll away while still being true. It rides beside the
+  recognition interim instead: current state, replaced not appended, carried in the
+  opening frame so a window that connects mid-outage is told.
+
+- **Every channel that is attached is told, not just the screen.** The screen had this
+  for a year and nothing else did, so an outage was invisible to anyone reading the
+  conversation — "correctly stopped and waiting" and "dead" are the same picture. The
+  out-of-energy account view is still the screen's own, richer rendering of one of the
+  three; it is not the mechanism.
 
 When it clears, the held mail drives a catch-up turn. Fix-forward, like everything else here.
+
+**And the mail is held on the way there, in every rung.** A turn that fails leaves what it
+was carrying in hand. This is easy to get wrong in the direction that costs the most: the
+conversation loop — the one rung somebody is actually waiting on — used to drop its batch
+whenever the vendor had not yet been declared down, on the strength of a comment saying the
+turn had already apologized. Nothing apologized, so what happened is that the person's
+message was discarded, unanswered and unmentioned.
+
+### § Decisions
+
+- **The condition is not spoken.** A voice-only person is not told about an outage.
+  Synthesis is a different vendor and would usually still work, so this is a real gap and
+  it is left open deliberately: an interruption from the host, unprompted, over whatever
+  else is happening, is a bigger decision than a strip above the composer, and no live run
+  has yet shown what it should sound like.
+- **The condition carries no deadline.** A retry gap that doubles would change the
+  published state on every failed attempt, which is exactly the "N × M apologies" this
+  section forbids. How long is still in the log, and for energy it is in the account view.
 
 ### The log
 

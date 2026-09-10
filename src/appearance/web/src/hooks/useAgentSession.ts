@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchOlderMessages,
   subscribeOutText,
+  type ConditionKind,
   type Conversation,
   type Message,
 } from "../channels/out/text";
@@ -99,6 +100,12 @@ export interface AgentSession {
   messages: Message[];
   /** The live recognition partial, shown pending at the tail. Not a message. */
   interim?: string | undefined;
+  /**
+   * What is wrong with the upstream model, or absent while it is usable. The host's
+   * own state — not a message either, and the reason a stalled agent looks stalled
+   * rather than silent.
+   */
+  condition?: ConditionKind | undefined;
   /**
    * Prepend a page of older messages. Resolves to how many were added, so a
    * caller can stop asking when it reaches the beginning.
@@ -291,6 +298,11 @@ export function useAgentSession(): AgentSession {
                 }
                 previousInterim = frame.text;
                 setConversation((prev) => ({ ...prev, interim: frame.text }));
+                break;
+              // The upstream's state. Current, not history: it replaces whatever was
+              // there and an absent kind means the model is answering again.
+              case "condition":
+                setConversation((prev) => ({ ...prev, condition: frame.condition }));
                 break;
             }
           }
@@ -848,6 +860,7 @@ export function useAgentSession(): AgentSession {
     activity: activityRef.current,
     messages: conversation.messages,
     interim: conversation.interim,
+    condition: conversation.condition,
     loadOlder,
     woken,
     audioInput,

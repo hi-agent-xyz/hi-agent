@@ -149,8 +149,6 @@ async fn run(reaction: Reaction, registration: Registration) {
     // Startup opens and primes this eagerly once `/mcp` is live. `None` remains the
     // cold-open fallback when warming failed or a later turn discarded the session.
     let mut session: Option<Arc<AgentSession>> = None;
-    let mut energy = crate::foundation::energy_state::subscribe();
-    let mut energy_paused = crate::foundation::energy_state::is_out();
 
     tracing::info!(cognition = %id, "cognition up");
     if reaction.wait_for_server_ready().await {
@@ -158,40 +156,6 @@ async fn run(reaction: Reaction, registration: Registration) {
     }
 
     loop {
-        // The rung never polls the account and never predicts whether a call can run.
-        // It only reacts to the process-wide 402 edge, then waits for the broker/app's
-        // explicit Resume message. Pending mail and the live agent session stay in place.
-        if energy_paused {
-            tokio::select! {
-                event = energy.recv() => {
-                    match event {
-                        Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
-                            energy_paused = false;
-                            tracing::info!(cognition = %id, "cognition resumed after energy refill");
-                            warm_session(&reaction, &id, &mut session).await;
-                            // A failed turn may already be waiting in `pending`. Retain a
-                            // notify permit so the next loop iteration drives it now rather
-                            // than waiting for fresh mail, which is now the only thing
-                            // that would.
-                            if !pending.is_empty() {
-                                mail.notify_one();
-                            }
-                        }
-                        Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            energy_paused = crate::foundation::energy_state::is_out();
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = reaction.inner.shutdown.cancelled() => {
-                    tracing::info!(cognition = %id, "cognition shutting down");
-                    break;
-                }
-            }
-            continue;
-        }
-
         // **One wake, and it is restart recovery — not a cadence.** The recurring arm that
         // used to sit beside this was a fixed period standing in for events that now exist:
         // input, mail, a worker's report. Measured before it went, a timer-driven turn made
@@ -206,21 +170,6 @@ async fn run(reaction: Reaction, registration: Registration) {
 
         tokio::select! {
             biased;
-            event = energy.recv() => {
-                match event {
-                    Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {
-                        energy_paused = true;
-                    }
-                    Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
-                        energy_paused = false;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        energy_paused = crate::foundation::energy_state::is_out();
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-                continue;
-            }
             _ = mail.notified() => {}
             _ = sleep_until_opt(wake_at) => {
                 let first = !woke_at_boot;
@@ -293,6 +242,22 @@ async fn run(reaction: Reaction, registration: Registration) {
         }
         if pending.is_empty() {
             continue;
+        }
+
+        // **Ask the shared gate before buying a subprocess.** This rung used to have a
+        // 402-shaped gate of its own — an `energy_state` subscription and a paused flag —
+        // which knew about exactly one of the reasons a turn cannot run and nothing about
+        // the others. So through a real 38-minute outage it cold-opened a codex child
+        // every two minutes and failed identically ten times, while the conversation loop
+        // beside it was correctly parked ([gaps #25](../../../docs/user-journeys/gaps.md)).
+        // Over one night that path spent 487 spawns rediscovering one fact.
+        //
+        // The mail stays in `pending` across the wait, so nothing is lost by waiting; and
+        // the wait ends on the same edge that wakes every other rung, which is what
+        // `host.md` means by the vendor being decided process-wide.
+        if !reaction.wait_for_vendor().await {
+            tracing::info!(cognition = %id, "cognition shutting down");
+            break;
         }
 
         // Timer wakes and worker reports bypass the switchboard inbox, so they
@@ -414,7 +379,10 @@ async fn run(reaction: Reaction, registration: Registration) {
             Err(err) => TurnOutcome::Failed(err.to_string()),
         };
         match result {
-            Ok(()) => pending.clear(),
+            Ok(()) => {
+                pending.clear();
+                reaction.note_turn_succeeded().await;
+            }
             Err(err) => {
                 // Keep `pending` — the mail is still owed. The recurring wake above is
                 // now what carries it: a failed turn used to wait for the next message
@@ -426,19 +394,23 @@ async fn run(reaction: Reaction, registration: Registration) {
                 // unrepresentable. Dropping it means the retry cold-opens, which costs one
                 // subprocess and loses only the working thread; the ledger and the carried
                 // notes are re-projected either way.
-                if crate::foundation::energy_state::is_402_error(&err)
-                    && crate::foundation::energy_state::is_out()
-                {
+                //
+                // **And tell the gate**, so the outage this rung just discovered steers
+                // Reaction and Reflection too instead of each finding it again.
+                let disposition = reaction.note_turn_failed(&err).await;
+                let held = crate::foundation::energy_state::is_402_error(&err)
+                    && crate::foundation::energy_state::is_out();
+                if held {
                     // The prompt receiver was restored by `SessionRun::wait`; keep the
-                    // session and retry this same pending batch after Resume.
-                    energy_paused = true;
+                    // session and retry this same pending batch once the gate reopens.
                 } else {
                     session = None;
                 }
                 tracing::warn!(
                     cognition = %id,
                     error = %format!("{err:#}"),
-                    held = energy_paused,
+                    ?disposition,
+                    held,
                     "cognition turn failed; mail held"
                 );
             }

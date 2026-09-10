@@ -79,6 +79,15 @@ pub(crate) async fn bind_outbound(
                 });
                 views.apply(envelope).await;
             }
+            // The host's own state about the upstream. It lands beside the recognition
+            // interim rather than as a message, so an outage is visible to a window that
+            // connects halfway through one and disappears when it clears — neither of
+            // which an appended line could do.
+            OutboundSignal::Condition { condition } => {
+                if transcript.note_condition(condition) {
+                    tracing::info!(?condition, "conversation: upstream condition changed");
+                }
+            }
         }
     }
     tracing::info!("outbound binder: reaction seam closed; exiting");

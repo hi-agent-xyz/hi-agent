@@ -59,6 +59,31 @@ describe("frames", () => {
     expect(frame).toEqual({ kind: "reset", conversation: { messages: [msg] } });
   });
 
+  it("reads the upstream's condition, and reads its absence as recovery", () => {
+    expect(parseFrame({ condition: "unreachable" })).toEqual({
+      kind: "condition",
+      condition: "unreachable",
+    });
+    // The model is answering again. There is no separate "clear" frame — a condition
+    // with nothing in it *is* the clear, the same shape `interim` uses.
+    expect(parseFrame({ condition: null })).toEqual({ kind: "condition" });
+  });
+
+  /** A kind this build has no words for is worse than none: it would draw a blank
+      strip claiming something is wrong and never say what. */
+  it("drops a condition it cannot word", () => {
+    expect(parseFrame({ condition: "moon_phase" })).toEqual({ kind: "condition" });
+  });
+
+  it("carries a live condition on the opening window", () => {
+    expect(
+      parseFrame({ reset: { messages: [], interim: null, condition: "out_of_energy" } }),
+    ).toEqual({
+      kind: "reset",
+      conversation: { messages: [], condition: "out_of_energy" },
+    });
+  });
+
   it("rejects anything that is not a frame", () => {
     expect(parseFrame({ user: "old wire shape" })).toBeNull();
     expect(parseFrame(null)).toBeNull();

@@ -33,6 +33,13 @@
 //! sends one back, and this module keeps no per-window position, acknowledgement or
 //! read receipt. Whether a person read something is not observable, and the previous
 //! attempt to derive it is what this replaces.
+//!
+//! **Two things ride this channel that are not messages**, and they are the same shape:
+//! the recognition `interim` and the upstream [`Condition`]. Both are current state
+//! rather than record — they are replaced, not appended, they ride the opening `Reset`
+//! so a window that connects late is current, and neither is ever journalled. The rule
+//! they keep is the one above: nothing *becomes a message* except the three things that
+//! do. A host that apologized into the list would be a fourth.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -41,6 +48,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
+use crate::body::reaction::Condition;
 use crate::types::{JournalEntry, Sender};
 
 /// How many messages stay in the live window. Older ones are still in the journal
@@ -134,16 +142,31 @@ pub enum Frame {
     Reset {
         messages: Vec<Wire>,
         interim: Option<String>,
+        /// Current, not historical — a window that opens during an outage must show it
+        /// without having been there for the transition.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        condition: Option<Condition>,
     },
     Append(Wire),
     /// The line being recognized, or `None` for none. Not a message — it is a
     /// preview of one, shown pending at the tail until the line settles.
     Interim(Option<String>),
+    /// What is wrong with the upstream model, or `None` while it is usable. Not a
+    /// message either: the host is not a participant in the conversation, and an
+    /// outage that scrolled away with the backlog would stop being true where the
+    /// person could still read it.
+    ///
+    /// **This is why the conversation is not the only thing on this channel.** The
+    /// screen already had a host-owned notice for exactly this state; the text channel
+    /// had nothing, so an outage was invisible to anybody not looking at a screen
+    /// ([gaps #6](../../../../docs/user-journeys/gaps.md)). One state, two renderings.
+    Condition(Option<Condition>),
 }
 
 struct Inner {
     messages: VecDeque<Wire>,
     interim: Option<String>,
+    condition: Option<Condition>,
 }
 
 /// Cloneable handle to the one conversation.
@@ -160,6 +183,7 @@ impl Transcript {
             inner: Arc::new(Mutex::new(Inner {
                 messages: VecDeque::new(),
                 interim: None,
+                condition: None,
             })),
             tx,
         }
@@ -177,6 +201,7 @@ impl Transcript {
             Frame::Reset {
                 messages: inner.messages.iter().cloned().collect(),
                 interim: inner.interim.clone(),
+                condition: inner.condition,
             }
         };
         let _ = self.tx.send(frame);
@@ -233,6 +258,30 @@ impl Transcript {
         changed
     }
 
+    /// Set what is wrong with the upstream, or `None` to clear it.
+    ///
+    /// Idempotent for the same reason [`Self::note_interim`] is, and it matters more
+    /// here: the gate reports every turn's outcome, so a sustained outage calls this
+    /// once per failed turn across every rung. Publishing only the change is what makes
+    /// *"the transition — not each failed turn — is what earns a word"*
+    /// ([`host.md`](../../../../docs/arch/host.md)) true here rather than a rule each
+    /// caller has to remember.
+    pub fn note_condition(&self, condition: Option<Condition>) -> bool {
+        let changed = {
+            let mut inner = self.inner.lock().expect("transcript mutex poisoned");
+            if inner.condition == condition {
+                false
+            } else {
+                inner.condition = condition;
+                true
+            }
+        };
+        if changed {
+            let _ = self.tx.send(Frame::Condition(condition));
+        }
+        changed
+    }
+
     /// The opening frame plus the stream of everything after it, taken together
     /// under one lock so no message can slip between the snapshot and the
     /// subscription.
@@ -242,6 +291,7 @@ impl Transcript {
         let frame = Frame::Reset {
             messages: inner.messages.iter().cloned().collect(),
             interim: inner.interim.clone(),
+            condition: inner.condition,
         };
         (frame, rx)
     }
@@ -386,7 +436,7 @@ mod tests {
         t.append(msg("1", Role::User, "hello"));
 
         let (opening, mut rx) = t.subscribe();
-        let Frame::Reset { messages, interim } = opening else {
+        let Frame::Reset { messages, interim, .. } = opening else {
             panic!("subscribe must open with a reset");
         };
         assert_eq!(messages.len(), 1);
@@ -400,6 +450,84 @@ mod tests {
         };
         assert_eq!(m.text, "hi");
         assert_eq!(m.role, Role::Agent);
+    }
+
+    /// The gate reports every failed turn across three rungs, so the same condition
+    /// arrives here many times over one outage. Only the change goes out — which is
+    /// what makes `host.md`'s *"the transition, not each failed turn"* a property of
+    /// this type rather than a rule three call sites have to keep.
+    #[tokio::test]
+    async fn only_a_change_of_condition_reaches_a_subscriber() {
+        let t = Transcript::new();
+        let (_, mut rx) = t.subscribe();
+
+        assert!(t.note_condition(Some(Condition::Unreachable)), "the transition");
+        assert!(!t.note_condition(Some(Condition::Unreachable)), "and every repeat after it");
+        assert!(!t.note_condition(Some(Condition::Unreachable)));
+        assert!(t.note_condition(None), "recovery is a change too");
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            Frame::Condition(Some(Condition::Unreachable)),
+        );
+        assert_eq!(rx.recv().await.unwrap(), Frame::Condition(None));
+        assert!(rx.try_recv().is_err(), "and nothing else was published");
+    }
+
+    /// The bytes, pinned. Both halves of this seam are asserted in their own language —
+    /// the Rust above, `channels/out/text.test.ts` below — and neither test can see the
+    /// other, so a rename on either side would leave both green and the strip blank.
+    #[test]
+    fn the_condition_on_the_wire_is_what_the_face_parses() {
+        let out = |c| serde_json::to_string(&Frame::Condition(c)).unwrap();
+        assert_eq!(out(Some(Condition::Unreachable)), r#"{"condition":"unreachable"}"#);
+        assert_eq!(out(Some(Condition::OutOfEnergy)), r#"{"condition":"out_of_energy"}"#);
+        assert_eq!(out(Some(Condition::Rejected)), r#"{"condition":"rejected"}"#);
+        // Present-and-null, not absent: the face keys on the field being there, and an
+        // omitted one would be an unparseable frame rather than a recovery.
+        assert_eq!(out(None), r#"{"condition":null}"#);
+
+        let reset = |c| {
+            serde_json::to_string(&Frame::Reset {
+                messages: vec![],
+                interim: None,
+                condition: c,
+            })
+            .unwrap()
+        };
+        assert_eq!(
+            reset(Some(Condition::OutOfEnergy)),
+            r#"{"reset":{"messages":[],"interim":null,"condition":"out_of_energy"}}"#,
+        );
+        // On the opening frame it *is* omitted when there is nothing wrong, so the
+        // ordinary case costs no bytes and reads as before.
+        assert_eq!(reset(None), r#"{"reset":{"messages":[],"interim":null}}"#);
+    }
+
+    /// A window opened during an outage was not there for the transition. Carrying the
+    /// condition in the opening frame is the difference between it seeing the state and
+    /// it seeing a conversation that stops for no reason — which is the whole failure.
+    #[tokio::test]
+    async fn a_window_that_opens_mid_outage_is_told_about_it() {
+        let t = Transcript::new();
+        t.append(msg("1", Role::User, "pls deploy"));
+        t.note_condition(Some(Condition::OutOfEnergy));
+
+        let (opening, _) = t.subscribe();
+        let Frame::Reset { messages, condition, .. } = opening else {
+            panic!("subscribe must open with a reset");
+        };
+        assert_eq!(messages.len(), 1, "the record is unchanged by a condition");
+        assert_eq!(condition, Some(Condition::OutOfEnergy));
+
+        // And it comes off without leaving anything in the record behind it.
+        t.note_condition(None);
+        let (opening, _) = t.subscribe();
+        let Frame::Reset { messages, condition, .. } = opening else {
+            panic!("subscribe must open with a reset");
+        };
+        assert_eq!(condition, None);
+        assert_eq!(messages.len(), 1, "an outage is never a message");
     }
 
     /// The opening frame and the subscription are taken under one lock, so a

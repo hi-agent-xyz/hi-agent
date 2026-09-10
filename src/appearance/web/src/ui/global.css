@@ -856,6 +856,61 @@ button,
   padding: 10px 12px;
 }
 
+/* --- The upstream's state -----------------------------------------------
+   Pinned between the record and the composer: it is the host saying something about
+   itself, so it belongs neither in the scrollback (which is what people said) nor in
+   the composer (which is what they are about to say).
+
+   Quiet on purpose. This replaces *silence*, not a working reply — the failure it
+   ends is that a host which cannot reach its model looked exactly like one with
+   nothing to say. A red bar would over-correct into the opposite mistake, treating a
+   thirty-second reconnect as an emergency. So: the same glass as everything else, one
+   dot, one sentence. */
+.hi-condition {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.hi-condition-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--fg-mute);
+}
+
+/* Still trying. The pulse is the difference between "wait" and "go and fix it", and
+   it is the only moving thing on the strip. */
+.hi-condition[data-kind="unreachable"] .hi-condition-dot {
+  background: var(--accent);
+  animation: hi-condition-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes hi-condition-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+/* Somebody who turned motion off still needs the state; they do not need the beat. */
+@media (prefers-reduced-motion: reduce) {
+  .hi-condition[data-kind="unreachable"] .hi-condition-dot { animation: none; }
+}
+
+.hi-condition-text {
+  min-width: 0;
+}
+
 /* The composer is shadcn's `InputGroup`; what is set here is the app's own
    surface under it — the same glass the controls and the panel are made of, so
    the foot reads as part of the conversation and not as a form dropped into it. */

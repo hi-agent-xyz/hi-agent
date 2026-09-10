@@ -17,7 +17,10 @@ import {
 } from "./shadcn/message-scroller";
 import { Message, MessageContent, MessageGroup } from "./shadcn/message";
 import { Bubble, BubbleContent } from "./shadcn/bubble";
-import type { Message as ChatMessage } from "../channels/out/text";
+import type {
+  ConditionKind,
+  Message as ChatMessage,
+} from "../channels/out/text";
 import { splitSpeechLinks } from "../lib/links";
 import { SenderAvatar } from "./Avatar";
 
@@ -236,6 +239,53 @@ function Typing() {
   );
 }
 
+/**
+ * What each upstream condition says, and whether it is the person's to fix.
+ *
+ * **It names the model, not the agent.** The whole failure this ends is that a host
+ * which cannot reach its model and a host which has nothing to say look identical
+ * from the chair — so the first job of every line here is to move the fault off the
+ * agent and onto the thing that is actually down. The second is to say whether
+ * waiting is enough, because that decides whether the person walks away or opens
+ * Settings.
+ *
+ * English, like the rest of the host chrome. Bundled views localize against
+ * `<html lang>`; the chrome does not, and one component doing it alone would read as
+ * a bug rather than a courtesy.
+ */
+const CONDITION_TEXT: Record<ConditionKind, string> = {
+  unreachable: "Can't reach the model right now — still trying.",
+  out_of_energy: "Out of energy, so replies are paused until the balance comes back.",
+  rejected: "The model refused these credentials — replies are paused until they change.",
+};
+
+/**
+ * The upstream's state, pinned above the composer.
+ *
+ * **No action link, deliberately.** The two conditions somebody can act on already have
+ * somewhere to act: out-of-energy puts the account view on screen at the same moment,
+ * with the balance, the reset countdown and the button; credentials are changed in
+ * Settings, which is a native window on macOS and has no URL to send anybody to. A
+ * link here would either duplicate the first or invent the second.
+ *
+ * `role="status"` rather than `role="alert"`: a screen reader should hear this when it
+ * reaches it, not have the current sentence interrupted by it. Nothing here is sudden —
+ * the state was already true before anybody published it.
+ */
+function ConditionStrip({ kind }: { kind: ConditionKind }) {
+  return (
+    <div className="hi-condition" role="status" data-kind={kind}>
+      {/* Still-retrying reads differently from stopped, and the difference is the one
+          thing that decides whether the person waits or goes and fixes something. A
+          pulsing dot for the first, a still one for the rest — no icon and no alarm
+          colour, because a banner that shouts about a blip is worse than the silence
+          it replaced. */}
+      <span className="hi-condition-dot" aria-hidden />
+      <span className="hi-condition-text">{CONDITION_TEXT[kind]}</span>
+    </div>
+  );
+}
+
 export interface ChatProps {
   messages: ChatMessage[];
   /** The conversation's foot — the line being written. Rendered here so it is
@@ -245,11 +295,20 @@ export interface ChatProps {
   interim?: string | undefined;
   /** A reply is being composed — draw the dots at the foot. */
   typing?: boolean;
+  /** What is wrong with the upstream, when something is. Not part of the record. */
+  condition?: ConditionKind | undefined;
   /** Prepend a page of older messages; resolves to how many arrived. */
   onLoadOlder?: () => Promise<number>;
 }
 
-export function Chat({ messages, interim, typing, onLoadOlder, children }: ChatProps) {
+export function Chat({
+  messages,
+  interim,
+  typing,
+  condition,
+  onLoadOlder,
+  children,
+}: ChatProps) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   // What is at the foot right now: the newest message, the partial being
@@ -362,12 +421,23 @@ export function Chat({ messages, interim, typing, onLoadOlder, children }: ChatP
 
               {/* A reply, begun. Last of everything, because it is the newest
                   thing in the room — under even the line still being recognized,
-                  which is what prompted it. */}
-              {typing && <Typing />}
+                  which is what prompted it.
+
+                  Suppressed while the upstream is down, because then it is not true:
+                  no generation is running, and animated dots under a message nobody
+                  is answering is precisely the "blindly waiting" this notice exists
+                  to end. The strip below says what is actually happening. */}
+              {typing && !condition && <Typing />}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton direction="end" />
         </MessageScroller>
+        {/* Pinned, not appended. It is the host's state rather than a turn in the
+            conversation, so it does not scroll away with the backlog and it does not
+            leave a line behind once the model answers again — it simply stops being
+            there. It sits directly above the composer because that is where somebody
+            waiting for a reply is looking. */}
+        {condition && <ConditionStrip kind={condition} />}
         {children && <div className="hi-chat-foot">{children}</div>}
       </div>
     </MessageScrollerProvider>

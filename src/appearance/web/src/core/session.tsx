@@ -40,6 +40,16 @@ export function useMessages() {
   };
 }
 
+/**
+ * What is wrong with the upstream model, or undefined while it is usable.
+ *
+ * Kept out of `useMessages` deliberately: it is not part of the conversation, and a
+ * consumer that draws the record should not have to know it exists.
+ */
+export function useCondition() {
+  return useSession().condition;
+}
+
 /** The agent's presence: animation/voice state plus the live audio + cadence. */
 export function usePresence() {
   const s = useSession();

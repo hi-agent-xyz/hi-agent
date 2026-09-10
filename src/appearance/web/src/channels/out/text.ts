@@ -1,8 +1,9 @@
 // Subscriber for the backend-owned conversation.
 //
 // GET /api/out/text is one long-lived NDJSON response. Its first line is the
-// current window whole; every later line appends one message or updates the single
-// rolling recognition interim. Nothing is ever rewritten or removed.
+// current window whole; every later line appends one message or updates one of the
+// two things here that are not messages — the rolling recognition interim, and the
+// host's own state about the upstream model. Nothing is ever rewritten or removed.
 //
 // There is no client id, no cursor, no acknowledgement and no read receipt. The
 // `before` on the scrollback fetch is not a cursor either — the backend remembers
@@ -38,6 +39,19 @@ export interface Sender {
   basis: SenderBasis;
 }
 
+/**
+ * What is wrong with the upstream model right now — the host's own state, not
+ * something the agent said, so it is never a message.
+ *
+ * `unreachable` is still being retried and needs nothing from the person; the other
+ * two do. Anything this build does not recognize is dropped rather than shown, for the
+ * same reason an unrecognized sender basis is: a condition it cannot word is worse
+ * than none.
+ */
+export type ConditionKind = "unreachable" | "out_of_energy" | "rejected";
+
+const CONDITIONS: ConditionKind[] = ["unreachable", "out_of_energy", "rejected"];
+
 export interface Message {
   /** The journal's uuidv7 — time-sortable, and the same key the backend logged. */
   id: string;
@@ -53,12 +67,15 @@ export interface Conversation {
   messages: Message[];
   /** The live recognition partial — a preview of a message, not a message. */
   interim?: string;
+  /** The upstream's state, when it is not usable. Absent means it is. */
+  condition?: ConditionKind;
 }
 
 export type Frame =
   | { kind: "reset"; conversation: Conversation }
   | { kind: "append"; message: Message }
-  | { kind: "interim"; text?: string };
+  | { kind: "interim"; text?: string }
+  | { kind: "condition"; condition?: ConditionKind };
 
 export interface SubscribeOpts {
   signal: AbortSignal;
@@ -115,18 +132,20 @@ export function parseFrame(value: unknown): Frame | null {
   if ("reset" in raw) {
     const body = raw.reset;
     if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
-    const { messages, interim } = body as Record<string, unknown>;
+    const { messages, interim, condition } = body as Record<string, unknown>;
     if (!Array.isArray(messages)) return null;
     const parsed: Message[] = [];
     for (const m of messages) {
       const message = parseMessage(m);
       if (message) parsed.push(message);
     }
+    const known = CONDITIONS.find((c) => c === condition);
     return {
       kind: "reset",
       conversation: {
         messages: parsed,
         ...(typeof interim === "string" ? { interim } : {}),
+        ...(known ? { condition: known } : {}),
       },
     };
   }
@@ -141,6 +160,14 @@ export function parseFrame(value: unknown): Frame | null {
       kind: "interim",
       ...(typeof raw.interim === "string" ? { text: raw.interim } : {}),
     };
+  }
+
+  if ("condition" in raw) {
+    const known = CONDITIONS.find((c) => c === raw.condition);
+    // `null` clears it — the upstream came back. An unknown kind clears it too:
+    // this build cannot say what is wrong, and a blank banner would be worse than
+    // letting the conversation speak for itself.
+    return { kind: "condition", ...(known ? { condition: known } : {}) };
   }
 
   return null;

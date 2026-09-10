@@ -110,9 +110,10 @@ nothing was missed: the messages are still there.
 
 | Frame | Meaning |
 |---|---|
-| `{"reset": {"messages": [...], "interim": null}}` | The current window, whole. Always the first frame; sent again only if the list is rebuilt. |
+| `{"reset": {"messages": [...], "interim": null, "condition"?: "..."}}` | The current window, whole, plus both pieces of current state. Always the first frame; sent again only if the list is rebuilt. |
 | `{"append": {"id", "ts", "role", "text", "media"?, "sender"?}}` | One new message at the end. |
 | `{"interim": "..."}` or `{"interim": null}` | The line being recognized, or none. |
+| `{"condition": "unreachable"｜"out_of_energy"｜"rejected"}` or `{"condition": null}` | What is wrong with the upstream model, or nothing. |
 
 `sender` is `{"subject"?: "赵力", "basis": "owner"｜"cluster"｜"stated"｜"unknown"}`. It is
 absent on the agent's own messages, and present-with-no-subject when somebody spoke and
@@ -122,6 +123,21 @@ than showing the name: a name whose grounding cannot be read is the ungrounded n
 
 The `interim` carries no sender. Recognition has not settled, so there is nobody to name
 yet, and it is a preview rather than a message.
+
+**Two frames here are state, not record**, and they behave the same way: `interim` and
+`condition` are replaced rather than appended, ride the opening `reset` so a window that
+connects late is current, and are never journalled. Neither is a message, and the rule
+above is unchanged — three things become messages and nothing else does.
+
+`condition` is the host's, not the agent's: it is the vendor gate saying the model cannot
+be reached, is out of energy, or refused its credentials (see
+[`host.md`](host.md#vendor-gate)). It is on this channel because an outage that only
+reached the screen was invisible to everyone else — a conversation that has stopped and a
+conversation whose upstream is down look identical from the chair. A window that does not
+recognize a kind clears the condition rather than drawing a blank one, for the same reason
+it drops a sender basis it cannot read. **A host apology would have been a fourth kind of
+message**; this is deliberately not one, because it must also stop being true, and an
+appended line cannot.
 
 `GET /api/messages?before=<id>&limit=<n>` returns older messages for scrollback, read
 from the journal.

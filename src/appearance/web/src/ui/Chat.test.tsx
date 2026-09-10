@@ -126,6 +126,41 @@ describe("the conversation", () => {
   });
 });
 
+describe("the upstream's state", () => {
+  const line = [said("1", "pls help deploy KTV from local")];
+
+  // The failure this ends, from a real run on 2026-09-10: the line above was typed at
+  // 10:39:12, the turn carrying it died on a `responseStreamDisconnected` at 10:41:45,
+  // and the screen went on looking exactly like an agent that had nothing to say.
+  it("says the model is the problem, not the agent", () => {
+    const html = renderToStaticMarkup(<Chat messages={line} condition="unreachable" />);
+    expect(html).toContain("hi-condition");
+    // The apostrophe arrives HTML-escaped out of `renderToStaticMarkup`.
+    expect(html).toContain("reach the model right now");
+  });
+
+  it("is absent while the model is answering", () => {
+    expect(renderToStaticMarkup(<Chat messages={line} />)).not.toContain("hi-condition");
+  });
+
+  // Dots under a message nobody is generating a reply to are the thing that made
+  // waiting feel reasonable for two and a half minutes.
+  it("does not promise a reply that no turn is running", () => {
+    const html = renderToStaticMarkup(<Chat messages={line} typing condition="unreachable" />);
+    expect(html).not.toContain("hi-typing");
+    expect(renderToStaticMarkup(<Chat messages={line} typing />)).toContain("hi-typing");
+  });
+
+  // It sits outside the scroller: an outage is true whether or not somebody has
+  // scrolled back to read what preceded it.
+  it("is pinned rather than appended to the record", () => {
+    const html = renderToStaticMarkup(<Chat messages={line} condition="out_of_energy" />);
+    expect(html.indexOf("hi-condition")).toBeGreaterThan(
+      html.indexOf('data-slot="message-scroller-viewport"'),
+    );
+  });
+});
+
 describe("the line being written", () => {
   // It used to be a box of its own, positioned to look flush with the panel by
   // sharing its width and right edge. Inside the conversation it is part of it,

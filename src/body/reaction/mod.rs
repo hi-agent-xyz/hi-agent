@@ -337,6 +337,38 @@ fn disposition(err: &str) -> Disposition {
     Disposition::Retry
 }
 
+/// What the person is told while the upstream is unusable — the gate's read side in
+/// the one vocabulary a surface can render.
+///
+/// **It is a state, not an announcement.** The screen already had this half: a
+/// host-owned condition that goes up when the gate goes down and comes off when it
+/// recovers. What it never had was a second renderer, so a 38-minute outage on
+/// 2026-08-05 put a notice on the screen and left `out-text.log` empty end to end —
+/// "correctly stopped and waiting" and "dead" look identical to somebody reading the
+/// conversation ([gaps #6](../../../docs/user-journeys/gaps.md)). Publishing the state
+/// rather than a sentence is what lets both surfaces render the same fact, and is why
+/// this carries no deadline: a retry gap that doubles would republish on every failed
+/// attempt, and `host.md` is explicit that the transition — not each failed turn — is
+/// what earns a word.
+///
+/// **Three kinds, because the person's next move differs.** Wait, pay, or fix a key.
+/// Anything finer is the log's business.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Condition {
+    /// The upstream is not answering and the host is still retrying. Nothing for the
+    /// person to do; the point of saying it is that they stop waiting on a reply that
+    /// is not coming.
+    Unreachable,
+    /// Managed energy is spent. The screen also carries the full account view
+    /// ([`crate::mind::views::factory::out_of_energy_view`]); this is the same fact for
+    /// everyone not looking at a screen.
+    OutOfEnergy,
+    /// The upstream refused the credentials, or the quota behind them is gone. No
+    /// retry can clear it — somebody has to change a setting.
+    Rejected,
+}
+
 /// How the reaction loop should treat the vendor right now — the read side of [`Vendor`].
 #[derive(Clone, Copy, Debug)]
 enum TurnGate {
@@ -355,9 +387,15 @@ enum TurnGate {
 enum VendorState {
     Up,
     /// Transient backoff (429 / generic). `try_at` is the next retry deadline;
-    /// `attempt` grows the gap toward [`BACKOFF_CAP`]; `silent` suppresses the user
-    /// notice for a pure rate-limit (429), which the user needn't hear about.
-    Backoff { try_at: Instant, attempt: u32, silent: bool },
+    /// `attempt` grows the gap toward [`BACKOFF_CAP`].
+    ///
+    /// **A rate limit reaches the person the same way anything else does.** This
+    /// carried a `silent` flag to suppress the notice for a pure 429; it was written
+    /// `false` at both construction sites, read nowhere, and the notice it named did
+    /// not exist. What it was standing in for — *"a rate limit is not an outage worth
+    /// mentioning; a string of failures is"* ([`host.md`](../../../docs/arch/host.md)) —
+    /// is `down_after`, which absorbs the blip before anything is declared down.
+    Backoff { try_at: Instant, attempt: u32 },
     /// Stopped, with no deadline of our own. Managed energy and unrelated permanent
     /// failures are tracked independently so a balance refill cannot clear an invalid
     /// key or another condition it does not own.
@@ -402,6 +440,27 @@ impl Vendor {
         let base = self.base.as_secs().max(1);
         let secs = base.saturating_mul(1u64 << attempt.min(20));
         Duration::from_secs(secs.min(BACKOFF_CAP.as_secs()))
+    }
+
+    /// The surfaces' read: what to tell the person right now, or `None` while the
+    /// upstream is usable.
+    ///
+    /// Derived from the same state [`Self::turn_gate`] reads, so a condition cannot
+    /// disagree with whether turns are actually running — the two used to be separate
+    /// facts and only one of them was ever published.
+    fn condition(&self) -> Option<Condition> {
+        match *self.state.lock().unwrap() {
+            VendorState::Up => None,
+            VendorState::Backoff { .. } => Some(Condition::Unreachable),
+            // Energy first: it is the more specific of the two, it has an account page
+            // behind it, and a person out of energy whose key is also bad should be
+            // sent to the thing they can actually fix today.
+            VendorState::Paused { energy: true, .. } => Some(Condition::OutOfEnergy),
+            VendorState::Paused { permanent: true, .. } => Some(Condition::Rejected),
+            // Neither reason left. `resume_energy` collapses this to `Up`, so it is
+            // reachable only in the instant between the two writes.
+            VendorState::Paused { .. } => None,
+        }
     }
 
     /// The reaction loop's scheduling read: drive now (Go) or retry at a deadline (Retry).
@@ -474,15 +533,15 @@ impl Vendor {
         let mut st = self.state.lock().unwrap();
         match *st {
             // Already backing off — a failed retry just grows the gap.
-            VendorState::Backoff { attempt, silent, .. } => {
+            VendorState::Backoff { attempt, .. } => {
                 let a = attempt.saturating_add(1);
-                *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(a), attempt: a, silent };
+                *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(a), attempt: a };
                 false
             }
             VendorState::Up => {
                 let n = self.generic_failures.fetch_add(1, Ordering::Relaxed) + 1;
                 if n >= self.down_after {
-                    *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(0), attempt: 0, silent: false };
+                    *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(0), attempt: 0 };
                     true
                 } else {
                     false
@@ -550,6 +609,59 @@ mod vendor_tests {
         assert!(v.is_down());
         assert!(matches!(v.turn_gate(), TurnGate::Retry { .. }));
         assert!(!v.note_unreachable(), "a failed retry grows the backoff without re-announcing");
+    }
+
+    /// What each gate state tells the person. The mapping is the whole contract
+    /// between the scheduler and every surface, so it is pinned here rather than
+    /// inferred from whichever renderer is being read.
+    #[test]
+    fn a_state_and_the_words_for_it_cannot_disagree() {
+        let v = fresh();
+        assert_eq!(v.condition(), None, "reachable says nothing");
+
+        // A blip is absorbed, and an absorbed blip is not something to tell anybody:
+        // `down_after` is where "a rate limit is not an outage worth mentioning; a
+        // string of failures is" actually lives.
+        v.note_unreachable();
+        assert_eq!(v.condition(), None, "one failure is still not an outage");
+        v.note_unreachable();
+        assert_eq!(v.condition(), Some(Condition::Unreachable));
+
+        // A failed retry grows the gap and says nothing new — the transition already
+        // spoke, and the transcript would drop the repeat anyway.
+        v.note_unreachable();
+        assert_eq!(v.condition(), Some(Condition::Unreachable));
+
+        v.note_success();
+        assert_eq!(v.condition(), None, "recovery takes the notice back off");
+    }
+
+    /// Energy outranks a bad key, and clearing the balance does not clear the key.
+    /// The person is sent to the thing they can act on today.
+    #[test]
+    fn two_reasons_at_once_report_the_one_worth_acting_on() {
+        let v = fresh();
+        v.note_permanent_paused();
+        assert_eq!(v.condition(), Some(Condition::Rejected));
+        v.note_energy_paused();
+        assert_eq!(v.condition(), Some(Condition::OutOfEnergy));
+        v.resume_energy();
+        assert_eq!(
+            v.condition(),
+            Some(Condition::Rejected),
+            "a refill cannot vouch for a key the vendor refused",
+        );
+    }
+
+    /// A crashed subprocess is one session's problem. Nothing about it reaches the
+    /// person, because nothing about it is true of the upstream.
+    #[test]
+    fn a_session_fault_says_nothing_to_anybody() {
+        let v = fresh();
+        // `Restart` never calls a writer at all — asserted here on the classifier,
+        // since that is the property the reporting path depends on.
+        assert_eq!(disposition("session not found"), Disposition::Restart);
+        assert_eq!(v.condition(), None);
     }
 
     /// The three real errors this layer has actually seen, and the default.
@@ -1078,6 +1190,154 @@ const NON_ACTIVITY_CHANNELS: [&str; 1] = ["clock"];
 
 
 impl Reaction {
+    /// Publish what the gate currently says about the upstream, so every attached
+    /// surface renders the same fact.
+    ///
+    /// Called after every write to the gate rather than only on the edges: the
+    /// transcript drops a repeat ([`Transcript::note_condition`]), so this is cheap to
+    /// call often and impossible to forget on a path that matters. The alternative —
+    /// each writer deciding whether its own change was *the* transition — is what the
+    /// gate already tried, and the `note_*` writers' "announce once" return values sat
+    /// discarded at every call site for as long as they existed.
+    async fn publish_condition(&self) {
+        let condition = self.inner.vendor.condition();
+        let _ = self
+            .inner
+            .out
+            .send(OutboundSignal::Condition { condition })
+            .await;
+    }
+
+    /// Report one turn's failure to the process-wide gate, and say what it means for
+    /// the caller's own session.
+    ///
+    /// **Every rung calls this, which is the point.** The vendor is one upstream shared
+    /// by Reaction, Cognition, Reflection and every worker, and [`host.md`] has always
+    /// said an outage discovered by one steers all of them — but the classifier and the
+    /// gate grew on the conversation loop alone, so the two standing rungs cold-opened a
+    /// subprocess into the same wall on every wake. Measured across one 402:
+    /// `cognition turn failed` ten times in 38 minutes, ten spawns, ten identical
+    /// failures ([gaps #25](../../../docs/user-journeys/gaps.md)); across a night, 487.
+    /// Putting the report here rather than in three loops is what stops that from being
+    /// three things to remember.
+    async fn note_turn_failed(&self, err: &anyhow::Error) -> Disposition {
+        let disposition = disposition(&err.to_string());
+        match disposition {
+            // The subprocess died, not the upstream. Deliberately no gate write: one
+            // crashed session must not make every other rung believe the model is
+            // unreachable.
+            Disposition::Restart => {}
+            Disposition::Pause => {
+                let managed = crate::foundation::energy_state::is_402_error(err)
+                    && crate::foundation::energy_state::is_out();
+                let first = if managed {
+                    self.inner.vendor.note_energy_paused()
+                } else {
+                    self.inner.vendor.note_permanent_paused()
+                };
+                if first {
+                    self.inner.vendor_wake.notify_waiters();
+                    tracing::warn!(
+                        error = %err,
+                        managed_energy = managed,
+                        "paused: retrying cannot help"
+                    );
+                }
+            }
+            Disposition::Retry => {
+                if self.inner.vendor.note_unreachable() {
+                    // The flip, announced once — the "one apology" `host.md` specifies.
+                    // This `bool` existed and was thrown away at every call site until
+                    // there was a surface to spend it on.
+                    self.inner.vendor_wake.notify_waiters();
+                    tracing::warn!(error = %err, "vendor unreachable; backing off");
+                }
+            }
+        }
+        self.publish_condition().await;
+        disposition
+    }
+
+    /// Report a turn that completed. Clears a transient backoff and, on the edge, takes
+    /// the condition back off every surface.
+    async fn note_turn_succeeded(&self) {
+        if self.inner.vendor.note_success() {
+            tracing::info!("vendor recovered; turns resume");
+            self.inner.vendor_wake.notify_waiters();
+        }
+        self.publish_condition().await;
+    }
+
+    /// Park until the upstream is worth trying again, or until shutdown.
+    ///
+    /// Returns `false` if the process is going down. A rung with mail in hand calls this
+    /// before opening a session, so a held batch waits on the gate instead of buying a
+    /// subprocess to rediscover the outage.
+    async fn wait_for_vendor(&self) -> bool {
+        // Only set once we actually park, so the ordinary case — the gate is open, this
+        // returns immediately — stays silent. The pair of lines exists because this repo
+        // reads the log as ground truth and a rung that parks with no line looks
+        // identical to one that hung.
+        let mut waited: Option<Instant> = None;
+        loop {
+            // **Register interest before reading the state, not after.**
+            // `notify_waiters` wakes whoever is registered at that instant and stores
+            // nothing for anybody who arrives later, so checking the gate first and
+            // then awaiting drops a recovery that lands in between — and a rung that
+            // misses it under `Hold`, which has no deadline of its own, waits forever.
+            // That is exactly the shape of the failure this whole path exists to end,
+            // so it must not be reintroduced by the fix. `enable()` arms the future
+            // without awaiting it.
+            let notified = self.inner.vendor_wake.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            let deadline = match self.inner.vendor.turn_gate() {
+                TurnGate::Go => {
+                    if let Some(since) = waited {
+                        tracing::info!(
+                            held_for = ?since.elapsed(),
+                            "vendor reachable; a held rung resumes",
+                        );
+                    }
+                    return true;
+                }
+                TurnGate::Retry { at } => Some(at),
+                // No deadline of this rung's own: whoever owns the reason owns the
+                // recovery — for managed energy, the gate task's broker poll.
+                TurnGate::Hold => None,
+            };
+            if waited.is_none() {
+                waited = Some(Instant::now());
+                tracing::info!(
+                    condition = ?self.inner.vendor.condition(),
+                    "vendor down; a rung holds its mail rather than opening a session",
+                );
+            }
+            // A passed deadline returns rather than looping: the caller is meant to go
+            // and *try*, which is what turns a backoff into either recovery or a longer
+            // gap. Looping here on a stale deadline would spin instead.
+            match deadline {
+                Some(at) => {
+                    tokio::select! {
+                        _ = notified => {}
+                        _ = sleep_until(at) => {
+                            tracing::info!("vendor retry due; a held rung tries again");
+                            return true;
+                        }
+                        _ = self.inner.shutdown.cancelled() => return false,
+                    }
+                }
+                None => {
+                    tokio::select! {
+                        _ = notified => {}
+                        _ = self.inner.shutdown.cancelled() => return false,
+                    }
+                }
+            }
+        }
+    }
+
     async fn reconcile_energy_view(&self, out: bool) {
         let envelope = if out {
             self.inner.energy_view.clone()
@@ -1103,6 +1363,10 @@ impl Reaction {
             self.inner.vendor.resume_energy()
         };
         self.reconcile_energy_view(out).await;
+        // Both renderings, from one read of the level: the screen's account view and
+        // the line every other surface gets. Shipping only the first is what left the
+        // text channel silent through a 38-minute outage.
+        self.publish_condition().await;
         if changed {
             self.inner.vendor_wake.notify_waiters();
         }
@@ -1390,11 +1654,28 @@ async fn reaction_loop(
     // mail went out) and on a reachable-but-failed blip (the apology was emitted);
     // held while down.
     let mut batch: Vec<LoopInput> = Vec::new();
+    // Consecutive turns that failed while carrying this batch. It bounds the loop's
+    // *own* re-driving: held mail is a reason to take a turn, and a turn that fails
+    // leaves the mail held, so without a bound a rung that cannot complete a turn and
+    // never reaches the gate — a session fault, which is exempt by design — would
+    // cold-open a subprocess as fast as it can spawn one. Past the bound the mail is
+    // still owed and still here; it just waits for the gate or for a fresh signal
+    // rather than for us to try again immediately.
+    let mut failed_attempts: u32 = 0;
 
     loop {
         // Wait for a turn-driving reason. The process-wide gate wakes this loop when
         // managed energy changes; the loop always re-reads the current vendor level.
         'wait: loop {
+            // Armed before the gate is read, for the reason spelled out in
+            // [`Reaction::wait_for_vendor`]: `notify_waiters` stores nothing for a
+            // waiter that registers afterwards, so a recovery landing between the read
+            // and the `select!` is lost — and under `Hold` there is no deadline to
+            // catch it. Fresh input would still wake this loop, which is what kept the
+            // hole survivable and therefore unnoticed.
+            let vendor_wake = reaction.inner.vendor_wake.notified();
+            tokio::pin!(vendor_wake);
+            vendor_wake.as_mut().enable();
             let gate = reaction.inner.vendor.turn_gate();
             if startup_warm_pending && matches!(gate, TurnGate::Go) {
                 startup_warm_pending =
@@ -1404,7 +1685,14 @@ async fn reaction_loop(
             // Mail already sitting in `batch` (e.g. held while the vendor was down)
             // needs no fresh signal to act on — drive it now while reachable. While
             // down, fall through to the timer logic.
-            if !batch.is_empty() && matches!(gate, TurnGate::Go) {
+            //
+            // The streak is what keeps this from being a spin: one cold-open retry
+            // after a session fault is the whole point of `Disposition::Restart`, and
+            // a run of them is a rung that is not going to recover by trying harder.
+            if !batch.is_empty()
+                && matches!(gate, TurnGate::Go)
+                && failed_attempts < reaction.inner.vendor.down_after
+            {
                 break 'wait;
             }
             let down = !matches!(gate, TurnGate::Go);
@@ -1423,7 +1711,7 @@ async fn reaction_loop(
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
                     biased;
-                    _ = reaction.inner.vendor_wake.notified() => Woke::Vendor,
+                    _ = &mut vendor_wake => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = reaction_mail.notified() => Woke::Mail,
@@ -1432,7 +1720,7 @@ async fn reaction_loop(
                 },
                 None => tokio::select! {
                     biased;
-                    _ = reaction.inner.vendor_wake.notified() => Woke::Vendor,
+                    _ = &mut vendor_wake => Woke::Vendor,
                     recvd = inbound.recv() => Woke::Inbound(recvd),
                     ctl = control.recv() => Woke::Control(ctl),
                     _ = reaction_mail.notified() => Woke::Mail,
@@ -1588,6 +1876,7 @@ async fn reaction_loop(
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
                 batch.clear();
+                failed_attempts = 0;
                 // Report what the session has accumulated, for the dashboard only.
                 // **Nothing thresholds on this.** Bounding a session's context is the
                 // underlying agent's job — it compacts in place, near its real window,
@@ -1610,15 +1899,24 @@ async fn reaction_loop(
                         record_reaction_session_closed(&reaction, &dead).await;
                     }
                 }
-                // Key on the vendor state the turn just wrote, not the pre-turn one:
-                // a turn that flipped the vendor down holds the mail — a backoff drives
-                // it at the next retry deadline. Only a still-reachable blip (already
-                // apologized inside run_turn) drops it.
-                if reaction.inner.vendor.is_down() {
-                    tracing::info!(mail = batch.len(), "vendor down; holding mail for recovery");
-                } else {
-                    batch.clear();
-                }
+                // **The mail is kept, whatever the vendor says.** A still-reachable
+                // blip used to drop it, on the strength of a comment saying the turn
+                // had "already apologized" — nothing in `run_turn` ever apologized,
+                // so what actually happened is that the person's message was thrown
+                // away with no reply and no trace. Observed 2026-09-10: a line typed
+                // at 10:39:12 failed at 10:41:45 on a `responseStreamDisconnected` and
+                // was never answered or mentioned again.
+                //
+                // Cognition and Reflection both already hold their `pending` for
+                // exactly this reason. This rung is the one somebody is waiting on,
+                // so it is the last one that should be losing what they said.
+                failed_attempts = failed_attempts.saturating_add(1);
+                tracing::info!(
+                    mail = batch.len(),
+                    attempts = failed_attempts,
+                    down = reaction.inner.vendor.is_down(),
+                    "holding mail for the next attempt"
+                );
             }
         }
 
@@ -1865,47 +2163,14 @@ async fn run_reaction_turn(
         }
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), "reaction turn failed");
-            let err_text = err.to_string();
-            let managed_402 = crate::foundation::energy_state::is_402_error(&err)
-                && crate::foundation::energy_state::is_out();
-            let disposition = disposition(&err_text);
-
-            // What the failure means for whether to keep trying. Presentation is not
-            // part of this classifier: only the process-wide managed-energy gate owns
-            // the out-of-energy view, and generic model/network/key failures must never
-            // borrow that explanation.
-            match disposition {
-                // The session was the problem, not the vendor. Say nothing to the
-                // process-wide gate: one crashed subprocess must not make every other
-                // conversation believe the model is unreachable.
-                Disposition::Restart => {
-                    tracing::warn!("session fault; reopening cold (vendor untouched)");
-                }
-                // Out of quota, credit, or credentials. A managed 402 has already
-                // shown the durable energy level from the common wire boundary. Apply
-                // its scheduling hold synchronously so this failed turn cannot drop its
-                // mail before the global gate task receives the edge. Other permanent
-                // failures retain their own pause reason and have no energy UI.
-                Disposition::Pause => {
-                    let first = if managed_402 {
-                        reaction.inner.vendor.note_energy_paused()
-                    } else {
-                        reaction.inner.vendor.note_permanent_paused()
-                    };
-                    if first {
-                        reaction.inner.vendor_wake.notify_waiters();
-                        tracing::warn!(
-                            error = %err_text,
-                            managed_energy = managed_402,
-                            "paused: retrying cannot help"
-                        );
-                    }
-                }
-                // A blip. Absorb one, then back off — unchanged behaviour, and the
-                // default for any error nobody has classified.
-                Disposition::Retry => {
-                    let _ = reaction.inner.vendor.note_unreachable();
-                }
+            // The gate write, the classification and the word to the person are one
+            // call now, shared with Cognition and Reflection. Presentation stays out of
+            // the classifier: the condition is derived from the gate's state, so a
+            // generic network failure can never borrow the out-of-energy explanation.
+            // A managed 402 applies its hold synchronously here so this failed turn
+            // cannot drop its mail before the global gate task receives the edge.
+            if reaction.note_turn_failed(&err).await == Disposition::Restart {
+                tracing::warn!("session fault; reopening cold (vendor untouched)");
             }
             turn_error = Some(err);
             false
@@ -1927,14 +2192,12 @@ async fn run_reaction_turn(
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
         //
-        // The return is the recovery edge and it is said out loud: the down side
-        // already logs `vendor down; holding mail for recovery`, so discarding this
-        // left a log that shows an outage starting and never ending — "still down"
-        // and "came back an hour ago" read identically, on the one surface this repo
-        // treats as ground truth.
-        if reaction.inner.vendor.note_success() {
-            tracing::info!("vendor recovered; turns resume");
-        }
+        // The recovery edge is said out loud, in the log and now on the channels: the
+        // down side already logs `vendor down; holding mail for recovery`, so a
+        // discarded recovery left a log that shows an outage starting and never ending —
+        // "still down" and "came back an hour ago" read identically, on the one surface
+        // this repo treats as ground truth. The person had the same problem, with no log.
+        reaction.note_turn_succeeded().await;
         // Hand the turn's human request down to Cognition — the reading and thinking
         // Reaction cannot do — so it works off the floor while Reaction moves on. Its answer
         // comes back as mail, which drives a turn of its own.

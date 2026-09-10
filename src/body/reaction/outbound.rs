@@ -42,4 +42,13 @@ pub enum OutboundSignal {
     /// carries the compiled module URL; the binder broadcasts it to GET
     /// /api/out/view subscribers.
     View { envelope: ViewEnvelope },
+    /// What is wrong with the upstream right now, or `None` once it is usable again —
+    /// the host's own state, not something the agent said.
+    ///
+    /// It rides this seam rather than a handle of its own for the reason the seam
+    /// exists: the vendor gate is the mind's, and which wire carries the fact to a
+    /// person is not its business. The binder folds it into the conversation's
+    /// current state beside the recognition interim, which is the closest existing
+    /// thing — a field that is *about* the conversation without being a message in it.
+    Condition { condition: Option<crate::body::reaction::Condition> },
 }

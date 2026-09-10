@@ -154,38 +154,10 @@ async fn run(reaction: Reaction, registration: Registration) {
     // Consecutive passes that had new input on the log and still found nothing to
     // consolidate — see [`note_pass`].
     let mut stalled: u32 = 0;
-    let mut energy = crate::foundation::energy_state::subscribe();
-    let mut energy_paused = crate::foundation::energy_state::is_out();
 
     tracing::info!(reflection = %id, "reflection up");
 
     loop {
-        // Reflection does not preflight the account. A managed 402 from any agent
-        // session flips the shared state; this rung simply parks until the positive
-        // balance sends Resume, keeping its pending mail intact.
-        if energy_paused {
-            tokio::select! {
-                event = energy.recv() => {
-                    match event {
-                        Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
-                            energy_paused = false;
-                            tracing::info!(reflection = %id, "reflection resumed after energy refill");
-                        }
-                        Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            energy_paused = crate::foundation::energy_state::is_out();
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = reaction.inner.shutdown.cancelled() => {
-                    tracing::info!(reflection = %id, "reflection shutting down");
-                    break;
-                }
-            }
-            continue;
-        }
-
         // When the clock is off, park the timer arm forever rather than branching the
         // whole `select!` — a never-completing sleep is the cheapest "this arm is not in
         // play" there is.
@@ -210,21 +182,6 @@ async fn run(reaction: Reaction, registration: Registration) {
 
         let wake = tokio::select! {
             biased;
-            event = energy.recv() => {
-                match event {
-                    Ok(crate::foundation::energy_state::EnergyEvent::Pause) => {
-                        energy_paused = true;
-                    }
-                    Ok(crate::foundation::energy_state::EnergyEvent::Resume) => {
-                        energy_paused = false;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        energy_paused = crate::foundation::energy_state::is_out();
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-                continue;
-            }
             _ = tokio::time::sleep(sleep_for) => Wake::Consolidate,
             // Fresh input landed: re-derive the deadline rather than sit out a long
             // backoff. Not a wake in itself.
@@ -261,6 +218,17 @@ async fn run(reaction: Reaction, registration: Registration) {
 
         if reaction.inner.shutdown.is_triggered() {
             tracing::info!(reflection = %id, "shutdown requested; ending reflection loop");
+            break;
+        }
+
+        // **One gate, shared with the other two rungs.** This rung parked on the
+        // `energy_state` broadcast alone, which is one of the reasons a call cannot run
+        // and knew nothing of the rest: through a generic outage it opened a session and
+        // failed on its own cadence, every cadence, forever. `host.md` has always said
+        // the vendor is decided process-wide; this is the read side of that for
+        // Reflection. The mail in `pending` is untouched by the wait.
+        if !reaction.wait_for_vendor().await {
+            tracing::info!(reflection = %id, "reflection shutting down");
             break;
         }
 
@@ -365,7 +333,10 @@ async fn run(reaction: Reaction, registration: Registration) {
             Err(err) => TurnOutcome::Failed(err.to_string()),
         };
         match turned {
-            Ok(()) => pending.clear(),
+            Ok(()) => {
+                pending.clear();
+                reaction.note_turn_succeeded().await;
+            }
             Err(err) => {
                 // Keep `pending` — the mail is still owed, and the next wake carries it.
                 //
@@ -373,14 +344,22 @@ async fn run(reaction: Reaction, registration: Registration) {
                 // handle good — `SessionRun::wait` restored the prompt receiver — so the
                 // same session retries this batch after Resume. Anything else is the
                 // session, and holding it would make this rung quietly deaf.
-                if crate::foundation::energy_state::is_402_error(&err)
-                    && crate::foundation::energy_state::is_out()
-                {
-                    energy_paused = true;
-                } else {
+                //
+                // **And tell the gate**, so an outage this rung finds first steers the
+                // two rungs a person is actually waiting on.
+                let disposition = reaction.note_turn_failed(&err).await;
+                let held = crate::foundation::energy_state::is_402_error(&err)
+                    && crate::foundation::energy_state::is_out();
+                if !held {
                     session = None;
                 }
-                tracing::warn!(reflection = %id, error = %format!("{err:#}"), "reflection turn failed; mail held");
+                tracing::warn!(
+                    reflection = %id,
+                    error = %format!("{err:#}"),
+                    ?disposition,
+                    held,
+                    "reflection turn failed; mail held"
+                );
             }
         }
         super::note_window(&id, session.as_deref());
