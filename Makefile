@@ -14,7 +14,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test test-live docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
+.PHONY: help check-version build dev run test test-live test-views docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -43,6 +43,7 @@ run: ## run the release binary
 test: ## run rust + web tests
 	cargo test
 	$(MAKE) test-web
+	$(MAKE) test-views
 
 test-live: ## run the tests that need a real server (see each test for its env)
 # Kept out of `test` rather than skipped inside it: these reach a third party over the
@@ -61,6 +62,17 @@ test-live: ## run the tests that need a real server (see each test for its env)
 # are developed on cannot always build the core — `cargo test` wants a toolchain
 # and tens of gigabytes of `target/`, and a disk that runs out mid-build reports
 # success while producing nothing.
+test-views: ## run the factory views' pure read models (no browser, no Rust toolchain)
+# These were written to be run and then were not reachable from any target, so nothing ran
+# them: `home.test.mjs` evaluates everything above `export default function Home` in a bare
+# VM and exercises the real layout engine. A test no target runs goes stale next to the code
+# it guards, which is the whole argument for it being here.
+#
+# Same guard as `test-web`, for the same reason: they resolve `d3-flextree` out of the web
+# app's `node_modules`, so a fresh worktree installs first.
+	@test -d src/appearance/web/node_modules/d3-flextree || (cd src/appearance/web && npm ci)
+	node --test src/mind/views/factory/*.test.mjs
+
 test-web: ## run the web tests alone (no Rust toolchain needed)
 # Guarded on the runner itself, not on `node_modules/` being present: a fresh
 # worktree has no deps at all and a half-installed tree has the directory, so a

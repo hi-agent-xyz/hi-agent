@@ -237,3 +237,170 @@ frame 下真渲了一遍:
 - ❓ **手机横屏时面板应不应该并排?** 现在 `shape.ts` 判定横屏手机是 `wide`,于是面板成了 420px
   的侧栏,view 只剩 432 —— 比竖屏的整屏还差。用户想要的"横屏接近桌面"在面板并排时拿不到。
   这是 `stops(shape)` 的问题,不是这次改动的范围,单独记在这里。
+
+## 实测 2026-09-11 · 从外网开这块屏,吵的是一个 endpoint
+
+用户在 `iloahz.hi-agent.xyz` 上开 face,DevTools 里 84 个请求、11 MB、1.6 分钟没停:
+`text` / `view` / `activity` / `audio` 这些长轮询一片 524、503、`ERR_HTTP2_PROTOCOL_ERROR`,
+`tasks` 每条 **2,025 kB**,一条接一条地重来。
+
+**长轮询不是坏了,是被饿着。** 在他自己那台机器的真库上量(166 条 task 记录):
+
+| | 之前 | 现在 |
+|---|---|---|
+| `GET /api/tasks` 原始 | 2,073,600 B | 178,354 B |
+| 同一条,gzip 上线 | 2,073,600 B | **59,109 B** |
+| `factory/home` 读它的节奏 | 2 秒 | 8 秒 |
+| 持续占用 | ~1 MB/s | ~7.4 KB/s |
+
+三件事叠起来的:
+
+- **list 把 record 一起发了。**`get_tasks` 把每条记录整个序列化 —— 正文、完整
+  timeline、`extra`、外加每条最多 32 次 `stat`。这台机器上 166 条记录的 `facet.md` 合计
+  2,132,250 B,跟响应体几乎一个数;其中 **157 条(95%)是 done/cancelled**,而收起来的那条
+  ledger 轨每行只画标题和日期。正文本身就带头:1.19 MB 正文 + 588 KB timeline。
+- **没有压缩。**`CompressionLayer` 只挂在 `/views/*` 上,理由是隔壁 `/api/*` 全是长轮询和
+  SSE —— 对那些是对的,对 `Json(..)` 这种发完就完的 buffered body 不是。
+- **ledger 挂在 roster 的钟上。**`factory/tasks` 自己走 `TEMPO.ledger`(8 秒);
+  `factory/home` 把 tasks 和 workers 一次 fan out,于是最重的那条读继承了最快的那个钟。
+
+改法:`GET /api/tasks` 只发行(身份、几个时钟、`latest` 一句话、`refs` 几个 token),
+`GET /api/tasks/<subject>` 发记录,人点开一行才读;buffered 的那些 review read 单独一个
+router 挂压缩;home 的 fan out 拆成两个钟。
+
+(**第三条里「ledger 那个钟」是个旋钮 —— 拿新鲜度换字节 —— 下一节把它删掉了**,
+ledger 改成停在自己的版本上,只剩 roster 还在钟上。拆成两条读这件事本身留下来了。
+前两条不是旋钮:不管用什么传输,被轮询的列表都不该带正文。)
+
+**实测**(release 二进制,`--data-dir` 是真库 166 份 `facet.md` 的副本,端口 12377):
+
+- ✅ **两块板都真渲过**,用的是它自己的无头 Chrome:`factory/tasks` 画出 Todo 2 / Doing 3 /
+  Serving 4 / Closed 157,「1 waiting on you」那条等待句、`Nobody on it`、`Alive Sep 11` 都在;
+  `factory/home` 的节点带 `latest` 那一行、`extra` 里来的标签(`lark` `ktv` `mylifedb`)、
+  以及 `refs` 认出来的 view。
+- ✅ **点开一行是一次读。** playwright 驱真浏览器:进页面只有一条 `/api/tasks`;点 ledger 第一行
+  发一条 `/api/tasks/deploy-ktv-from-local-20260911`,面板画出 13 条 timeline、正文、
+  「What you asked for」、标签、Reopen 全在。
+- ✅ **其余轮询读也压上了**:`/api/facets` 13,708 → 2,506。
+- ✅ **`refs` 收紧了一次。**第一版照搬 face 那条正则,捞出来一堆 `evidence/01`、`03/35-41`、
+  `96/96`;正则原来扫的是整篇正文、认不出 view 就扔,不花钱,而这里有 16 条的上限,噪声会把
+  真的那条挤掉。加了「每段至少一个字母」,全库 refs 从一堆降到 124 条。
+- ⚠️ **没在外网复测。** 上面的数是 loopback 上量的字节和次数;524 那批错误是不是就此消失,
+  要在 `iloahz.hi-agent.xyz` 上再看一次。
+- ⚠️ **长轮询仍然没有保活。** `/api/out/view`、`/api/out/text`、`/api/out/audio` 在没事发生时
+  一个字节都不发,只有 `/api/activity` 有 15 秒的 keep-alive。代理手上没有任何东西可以据以
+  把连接留住,所以那批 524 里有多少是带宽饿出来的、有多少是空闲超时,现在还分不开 —— 这条
+  没动。
+
+## 实测 2026-09-11 · 把 ledger 从钟上摘下来
+
+上一节把 2 MB 降到 59 KB,但**节奏本身还是个旋钮** —— 2 秒改 8 秒,拿新鲜度换字节。
+这一节是把这笔交换取消掉。
+
+**这个仓库里除了 review 那几块板,别的都已经是事件了**:appearance 是
+`ViewBus::wait_state(since)` 的带版本长轮询,activity 是 `watch` + SSE,view 被改写走
+`view_watch` 的文件系统 watcher。`view_watch` 自己的注释就把话说完了 ——
+*"It is an event, not a tick: the watcher costs nothing until a file is written"*,
+以及 *"a view is saved by writing the file, so there is no tool call to hang this off"*。
+两句对 task 逐字成立:`facet.md` 里那些 `## 当前接管状态` 是拿 shell 追上去的,
+从不经过 `write_task`。
+
+于是:`stores.rs` 一张按 store 计数的版本表 + `facet_watch.rs` 一个 watcher,
+`GET /api/tasks?since=<version>` 停在那儿,直到版本跟调用方手上的不一致。
+
+### 量出来的数改掉了设计:watch 不能递归
+
+第一版照抄 `view_watch` 用 `RecursiveMode::Recursive`。数了一下才发现不行 ——
+**真库 `facets/` 底下有 13,982 个目录**,因为 task 文件夹同时也是干活的地方:
+`kt8-046` 一个任务里 clone 的 repo 就占 2,011 个。Linux 上 `notify` 一个目录一个 inotify
+watch,`max_user_watches` 常见是 8,192,**这一台今天就会打爆**,而且以后 worker 每 clone
+一个仓库就更糟。
+
+改成只订阅**能放下 `facet.md` 的那三层**(root / dimension / subject),都不递归。
+同一个库上是 302 个 watch —— 跟「有多少条记录」成正比,而不是跟「记录旁边堆了什么」。
+探针实测:故意在一个 task 文件夹里造 209 个子目录,启动日志报 `dirs=173`,一个都没进去。
+
+### 实测(release 二进制,`--data-dir` 是真库 166 份 `facet.md` 的副本,端口 12377)
+
+curl 上量的四条:
+
+- ✅ **首读不带 `since`**:立刻回,带 `version`。
+- ✅ **带 `since` 停住,外面写一次 `facet.md` → 1.97 s 后醒**(其中 1.5 s 是我等着才写的)。
+- ✅ **`PATCH` 从板上改状态 → 1.03 s 后醒**,即 patch 落地即醒,不等 watcher 那 300 ms
+  settle —— 这是 `patch_task` 直接 bump 那一半在起作用。
+- ✅ **什么都不发生**:25 s 后回 `{"unchanged":true,"version":3}`,**30 字节**。
+
+然后在**真的那张脸**上(playwright 驱真浏览器开 `http://localhost:12377/`,不是
+`/render/view` —— 渲染页带 `__hiRender`,`useWatched` 在那里按设计只读一次就停,
+第一版就是在渲染页上量的,两个数都是假的,这是这次差点报出去的一个错):
+
+| | 之前 | 现在 |
+|---|---|---|
+| 干坐 30 秒 | ~4 次 × 2 MB | **1 次响应,30 字节** |
+| 盘上写一条记录 → 板上跟上 | 最多 8 秒 | **337 ms** |
+
+- ✅ 板子照常:Todo 1 / Doing 4 / Serving 4 / Closed 157,等待句、`Alive` 行都在。
+  (337 ms 里有 300 ms 是 watcher 的 settle —— 那是这条路径的地板,不是网络。)
+- ✅ 点开一行仍然只读一次记录:进页面 `/api/tasks` + `/api/tasks?since=3` 两条,
+  点 ledger 第一行发 `/api/tasks/deploy-ktv-from-local-20260911`,面板画出 13 条 timeline。
+
+### 探针本身差点变成实验的一部分
+
+`--data-dir` 是真库的副本,里面带着 4 条 `serving` 的 duty,**于是探针一启动就 boot wake、
+resume 了上一次的 codex thread、spawn 了一个 `task-manager` worker** —— 一个拿着自动 bootstrap
+出来的 broker 凭证、对着真任务记录干活的 agent。这次没造成什么(两个 turn 都在 27 秒后被我
+kill 掉了,日志里没有任何 tool call,`memory/raw/` 下只有 appearance/sessions/view),但这正是
+「Keep the harness out of the experiment」说的那件事,只是方向反过来:实验把产品跑起来了。
+
+后面的量测都改成先给探针一个 `config.db`、把 mode 钉成 `byok` 且不给 key。它照样 boot、
+照样起 codex 子进程,但 `auth_token_fp=""`,prompt 一律失败 —— HTTP 面和 view 全都正常,
+而 agent 动不了任何东西。以后拿真库副本做探针都应该这么起。
+
+### 未验证 / 没做
+
+- ⚠️ **还是没在外网复测。** 上面是 loopback 上的字节和次数;`iloahz.hi-agent.xyz` 上那批
+  524 是不是就此消失,要部署后再看一次。25 s 的 park 上限是照着观测到的 ~30 s 超时挑的,
+  真实代理的耐心值没量过。
+- ⚠️ **watcher 起不来时的降级只有推理,没试过。** 拿不到 watcher 时日志会 warn,板子只跟得上
+  本进程自己的写(`patch_task` 直接 bump),跟不上 agent 用 shell 写的。没造过这个场景。
+- ❌ **另外 9 块 review 板还在钟上。** `useLive` 有 11 处调用,这次只动了 ledger 那两处。
+  roster(`/api/workers`)是内存里的 session 状态,盘上没有东西可盯,下一步应该挂到
+  `registry::subscribe_activity` 上 —— 那个 `watch` 已经存在了。
+- ❌ **长轮询保活仍然没做**,`/api/out/view`、`/api/out/text`、`/api/out/audio` 空闲时一个
+  字节都不发。`/api/tasks` 这条现在 25 s 必答一次,等于顺手有了保活;那三条没有。
+
+### 落地时撞上了 home 的重写
+
+推之前 rebase,撞上当天 07:18 的 `feat(home): model work as a connected semantic tree` ——
+home 整个重写过。**不是文本冲突,是语义冲突**:新的 home 从每一行任务上读 `body`、
+`timeline`、`files`,正好是列表刚停止携带的三样。而且它不会崩,只会静悄悄地坏:树上的
+view 连线消失,弹窗里正文空白。
+
+两处跟着改了设计:
+
+- **`files` 放回行上。** 当初摘掉它是因为它要对每条任务的每个引用文件做一次 `stat` ——
+  真库上一轮最多 5,000 次,而那时列表挂在钟上。**读变成按事件之后这笔开销就付得起了**,
+  所以它回来了:chart 要给每条任务的每个产物挂一个节点,不只是被打开的那一条。
+  列表从 20 ms 变成 52 ms,这是服务端的时间,不在线上。
+- **`refs` 从「抽取」变成「解析」。** 第一版照搬四种拼法在服务端抽 token,再让 home 拿去
+  跟 view 索引比对。**探针上立刻露馅**:`data/views/ktv-deploy-method.jsx` 抽出来是
+  `data/views/ktv-deploy-method` 和 `views/ktv-deploy-method`,而真正的 ref 是单段的
+  `ktv-deploy-method` —— 被我「至少两段」的规则挡掉了。上游原来的写法是**松匹配 + 拿已知
+  view 做精确过滤**,松是安全的,因为过滤兜着。所以索引读到服务端来:一次列表读走一遍
+  views 树,行上只留真的存在的那些。于是不需要 cap(答案不可能比 view 索引长),也不需要
+  「每段至少一个字母」那条挡噪声的规则 —— 噪声根本到不了行上。
+
+顺带:**`home.test.mjs` 之前没有任何 target 会跑它。** 它测的正是被我改掉的那段纯函数,
+加了 `make test-views`(`node --test src/mind/views/factory/*.test.mjs`)并挂进 `make test`。
+一个没人跑的测试会跟着它守着的代码一起过期。
+
+**复测(新 home,真浏览器,真库副本)**:
+
+- ✅ 43 个节点画出来,进页面一次 `/api/tasks`。
+- ✅ **干坐 20 秒:0 次响应,0 字节。**
+- ✅ 点开一个 task 节点 → 发 `/api/tasks/deck-whitespace-fix`,弹窗里 4,546 字的正文出来了。
+  (那条记录本身没有 `## Timeline` 段,所以时间线 0 条是对的,不是坏的。)
+- ✅ 盘上写一条记录 → home 423 ms 后跟上。
+- ⚠️ **上游这次重写去掉了 `factory/*` 的排除**(老 `viewRefOf` 有,新 `resolveViews` 没有),
+  所以一条记录里作为佐证提到的 `factory/tasks` 会变成它的产物节点。**这次原样保留了** ——
+  行为跟改之前一致,是不是要改回是 home 自己的设计问题,不是这次重构的。

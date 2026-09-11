@@ -552,6 +552,9 @@ async fn a_task_serves_the_files_its_own_record_names() {
     // shows the account's own references, not a listing of the working folder.
     std::fs::write(folder.join("scratch.log"), "noise").expect("write scratch");
 
+    // The list names what the task produced — the chart hangs a node off each — and carries
+    // neither the prose nor the timeline, which is the property that keeps it proportional to
+    // how many tasks there are rather than to how much has been written on them.
     let listed: serde_json::Value = client
         .get(format!("{base}/api/tasks"))
         .send()
@@ -566,9 +569,34 @@ async fn a_task_serves_the_files_its_own_record_names() {
         .iter()
         .find(|row| row["subject"] == serde_json::Value::String(task.subject.clone()))
         .expect("the task is in the list");
-    assert_eq!(row["files"][0]["path"], "inspection-report.md");
-    assert_eq!(row["files"][0]["bytes"], 15);
-    assert_eq!(row["files"].as_array().expect("files").len(), 1, "only what it names");
+    assert_eq!(row["files"][0]["path"], "inspection-report.md", "the row names it: {row}");
+    assert!(row.get("body").is_none(), "a row carries no prose: {row}");
+    assert!(row.get("timeline").is_none(), "a row carries no timeline: {row}");
+
+    // Opening it is what asks, and the answer is the account behind that name.
+    let opened: serde_json::Value = client
+        .get(format!("{base}/api/tasks/{}", task.subject))
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    let record = &opened["task"];
+    assert_eq!(record["subject"], serde_json::Value::String(task.subject.clone()));
+    assert!(record["body"].as_str().expect("body").contains("inspection-report.md"));
+    assert_eq!(record["files"][0]["path"], "inspection-report.md");
+    assert_eq!(record["files"][0]["bytes"], 15);
+    assert_eq!(record["files"].as_array().expect("files").len(), 1, "only what it names");
+
+    // A subject with no record behind it is a 404 and not an invented task: the list may
+    // stand a malformed row up so somebody can go and fix it, a direct read may not.
+    let resp = client
+        .get(format!("{base}/api/tasks/no-such-errand"))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), 404);
 
     let resp = client
         .get(format!(
@@ -599,4 +627,84 @@ async fn a_task_serves_the_files_its_own_record_names() {
         .await
         .expect("send");
     assert_eq!(resp.status(), 404, "no climbing out of the task's folder");
+}
+
+/// **The ledger answers when it moves, not when asked again.**
+///
+/// The contract the board runs on: a read carrying the version it already has does not come
+/// back until that version stops being true. The alternative — the clock this replaced — costs
+/// the same whether anything happened or not, and is still a period stale at the moment
+/// something does.
+#[tokio::test]
+async fn a_read_holding_the_current_version_waits_for_the_ledger_to_move() {
+    let (base, dir, _seams) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let task = hi_agent::mind::memory::tasks::Task::new(
+        "Ship the flash cards",
+        hi_agent::mind::memory::tasks::TaskStatus::Todo,
+    );
+    hi_agent::mind::memory::tasks::write_task(dir.path(), &task)
+        .await
+        .expect("write task");
+
+    // A first read takes no version and answers straight away, carrying the one to park on.
+    let first: serde_json::Value = client
+        .get(format!("{base}/api/tasks"))
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    let version = first["version"].as_u64().expect("a version to park on");
+    assert_eq!(first["tasks"][0]["status"], "todo");
+
+    // Park on it. Nothing has happened, so this must still be out a moment later — that it
+    // *waits* is the whole property, and a read that answered here would be the old clock
+    // wearing a version number.
+    let parked = tokio::spawn({
+        let client = client.clone();
+        let url = format!("{base}/api/tasks?since={version}");
+        async move { client.get(url).send().await.expect("send").json::<serde_json::Value>().await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!parked.is_finished(), "a read parked on the current version must not answer");
+
+    // Now move it, through the one verb a person has.
+    let patched = client
+        .patch(format!("{base}/api/tasks/{}", task.subject))
+        .json(&serde_json::json!({ "status": "doing" }))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(patched.status(), 200);
+
+    let woke = tokio::time::timeout(Duration::from_secs(5), parked)
+        .await
+        .expect("the parked read never woke")
+        .expect("join")
+        .expect("json");
+    assert!(
+        woke["version"].as_u64().expect("version") > version,
+        "the answer carries the version it is now safe to park on: {woke}"
+    );
+    assert_eq!(woke["tasks"][0]["status"], "doing", "and the change that woke it");
+}
+
+/// A version from before a restart is higher than the one a fresh process counts from.
+/// Waiting for the counter to climb past it would park that client for good, so any
+/// disagreement answers instead.
+#[tokio::test]
+async fn a_version_from_before_a_restart_is_answered_rather_than_parked_on() {
+    let (base, _dir, _seams) = spawn_server().await;
+    let answer: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/tasks?since=9999"))
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    assert!(answer["tasks"].is_array(), "told to re-read, not left hanging: {answer}");
 }

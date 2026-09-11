@@ -379,6 +379,17 @@ pub async fn share_view(
 /// Walk the views tree collecting `<rel>.jsx` as refs. Iterative rather than recursive
 /// because an `async fn` cannot recurse without boxing, and the tree is shallow enough
 /// that a worklist is the plainer of the two.
+/// Every view ref that exists on disk under `<data_dir>/views`.
+///
+/// The ledger read uses this to say which views a task produced: a record *mentions* names in
+/// prose, and only a name that is really a view is one — see `tasks::view_refs`.
+pub async fn existing_refs(data_dir: &std::path::Path) -> std::collections::HashSet<String> {
+    let root = data_dir.join("views");
+    let mut found = Vec::new();
+    collect_views(&root, &root, &mut found).await;
+    found.into_iter().map(|view| view.view_ref).collect()
+}
+
 async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mut Vec<ListedView>) {
     let mut queue = vec![start.to_path_buf()];
     while let Some(dir) = queue.pop() {

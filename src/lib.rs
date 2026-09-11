@@ -393,6 +393,14 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         config.data_dir.clone(),
         view_compiler.clone(),
     );
+    // The same argument one tree over: a task record is kept by writing its `facet.md`, so
+    // nothing tells a board that the ledger moved. Without this every review surface is back
+    // to asking on a clock — which costs the same whether anything changed or not, and is
+    // still a period stale at the moment it matters.
+    foundation::server::facet_watch::spawn(
+        seams.state.stores.clone(),
+        config.data_dir.clone(),
+    );
     // The person's language, stamped onto `<html lang>` so a bundled view can pick which
     // of its copies to show. Captured once here for the same reason the setting says it
     // applies on restart. Unset reads as `system`, which the page resolves against the

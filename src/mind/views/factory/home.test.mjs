@@ -16,7 +16,7 @@ const { buildHome, arrange, TONE, stateOf, childIndex, revealPath, normalizeSess
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
 const hoursAgo = (h) => new Date(NOW - h * 3600000).toISOString();
-const task = (subject, status = "doing", hours = 1) => ({ subject, title: subject, status, statusSince: hoursAgo(hours), timeline: [], extra: [], files: [] });
+const task = (subject, status = "doing", hours = 1) => ({ subject, title: subject, status, statusSince: hoursAgo(hours), refs: [], extra: [], files: [] });
 const worker = (id, role = "worker", extra = {}) => ({ run: "0123456789ab", id, role, state: "running", title: `Work ${id}`, started: hoursAgo(2), state_since: hoursAgo(1), ...extra });
 const ended = (session, extra = {}) => ({ run: "0123456789ab", session, role: "worker", title: `Work ${session}`, started: hoursAgo(2), ended: hoursAgo(1), how: "closed", ...extra });
 const project = (input) => buildHome(input, NOW);
@@ -124,8 +124,12 @@ test("overview uses public messages and factual transitions, never worker tail o
 });
 
 test("topics are explicit, results are optional children, shared results keep one identity", () => {
-  const a = { ...task("a"), extra: [{ key: "project", value: "Home, Product" }], body: "See views/demo/result.jsx" };
-  const b = { ...task("b"), body: "See `demo/result`" };
+  // Both rows name the same view. *How* a record spells it — inline code, quoted,
+  // `views/x.jsx`, a `view_ref:` field — is matched server-side now that the row does not
+  // carry the prose to match against; the four spellings are pinned in
+  // `foundation::server::tasks::tests::every_spelling_a_record_uses_for_a_view_is_read`.
+  const a = { ...task("a"), extra: [{ key: "project", value: "Home, Product" }], refs: ["demo/result"] };
+  const b = { ...task("b"), refs: ["demo/result"] };
   const model = project({ tasks: [a, b], views: [{ view_ref: "demo/result", label: "Result" }] });
   assert.equal(ofKind(model, "topic").length, 2); assert.equal(ofKind(model, "artifact").length, 1);
   assert.equal(model.edges.filter((e) => e.relation === "produces").length, 2);

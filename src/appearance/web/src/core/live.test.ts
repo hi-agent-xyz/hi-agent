@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { TEMPO, clockFor, shouldRead, type ReadState } from "./live";
+import { TEMPO, afterAnswer, clockFor, shouldRead, type ReadState } from "./live";
 
 const idle: ReadState = { hidden: false, inFlight: false, held: false };
 
@@ -70,5 +70,26 @@ describe("TEMPO", () => {
     // is what stops a third number being invented for the next surface.
     expect(TEMPO.watching).toBe(2000);
     expect(TEMPO.ledger).toBe(8000);
+  });
+});
+
+describe("afterAnswer", () => {
+  it("advances to the version the server answered with", () => {
+    expect(afterAnswer(null, 7)).toEqual({ since: 7, waitMs: 0 });
+    expect(afterAnswer(7, 8)).toEqual({ since: 8, waitMs: 0 });
+  });
+
+  it("keeps the version when the answer was not taken, so the change is not lost", () => {
+    // The failure this prevents: a change that lands mid-drag is dropped by the view, the
+    // loop advances past it anyway, and the store never mentions it again — the board sits
+    // on a stale ledger until something else happens to move it.
+    expect(afterAnswer(7, null)).toEqual({ since: 7, waitMs: expect.any(Number) });
+    expect(afterAnswer(7, null).waitMs).toBeGreaterThan(0);
+  });
+
+  it("holds off before asking again, so a refused answer cannot spin", () => {
+    // The server answers a stale `since` immediately, so re-asking with no pause while a
+    // card is held would be a hot loop for as long as the drag lasts.
+    expect(afterAnswer(null, null).waitMs).toBeGreaterThan(0);
   });
 });

@@ -28,11 +28,30 @@
 // cannot be driven from a keyboard, so the primary verb stays on the card and every
 // remaining transition is in the panel, which opens by click, tap and Enter alike.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { useLive, TEMPO } from "@hi/core";
+import { useLive, useWatched, TEMPO } from "@hi/core";
 
 const J = { "Content-Type": "application/json" };
 const api = {
-  list: () => fetch("/api/tasks").then((response) => response.json()),
+  // **Parks rather than polls.** With a `since` this does not answer until the ledger stops
+  // agreeing with that version, so a board left open all day costs nothing on the wire until
+  // a record is actually written — and hears about it then, not by the next tick. Without one
+  // it answers immediately, which is what a first read is.
+  //
+  // It does not swallow its own failures: `useWatched` reads a throw as "ask again shortly",
+  // and a caught one would look like an answer.
+  list: async (since) => {
+    const at = since === null || since === undefined ? "" : `?since=${encodeURIComponent(since)}`;
+    const response = await fetch(`/api/tasks${at}`);
+    if (!response.ok) throw new Error(`/api/tasks failed: ${response.status}`);
+    return response.json();
+  },
+  // The account behind one row, read when somebody opens it. The list carries a row's
+  // identity, its clocks and one line; the prose, the whole timeline and the resolved files
+  // are here, and they are the bulk — on one live store the ledger's rows are ~150 KB and the
+  // records behind them 2.1 MB. A board polls the first every few seconds and asks for the
+  // second when a person actually wants to read one.
+  record: (subject) =>
+    fetch(`/api/tasks/${encodeURIComponent(subject)}`).then((response) => response.json()),
   // The switchboard, joined to the ledger by subject in this view rather than served
   // alongside it. `GET /api/workers` already carries `subject` — the workers page reads it
   // the same way — so the alternative was a field on every row of a polled list, its own
@@ -101,6 +120,7 @@ const T = {
     assumed: "assumed, never confirmed",
     timeline: "What has happened",
     noTimeline: "Nothing recorded yet.",
+    readingRecord: "Reading the record\u2026",
     // One field, two questions, because the reader arrives with a different one
     // depending on whether the row is still owed.
     accountOpen: "Where it stands",
@@ -194,6 +214,7 @@ const T = {
     assumed: "推断的，未经确认",
     timeline: "发生了什么",
     noTimeline: "还没有记录。",
+    readingRecord: "正在读取记录\u2026",
     accountOpen: "进展如何",
     accountClosed: "结果如何",
     showAll: "展开全部",
@@ -306,6 +327,10 @@ export default function Tasks() {
   // replaces every task on each tick, and a held object would freeze the panel on
   // the version that was open when it was clicked.
   const [openSubject, setOpenSubject] = useState(null);
+  // The record behind the open panel, read separately from the list. Cleared the moment a
+  // different row is opened, so the panel shows a skeleton for a beat rather than the previous
+  // task's account under this task's title.
+  const [record, setRecord] = useState(null);
   // Subject -> the session on it, from the same poll. `null` until the first roster lands, so
   // the board can tell "nobody is on this" from "we have not asked yet" and say neither early.
   const [onIt, setOnIt] = useState(null);
@@ -317,32 +342,69 @@ export default function Tasks() {
   const busyRef = useRef(false);
   const dragRef = useRef(false);
 
-  const reload = useCallback(async () => {
-    const [data, roster] = await Promise.all([
-      api.list().catch(() => ({ tasks: [] })),
-      // A failed roster is *not* an empty one. Empty says nobody is on anything, which on
-      // this board is the alarm on every `doing` row at once — so a fetch that did not come
-      // back leaves the last reading standing rather than raising eleven false alarms.
-      api.workers().catch(() => null),
-    ]);
+  // **The ledger, read when it moves.** Returns the version to park from next, or `null` for
+  // "ask again shortly" — which is what a dropped answer and a failed read both are.
+  const readLedger = useCallback(async (since) => {
+    const data = await api.list(since);
+    if (data.unchanged) return data.version;
+    // A change landing mid-write or mid-drag is **dropped, not applied**: a tick that lands
+    // there flips a card back under the click that changed it, or re-renders the board out
+    // from under a held card and cancels the drag. Nothing is lost by dropping it — `since`
+    // is not advanced, so the next ask returns the same answer the moment the hand lifts.
+    //
+    // The refs and not the state: `busyRef` is set imperatively either side of an `await`,
+    // and at that moment the matching `setBusy` has not committed.
+    if (busyRef.current || dragRef.current) return null;
     setTasks(data.tasks || []);
+    return data.version;
+  }, []);
+
+  // The roster is in-memory session state rather than a record on disk, so it has no version
+  // to park on and keeps its clock. It is the cheap one — 255 bytes over the wire — and the
+  // next thing to move onto an event, off `registry::subscribe_activity`, which already exists.
+  //
+  // A failed roster is *not* an empty one. Empty says nobody is on anything, which on this
+  // board is the alarm on every `doing` row at once — so a fetch that did not come back
+  // leaves the last reading standing rather than raising eleven false alarms.
+  const readRoster = useCallback(async () => {
+    const roster = await api.workers().catch(() => null);
     if (roster) setOnIt(bySubject(roster.workers || []));
   }, []);
 
-  // Re-read, for the reason the workers roster does: the agent opens and closes tasks while
-  // this is on screen, and a ledger that is quietly stale still reads as authoritative —
-  // it is the surface someone checks *before* asking "did you drop that?". This is a ledger
-  // rather than something you watch happen, so it runs on the slower tempo.
-  //
-  // The hold reads the refs and not the state: `busyRef` is set imperatively either side of
-  // an `await`, and at that moment the matching `setBusy` has not committed, so a tick in
-  // the gap would see the old value and flip a card back under the click that changed it.
-  // Mid-drag it is the same shape — re-rendering the board out from under a held card
-  // cancels the drag.
-  useLive(reload, {
+  // The agent opens and closes tasks while this is on screen, and a ledger that is quietly
+  // stale still reads as authoritative — it is the surface someone checks *before* asking
+  // "did you drop that?". That used to be answered with a clock; it is answered by the store
+  // saying when it moved, which costs nothing while nothing happens and is not a tick late
+  // when something does.
+  useWatched(readLedger);
+  useLive(readRoster, {
     period: TEMPO.ledger,
     hold: () => busyRef.current || dragRef.current,
   });
+
+  // The open record re-reads for the same reason the list does — the agent writes into a task
+  // while somebody has it open, and a panel that froze on the version that was clicked is the
+  // stale reading that reads as authoritative. `subject` restarts it: opening another row is a
+  // fresh mount, not a wait for the next tick.
+  const loadRecord = useCallback(async () => {
+    if (!openSubject) return;
+    const answer = await api.record(openSubject).catch(() => null);
+    // A read that did not come back leaves what is on screen standing, and one that came back
+    // for a row the reader has since left is not this panel's answer.
+    if (answer?.task && answer.task.subject === openSubject) setRecord(answer.task);
+  }, [openSubject]);
+
+  useLive(loadRecord, { period: TEMPO.ledger, subject: openSubject || "" });
+
+  // Opening a row is two reads, and this is the one that has to be immediate.
+  //
+  // Cleared only when the subject really changes: `useLive` restarts on `subject`, so
+  // clearing for a row that is already open throws the record away and schedules nothing to
+  // fetch it again — the panel would sit on "reading" until the next tick came round.
+  const openTask = useCallback((subject) => {
+    setRecord((prev) => (prev?.subject === subject ? prev : null));
+    setOpenSubject(subject);
+  }, []);
 
   const setTaskStatus = async (subject, nextStatus) => {
     setBusy(subject);
@@ -350,7 +412,9 @@ export default function Tasks() {
     await api.patch(subject, { status: nextStatus }).catch(() => {});
     setBusy(null);
     busyRef.current = false;
-    reload();
+    // No re-read here. The `PATCH` bumps the ledger's version on the way out and `readLedger`
+    // is already parked on exactly that, so the board takes its own change through the one
+    // path it takes everybody else's — rather than through a second one that could disagree.
   };
 
   const startDrag = (task) => {
@@ -404,7 +468,13 @@ export default function Tasks() {
     : tasks;
   // A task whose status changed out from under the panel keeps the panel open on it —
   // it is still the task someone was reading. Only a task that left the ledger closes it.
-  const open = openSubject ? rows.find((task) => task.subject === openSubject) || null : null;
+  //
+  // The row is the base and the record lands on top: the row carries the roster join (`onIt`)
+  // and the freshest status, the record carries the account. Until the record arrives the
+  // panel draws from the row alone — every part of it that needs the account already guards
+  // for an absent one, so what is missing for that beat is the prose, not the panel.
+  const row = openSubject ? rows.find((task) => task.subject === openSubject) || null : null;
+  const open = row && record?.subject === openSubject ? { ...record, ...row } : row;
 
   return (
     <div className="hi-tasks">
@@ -420,7 +490,7 @@ export default function Tasks() {
             busy={busy}
             drag={drag}
             onStatus={setTaskStatus}
-            onOpen={setOpenSubject}
+            onOpen={openTask}
             onDragStart={startDrag}
             onDragEnd={endDrag}
             onDrop={dropOn}
@@ -430,7 +500,7 @@ export default function Tasks() {
           tasks={rows.filter((task) => CLOSED.includes(task.status))}
           busy={busy}
           drag={drag}
-          onOpen={setOpenSubject}
+          onOpen={openTask}
           onDrop={dropOn}
         />
       </div>
@@ -729,6 +799,12 @@ function Detail({ task, busy, onStatus, onClose }) {
   // Newest first. The file appends, because that is what a writer with a shell can do
   // safely; a reader catching up wants the opposite order.
   const moments = [...(task.timeline || [])].reverse();
+  // **Whether the record is here at all.** The list carries no `timeline` key — it is the one
+  // thing only the record has — so its absence is the read that has not landed yet, and its
+  // emptiness is a task nothing has been written on. Those are different sentences and the
+  // panel must not print the second while the first is true: "Nothing recorded yet." under a
+  // duty with forty entries is the stale reading that still reads as authoritative.
+  const reading = !task.timeline;
   // Frontmatter this schema does not know. The store keeps it because a writer that does not
   // understand a line is not entitled to drop it; the panel shows it for the same reason —
   // most of what a real record says about itself is down here, not in the twelve parsed keys.
@@ -824,7 +900,7 @@ function Detail({ task, busy, onStatus, onClose }) {
 
           <div className="hi-tasks__moments-title">{L.timeline}</div>
           {moments.length === 0 && !live ? (
-            <div className="hi-tasks__none">{L.noTimeline}</div>
+            <div className="hi-tasks__none">{reading ? L.readingRecord : L.noTimeline}</div>
           ) : (
             <ol className="hi-tasks__moments">
               {live && (
@@ -1038,15 +1114,15 @@ function formatStamp(value) {
   }).format(date);
 }
 
-// The newest line a *mind* wrote. `moved` is excluded because the store writes it on a
-// transition it merely witnessed: a status change is the consequence of a decision, not a
-// statement about one, so it can neither raise a wait nor answer it.
+// The newest line a *mind* wrote, which the server has already picked: `moved` is excluded
+// there because the store writes it on a transition it merely witnessed — a status change is
+// the consequence of a decision, not a statement about one, so it can neither raise a wait nor
+// answer it.
+//
+// It is a field rather than a walk because a row has no `timeline` to walk. The record carries
+// the same field under the same name, so a panel and a card read one thing.
 function latestSpoken(task) {
-  const timeline = task.timeline || [];
-  for (let i = timeline.length - 1; i >= 0; i -= 1) {
-    if (timeline[i].kind !== "moved") return timeline[i];
-  }
-  return null;
+  return task.latest || null;
 }
 
 // **Whether a human is wanted right now** — the one question the record could not answer

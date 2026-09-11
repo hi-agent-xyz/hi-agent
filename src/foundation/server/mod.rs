@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, patch, post, put};
+use axum::routing::{get, post, put};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use tokio::sync::{broadcast, mpsc};
@@ -28,6 +28,7 @@ pub mod channels;
 pub mod drive;
 pub mod duty;
 pub mod external_sessions;
+pub mod facet_watch;
 pub mod facets;
 pub mod files;
 pub mod generated;
@@ -43,6 +44,7 @@ pub mod settings;
 pub mod skills;
 pub mod stage;
 pub mod stats;
+pub mod stores;
 pub mod stubs;
 pub mod surfaces;
 pub mod tasks;
@@ -285,6 +287,10 @@ pub struct AppState {
     /// Unlike a broadcast, a view shown while no client is connected is retained —
     /// refresh, a second device, or a restart all converge on the same screen.
     pub views: ViewBus,
+
+    /// Where each review store stands, so a surface reading one can park on it rather than
+    /// ask again on a clock. Filled in by [`facet_watch`]; see [`stores`].
+    pub stores: Arc<stores::StoreVersions>,
 
     /// Outbound view-event broadcast — the non-draining debug tap of the view
     /// channel, observed by the channel inspector. Delivery rides `views`.
@@ -546,6 +552,7 @@ pub fn build(
         audio_in: audio_in_tx.clone(),
         audio_in_turn: AtomicU64::new(0),
         views: view_bus,
+        stores: Arc::new(stores::StoreVersions::default()),
         view_out: view_tx.clone(),
         video_in: video_in_tx.clone(),
         video_in_turn: AtomicU64::new(0),
@@ -699,28 +706,44 @@ pub fn build(
         // read plus exactly the writes it can honestly honour — no stop verb for workers,
         // no edits at all for tools or drive, because neither is accumulated state a
         // person can fix from a screen.
-        .route("/api/tasks", get(tasks::get_tasks))
-        .route("/api/tasks/{subject}", patch(tasks::patch_task))
         .route("/api/tasks/{subject}/files/{*path}", get(tasks::get_task_file))
-        .route("/api/skills", get(skills::get_skills))
-        .route("/api/skills/{*path}", get(skills::get_skill).delete(skills::delete_skill))
-        .route("/api/facets", get(facets::get_facets))
-        .route("/api/facets/{dimension}/{subject}", get(facets::get_facet).put(facets::put_facet))
-        .route("/api/episodes", get(facets::get_episodes))
-        .route("/api/workers", get(workers::get_workers))
-        // Before `/{id}`: axum matches a literal segment ahead of a capture, but keeping
-        // them adjacent and in this order stops a later reader from reading `ended` as an
-        // id-shaped route.
-        .route("/api/workers/ended", get(workers::get_ended))
-        .route("/api/workers/mail", get(workers::get_mail))
-        .route("/api/workers/{id}", get(workers::get_worker))
-        .route("/api/workers/{id}/frames", get(workers::get_frames))
-        .route("/api/workers/{id}/messages", get(workers::get_messages))
         .route("/api/activity", get(activity::get_activity))
-        .route("/api/stats", get(stats::get_stats))
-        .route("/api/tools", get(tools::get_tools))
-        .route("/api/drive", get(drive::get_drive))
         .route("/api/drive/file/{*path}", get(drive::get_drive_file))
+        // The review *reads*, on their own `Router` so the compressor below can be scoped to
+        // them. Every one of these answers with a `Json(..)` — one buffered body, complete
+        // before it is handed back — which is the whole rule for what may be wrapped here:
+        // the `/api/*` neighbours outside are long-polls and SSE, and a compressor would sit
+        // on those waiting for an end that is the point of the endpoint not to have.
+        //
+        // These are also the ones a surface polls, which is why it is worth doing at all: a
+        // review view re-reads on a clock for as long as it is open, and off-box that is the
+        // traffic the connection is actually spending. The list of tasks compresses about 3:1.
+        .merge(
+            Router::new()
+                .route("/api/tasks", get(tasks::get_tasks))
+                .route("/api/tasks/{subject}", get(tasks::get_task).patch(tasks::patch_task))
+                .route("/api/skills", get(skills::get_skills))
+                .route("/api/skills/{*path}", get(skills::get_skill).delete(skills::delete_skill))
+                .route("/api/facets", get(facets::get_facets))
+                .route(
+                    "/api/facets/{dimension}/{subject}",
+                    get(facets::get_facet).put(facets::put_facet),
+                )
+                .route("/api/episodes", get(facets::get_episodes))
+                .route("/api/workers", get(workers::get_workers))
+                // Before `/{id}`: axum matches a literal segment ahead of a capture, but
+                // keeping them adjacent and in this order stops a later reader from reading
+                // `ended` as an id-shaped route.
+                .route("/api/workers/ended", get(workers::get_ended))
+                .route("/api/workers/mail", get(workers::get_mail))
+                .route("/api/workers/{id}", get(workers::get_worker))
+                .route("/api/workers/{id}/frames", get(workers::get_frames))
+                .route("/api/workers/{id}/messages", get(workers::get_messages))
+                .route("/api/stats", get(stats::get_stats))
+                .route("/api/tools", get(tools::get_tools))
+                .route("/api/drive", get(drive::get_drive))
+                .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6))),
+        )
         // The device account's energy standing + a signed-in upgrade link. Public,
         // like every route here; the out-of-energy card calls both.
         .route("/api/account/energy", get(account::get_energy))

@@ -188,3 +188,102 @@ export function useLive(reload: () => void | Promise<void>, options: LiveOptions
     };
   }, [period, subject]);
 }
+
+// ── watching, without a clock ─────────────────────────────────────────────────
+
+/**
+ * How long to wait before asking again after a read that answered nothing.
+ *
+ * Three cases reach it and they want the same thing: the fetch failed, the server said
+ * "still current" (its own park expired), or the view dropped an answer that landed while it
+ * was held. None is an error and none should spin.
+ */
+const RETRY_MS = 500;
+
+/** Where the loop stands after one round trip: what to park from, and how long to hold off. */
+export interface NextRead {
+  since: number | null;
+  waitMs: number;
+}
+
+/**
+ * What one answer means for the next read.
+ *
+ * **A `null` must not advance the version, and that is the whole of it.** `null` is the view
+ * saying it did not take this answer — it was mid-drag, or mid-write, or the fetch failed.
+ * Advancing anyway would park the next read on a version *past* a change nobody applied, and
+ * the store would never mention it again: the board would sit on a stale ledger until
+ * something else happened to move it. Keeping `since` means the same answer is waiting the
+ * moment the hand lifts.
+ */
+export function afterAnswer(since: number | null, answer: number | null): NextRead {
+  return answer === null ? { since, waitMs: RETRY_MS } : { since: answer, waitMs: 0 };
+}
+
+export interface WatchOptions {
+  /**
+   * What is being watched, when that can change without the component being replaced.
+   * A change restarts the loop from no version at all, which is what a fresh subject is.
+   */
+  subject?: string;
+}
+
+/**
+ * Re-read when the server says the store moved, instead of on a clock.
+ *
+ * `read(since)` does one round trip and returns **the version to park from next**, or `null`
+ * meaning "ask again shortly". The hook owns nothing but that number: the view keeps its own
+ * state and decides for itself whether an answer is welcome right now, which is the same
+ * division [`useLive`] makes and for the same reason — a view here fans one read out over
+ * several pieces of state, and a data-owning hook would have to be fought in every one.
+ *
+ * **Why this is not [`useLive`] with a faster clock.** A tick costs the same whether anything
+ * changed or not, and is still up to one period stale at the moment something does. Parking
+ * on a version is better on both counts at once: nothing crosses the wire while nothing
+ * happens, and a change arrives when it happens. The period stops being a number anyone has
+ * to pick.
+ *
+ * **A hidden page keeps its read parked**, which is the other difference. `useLive` skips
+ * ticks while nobody is looking because a tick is spend; a parked read is not, and holding it
+ * means a page brought forward is already current instead of being a round trip behind.
+ */
+export function useWatched(
+  read: (since: number | null) => Promise<number | null>,
+  options: WatchOptions = {},
+): void {
+  const { subject } = options;
+
+  const readRef = useRef(read);
+  readRef.current = read;
+
+  useEffect(() => {
+    let alive = true;
+    // The render page publishes its report and is photographed; a loop that kept asking
+    // would still be running under the camera, and no answer it got could make the shot more
+    // correct. One read, the same call `clockFor` declines to put a clock on.
+    const once = isHeadless();
+
+    void (async () => {
+      let since: number | null = null;
+      while (alive) {
+        let next: number | null = null;
+        try {
+          next = await readRef.current(since);
+        } catch {
+          // A read that did not come back leaves the last good one standing. `next` stays
+          // null, so this backs off rather than hammering a server that is having a moment.
+        }
+        if (!alive || once) return;
+        const step = afterAnswer(since, next);
+        since = step.since;
+        if (step.waitMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, step.waitMs));
+        }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [subject]);
+}

@@ -2,7 +2,7 @@
 // This factory view is compiled as a single JSX module, without bundling local imports.
 // Keep the pure read model above Home; home.test.mjs tests it without a React host.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLive, useMessages, useViews, TEMPO } from "@hi/core";
+import { useLive, useWatched, useMessages, useViews, TEMPO } from "@hi/core";
 import { flextree } from "d3-flextree";
 import { ChevronDown, ChevronRight, Crosshair, Maximize2, Minus, Plus, Search, X, ExternalLink } from "lucide-react";
 
@@ -131,15 +131,12 @@ function taskTopics(task) {
 }
 
 function resolveViews(task, views) {
-  const text = [task.body, ...(task.timeline || []).map((m) => m.text)].join("\n");
-  // Match explicit view references, not arbitrary title substrings. URL and source-path
-  // forms are both written by existing task authors. Only known views can be opened.
-  const mentioned = new Set();
-  for (const match of text.matchAll(/(?:views\/|view_ref\s*[:=]\s*["'`]?)([\w/-]+)(?:\.jsx)?/g)) {
-    mentioned.add(match[1]);
-  }
-  return views.filter((v) => v.view_ref && (mentioned.has(v.view_ref) ||
-    text.includes(`\`${v.view_ref}\``) || text.includes(`"${v.view_ref}"`)));
+  // The row names what it mentions and this decides what that means. Matching moved to the
+  // server (`view_refs` in `foundation/server/tasks.rs`) when the row stopped carrying the
+  // prose to match against — same four spellings, inline code and quoted and `views/x.jsx`
+  // and a `view_ref:` field, and the same rule that only a known view can be opened.
+  const mentioned = new Set(task.refs || []);
+  return views.filter((v) => v.view_ref && mentioned.has(v.view_ref));
 }
 
 function buildHome({ tasks = [], workers = [], ended = [], views = [], messages = [] }, now = Date.now()) {
@@ -354,7 +351,6 @@ export default function Home() {
     try {
       const since = encodeURIComponent(new Date(Date.now() - WINDOW_MS).toISOString());
       const requests = [
-        ["tasks", "/api/tasks", (v) => v.tasks],
         ["workers", "/api/workers", (v) => v.workers],
         ["ended", `/api/workers/ended?since=${since}`, (v) => {
           if (v.complete !== true) throw new Error("Incomplete session history");
@@ -379,6 +375,34 @@ export default function Home() {
   }, []);
   // Durable history is a ledger read, not a 2-second activity scan.
   useLive(refresh, { period: TEMPO.ledger });
+  // **The ledger is not read on a clock at all.** It is the heaviest of the four sources and
+  // the one that can say when it moved, so this parks on its version: nothing crosses the wire
+  // while nothing is written, and a record written on disk is here in a few hundred ms rather
+  // than by the next tick. The other three have nothing to park on — two are session state and
+  // one is the view index — so they keep the clock above.
+  //
+  // Kept out of `refresh`'s `Promise.allSettled` for the same reason: that fan-out reads four
+  // sources at one moment and marks whichever failed, which is a shape for a tick. Returning
+  // `null` here is "ask again shortly", and a failure keeps the last good tasks standing and
+  // says so, exactly as the fan-out would.
+  const readLedger = useCallback(async (since) => {
+    const at = since === null || since === undefined ? "" : `?since=${encodeURIComponent(since)}`;
+    let answer;
+    try {
+      answer = await getJson(`/api/tasks${at}`);
+    } catch {
+      setErrors((prev) => (prev.includes("tasks") ? prev : [...prev, "tasks"]));
+      return null;
+    }
+    setErrors((prev) => prev.filter((source) => source !== "tasks"));
+    if (answer.unchanged) return answer.version;
+    if (!Array.isArray(answer.tasks)) return null;
+    setSource((prev) => ({ ...prev, tasks: answer.tasks }));
+    setNow(Date.now());
+    setLoaded(true);
+    return answer.version;
+  }, []);
+  useWatched(readLedger);
   const model = useMemo(() => buildHome({ ...source, messages }, now), [source, messages, now]);
   const children = useMemo(() => childIndex(model), [model]);
   const chart = useMemo(() => arrange(model, collapsed), [model, collapsed]);
@@ -537,6 +561,26 @@ function Details({ node, model, now, close, focus, openRef }) {
     dialog.current?.showModal();
     return () => { if (previous instanceof HTMLElement) previous.focus(); };
   }, []);
+  // A task's account is not on the row. The list carries what the chart *draws* — a title, a
+  // status, the refs and the files — and `GET /api/tasks/<subject>` carries the prose and the
+  // whole timeline, which is 1.8 MB across one live store and is shown in exactly one place:
+  // here, while this dialog is open. It re-reads for the reason the ledger does — the agent
+  // writes into a task while somebody is reading it.
+  const subject = node.kind === "task" ? node.data.task.subject : null;
+  const [record, setRecord] = useState(null);
+  const readRecord = useCallback(async () => {
+    if (!subject) return;
+    const answer = await getJson(`/api/tasks/${encodeURIComponent(subject)}`).catch(() => null);
+    // An answer for a task this dialog has since left is not this dialog's answer.
+    if (answer?.task && answer.task.subject === subject) setRecord(answer.task);
+  }, [subject]);
+  useLive(readRecord, { period: TEMPO.ledger, subject: subject || "" });
+  // The row is the base and the record lands on top: the row holds the freshest status, the
+  // record holds the account. `timeline` is the one key only the record has, so its absence
+  // is the read that has not landed and its emptiness is a task nothing has been written on —
+  // different sentences, and the panel must not print the second while the first is true.
+  const task = subject ? { ...record, ...node.data.task } : null;
+  const reading = Boolean(subject) && !task.timeline;
   const children = childIndex(model).get(node.id) || [];
   const related = model.edges.filter((e) => !e.primary && (e.from === node.id || e.to === node.id))
     .map((e) => model.nodes.find((n) => n.id === (e.from === node.id ? e.to : e.from))).filter(Boolean);
@@ -549,8 +593,8 @@ function Details({ node, model, now, close, focus, openRef }) {
       {node.kind === "overview" && <><time>{age(node.data.updatedAt, now)}{node.data.freshness === "stale" ? ` · ${L.stale}` : ""}</time>
         <p className="hi-work__prose">{node.data.text}</p></>}
       {node.kind === "task" && <><p>{L.status[node.data.status]} · {age(nodeTime(node), now)}</p>
-        <p className="hi-work__prose">{node.data.task.body}</p>
-        {(node.data.task.timeline || []).map((entry, i) => <div key={i} className="hi-work__moment"><time>{age(entry.at, now)}</time><p>{entry.text}</p></div>)}
+        <p className="hi-work__prose">{reading ? L.reading : task.body}</p>
+        {(task.timeline || []).map((entry, i) => <div key={i} className="hi-work__moment"><time>{age(entry.at, now)}</time><p>{entry.text}</p></div>)}
       </>}
       {node.kind === "artifact" && <>
         {node.data.shot && <img className="hi-work__detail-image" src={node.data.shot} alt={node.title} />}
