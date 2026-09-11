@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Declare an icon, and a `data:` one, because of what this page is: a view
+         mounted for somebody to look at, and the page a share is published *as*.
+         A document with no icon link makes Chrome fall back to the root
+         `/favicon.ico` — a request the page makes, never the view — and a share's
+         scope serves only the view's own files, so that fallback refused every
+         view in the install. A real path here (the SPA's own icon set) would be
+         that same out-of-scope request; `data:,` is a valid icon that resolves to
+         nothing, so the browser asks for nothing and shows nothing. -->
+    <link rel="icon" href="data:," />
     <title>hi-agent view render</title>
     <style>
       /* Paint the paper immediately: a render that captures before the CSS chunk

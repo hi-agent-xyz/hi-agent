@@ -538,6 +538,10 @@ mod tests {
         assert!(!in_scope("/views/_shots/", r, m));
         assert!(!in_scope("/views/", r, m));
         assert!(!in_scope("/api/views", r, m));
+        // The core's own favicon is the core's, not the view's. The page declaring its
+        // own icon is what keeps a browser from asking for this at all; widening this
+        // list instead would hand a core asset to every visitor of a share.
+        assert!(!in_scope("/favicon.ico", r, m));
     }
 
     /// A view cannot be published under a name this core already answers to. Checked

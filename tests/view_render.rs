@@ -329,6 +329,49 @@ async fn the_render_page_is_served_with_the_host_import_map() {
     ] {
         assert!(html.contains(spec), "the map must bind {spec}");
     }
+    // …and it declares its own icon, which is not decoration here. A document with no
+    // icon link makes the browser fall back to the root `/favicon.ico` — a request the
+    // share check reads as the *view's* appetite and refuses, because a share's scope is
+    // the view's own files and nothing else. A `data:` href, because any real path is
+    // that same request.
+    assert!(
+        html.contains("<link rel=\"icon\" href=\"data:,"),
+        "the render page must declare a data: icon, or every browser asks for /favicon.ico"
+    );
+}
+
+/// The render a share is checked with must ask for nothing the view does not own.
+///
+/// `/render/view` declared no icon, so Chrome fell back to the root `/favicon.ico` — and
+/// a share's scope is the view's own module, its own folder, `/assets/*` and its shot, so
+/// the check refused **every** view in this install, on a request no view ever made. The
+/// fix is in the page (it declares a `data:` icon), and this is the run-level guard on it:
+/// the same render `check` performs comes back having asked for nothing outside the view.
+///
+/// Deliberately not `view_share::check` itself. The check reads the render context, which
+/// is a process-global that this binary's shot tests set and depend on; a second setter
+/// here would race them. The gate's own end-to-end test is `tests/view_share.rs`.
+#[tokio::test]
+async fn a_share_render_asks_for_nothing_the_view_does_not_own() {
+    let Some(h) = ready().await else { return };
+
+    let module_url = h.compiler.compile(GOOD_VIEW).await.expect("compiles");
+    let out =
+        view_render::render(&RenderRequest::for_share(h.base_url.as_str(), module_url.as_str()))
+            .await
+            .expect("render succeeds");
+
+    assert_eq!(out.verdict(), Verdict::Rendered, "problems: {:?}", out.problems);
+    let html = out.html.as_deref().expect("a share render reads the settled DOM back");
+    assert!(
+        html.contains("rel=\"icon\""),
+        "the page a share is published as must declare its own icon"
+    );
+    assert!(
+        !out.requested.iter().any(|u| u.ends_with("/favicon.ico")),
+        "nothing may ask for the root favicon; requested: {:?}",
+        out.requested
+    );
 }
 
 /// The `reach` surface renders, and that is not a formality: it is the one
