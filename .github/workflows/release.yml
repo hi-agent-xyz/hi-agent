@@ -444,6 +444,19 @@ jobs:
         with:
           node-version: "22"
 
+      # windows-latest preinstalls whatever .NET SDK is current — 10.0.400 as
+      # of this run — and `dotnet` picks the highest installed SDK unless a
+      # global.json says otherwise. WindowsAppSDK 1.6's packaging targets look
+      # for `Microsoft.Build.Packaging.Pri.Tasks.dll` where an SDK 8 lays it
+      # out, so under 10 the build dies at MSB4062 with a missing task
+      # assembly, long after restore and compilation have succeeded. The repo
+      # root's global.json pins the band; this step makes sure the band is
+      # actually installed.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Install make and NSIS
         shell: bash
         run: |

@@ -164,51 +164,51 @@ start.
 
 ## Verification
 
-**Still not compiled — but no longer untouched.** There is no Windows machine
-among the hosts this repo is developed from, and for a long time that meant the
-shell had never been near a compiler: the C# and XAML here were written the way
-the Phase 1 SwiftUI window was, blind and fix-forward.
+**Not yet compiled end to end — but no longer untouched.** There is no Windows
+machine among the hosts this repo is developed from, so the C# and XAML here
+were written the way the Phase 1 SwiftUI window was: blind and fix-forward.
+What changed on 2026-09-10/11 is that `.github/workflows/release.yml` builds
+this project on a hosted `windows-latest` runner, so the v0.1.0 release runs
+became the first Windows box ever to try. Each run got one stage further, and
+each failure is recorded here because a release is an expensive place to
+discover them.
 
-The v0.1.0 release runs (2026-09-10, 2026-09-11) changed that by half. `.github/workflows/release.yml`
-builds this project on a hosted `windows-latest` runner, so a Windows box with a
-.NET SDK has now attempted it — and stopped at NuGet restore, before a single
-line was compiled:
+| Run | Reached | Stopped on |
+|---|---|---|
+| 1 | NuGet restore | `NU1202` — `H.NotifyIcon.WinUI 2.*` had floated to 2.4.1, which ships only net10.0 |
+| 2 | C# compile | `CS1729` — `CoreWebView2EnvironmentOptions` takes no constructor arguments |
+| 3 | packaging | `MSB4062` — `Microsoft.Build.Packaging.Pri.Tasks.dll` not found under SDK 10.0.400 |
 
-    error NU1202: Package H.NotifyIcon.WinUI 2.4.1 is not compatible with
-    net8.0-windows10.0.19041 (.NETCoreApp,Version=v8.0).
-    Package H.NotifyIcon.WinUI 2.4.1 supports: net10.0-windows10.0.17763
+Three lessons, each now fixed in the general form rather than the specific one.
 
-That is the wildcard cost arriving exactly where this section predicted it
-would. `2.*` had floated to a release that dropped net8.0, retargeting the app
-out from under itself; the failure surfaced at a release rather than at a build,
-because there is no build. All three package versions are now pinned to what
-that run resolved, `H.NotifyIcon.WinUI` back to 2.3.2 — the newest still
-shipping a net8.0 lib.
+**Wildcards retarget an app nobody compiles.** `2.*` moved to a release that
+dropped net8.0 and the project went with it, silently, until a release run
+said so. All three package versions are pinned now — `H.NotifyIcon.WinUI` to
+2.3.2, the newest still shipping a net8.0 lib.
 
-The second run, the same day, got past that and into the compiler — and the
-compiler found exactly one thing, in one of the two places this section had
-already named as most likely wrong:
+**The bundled WebView2 is not the standalone one.** The four-argument
+`CoreWebView2EnvironmentOptions` constructor belongs to
+`Microsoft.Web.WebView2`; the copy inside the Windows App SDK has a
+parameterless constructor and `AdditionalBrowserArguments` as a property. The
+`XamlCompiler.exe` MSB3073 that rode along behind this error turned out to be
+a cascade — it cleared when the C# did.
 
-    Views/CoreWebView.cs(165,31): error CS1729:
-    'CoreWebView2EnvironmentOptions' does not contain a constructor that
-    takes 1 arguments
+**The SDK the runner happens to ship is not the SDK this targets.**
+`windows-latest` preinstalls the current .NET SDK (10.0.400 on run 3), and
+`dotnet` picks the highest one installed unless told otherwise. WindowsAppSDK
+1.6's packaging targets look for their task assembly where an SDK 8 lays it
+out. The repo root now carries a `global.json` pinning the 8.0 band, which
+binds a local `make win-app` as much as CI, and the workflow installs that
+band so the pin can be satisfied.
 
-The four-argument constructor belongs to the standalone
-`Microsoft.Web.WebView2` package; the copy bundled with the Windows App SDK
-exposes a parameterless one and `AdditionalBrowserArguments` as a property.
-Fixed that way, still blind. A `XamlCompiler.exe` failure (MSB3073) rode along
-behind it, and whether that is its own fault or a cascade from the C# error is
-not yet known.
-
-So, precisely: **restore succeeds, and the C# has been through a compiler
-once.** It did not get through. Nothing has linked and nothing has run, so
-`TaskbarIcon.IconSource` — the other API flagged as probably wrong — is still
-unsettled, and so is every runtime question behind it: whether the tray
-appears, whether the WebView loads, whether the engine child is adopted. What
-this run bought is that the *category* of error has moved from "does it even
-resolve" to "does this specific API call exist", which is the kind a compiler
-answers one round trip at a time. `make exe` and `make installer` are verified
-to *build* on the Mac mini and have never been run on Windows either.
+**What is verified is therefore: restore succeeds, the C# compiles, and the
+XAML compiles.** Packaging does not, yet. Nothing has linked, nothing has run,
+and no window has ever appeared. `TaskbarIcon.IconSource` — the other API
+flagged as probably wrong where it is used — remains unsettled, along with
+every runtime question behind it: whether the tray appears, whether the
+WebView loads the face, whether the engine child is adopted and dies with its
+parent. `make exe` and `make installer` are verified to *build* on the Mac
+mini and have never been run on Windows either.
 
 ## See also
 
