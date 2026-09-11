@@ -21,7 +21,7 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>HiAgent.Windows</RootNamespace>
     <!-- Stamped by `make bump-version`; VERSION is the source of truth. -->
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <!-- The shell, beside the engine's `hi-agent.exe` in the same directory. -->
     <AssemblyName>HiAgent</AssemblyName>
     <Platforms>x64;arm64</Platforms>

@@ -9,7 +9,7 @@ plugins {
 // the same way it is for Cargo.toml and the iOS project file; `make bump-version`
 // keeps this line in step and `scripts/check-version.sh` fails the build if it
 // drifts.
-val hiAgentVersion = "0.1.0"
+val hiAgentVersion = "0.1.1"
 
 // Derived, never stamped: Play and every installer want a monotonic integer, and
 // deriving it from the semver means one file to bump instead of two that can

@@ -3,7 +3,7 @@ members = ["crates/hi-wire"]
 
 [package]
 name = "hi-agent"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 description = "Reference implementation of the human-interface spec"

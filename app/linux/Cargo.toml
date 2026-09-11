@@ -1,6 +1,6 @@
 [package]
 name = "hi-linux"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 description = "The Hi Agent shell for Linux desktops"
