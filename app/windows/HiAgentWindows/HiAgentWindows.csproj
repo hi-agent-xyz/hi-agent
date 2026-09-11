@@ -41,20 +41,26 @@
 
   <ItemGroup>
     <!--
-      Version wildcards rather than pins. Nothing here has ever been restored:
-      there is no Windows host and no .NET SDK on any machine this repo is
-      developed on, so an exact version would be a guess that reads like a
-      decision. Pin all three the first time a Windows box restores them.
+      Pinned, on the terms the wildcards set for themselves: they said to pin
+      all three the first time a Windows box restored them, and the v0.1.0
+      release run was that first restore. These are the versions it resolved.
+
+      It also showed what the wildcard costs on a project nobody compiles.
+      `H.NotifyIcon.WinUI 2.*` had floated to 2.4.1, which ships only
+      net10.0-windows10.0.17763, so restore failed NU1202 against this
+      project's net8.0-windows10.0.19041.0 — a dependency retargeting the app
+      out from under it, discovered at the release, not at a build. 2.3.2 is
+      the newest release still carrying a net8.0 lib.
     -->
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.*" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.*" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <!--
       The tray. Hand-rolling `Shell_NotifyIcon` means a message-only window, a
       subclassed WndProc and icon lifetime across explorer restarts — all of it
       the kind of code that looks right and is not, which is the wrong thing to
       write with no way to run it.
     -->
-    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.*" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.3.2" />
   </ItemGroup>
 
   <ItemGroup>

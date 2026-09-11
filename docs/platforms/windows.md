@@ -164,19 +164,37 @@ start.
 
 ## Verification
 
-**None of this has been compiled.** There is no Windows machine and no .NET SDK
-on any host this repo is developed from, so the shell has never been through a
-compiler, let alone run: the C# and XAML here are written the way the Phase 1
-SwiftUI window was, blind and fix-forward. `make exe` and `make installer` are
-verified to *build* on the Mac mini and have never been run on Windows either.
+**Still not compiled — but no longer untouched.** There is no Windows machine
+among the hosts this repo is developed from, and for a long time that meant the
+shell had never been near a compiler: the C# and XAML here were written the way
+the Phase 1 SwiftUI window was, blind and fix-forward.
 
-Two consequences worth stating rather than discovering. The package versions in
-`HiAgentWindows.csproj` are wildcards, not pins — nothing has ever restored them,
-and an exact version would be a guess that reads like a decision; pin them the
-first time a Windows box succeeds. And the two API details most likely to be
-wrong are `TaskbarIcon.IconSource` (H.NotifyIcon's image type) and
+The v0.1.0 release run (2026-09-10) changed that by half. `.github/workflows/release.yml`
+builds this project on a hosted `windows-latest` runner, so a Windows box with a
+.NET SDK has now attempted it — and stopped at NuGet restore, before a single
+line was compiled:
+
+    error NU1202: Package H.NotifyIcon.WinUI 2.4.1 is not compatible with
+    net8.0-windows10.0.19041 (.NETCoreApp,Version=v8.0).
+    Package H.NotifyIcon.WinUI 2.4.1 supports: net10.0-windows10.0.17763
+
+That is the wildcard cost arriving exactly where this section predicted it
+would. `2.*` had floated to a release that dropped net8.0, retargeting the app
+out from under itself; the failure surfaced at a release rather than at a build,
+because there is no build. All three package versions are now pinned to what
+that run resolved, `H.NotifyIcon.WinUI` back to 2.3.2 — the newest still
+shipping a net8.0 lib.
+
+So what is verified is one line long, and it is less than it sounds: **the
+project file is well-formed enough that NuGet read it, understood its target
+framework, and rejected a package against it.** Restore did not succeed —
+that is what NU1202 is. Whether the pins above fix it is itself unwitnessed.
+Nothing has compiled, nothing has linked, nothing has run. The two API details most likely to be wrong are still
+`TaskbarIcon.IconSource` (H.NotifyIcon's image type) and
 `CoreWebView2Environment.CreateWithOptionsAsync`'s signature, both flagged where
-they are used.
+they are used, and neither will be settled by anything short of a compile.
+`make exe` and `make installer` are verified to *build* on the Mac mini and have
+never been run on Windows either.
 
 ## See also
 

@@ -123,6 +123,60 @@ jobs:
           git tag "$tag" "$GITHUB_SHA"
           git push origin "$tag"
 
+      # ---------------------------------------------------------------------
+      # The release starts as a draft, and every platform job attaches its own
+      # artifact straight to it. That is not a style preference: the macOS
+      # .dmg is ~460 MB and the Mac mini that signs it pushed 470 MB in 58
+      # minutes on the v0.1.0 run before `actions/upload-artifact` failed with
+      # "Server failed to authenticate the request" — the artifact store's SAS
+      # token had expired mid-upload. A GitHub release asset is uploaded with
+      # the job's token, which does not expire out from under a slow uplink.
+      #
+      # A draft, not a release, so the all-or-nothing gate survives the change:
+      # a draft is invisible to anyone without repo access, carries no git
+      # ref that `releases/latest` will resolve, and is flipped to public by
+      # the `release` job only once every platform job has succeeded.
+      # ---------------------------------------------------------------------
+      - name: Open the draft release
+        if: steps.resolve.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists; re-using it"
+            exit 0
+          fi
+
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "## Downloads"
+            echo
+            echo "| Platform | File |"
+            echo "| --- | --- |"
+            echo "| macOS (Apple Silicon) | \`hi-agent-$VERSION-macos-apple-silicon.dmg\` |"
+            echo "| Windows (x64) | \`hi-agent-$VERSION-windows-x64.exe\` |"
+            echo "| Debian / Ubuntu (amd64) | \`hi-agent_${VERSION}_amd64.deb\` |"
+            echo "| Android (handset) | \`hi-agent-$VERSION-android.apk\` |"
+            echo "| Android (TV) | \`hi-agent-$VERSION-android-tv.apk\` |"
+            echo
+            echo "The Android packages are unsigned; Windows is not Authenticode-signed."
+            echo "iPhone and iPad ship through TestFlight, not from this page."
+            echo
+            echo "\`manifest.json\` lists every file with its size and SHA-256."
+            echo "The latest release's copy is always at"
+            echo "<https://github.com/$GITHUB_REPOSITORY/releases/latest/download/manifest.json>."
+          } > "$notes"
+
+          gh release create "$TAG" \
+            --draft \
+            --title "Hi Agent $VERSION" \
+            --notes-file "$notes"
+
   # ---------------------------------------------------------------------------
   # macOS. Must be the Mac mini: `make dmg` guards on Apple Silicon, and the
   # Developer ID private key and notary credentials live in that machine's
@@ -161,6 +215,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Check for gh
+        shell: bash
+        # `gh` is preinstalled on GitHub-hosted runners; this is the Mac mini,
+        # where it is whatever someone installed. The .dmg is attached with it,
+        # and that happens after a twenty-minute build and a notarization round
+        # trip — so ask now, while a missing tool costs seconds.
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || {
+            echo "gh is not on this runner's PATH. Install it (brew install gh) or add it to ~/actions-runner-hi-agent/.path, then re-run." >&2
+            exit 1
+          }
+          gh --version | head -1
 
       - name: Unlock the signing keychain
         shell: bash
@@ -208,13 +276,25 @@ jobs:
           mkdir -p target/dist
           cp "$dmg" target/dist/
 
-      - name: Upload the .dmg
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dist-macos
-          path: target/dist/*.dmg
-          if-no-files-found: error
-          retention-days: 7
+      - name: Attach the .dmg to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(target/dist/*.dmg)
+          # What `if-no-files-found: error` used to buy: a packaging step
+          # that reports success and produces nothing must fail here, on a
+          # dry run too.
+          (( ${#files[@]} > 0 )) || { echo "target/dist/*.dmg matched no file" >&2; exit 1; }
+          if [ "$PUBLISH" != "true" ]; then
+            echo "dry run — built ${files[*]}, attaching nothing"
+            exit 0
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
 
   # ---------------------------------------------------------------------------
   # Linux, and the test gate for the whole release.
@@ -241,7 +321,9 @@ jobs:
         # Before checkout: the container starts bare, and actions/checkout wants
         # git. The GUI packages are the four docs/platforms/linux.md names; the
         # rest is what the engine needs (cmake + libclang for the ONNX and
-        # ffmpeg bindings, unzip for the browser provisioner's .zip).
+        # ffmpeg bindings, libssl-dev for openssl-sys, unzip for the browser
+        # provisioner's .zip). A dev box has libssl-dev from some earlier
+        # apt-get, so its absence shows up only in this bare container.
         shell: bash
         run: |
           set -euo pipefail
@@ -249,7 +331,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential pkg-config \
-            cmake libclang-dev unzip xz-utils dpkg-dev \
+            cmake libclang-dev libssl-dev unzip xz-utils dpkg-dev \
             libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libsecret-1-dev
           rm -rf /var/lib/apt/lists/*
           # The container runs as root over a workspace the runner owns, which
@@ -305,13 +387,25 @@ jobs:
           mkdir -p target/dist
           cp "$deb" target/dist/
 
-      - name: Upload the .deb
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dist-linux
-          path: target/dist/*.deb
-          if-no-files-found: error
-          retention-days: 7
+      - name: Attach the .deb to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(target/dist/*.deb)
+          # What `if-no-files-found: error` used to buy: a packaging step
+          # that reports success and produces nothing must fail here, on a
+          # dry run too.
+          (( ${#files[@]} > 0 )) || { echo "target/dist/*.deb matched no file" >&2; exit 1; }
+          if [ "$PUBLISH" != "true" ]; then
+            echo "dry run — built ${files[*]}, attaching nothing"
+            exit 0
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
 
   # ---------------------------------------------------------------------------
   # Windows — and the first compiler this half of the repo has ever met.
@@ -380,13 +474,25 @@ jobs:
           mkdir -p target/dist
           cp "$setup" target/dist/
 
-      - name: Upload the installer
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dist-windows
-          path: target/dist/*.exe
-          if-no-files-found: error
-          retention-days: 7
+      - name: Attach the installer to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(target/dist/*.exe)
+          # What `if-no-files-found: error` used to buy: a packaging step
+          # that reports success and produces nothing must fail here, on a
+          # dry run too.
+          (( ${#files[@]} > 0 )) || { echo "target/dist/*.exe matched no file" >&2; exit 1; }
+          if [ "$PUBLISH" != "true" ]; then
+            echo "dry run — built ${files[*]}, attaching nothing"
+            exit 0
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
 
   # ---------------------------------------------------------------------------
   # Android: the handset and the television, one build each.
@@ -420,7 +526,17 @@ jobs:
         # compileSdk 37 is newer than the runner image's preinstalled
         # platforms, so Gradle downloads it — which it will only do against
         # accepted licences.
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+        #
+        # A bounded feed rather than `yes |`. sdkmanager stops reading once the
+        # last licence is accepted, and an infinite `yes` then dies of SIGPIPE,
+        # which `-o pipefail` reports as a failed step — a green licence
+        # acceptance recorded as a red job. 100 "y" lines is 200 bytes, far
+        # inside the 64K pipe buffer, so the writer finishes regardless of when
+        # the reader stops.
+        run: |
+          set -euo pipefail
+          printf 'y\n%.0s' $(seq 100) \
+            | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
 
       - name: Build both APKs
         shell: bash
@@ -439,19 +555,34 @@ jobs:
           cp "$mobile" "target/dist/hi-agent-$version-android.apk"
           cp "$tv" "target/dist/hi-agent-$version-android-tv.apk"
 
-      - name: Upload the APKs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dist-android
-          path: target/dist/*.apk
-          if-no-files-found: error
-          retention-days: 7
+      - name: Attach the APKs to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(target/dist/*.apk)
+          # What `if-no-files-found: error` used to buy: a packaging step
+          # that reports success and produces nothing must fail here, on a
+          # dry run too.
+          (( ${#files[@]} > 0 )) || { echo "target/dist/*.apk matched no file" >&2; exit 1; }
+          if [ "$PUBLISH" != "true" ]; then
+            echo "dry run — built ${files[*]}, attaching nothing"
+            exit 0
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
 
   # ---------------------------------------------------------------------------
-  # Collect, describe, publish.
+  # Describe and publish what the draft already holds.
   #
   # `needs` every build job, so one platform failing means no release rather
-  # than a half one. Re-run the failed job, then re-run this one.
+  # than a half one. Re-run the failed job, then re-run this one — the draft
+  # keeps whatever already uploaded, so a re-run costs only the leg that
+  # failed, which on the Mac mini is the difference between five minutes and
+  # another hour.
   # ---------------------------------------------------------------------------
   release:
     name: Publish
@@ -464,14 +595,23 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - name: Download every artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          path: target/dist
-          pattern: dist-*
-          merge-multiple: true
+      # The platform jobs attached their artifacts to the draft; pull them back
+      # to compute the manifest's sizes and checksums. This leg is
+      # GitHub-to-GitHub, so the half gigabyte that took the Mac mini an hour
+      # to push moves in seconds.
+      - name: Collect the draft's artifacts
+        if: needs.prepare.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/dist
+          gh release download "$TAG" --dir target/dist --clobber
 
       - name: Write the manifest
+        if: needs.prepare.outputs.publish == 'true'
         shell: bash
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -483,59 +623,27 @@ jobs:
           make manifest
           cat target/dist/manifest.json
 
-      - name: Upload the manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: manifest
-          path: target/dist/manifest.json
-          if-no-files-found: error
-          retention-days: 7
-
+      # The draft becomes a release here and nowhere else. Every platform job
+      # has succeeded by now — that is what `needs` bought — so this is the
+      # first moment the download page's `releases/latest` can resolve, and it
+      # resolves to a complete set.
       - name: Publish the release
         if: needs.prepare.outputs.publish == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
 
-          notes="$RUNNER_TEMP/notes.md"
-          {
-            echo "## Downloads"
-            echo
-            echo "| Platform | File |"
-            echo "| --- | --- |"
-            echo "| macOS (Apple Silicon) | \`hi-agent-$VERSION-macos-apple-silicon.dmg\` |"
-            echo "| Windows (x64) | \`hi-agent-$VERSION-windows-x64.exe\` |"
-            echo "| Debian / Ubuntu (amd64) | \`hi-agent_${VERSION}_amd64.deb\` |"
-            echo "| Android (handset) | \`hi-agent-$VERSION-android.apk\` |"
-            echo "| Android (TV) | \`hi-agent-$VERSION-android-tv.apk\` |"
-            echo
-            echo "The Android packages are unsigned; Windows is not Authenticode-signed."
-            echo "iPhone and iPad ship through TestFlight, not from this page."
-            echo
-            echo "\`manifest.json\` lists every file with its size and SHA-256."
-            echo "The latest release's copy is always at"
-            echo "<https://github.com/$GITHUB_REPOSITORY/releases/latest/download/manifest.json>."
-          } > "$notes"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            # A re-run after a partial failure: replace the files rather than
-            # fail on an existing release.
-            gh release upload "$TAG" target/dist/* --clobber
-          else
-            gh release create "$TAG" target/dist/* \
-              --title "Hi Agent $VERSION" \
-              --notes-file "$notes" \
-              --generate-notes
-          fi
+          gh release upload "$TAG" target/dist/manifest.json --clobber
+          gh release edit "$TAG" --draft=false
 
           {
             echo "### Published [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)"
             echo
-            cat "$notes"
+            gh release view "$TAG" --json assets \
+              --jq '.assets[] | "- `\(.name)` — \(.size) bytes"'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dry run — nothing published
@@ -545,6 +653,7 @@ jobs:
           {
             echo "### Dry run"
             echo
-            echo "Every platform built and the manifest was generated. No tag was created and no release was published."
-            echo "Both are attached to this run as workflow artifacts."
+            echo "Every platform built and each checked that its artifact exists and is non-empty."
+            echo "No tag was created, no draft was opened, and nothing was uploaded — a dry run"
+            echo "is a build check, and the artifacts are too large to be worth moving twice."
           } >> "$GITHUB_STEP_SUMMARY"
