@@ -190,22 +190,10 @@ bump-version: ## set the committed version everywhere (usage: make bump-version 
 	@test -n "$(BUMP_VERSION)" || { echo "usage: make bump-version V=x.y.z" >&2; exit 1; }
 	@./scripts/bump-version.sh "$(BUMP_VERSION)"
 
-# Cut a release from an up-to-date branch. This follows Abacad's workflow:
-# propose the next patch version, synchronize all version files, commit them,
-# tag v<version>, and push both the commit and tag.
-version: ## bump, commit, tag, and push a release
-	@cur=$$(cat VERSION); \
-	major=$${cur%%.*}; rest=$${cur#*.}; minor=$${rest%%.*}; patch=$${rest##*.}; \
-	def="$$major.$$minor.$$((patch + 1))"; \
-	printf 'Current version: %s\n' "$$cur"; \
-	printf 'New version [%s]: ' "$$def"; \
-	read v; v=$${v:-$$def}; \
-	case "$$v" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "error: not an x.y.z version: $$v" >&2; exit 1;; esac; \
-	if git rev-parse -q --verify "refs/tags/v$$v" >/dev/null 2>&1; then echo "error: tag v$$v already exists" >&2; exit 1; fi; \
-	"$${MAKE:-make}" --no-print-directory bump-version V="$$v" && \
-	git add $(VERSIONED_FILES) && \
-	git commit -m "release v$$v" && \
-	git tag "v$$v" && \
-	git push origin HEAD && \
-	git push origin "v$$v" && \
-	echo "Pushed v$$v"
+# Cut a release: stamp the version everywhere, tag it, push it, and hand the
+# rest to CI. The tag push is the handoff — release.yml triggers on `v*` and
+# does the building, signing, notarizing and publishing. This target builds
+# nothing, which is why it is fast and why a failure here is never a build
+# failure.
+version: ## bump, tag, and push a release (CI builds and publishes it)
+	@VERSIONED_FILES="$(VERSIONED_FILES)" V="$(BUMP_VERSION)" ./scripts/cut-release.sh
