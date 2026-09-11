@@ -899,9 +899,12 @@ const W = 320;
 // picture card's height — a 320x240 box holding three lines of grey text with the title pressed
 // against the bottom edge, which reads as a view that failed to render. A size class is only
 // tidy when its members hold the same kind of thing; otherwise uniform size is uniform emptiness.
-const BOX = { P: 240, T: 152, R: 64 }; // picture card / text card / one row
-const LABEL_H = 34;
-const SUB_H = 28;
+const BOX = { P: 244, T: 152, R: 68 }; // picture card / text card / one row
+// A heading is body type now, so the box around it is body-sized. Both ranks are the same
+// height because they are the same style: see the note on `.hi-home__sub` in the stylesheet
+// for what that costs and what is meant to buy it back.
+const LABEL_H = 26;
+const SUB_H = 26;
 // A heading and the air under it, charged to the row it stands on. Reserving the height *in the
 // node* is the whole trick: hand the tree a bare row and re-seat the heading above it afterwards
 // and the heading lands on whatever the tree packed into that space.
@@ -950,10 +953,10 @@ const shapeOf = (leaf) =>
 // The ruler is made once, and only where there is a document; without one the old character
 // count is the fallback. A read taken before the display face has finished loading measures the
 // fallback face, and the next one — the ledger reads every few seconds — corrects it.
-// **Three sizes for the whole surface**, in JavaScript rather than in the stylesheet because
+// **Two styles for the whole surface**, in JavaScript rather than in the stylesheet because
 // the ruler has to measure in the same type the chip is set in. The stylesheet reads them back
 // out as custom properties, so there is still one place to change them.
-const TYPE = { lg: 17, md: 13.5, sm: 12 };
+const TYPE = { lg: 20, md: 13 };
 const CHIP_PAD = 24; // 11px of padding either side, plus the hairline
 const CHIP_THUMB = 39; // the thumbnail and the gap before it
 let ruler = null;
@@ -962,7 +965,7 @@ function chipFace() {
   if (face) return face;
   const root = typeof document !== "undefined" && document.documentElement;
   const read = (name) => (root ? getComputedStyle(root).getPropertyValue(name).trim() : "");
-  face = `700 ${TYPE.md}px ${read("--font-display") || "sans-serif"}`;
+  face = `400 ${TYPE.md}px ${read("--font-display") || "sans-serif"}`;
   return face;
 }
 function textWidth(text, font) {
@@ -1022,12 +1025,12 @@ function rowsOf(node) {
     if (sub) pending.push({ label: n.label, rank: 2 });
     for (const leaf of n.leaves) {
       if (leaf.kind === "note") {
-        chips.push({ id: leaf.id, title: leaf.title });
+        chips.push({ id: leaf.id, title: leaf.title, tone: leaf.tone });
         continue;
       }
       const k = shapeOf(leaf);
       if (k === "XS") {
-        chips.push({ id: leaf.id, title: leaf.title, view: leaf.view });
+        chips.push({ id: leaf.id, title: leaf.title, view: leaf.view, tone: leaf.tone });
         continue;
       }
       push({ id: leaf.id, t: "card", leaf, k, baseH: BOX[k], h: BOX[k], w: W, tone: leaf.tone });
@@ -1038,7 +1041,18 @@ function rowsOf(node) {
   if (chips.length > 0) {
     const n = chipRows(chips);
     const h = n * CHIP_H + (n - 1) * CHIP_GAP;
-    push({ id: `${node.key}-chips`, t: "chips", chips, baseH: h, h, w: W, tone: node.tone });
+    // **A run of parked chips is as cold as the chips in it**, not as hot as the topic they
+    // hang off. Taking the node's tone gave the coldest thing on the chart the hottest wire on
+    // it: one row under `no project` waiting on a person painted the parked run's wire red.
+    push({
+      id: `${node.key}-chips`,
+      t: "chips",
+      chips,
+      baseH: h,
+      h,
+      w: W,
+      tone: chips.map((c) => c.tone || "closed").reduce(hotter, "closed"),
+    });
   }
   // A sub-topic whose rows were all chips leaves its heading with nothing to stand on; it rides
   // the chip run above, which is where its chips went.
@@ -1294,7 +1308,7 @@ export default function Home() {
       <span className="hi-home__pip" data-live={running > 0 ? "true" : undefined} aria-hidden />
       {(tasks === null || deaf) && (
         <div className="hi-home__meta">
-          {tasks === null ? <span>{L.reading}</span> : <span className="hi-home__deaf">{L.deaf}</span>}
+          <span>{tasks === null ? L.reading : L.deaf}</span>
         </div>
       )}
     </div>
@@ -1532,16 +1546,34 @@ const CSS = `
   padding: max(24px, var(--hi-safe-top)) clamp(18px, 3vw, 52px) 118px;
   color: var(--fg);
   font-family: var(--font-display);
-  /* **Three sizes and two weights, for the whole surface** (the sizes are TYPE, above, because
-     the chip ruler measures in them). It had seven sizes and four weights, which is not a
-     hierarchy — it is a hierarchy per element, and a wall of cards built that way reads as
-     untidy however carefully each card was reasoned about. The three are the three things a
-     card does: name something, say one thing about it, and carry a small mark. Every rank is
-     told apart by size and colour; weight only ever separates a name from prose. */
+  /* **Two styles for the whole surface: a title and a body** (the sizes are TYPE, above,
+     because the chip ruler measures in them). Three sizes and two weights was already a cut
+     down from seven and four, and it still read as busy, for a reason counting the axes hides:
+     the tone custom property is a variable, so every class that reached for it was not one style but six. Two
+     text classes reaching for it turned 2x3x2 on paper into nine distinct styles on the glass.
+
+     So the ranks are told apart by **size alone**, and the gap is wide enough to do it without
+     help: 20 against 13. Colour is spent nowhere in type — one ink for a title, one for
+     everything else — which leaves the wires and the on-it dot as the only coloured things on
+     the canvas, and therefore the only things a colour can still mean something on.
+
+     What this does not yet have is a form for a **label** (a topic's name, a row's mark) or for
+     an **alarm** (nobody is on this; the host is not listening). Both are body for now, which
+     means a topic name reads as prose and a failure reads as calm. That is a placeholder, not
+     an answer — it is waiting on a treatment that is not another size and not another colour. */
   --t-lg: ${TYPE.lg}px;
   --t-md: ${TYPE.md}px;
-  --t-sm: ${TYPE.sm}px;
 }
+/* **Two styles means two, and the browser's own stylesheet does not know that.** Each of these
+   rules used to carry an explicit weight, so deleting the weights did not make them body — it
+   uncovered what was under them. A heading is an h2 and a state word is a b, and both arrive
+   bold from the UA sheet; a row's mark sits inside the title and inherited the title's. Three
+   things rendered bold with nothing in this file asking for it. So the body weight is stated
+   once, here, and the title is the only place anything overrides it. The h2's own font-size is
+   reset on the heading box below for the same reason: it is 1.5em until something says otherwise. */
+.hi-home { font-weight: 400; }
+.hi-home :where(b, strong, h1, h2, h3, h4, h5, h6) { font-weight: inherit; }
+.hi-home__mark, .hi-home__on i { font-weight: 400; }
 .hi-home:has(.hi-home__canvas) { align-items: center; justify-content: center; overflow: hidden; }
 
 /* ── the hub ── */
@@ -1567,9 +1599,9 @@ const CSS = `
   0%, 100% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent); }
   50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent) 3%, transparent); }
 }
-.hi-home__meta { white-space: nowrap; font-size: var(--t-md); font-weight: 700; color: var(--fg-mute); }
-.hi-home__deaf { color: var(--danger); font-weight: 700; }
-.hi-home__empty { font-size: var(--t-lg); color: var(--fg-mute); margin: 26px 0 0; }
+.hi-home__meta { white-space: nowrap; font-size: var(--t-md); color: var(--fg-dim); }
+/* The one thing on the screen in this state, so it is the title rank rather than the body one. */
+.hi-home__empty { font-size: var(--t-lg); font-weight: 600; color: var(--fg); margin: 26px 0 0; }
 
 /* ── the canvas ── */
 .hi-home__canvas { position: relative; flex: 0 0 auto; transform-origin: center center; }
@@ -1596,6 +1628,7 @@ const CSS = `
    ranks take the same treatment; the count rides on the heading rather than outside it. */
 .hi-home__trunk, .hi-home__sub {
   margin: 0;
+  font-size: var(--t-md);
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
@@ -1613,13 +1646,17 @@ const CSS = `
 /* **A continued run still says whose it is**, and says that it is continued. Bare, the second
    half of a split topic reads as an orphan run of cards beside the hub rather than as more of
    the topic across the way. Quieter than the first, because it is the same name said again. */
-.hi-home__trunk[data-cont] .hi-home__trunk-name { font-weight: 400; opacity: .55; }
+.hi-home__trunk[data-cont] .hi-home__trunk-name { opacity: .55; }
 .hi-home__trunk-name, .hi-home__sub > span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
-.hi-home__trunk-name { font-size: var(--t-lg); font-weight: 700; letter-spacing: -.012em; color: var(--tone); }
-/* A rank below a topic is a part of it, so it is quieter than the thing it is part of. */
-.hi-home__sub { font-size: var(--t-md); font-weight: 700; color: var(--fg-dim); }
+.hi-home__trunk-name { font-size: var(--t-md); color: var(--fg-dim); }
+/* **A rank below a topic is currently indistinguishable from the topic**, because the one thing
+   that separated them was weight and colour and both are spent. It is the same loss the label
+   note above records, in the one place it changes what the chart says rather than how it looks:
+   a sub-topic heading and a topic heading are now the same mark. Whatever form a label takes
+   has to carry this rank too, or the sub-rank should go. */
+.hi-home__sub { font-size: var(--t-md); color: var(--fg-dim); }
 /* **A small mark is the same mark wherever it appears**: how many sessions are on a row here,
    the topic a row is filed under further down. They were three sizes for one idea with nothing
    on the screen saying why. **A heading now carries none at all** — a topic's row count and a
@@ -1628,10 +1665,8 @@ const CSS = `
 .hi-home__on i {
   flex: 0 0 auto;
   font-style: normal;
-  font-family: var(--font-mono);
-  font-size: var(--t-sm);
-  font-weight: 700;
-  color: var(--fg-mute);
+  font-size: var(--t-md);
+  color: var(--fg-dim);
 }
 
 .hi-home__bx {
@@ -1693,7 +1728,7 @@ const CSS = `
   gap: 7px;
   min-width: 0;
   font-size: var(--t-lg);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -.012em;
   line-height: 1.3;
 }
@@ -1725,7 +1760,7 @@ const CSS = `
 .hi-home__ln {
   margin: 0;
   font-size: var(--t-md);
-  color: var(--fg-mute);
+  color: var(--fg-dim);
   display: flex;
   align-items: baseline;
   gap: 7px;
@@ -1738,20 +1773,20 @@ const CSS = `
    edge — a fact that ended in "· just no" read as a card that had failed rather than a line
    that was long. */
 .hi-home__ln > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-/* The one place a state is named, in the one colour it is worth spending. */
-.hi-home__st { flex: 0 0 auto; font-size: var(--t-md); font-weight: 700; color: var(--tone); }
-.hi-home__kind { flex: 0 0 auto; font-style: normal; font-weight: 700; color: var(--accent); }
-/* A topic this row is under that did not earn a rank of its own. */
+/* **The state word is prose now.** It used to be the one place a colour was spent, and on a
+   live ledger that put the words on duty in amber on four rows out of five — an alarm colour doing
+   duty as a label for the ordinary case. It reads as the sentence it always was: nobody
+   standing 1d, on duty confirmed alive 9h ago. What it has lost is the ability to shout
+   on the row that deserves it; that is the alarm form still owed, noted at the top. */
+.hi-home__st { flex: 0 0 auto; }
+.hi-home__kind { flex: 0 0 auto; font-style: normal; }
+/* A topic this row is under that did not earn a rank of its own. Body, and no box: the box was
+   a label treatment, and label treatments are the thing being redesigned. */
 .hi-home__mark {
   flex: 0 0 auto;
   font-style: normal;
-  font-size: var(--t-sm);
-  font-weight: 700;
-  color: var(--fg-mute);
-  border: 1px solid var(--surface-border);
-  background: var(--paper);
-  border-radius: 4px;
-  padding: 1px 6px;
+  font-size: var(--t-md);
+  color: var(--fg-dim);
 }
 .hi-home__on { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 .hi-home__on b {
@@ -1761,7 +1796,6 @@ const CSS = `
   border: 1.5px solid var(--line-strong);
   box-sizing: border-box;
 }
-.hi-home__on[data-live] i { color: var(--accent); }
 .hi-home__on[data-live] b {
   border-color: var(--accent);
   background: var(--accent);
@@ -1787,7 +1821,6 @@ const CSS = `
   border: 1px solid var(--surface-border);
   background: var(--surface);
   font-size: var(--t-md);
-  font-weight: 700;
   color: var(--fg-dim);
   white-space: nowrap;
   font-family: inherit;
