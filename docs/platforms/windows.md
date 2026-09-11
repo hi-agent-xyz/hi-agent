@@ -179,6 +179,14 @@ discover them.
 | 2 | C# compile | `CS1729` — `CoreWebView2EnvironmentOptions` takes no constructor arguments |
 | 3 | packaging | `MSB4062` — `Microsoft.Build.Packaging.Pri.Tasks.dll` not found under SDK 10.0.400 |
 
+**Windows is not in 0.1.0.** Its job in `release.yml` is commented out, with the
+conditions for uncommenting it written above the comment block. The run-3 fix —
+the repo-root `global.json` pinning the SDK 8.0 band — is committed and has
+never been tried, so the next run starts there rather than at the top. What
+stopped it being worth holding a release for is not the three errors above,
+which are ordinary; it is that nobody knows how many stages sit behind
+packaging, on a surface that has never produced a running window.
+
 Three lessons, each now fixed in the general form rather than the specific one.
 
 **Wildcards retarget an app nobody compiles.** `2.*` moved to a release that

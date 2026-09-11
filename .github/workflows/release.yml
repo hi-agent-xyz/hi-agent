@@ -159,13 +159,13 @@ jobs:
             echo "| Platform | File |"
             echo "| --- | --- |"
             echo "| macOS (Apple Silicon) | \`hi-agent-$VERSION-macos-apple-silicon.dmg\` |"
-            echo "| Windows (x64) | \`hi-agent-$VERSION-windows-x64.exe\` |"
             echo "| Debian / Ubuntu (amd64) | \`hi-agent_${VERSION}_amd64.deb\` |"
             echo "| Android (handset) | \`hi-agent-$VERSION-android.apk\` |"
             echo "| Android (TV) | \`hi-agent-$VERSION-android-tv.apk\` |"
             echo
-            echo "The Android packages are unsigned; Windows is not Authenticode-signed."
-            echo "iPhone and iPad ship through TestFlight, not from this page."
+            echo "The Android packages are unsigned."
+            echo "Windows is not in this release — its shell has never completed a build;"
+            echo "see docs/platforms/windows.md. iPhone and iPad ship through TestFlight.""
             echo
             echo "\`manifest.json\` lists every file with its size and SHA-256."
             echo "The latest release's copy is always at"
@@ -415,105 +415,127 @@ jobs:
           gh release upload "$TAG" "${files[@]}" --clobber
 
   # ---------------------------------------------------------------------------
-  # Windows — and the first compiler this half of the repo has ever met.
+  # Windows is commented out, and this is the note that says why and what takes
+  # it back. It is not deleted, because it is close: three release runs walked
+  # it from "does this even restore" to "does packaging work", and the code
+  # below is what got it that far.
   #
-  # Neither the engine's MSVC target natively nor app/windows at all has been
-  # built before: there is no Windows machine and no .NET SDK on any host this
-  # repo is developed from, which is why HiAgentWindows.csproj's package
-  # references are wildcards nothing has ever restored. Expect this job to find
-  # real errors in code written blind. That is the job working.
+  #   run 1  NU1202     a wildcard had retargeted the app to net10.0
+  #   run 2  CS1729     CoreWebView2EnvironmentOptions takes no ctor args
+  #   run 3  MSB4062    the runner's SDK 10 lays out the packaging tasks
+  #                     elsewhere than WindowsAppSDK 1.6 expects
   #
-  # `make` is installed rather than avoided: the repo's rule is that packaging
-  # goes through a target, and make-installer.sh's two payload tiers (with or
-  # without the shell) are exactly the logic that should not be re-implemented
-  # in YAML.
+  # Each fix is committed and still stands; the SDK pin from run 3 has never
+  # been tried. What is NOT known is how many stages remain behind packaging —
+  # linking, then NSIS — and 0.1.0 was not going to wait to find out on a
+  # surface that has never once produced a running window.
+  #
+  # TAKEN BACK BY: uncommenting this job, restoring `windows` to the `release`
+  # job's `needs`, and dropping `windows` from the ONLY= list in "Write the
+  # manifest" — all three, or the release either ignores the job or promises a
+  # .exe the manifest cannot find. docs/platforms/windows.md § Verification is
+  # the running record of how far it gets.
   # ---------------------------------------------------------------------------
-  windows:
-    name: Windows installer
-    needs: prepare
-    runs-on: windows-latest
-    timeout-minutes: 120
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-
-      - name: Set up Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: "22"
-
-      # windows-latest preinstalls whatever .NET SDK is current — 10.0.400 as
-      # of this run — and `dotnet` picks the highest installed SDK unless a
-      # global.json says otherwise. WindowsAppSDK 1.6's packaging targets look
-      # for `Microsoft.Build.Packaging.Pri.Tasks.dll` where an SDK 8 lays it
-      # out, so under 10 the build dies at MSB4062 with a missing task
-      # assembly, long after restore and compilation have succeeded. The repo
-      # root's global.json pins the band; this step makes sure the band is
-      # actually installed.
-      - name: Set up .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: "8.0.x"
-
-      - name: Install make and NSIS
-        shell: bash
-        run: |
-          set -euo pipefail
-          choco install -y --no-progress make nsis
-          # NSIS installs outside PATH. make-installer.sh looks for `makensis`
-          # and stops if it cannot find one, so put it there rather than let
-          # that check fire.
-          echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
-
-      - name: Publish the WinUI shell
-        shell: bash
-        run: |
-          set -euo pipefail
-          make win-app
-
-          # make-installer.sh treats a missing shell as its normal lower tier —
-          # correct on a Mac, wrong here, where a shell-less installer would
-          # mean an install with no app in it. Assert rather than let the
-          # installer quietly drop to the engine-only tier.
-          shell_exe="app/windows/HiAgentWindows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/HiAgent.exe"
-          [ -f "$shell_exe" ] || { echo "make win-app produced no $shell_exe" >&2; exit 1; }
-
-      - name: Build the installer
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Builds the engine .exe natively (see the `exe` target) and wraps
-          # both halves with NSIS.
-          make installer
-
-          version="${{ needs.prepare.outputs.version }}"
-          setup="target/installer/hi-agent-$version-windows-x64.exe"
-          [ -s "$setup" ] || { echo "make installer reported success but $setup is missing or empty" >&2; exit 1; }
-          mkdir -p target/dist
-          cp "$setup" target/dist/
-
-      - name: Attach the installer to the draft release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          PUBLISH: ${{ needs.prepare.outputs.publish }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(target/dist/*.exe)
-          # What `if-no-files-found: error` used to buy: a packaging step
-          # that reports success and produces nothing must fail here, on a
-          # dry run too.
-          (( ${#files[@]} > 0 )) || { echo "target/dist/*.exe matched no file" >&2; exit 1; }
-          if [ "$PUBLISH" != "true" ]; then
-            echo "dry run — built ${files[*]}, attaching nothing"
-            exit 0
-          fi
-          gh release upload "$TAG" "${files[@]}" --clobber
-
+  #   # ---------------------------------------------------------------------------
+  #   # Windows — and the first compiler this half of the repo has ever met.
+  #   #
+  #   # Neither the engine's MSVC target natively nor app/windows at all has been
+  #   # built before: there is no Windows machine and no .NET SDK on any host this
+  #   # repo is developed from, which is why HiAgentWindows.csproj's package
+  #   # references are wildcards nothing has ever restored. Expect this job to find
+  #   # real errors in code written blind. That is the job working.
+  #   #
+  #   # `make` is installed rather than avoided: the repo's rule is that packaging
+  #   # goes through a target, and make-installer.sh's two payload tiers (with or
+  #   # without the shell) are exactly the logic that should not be re-implemented
+  #   # in YAML.
+  #   # ---------------------------------------------------------------------------
+  #   windows:
+  #     name: Windows installer
+  #     needs: prepare
+  #     runs-on: windows-latest
+  #     timeout-minutes: 120
+  #     steps:
+  #       - name: Check out repository
+  #         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+  #         with:
+  #           ref: ${{ needs.prepare.outputs.sha }}
+  #
+  #       - name: Set up Node
+  #         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+  #         with:
+  #           node-version: "22"
+  #
+  #       # windows-latest preinstalls whatever .NET SDK is current — 10.0.400 as
+  #       # of this run — and `dotnet` picks the highest installed SDK unless a
+  #       # global.json says otherwise. WindowsAppSDK 1.6's packaging targets look
+  #       # for `Microsoft.Build.Packaging.Pri.Tasks.dll` where an SDK 8 lays it
+  #       # out, so under 10 the build dies at MSB4062 with a missing task
+  #       # assembly, long after restore and compilation have succeeded. The repo
+  #       # root's global.json pins the band; this step makes sure the band is
+  #       # actually installed.
+  #       - name: Set up .NET
+  #         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+  #         with:
+  #           dotnet-version: "8.0.x"
+  #
+  #       - name: Install make and NSIS
+  #         shell: bash
+  #         run: |
+  #           set -euo pipefail
+  #           choco install -y --no-progress make nsis
+  #           # NSIS installs outside PATH. make-installer.sh looks for `makensis`
+  #           # and stops if it cannot find one, so put it there rather than let
+  #           # that check fire.
+  #           echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
+  #
+  #       - name: Publish the WinUI shell
+  #         shell: bash
+  #         run: |
+  #           set -euo pipefail
+  #           make win-app
+  #
+  #           # make-installer.sh treats a missing shell as its normal lower tier —
+  #           # correct on a Mac, wrong here, where a shell-less installer would
+  #           # mean an install with no app in it. Assert rather than let the
+  #           # installer quietly drop to the engine-only tier.
+  #           shell_exe="app/windows/HiAgentWindows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/HiAgent.exe"
+  #           [ -f "$shell_exe" ] || { echo "make win-app produced no $shell_exe" >&2; exit 1; }
+  #
+  #       - name: Build the installer
+  #         shell: bash
+  #         run: |
+  #           set -euo pipefail
+  #           # Builds the engine .exe natively (see the `exe` target) and wraps
+  #           # both halves with NSIS.
+  #           make installer
+  #
+  #           version="${{ needs.prepare.outputs.version }}"
+  #           setup="target/installer/hi-agent-$version-windows-x64.exe"
+  #           [ -s "$setup" ] || { echo "make installer reported success but $setup is missing or empty" >&2; exit 1; }
+  #           mkdir -p target/dist
+  #           cp "$setup" target/dist/
+  #
+  #       - name: Attach the installer to the draft release
+  #         shell: bash
+  #         env:
+  #           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #           TAG: ${{ needs.prepare.outputs.tag }}
+  #           PUBLISH: ${{ needs.prepare.outputs.publish }}
+  #         run: |
+  #           set -euo pipefail
+  #           shopt -s nullglob
+  #           files=(target/dist/*.exe)
+  #           # What `if-no-files-found: error` used to buy: a packaging step
+  #           # that reports success and produces nothing must fail here, on a
+  #           # dry run too.
+  #           (( ${#files[@]} > 0 )) || { echo "target/dist/*.exe matched no file" >&2; exit 1; }
+  #           if [ "$PUBLISH" != "true" ]; then
+  #             echo "dry run — built ${files[*]}, attaching nothing"
+  #             exit 0
+  #           fi
+  #           gh release upload "$TAG" "${files[@]}" --clobber
+  #
   # ---------------------------------------------------------------------------
   # Android: the handset and the television, one build each.
   #
@@ -606,7 +628,7 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     name: Publish
-    needs: [prepare, macos, linux, windows, android]
+    needs: [prepare, macos, linux, android]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -637,6 +659,10 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           COMMIT: ${{ needs.prepare.outputs.sha }}
           MACOS_NOTARIZED: ${{ needs.macos.outputs.notarized }}
+          # Windows is commented out above. Without this the manifest would
+          # hard-error on a .exe nothing built — which is make-manifest.sh
+          # working as designed, and the reason ONLY= exists.
+          ONLY: macos,linux,android,android-tv
         run: |
           set -euo pipefail
           ls -l target/dist
