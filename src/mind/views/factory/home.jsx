@@ -364,6 +364,7 @@ const TONE = {
   live: "var(--accent)",
   serving: "var(--accent-2)",
   todo: "var(--fg-mute)",
+  done: "var(--fg-mute)",
   closed: "var(--fg-mute)",
 };
 // A topic is as hot as the hottest thing under it: that is how a chart organised by subject
@@ -916,7 +917,6 @@ const GAP = 9;
 // A chip is a fixed height in the stylesheet rather than whatever its contents come to, so the
 // row arithmetic below is exact instead of nearly right — and so a run of them reads as a run.
 const CHIP_H = 28;
-const CHIP_GAP = 6;
 // How far the cards stand off the hub. The wires live in this gap and nothing else does.
 const SIDE_GAP = 132;
 const PAD = 34;
@@ -943,58 +943,8 @@ const shapeOf = (leaf) =>
           : "T"
         : "R";
 
-// **How wide a chip will be, measured rather than counted.** It was `title.length * 7.4`, which
-// is wrong by a whole row the moment a title is CJK — one em a character, not half — and it
-// left out the timestamp beside the name entirely, which is most of a chip's width. A row out is
-// a run 30px shorter than the one on the screen, and since a run's height is charged to the node
-// the tree packs, that is a node the tree believes is smaller than it is.
-//
-// `measureText` is the same engine that will lay the chip out, so it cannot disagree with it.
-// The ruler is made once, and only where there is a document; without one the old character
-// count is the fallback. A read taken before the display face has finished loading measures the
-// fallback face, and the next one — the ledger reads every few seconds — corrects it.
-// **Two styles for the whole surface**, in JavaScript rather than in the stylesheet because
-// the ruler has to measure in the same type the chip is set in. The stylesheet reads them back
-// out as custom properties, so there is still one place to change them.
+// Shared title and body sizes, read by the stylesheet below.
 const TYPE = { lg: 20, md: 13 };
-const CHIP_PAD = 24; // 11px of padding either side, plus the hairline
-const CHIP_THUMB = 39; // the thumbnail and the gap before it
-let ruler = null;
-let face = null;
-function chipFace() {
-  if (face) return face;
-  const root = typeof document !== "undefined" && document.documentElement;
-  const read = (name) => (root ? getComputedStyle(root).getPropertyValue(name).trim() : "");
-  face = `400 ${TYPE.md}px ${read("--font-display") || "sans-serif"}`;
-  return face;
-}
-function textWidth(text, font) {
-  if (ruler === null) {
-    ruler =
-      typeof document !== "undefined" && document.createElement("canvas").getContext
-        ? document.createElement("canvas").getContext("2d")
-        : false;
-  }
-  if (!ruler) return String(text).length * 7.4;
-  ruler.font = font;
-  return ruler.measureText(String(text)).width;
-}
-function chipWidth(chip) {
-  return CHIP_PAD + textWidth(chip.title, chipFace()) + (chip.view ? CHIP_THUMB : 0);
-}
-function chipRows(list) {
-  let rows = 1;
-  let x = 0;
-  for (const chip of list) {
-    const w = chipWidth(chip);
-    if (x > 0 && x + w > W) {
-      rows += 1;
-      x = 0;
-    }
-    x += w + CHIP_GAP;
-  }
-  return rows;
-}
 
 /**
  * A topic, flattened into the rows that draw it, **in the order the column used to stack them**:
@@ -1006,9 +956,8 @@ function chipRows(list) {
  * its rows from ever being separated by the packing: there is nothing to separate, the name is
  * inside the node.
  *
- * **The chip run stays one node.** A chip is 28px of a pill, and giving each its own 320-wide
- * node would have the tree reserve a full row's width for a word — and would break the run,
- * which is the thing that says *these are the parked ones* at a glance.
+ * Each chip gets its own row and wire, just like a card. Topic membership and task status
+ * never decide whether a visible item connects to the hub.
  */
 function rowsOf(node) {
   const rows = [];
@@ -1038,20 +987,15 @@ function rowsOf(node) {
     for (const child of n.children) walk(child, true);
   };
   walk(node, false);
-  if (chips.length > 0) {
-    const n = chipRows(chips);
-    const h = n * CHIP_H + (n - 1) * CHIP_GAP;
-    // **A run of parked chips is as cold as the chips in it**, not as hot as the topic they
-    // hang off. Taking the node's tone gave the coldest thing on the chart the hottest wire on
-    // it: one row under `no project` waiting on a person painted the parked run's wire red.
+  for (const chip of chips) {
     push({
-      id: `${node.key}-chips`,
+      id: chip.id,
       t: "chips",
-      chips,
-      baseH: h,
-      h,
+      chips: [chip],
+      baseH: CHIP_H,
+      h: CHIP_H,
       w: W,
-      tone: chips.map((c) => c.tone || "closed").reduce(hotter, "closed"),
+      tone: chip.tone || "closed",
     });
   }
   // A sub-topic whose rows were all chips leaves its heading with nothing to stand on; it rides
