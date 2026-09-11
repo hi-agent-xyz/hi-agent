@@ -274,6 +274,31 @@ pub async fn seed(data_dir: &Path, current_run: &str) -> Vec<Ended> {
 /// Unparseable lines are skipped rather than failing the read: the first line of a
 /// tail-read is routinely a fragment, and one corrupt line must not blank the page.
 fn fold(text: &str, current_run: &str) -> Vec<Ended> {
+    let mut ends = fold_all(text, current_run);
+    ends.truncate(RECENT_CAP);
+    ends
+}
+
+/// Home asks for a time window, not the switchboard's capped boot-recovery cache.
+/// Read the durable index so a busy day with >500 sessions loses no nodes. A crash
+/// has no trustworthy end timestamp; keep those rows rather than inventing one.
+/// This is a ledger-frequency read, never part of the activity/event hot path.
+pub async fn ended_since(
+    data_dir: &Path,
+    current_run: &str,
+    since: DateTime<Utc>,
+) -> std::io::Result<Vec<Ended>> {
+    let text = match tokio::fs::read_to_string(index_path(data_dir)).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+    let mut ends = fold_all(&text, current_run);
+    ends.retain(|end| end.ended.is_none_or(|at| at >= since));
+    Ok(ends)
+}
+
+fn fold_all(text: &str, current_run: &str) -> Vec<Ended> {
     let mut ends: Vec<Ended> = Vec::new();
     let mut opened: Vec<Ended> = Vec::new();
     let mut closed: HashSet<(String, SessionSlug)> = HashSet::new();
@@ -375,7 +400,6 @@ fn fold(text: &str, current_run: &str) -> Vec<Ended> {
     // compare now that ids are slugs, not "the later session first" it read as while they
     // were ordinals — deterministic either way, which is all this line is for.
     ends.sort_by(|a, b| b.recency().cmp(&a.recency()).then(b.session.cmp(&a.session)));
-    ends.truncate(RECENT_CAP);
     ends
 }
 
@@ -760,6 +784,48 @@ mod tests {
         let mut row = ended_now(run, &SessionSlug::from(session), role, None, "", None, 1, started, None, false, false, None);
         row.ended = Some(ended);
         closed_record(&row)
+    }
+
+    #[tokio::test]
+    async fn home_window_is_not_limited_by_the_recent_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = index_path(dir.path());
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        let mut text = String::new();
+        for id in 1..=650 {
+            text.push_str(&line(&closed_at(
+                "run-a", id, Role::Worker(WorkerType::General), ts(1), ts(20),
+            )));
+        }
+        text.push_str(&line(&closed_at("run-a", 900, Role::Reaction, ts(1), ts(2))));
+        tokio::fs::write(path, &text).await.unwrap();
+        assert_eq!(fold(&text, "run-b").len(), RECENT_CAP, "boot recovery stays bounded");
+        let rows = ended_since(dir.path(), "run-b", ts(10)).await.unwrap();
+        assert_eq!(rows.len(), 650, "the time-window reader must not silently truncate");
+        assert!(rows.iter().all(|row| row.ended == Some(ts(20))));
+    }
+
+    #[tokio::test]
+    async fn home_window_preserves_unknown_crash_times_and_excludes_live_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = index_path(dir.path());
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        let text = format!("{}{}",
+            line(&opened_record("run-a", &1.into(), Role::Cognition, None, "", None, ts(1))),
+            line(&opened_record("run-b", &2.into(), Role::Reaction, None, "", None, ts(20))));
+        tokio::fs::write(path, text).await.unwrap();
+        let rows = ended_since(dir.path(), "run-b", ts(10)).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].how, EndedHow::Restart);
+        assert_eq!(rows[0].ended, None, "a crash did not record an end time");
+    }
+
+    #[tokio::test]
+    async fn home_window_distinguishes_missing_history_from_unreadable_history() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(ended_since(dir.path(), "run-a", ts(1)).await.unwrap().is_empty());
+        tokio::fs::create_dir_all(index_path(dir.path())).await.unwrap();
+        assert!(ended_since(dir.path(), "run-a", ts(1)).await.is_err());
     }
 
     /// A `closed` line alone is enough to render a row. This is the property the

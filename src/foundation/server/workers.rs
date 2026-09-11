@@ -41,7 +41,7 @@
 //! reader, where the difference stays visible on the page.
 
 use axum::Json;
-use axum::extract::{Path, Query};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
@@ -80,6 +80,9 @@ use crate::foundation::registry::{self, SessionSlug, Status, TurnEnd};
 #[derive(Serialize)]
 struct WorkerDto {
     id: String,
+    /// Slugs can repeat after restart. Home identities and frame links must use
+    /// (run, id), exactly like the durable Ended record, never the slug alone.
+    run: &'static str,
     /// The role, as the `X-HI-Role` header and `tools_for_role` spell it — `reaction`,
     /// `cognition`, `reflection`, `worker` — so a row here and a tool
     /// surface line up by eye.
@@ -224,6 +227,9 @@ const MAX_MESSAGES: usize = 2_000;
 #[derive(Deserialize)]
 pub struct Paging {
     limit: Option<usize>,
+    /// With `since`, return the entire retained time window, not a top-N sample.
+    /// Unknown crash end times stay visible and are explicitly null in the DTO.
+    since: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// `GET /api/workers/ended?limit=N` — sessions that are no longer live, most recent first.
@@ -235,7 +241,31 @@ pub struct Paging {
 ///
 /// Includes sessions a **restart** ended (`how: "restart"`), which have no close record
 /// because nothing got to write one. Those are the rows worth the whole endpoint.
-pub async fn get_ended(Query(paging): Query<Paging>) -> Response {
+pub async fn get_ended(
+    State(state): State<std::sync::Arc<super::AppState>>,
+    Query(paging): Query<Paging>,
+) -> Response {
+    if let Some(since) = paging.since {
+        let mut ended = match registry::index::ended_since(
+            &state.data_dir, crate::foundation::run::id(), since,
+        ).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, "Home session history read failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "session history unavailable").into_response();
+            }
+        };
+        // The index writer is asynchronous. Include just-ended in-memory entries
+        // until their durable close record lands; the memory version wins by key.
+        let recent = registry::global().recent_ended(usize::MAX);
+        let keys: std::collections::HashSet<_> = recent.iter()
+            .map(|row| (row.run.clone(), row.session.clone())).collect();
+        ended.retain(|row| !keys.contains(&(row.run.clone(), row.session.clone())));
+        ended.extend(recent.into_iter().filter(|row| row.ended.is_none_or(|at| at >= since)));
+        ended.sort_by(|a, b| b.ended.or(b.started).cmp(&a.ended.or(a.started))
+            .then(a.run.cmp(&b.run)).then(a.session.cmp(&b.session)));
+        return Json(serde_json::json!({ "ended": ended, "since": since, "complete": true })).into_response();
+    }
     let limit = paging.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_ENDED);
     let ended = registry::global().recent_ended(limit);
     Json(serde_json::json!({ "ended": ended })).into_response()
@@ -514,6 +544,7 @@ fn tail(id: &SessionSlug) -> Option<String> {
 fn dto(st: &Status, tail: Option<String>) -> WorkerDto {
     WorkerDto {
         id: st.id.to_string(),
+        run: crate::foundation::run::id(),
         role: st.role.as_str(),
         worker_type: st.role.worker_type().map(|t| t.as_str()),
         owner: st.owner.as_ref().map(|o| o.to_string()),

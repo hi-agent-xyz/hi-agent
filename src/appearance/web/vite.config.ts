@@ -53,6 +53,7 @@ const SHARED_SPECIFIERS: Record<string, string> = {
 // package name so a view the agent writes from prior knowledge of the library
 // resolves — see the shim's header for why shadowing beat renaming.
 const LIBRARY_SPECIFIERS: Record<string, string> = {
+  "src/shared/lucide.ts": "lucide-react",
   "src/shared/d3-hierarchy.ts": "d3-hierarchy",
   "src/shared/d3-flextree.ts": "d3-flextree",
   "src/shared/ofv.ts": "@open-file-viewer/core",
@@ -333,6 +334,7 @@ export default defineConfig({
         "share-core": r("src/shared/core.ts"),
         "lib-d3-hierarchy": r("src/shared/d3-hierarchy.ts"),
         "lib-d3-flextree": r("src/shared/d3-flextree.ts"),
+        "lib-lucide": r("src/shared/lucide.ts"),
         "lib-ofv": r("src/shared/ofv.ts"),
         ...Object.fromEntries(
           Object.keys(SHADCN_SPECIFIERS).map((file) => {
