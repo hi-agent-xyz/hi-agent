@@ -72,16 +72,54 @@ revocation, memory, cognition, and channel behavior.
 ## Connection
 
 The app talks directly to the selected core. It presents its credential to
-`POST /api/session`, installs the returned short-lived cookie into the
-`WKWebView` cookie store, then loads the core address.
+`POST /api/session`, installs the returned cookie into the `WKWebView` cookie
+store, then loads the core address.
 
 The credential never enters JavaScript, `UserDefaults`, a plist, or the
 WebView's storage.
 
-The core's `POST /api/pair` response also includes a `hiagent://pair` URL with
-the core address and one-time code. The Reach view encodes that URL into its QR
-code. iOS accepts the URL from the Camera app or scans it in-app, then shows the
-native pairing form before exchanging the code.
+### Adding an agent
+
+**The user-facing noun is "agent".** Every screen says it; the wire does not — `/api/pair`,
+`hiagent://pair`, `hi_surface` and `surface_credential` are shared with four other clients
+and a rename there would buy nothing. iOS-local type names moved with the copy, so the app
+stays coherent with itself: `AddAgentView`, `AddAgentRequest`, `AgentQRScannerView`.
+
+Three ways in, in the order the sheet offers them:
+
+1. **By name** — the hero. A single field rendered inline as `[ your agent ].hi-agent.xyz`,
+   `POST /api/access/request`, then a six-digit code and a wait while the person approves it
+   on the agent. This leads because it is the only one that works from another room: a scan
+   only helps when you are standing at the machine showing the code, and if you are standing
+   there you are standing where the Approve button is.
+2. **A QR code** — `hiagent://pair`, carrying address and one-time code, from the Camera app
+   or scanned in-app.
+3. **A full address and a code**, folded into a disclosure, for a self-hosted agent with no
+   name in the default zone. The stage's "Add again" opens straight onto it, because it
+   arrives already knowing the address.
+
+### Verified, and not
+
+`make ios` builds, and all three states were watched in an iPhone 17 Simulator against a live
+core on the same machine (2026-09-11, [journey 39](../user-journeys/39-add-a-remote-agent.md)):
+the name field assembling `iloahz.hi-agent.xyz`, the waiting screen polling the real core and
+showing the code that core had issued, and — after the request was approved from the other
+side — the sheet dismissing and the stage opening the core's face. There is no tap driver over
+SSH, so the waiting state was entered by seeding the invitation into a scratch build rather
+than by typing a name.
+
+**Two things are still unwatched.** The phone-to-desktop approval **on real hardware, across a
+relay** — everything above was a Simulator talking to loopback. And a build from `make ios`
+cannot complete the last step at all: it passes `CODE_SIGNING_ALLOWED=NO`, so the app has no
+entitlements and `KeychainStore.save` fails `-34018`. That is not specific to this flow — the
+pairing path stores its credential the same way — but it means **anything verified in the
+Simulator past "exchange a credential" has to be built ad-hoc signed**:
+
+```sh
+xcodebuild -project app/apple/ios/HiAgentIOS.xcodeproj -scheme HiAgentIOS \
+  -sdk iphonesimulator -configuration Debug \
+  CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES build
+```
 
 If the web session is rejected, the shell exchanges the Keychain credential
 again and reloads with the new cookie. Foregrounding and network restoration

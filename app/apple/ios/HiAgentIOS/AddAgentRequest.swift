@@ -1,6 +1,6 @@
 import Foundation
 
-enum PairingRequestError: LocalizedError {
+enum AddAgentRequestError: LocalizedError {
     case invalidLink
     case missingAddress
     case missingCode
@@ -8,30 +8,35 @@ enum PairingRequestError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidLink:
-            return "This is not a Hi Agent pairing link."
+            return "This is not a Hi Agent link."
         case .missingAddress:
-            return "The pairing link does not contain a core address."
+            return "That link does not contain an agent's address."
         case .missingCode:
-            return "The pairing link does not contain a pairing code."
+            return "That link does not contain a one-time code."
         }
     }
 }
 
-struct PairingRequest: Identifiable, Equatable {
+/// What opened the add sheet, and what it should arrive holding.
+///
+/// The `hiagent://pair` URL this parses is **unchanged** — that is the wire, and
+/// four other clients mint and read it. Only the words on this side moved.
+struct AddAgentRequest: Identifiable, Equatable {
     let id = UUID()
     let baseURL: String
     let code: String
     let label: String
-    /// Scanning is the intended path, so the sheet can be asked to arrive with
-    /// the camera already up rather than making the reader find the button.
+    /// Arrive with the camera already up rather than making the reader find the
+    /// button. Set when the person picked "scan" from somewhere else.
     let opensScanner: Bool
 
-    static var manual: PairingRequest {
-        PairingRequest(baseURL: "", code: "", label: "")
+    /// The ordinary way in: a name, and a person to approve it.
+    static var ask: AddAgentRequest {
+        AddAgentRequest(baseURL: "", code: "", label: "")
     }
 
-    static var scan: PairingRequest {
-        PairingRequest(baseURL: "", code: "", label: "", opensScanner: true)
+    static var scan: AddAgentRequest {
+        AddAgentRequest(baseURL: "", code: "", label: "", opensScanner: true)
     }
 
     init(baseURL: String, code: String, label: String, opensScanner: Bool = false) {
@@ -46,19 +51,19 @@ struct PairingRequest: Identifiable, Equatable {
               components.scheme?.lowercased() == "hiagent",
               components.host?.lowercased() == "pair"
         else {
-            throw PairingRequestError.invalidLink
+            throw AddAgentRequestError.invalidLink
         }
 
         let items = components.queryItems ?? []
         guard let rawBaseURL = Self.singleValue(named: "url", in: items),
               !rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
-            throw PairingRequestError.missingAddress
+            throw AddAgentRequestError.missingAddress
         }
         guard let rawCode = Self.singleValue(named: "code", in: items),
               !rawCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
-            throw PairingRequestError.missingCode
+            throw AddAgentRequestError.missingCode
         }
 
         baseURL = try CoreClient.normalizeBaseURL(rawBaseURL).absoluteString

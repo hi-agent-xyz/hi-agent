@@ -589,6 +589,23 @@ pub fn build(
         .route("/healthz", get(surfaces::get_healthz))
         .route("/api/session", post(surfaces::post_session))
         .route("/api/pair", post(surfaces::post_pair))
+        // The third way in: a device states the agent's name, a person approves it
+        // here. The singular is **open** in both directions — the caller is a device
+        // with no way in — and the plural is the approver's side, gated like the
+        // rest. See `surfaces::open_path`.
+        .route(
+            "/api/access/request",
+            post(surfaces::post_access_request).get(surfaces::get_access_request),
+        )
+        .route("/api/access/requests", get(surfaces::get_access_requests))
+        .route(
+            "/api/access/requests/{id}/approve",
+            post(surfaces::post_access_approve),
+        )
+        .route(
+            "/api/access/requests/{id}",
+            axum::routing::delete(surfaces::delete_access_request),
+        )
         // This core's address in the community: what it is called, and claiming
         // or renaming it. The id underneath never changes.
         .route(

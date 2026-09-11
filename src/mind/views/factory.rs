@@ -712,13 +712,21 @@ mod tests {
         assert!(!by_name("workers").contains("method: \"POST\""));
         assert!(!by_name("tools").contains("method:"));
         assert!(!by_name("drive").contains("method:"));
-        // Reach carries three writes and each has to keep reaching for its endpoint —
+        // Reach carries four writes and each has to keep reaching for its endpoint —
         // a name that silently 404s looks exactly like a name that was refused.
         let reach = by_name("reach");
         assert!(reach.contains("/api/handle"), "reach must be able to claim a name");
         assert!(reach.contains("/api/pair"), "reach must be able to let a device in");
         assert!(reach.contains("/api/surfaces/"), "reach must be able to take one back");
         assert!(reach.contains("DELETE"));
+        // Approving is the one write with somebody watching from the other end. If it
+        // 404s the request simply stays on the list, which looks like a click that
+        // missed rather than an endpoint that moved.
+        assert!(
+            reach.contains("/api/access/requests/"),
+            "reach must be able to answer a device asking to be let in"
+        );
+        assert!(reach.contains("/approve"));
         // Every one of them is a state change, and off-box the core refuses a bare
         // one as something a cross-site form could have sent.
         assert!(reach.contains("X-HI-Surface"), "reach's writes must be provably not cross-site");

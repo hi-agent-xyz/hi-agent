@@ -3,10 +3,10 @@ import SwiftUI
 import UIKit
 import VisionKit
 
-struct PairingQRScannerView: View {
+struct AgentQRScannerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
-    let onScan: (PairingRequest) -> Void
+    let onScan: (AddAgentRequest) -> Void
 
     @State private var cameraState = CameraState.checking
     @State private var scanError: String?
@@ -30,7 +30,7 @@ struct PairingQRScannerView: View {
                     StatusScreen(
                         symbol: "camera.fill",
                         title: "Camera access is off",
-                        message: "Allow camera access in Settings, or type the pairing code instead.",
+                        message: "Allow camera access in Settings, or add the agent by name instead.",
                         primary: .init(title: "Open Settings", action: {
                             guard let settingsURL = URL(string: UIApplication.openSettingsURLString)
                             else {
@@ -38,18 +38,18 @@ struct PairingQRScannerView: View {
                             }
                             openURL(settingsURL)
                         }),
-                        secondary: .init(title: "Type it instead", action: { dismiss() })
+                        secondary: .init(title: "Go back", action: { dismiss() })
                     )
                 case .unavailable:
                     StatusScreen(
                         symbol: "qrcode.viewfinder",
                         title: "Scanning isn't available",
-                        message: "This device can't scan a code. Enter the core address and pairing code by hand.",
-                        primary: .init(title: "Type it instead", action: { dismiss() })
+                        message: "This device can't scan a code. Add the agent by name, or type its address by hand.",
+                        primary: .init(title: "Go back", action: { dismiss() })
                     )
                 }
             }
-            .navigationTitle("Scan pairing code")
+            .navigationTitle("Scan a QR code")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(cameraState == .ready ? .hidden : .automatic, for: .navigationBar)
             .toolbarColorScheme(cameraState == .ready ? .dark : nil, for: .navigationBar)
@@ -68,7 +68,7 @@ struct PairingQRScannerView: View {
 
     private var scanner: some View {
         ZStack(alignment: .bottom) {
-            PairingQRScannerController { payload in
+            AgentQRScannerController { payload in
                 handle(payload)
             }
             .ignoresSafeArea()
@@ -92,7 +92,7 @@ struct PairingQRScannerView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
 
-                Text("Point the camera at the pairing code your core is showing.")
+                Text("Point the camera at the code your agent is showing.")
                     .font(.subheadline)
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
@@ -133,9 +133,9 @@ struct PairingQRScannerView: View {
     private func handle(_ payload: String) {
         do {
             guard let url = URL(string: payload) else {
-                throw PairingRequestError.invalidLink
+                throw AddAgentRequestError.invalidLink
             }
-            let request = try PairingRequest(url: url)
+            let request = try AddAgentRequest(url: url)
             onScan(request)
             dismiss()
         } catch {
@@ -177,7 +177,7 @@ private struct ScannerReticle: View {
     }
 }
 
-private struct PairingQRScannerController: UIViewControllerRepresentable {
+private struct AgentQRScannerController: UIViewControllerRepresentable {
     let onPayload: (String) -> Void
 
     func makeCoordinator() -> Coordinator {

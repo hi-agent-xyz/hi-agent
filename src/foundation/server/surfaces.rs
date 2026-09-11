@@ -1,14 +1,19 @@
-//! The surface endpoints — exchange a credential, pair a new one, list and
-//! revoke.
+//! The surface endpoints — exchange a credential, pair a new one, ask to be let
+//! in, list and revoke.
 //!
 //! The gate itself lives in [`crate::foundation::surfaces`]; this is only its
-//! HTTP face. Four routes, and the split between them is who may call:
+//! HTTP face, and the split between the routes is who may call:
 //!
 //! - `POST /api/session` is **open**, because it is how anything stops being
 //!   unauthorized. It takes either a credential or a one-time pairing code.
-//! - `POST /api/pair`, `GET /api/surfaces`, `DELETE /api/surfaces/{id}` are
-//!   gated like everything else, so pairing a phone means asking from the Mac —
-//!   or from the machine itself, which is `authorized_keys` again.
+//! - `/api/access/request` — singular — is **open** in both directions, for the
+//!   same reason: the caller is a device with no way in. It is two
+//!   unauthenticated writes, so `MAX_PENDING`, the ten-minute TTL and the failure
+//!   throttle are what bound it.
+//! - `POST /api/pair`, `/api/access/request**s**` and everything under
+//!   `/api/surfaces` are gated like everything else, so letting a phone in means
+//!   asking from the Mac — or from the machine itself, which is
+//!   `authorized_keys` again.
 
 use std::sync::Arc;
 
@@ -152,6 +157,109 @@ fn pairing_app_url(core_url: &str, code: &str) -> String {
         .append_pair("url", core_url)
         .append_pair("code", code);
     url.to_string()
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AskBody {
+    /// What to call the asking device on the approver's screen. It is a stranger's
+    /// text until somebody approves it, so it is trimmed and clipped like a label.
+    #[serde(default)]
+    label: String,
+}
+
+/// `POST /api/access/request` — a device with no way in asks for one.
+///
+/// **Open, and that is the whole design.** The two paths that already existed need
+/// a keyboard or a camera pointed at the desktop; a TV has neither, and a phone in
+/// another room has neither. What this trades for that is that anyone who can
+/// reach the address can put a line on the owner's `reach` view — bounded by
+/// `MAX_PENDING`, which is why a ninth is refused rather than queued.
+///
+/// **The agent is never told.** Anything that let an unauthenticated write reach
+/// Cognition would let a stranger make someone else's agent speak.
+pub async fn post_access_request(State(state): State<Arc<AppState>>, body: String) -> Response {
+    // Parsed leniently for the same reason `post_session` is: this is reached by
+    // `curl` with no content type as often as by a page.
+    let parsed: AskBody = serde_json::from_str(&body).unwrap_or_default();
+    let label: String = parsed.label.trim().chars().take(80).collect();
+    let label = if label.is_empty() { "a device".to_string() } else { label };
+
+    let Some((id, code, secret)) = state.surfaces.ask(&label) else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many devices are already waiting to be let in\n",
+        )
+            .into_response();
+    };
+    tracing::info!(request = %id, %label, "a device asked to be let in");
+    axum::Json(serde_json::json!({
+        "id": id,
+        "code": code,
+        "secret": secret,
+        "expires_in": 600,
+    }))
+    .into_response()
+}
+
+/// `GET /api/access/request` — the asking device polls for its answer, presenting
+/// the secret it was handed as a bearer token.
+///
+/// An approved credential comes back once; a wrong secret is answered `expired`
+/// and counts a failure. What makes it unguessable is its 32 bytes, not that
+/// count — this route is open, so like `POST /api/session` it is not itself
+/// refused when the budget is spent. See [`surfaces::Surfaces::claim`].
+pub async fn get_access_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(secret) = bearer(&headers) else {
+        return (StatusCode::UNAUTHORIZED, "present the secret you were handed\n").into_response();
+    };
+    let (state_name, credential) = match state.surfaces.claim(&secret) {
+        surfaces::Claim::Pending => ("pending", None),
+        surfaces::Claim::Approved(token) => ("approved", Some(token)),
+        surfaces::Claim::Denied => ("denied", None),
+        surfaces::Claim::Expired => ("expired", None),
+    };
+    axum::Json(serde_json::json!({ "state": state_name, "credential": credential })).into_response()
+}
+
+/// `GET /api/access/requests` — who is waiting, for the `reach` view. Gated: a
+/// device that could read this could read every waiting code.
+pub async fn get_access_requests(State(state): State<Arc<AppState>>) -> Response {
+    axum::Json(serde_json::json!({ "requests": state.surfaces.pending() })).into_response()
+}
+
+/// `POST /api/access/requests/{id}/approve` — let that device in.
+pub async fn post_access_approve(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    match state.surfaces.approve(&id) {
+        Ok(true) => {
+            tracing::info!(request = %id, "a waiting device was let in");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, "nothing is waiting under that id\n").into_response(),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "approving an access request");
+            (StatusCode::INTERNAL_SERVER_ERROR, "could not mint the credential\n").into_response()
+        }
+    }
+}
+
+/// `DELETE /api/access/requests/{id}` — turn it down. Told apart from an expiry on
+/// the other device, because "nobody answered" and "somebody said no" are
+/// different things to read.
+pub async fn delete_access_request(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    if state.surfaces.deny(&id) {
+        tracing::info!(request = %id, "a waiting device was turned down");
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    (StatusCode::NOT_FOUND, "nothing is waiting under that id\n").into_response()
 }
 
 /// `GET /api/surfaces` — the device list. Labels, when each was added, and when

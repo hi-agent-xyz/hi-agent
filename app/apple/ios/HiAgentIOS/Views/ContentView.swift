@@ -26,8 +26,8 @@ struct ContentView: View {
                 .id(current.id)
             } else {
                 WelcomeView(
-                    onScan: { model.pairingRequest = .scan },
-                    onManual: { model.pairingRequest = .manual }
+                    onAdd: { model.addRequest = .ask },
+                    onScan: { model.addRequest = .scan }
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
@@ -47,22 +47,22 @@ struct ContentView: View {
             RosterView()
                 .environmentObject(model)
         }
-        .sheet(item: $model.pairingRequest) { request in
-            PairCoreView(request: request)
+        .sheet(item: $model.addRequest) { request in
+            AddAgentView(request: request)
                 .environmentObject(model)
         }
         .alert(
-            "Could not open pairing link",
+            "Could not open that link",
             isPresented: Binding(
-                get: { model.pairingLinkError != nil },
-                set: { if !$0 { model.pairingLinkError = nil } }
+                get: { model.addLinkError != nil },
+                set: { if !$0 { model.addLinkError = nil } }
             )
         ) {
             Button("OK", role: .cancel) {
-                model.pairingLinkError = nil
+                model.addLinkError = nil
             }
         } message: {
-            Text(model.pairingLinkError ?? "")
+            Text(model.addLinkError ?? "")
         }
         .task {
             await model.refresh()
@@ -92,8 +92,8 @@ struct ContentView: View {
 /// thrown at the reader before they have looked at the screen.
 private struct WelcomeView: View {
     @Environment(\.isRoomy) private var isRoomy
+    let onAdd: () -> Void
     let onScan: () -> Void
-    let onManual: () -> Void
 
     @State private var appeared = false
 
@@ -108,7 +108,7 @@ private struct WelcomeView: View {
                     .font(Theme.display(38))
                     .foregroundStyle(.primary)
 
-                Text("Pair a core to open the conversation.")
+                Text("Add your agent to open the conversation.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -144,8 +144,8 @@ private struct WelcomeView: View {
 
     private var actions: some View {
         VStack(spacing: 14) {
-            Button(action: onScan) {
-                Label("Scan pairing code", systemImage: "qrcode.viewfinder")
+            Button(action: onAdd) {
+                Label("Add a remote hi-agent", systemImage: "plus.circle.fill")
                     .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity)
             }
@@ -153,7 +153,7 @@ private struct WelcomeView: View {
             .controlSize(.large)
             .buttonBorderShape(.roundedRectangle(radius: 14))
 
-            Button("Enter details manually", action: onManual)
+            Button("Scan a QR code", action: onScan)
                 .font(.subheadline.weight(.medium))
                 .tint(Theme.ink)
         }
@@ -228,11 +228,11 @@ private struct CoreStageView: View {
             } else {
                 StatusScreen(
                     symbol: "antenna.radiowaves.left.and.right.slash",
-                    title: "Can't reach this core",
-                    message: errorMessage ?? "Check the core address and try again.",
+                    title: "Can't reach this agent",
+                    message: errorMessage ?? "Check the address and try again.",
                     primary: .init(title: "Try again", action: { Task { await open() } }),
-                    secondary: .init(title: "Pair again", action: {
-                        model.pairingRequest = PairingRequest(
+                    secondary: .init(title: "Add again", action: {
+                        model.addRequest = AddAgentRequest(
                             baseURL: entry.baseURL,
                             code: "",
                             label: entry.label
@@ -359,17 +359,17 @@ private struct CoreStageView: View {
             case .notConnectedToInternet:
                 return "This device is offline."
             case .timedOut:
-                return "The core took too long to respond."
+                return "The agent took too long to respond."
             case .cannotFindHost, .dnsLookupFailed:
-                return "The core address could not be found."
+                return "That address could not be found."
             case .cannotConnectToHost, .networkConnectionLost:
-                return "The connection to the core was lost."
+                return "The connection to the agent was lost."
             case .secureConnectionFailed,
                  .serverCertificateHasBadDate,
                  .serverCertificateUntrusted,
                  .serverCertificateHasUnknownRoot,
                  .serverCertificateNotYetValid:
-                return "The core's secure connection could not be verified."
+                return "The agent's secure connection could not be verified."
             default:
                 break
             }
@@ -377,12 +377,12 @@ private struct CoreStageView: View {
         if let clientError = error as? CoreClientError,
            case .rejected(let status, _) = clientError,
            status == 401 {
-            return "This device's credential was not accepted. Pair it with the core again."
+            return "This device's credential was not accepted. Add the agent again."
         }
         if let keychainError = error as? KeychainError, case .read = keychainError {
             // The OSStatus is diagnostic noise to the reader; what they can act
             // on is that the stored credential is gone.
-            return "This device is no longer paired with \(entry.label). Pair it again."
+            return "This device no longer has access to \(entry.label). Add it again."
         }
         return error.localizedDescription
     }
@@ -435,7 +435,7 @@ private struct StageChrome: View {
             }
             .buttonStyle(.plain)
             .background(.regularMaterial, in: Capsule())
-            .accessibilityLabel("\(entry.label), \(entry.health.title). Switch core")
+            .accessibilityLabel("\(entry.label), \(entry.health.title). Switch agent")
 
             if !isRoomy {
                 Spacer(minLength: 0)
@@ -506,7 +506,7 @@ private struct ChromeReveal: View {
             )
             .frame(maxWidth: .infinity)
             .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Show which core this is")
+            .accessibilityLabel("Show which agent this is")
             .accessibilityAction { onCall() }
     }
 }

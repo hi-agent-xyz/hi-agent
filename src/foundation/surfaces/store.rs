@@ -5,11 +5,17 @@
 //! app settings live in. The **label** is the whole reason the columns are shaped
 //! this way: a device list a person can read is what makes revocation a decision
 //! rather than a guess.
+//!
+//! **Sessions are here too, and that is the point.** An app survives a restart
+//! because it re-exchanges the credential it keeps in its keychain; a browser at
+//! `https://iloahz.hi-agent.xyz/` holds only the cookie, so a session living in
+//! process memory made every restart a walk to the desktop for a fresh code —
+//! while the `Set-Cookie` it had already sent claimed thirty days.
 
 use std::path::Path;
 
 use anyhow::Context;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
@@ -22,6 +28,12 @@ const SCHEMA: &str = "
         last_seen_at TEXT NOT NULL DEFAULT '',
         revoked_at   TEXT NOT NULL DEFAULT '',
         subject      TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS surface_session (
+        hash          TEXT PRIMARY KEY,
+        credential_id TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        expires_at    TEXT NOT NULL
     );
 ";
 
@@ -186,9 +198,160 @@ pub fn revoke(data_dir: &Path, id: &str) -> anyhow::Result<bool> {
     Ok(n > 0)
 }
 
+// ── sessions ─────────────────────────────────────────────────────────────────
+
+/// One live session: the hash of its token, the credential it stands on, and when
+/// it lapses. Never carries the token — that exists once, in the `Set-Cookie` that
+/// hands it over, exactly like a credential.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub hash: String,
+    pub credential_id: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Record an exchanged session. Takes the **hash**, for the same reason
+/// [`insert`] does.
+pub fn session_insert(
+    data_dir: &Path,
+    hash: &str,
+    credential_id: &str,
+    expires_at: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let conn = open(data_dir)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO surface_session (hash, credential_id, created_at, expires_at) \
+         VALUES (?1, ?2, ?3, ?4)",
+        params![hash, credential_id, Utc::now().to_rfc3339(), expires_at.to_rfc3339()],
+    )?;
+    Ok(())
+}
+
+/// Every unexpired session, sweeping the expired ones on the way past.
+///
+/// **A revoked credential's sessions are excluded by the join, not by remembering
+/// to delete them.** [`session_revoke_for`] does delete them, but that is cleanup;
+/// this is the guarantee, and it is the one that has to hold if the delete ever
+/// fails. An `expires_at` that will not parse is swept with the lapsed — the safe
+/// reading of a row we cannot date is that it is not live.
+///
+/// Returns *all* of them rather than looking one up by hash, for the same reason
+/// [`live`] does: the caller compares in constant time (see [`super::ct_eq`]), and
+/// the row count is one person's devices.
+pub fn session_live(data_dir: &Path) -> anyhow::Result<Vec<Session>> {
+    let conn = open(data_dir)?;
+    let rows: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT s.hash, s.credential_id, s.expires_at FROM surface_session s \
+             JOIN surface_credential c ON c.id = s.credential_id WHERE c.revoked_at = ''",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.filter_map(Result::ok).collect()
+    };
+
+    let now = Utc::now();
+    let mut live = Vec::new();
+    let mut lapsed = Vec::new();
+    for (hash, credential_id, expires_at) in rows {
+        match parse_rfc3339(&expires_at) {
+            Some(at) if at > now => live.push(Session { hash, credential_id, expires_at: at }),
+            _ => lapsed.push(hash),
+        }
+    }
+    for hash in lapsed {
+        let _ = conn.execute("DELETE FROM surface_session WHERE hash = ?1", params![hash]);
+    }
+    Ok(live)
+}
+
+/// Push a session's expiry out. The token is unchanged — see
+/// [`super::Surfaces::session_of`] for why it is not rotated.
+pub fn session_renew(data_dir: &Path, hash: &str, expires_at: DateTime<Utc>) -> anyhow::Result<()> {
+    let conn = open(data_dir)?;
+    conn.execute(
+        "UPDATE surface_session SET expires_at = ?2 WHERE hash = ?1",
+        params![hash, expires_at.to_rfc3339()],
+    )?;
+    Ok(())
+}
+
+/// Drop every session standing on one credential. Called with [`revoke`], or a
+/// revoked phone keeps working until its session lapses.
+pub fn session_revoke_for(data_dir: &Path, credential_id: &str) -> anyhow::Result<()> {
+    let conn = open(data_dir)?;
+    conn.execute("DELETE FROM surface_session WHERE credential_id = ?1", params![credential_id])?;
+    Ok(())
+}
+
+fn parse_rfc3339(iso: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(iso).ok().map(|t| t.with_timezone(&Utc))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restart case, which is the whole point: a session written through one
+    /// handle authorizes through another opened over the same data dir.
+    #[test]
+    fn a_session_outlives_the_process_that_wrote_it() {
+        let dir = tempdir();
+        insert(&dir, "a", "the browser", "hash-a").unwrap();
+        let far = Utc::now() + chrono::TimeDelta::seconds(3600);
+        session_insert(&dir, "sess-a", "a", far).unwrap();
+
+        // A second reader over the same file — no shared process state between them.
+        let live = session_live(&dir).unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].credential_id, "a");
+    }
+
+    #[test]
+    fn an_expired_session_is_swept_rather_than_returned() {
+        let dir = tempdir();
+        insert(&dir, "a", "the browser", "hash-a").unwrap();
+        session_insert(&dir, "gone", "a", Utc::now() - chrono::TimeDelta::seconds(1)).unwrap();
+        assert!(session_live(&dir).unwrap().is_empty());
+
+        let conn = open(&dir).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM surface_session", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "and the row is gone, not merely filtered out");
+    }
+
+    #[test]
+    fn renewing_moves_the_expiry_and_keeps_the_token() {
+        let dir = tempdir();
+        insert(&dir, "a", "the browser", "hash-a").unwrap();
+        let soon = Utc::now() + chrono::TimeDelta::seconds(60);
+        session_insert(&dir, "sess-a", "a", soon).unwrap();
+
+        let later = Utc::now() + chrono::TimeDelta::seconds(7200);
+        session_renew(&dir, "sess-a", later).unwrap();
+        let live = session_live(&dir).unwrap();
+        assert_eq!(live.len(), 1, "the same row, not a second one");
+        assert_eq!(live[0].hash, "sess-a", "the token is not rotated");
+        assert!(live[0].expires_at > soon);
+    }
+
+    /// The join is the guarantee. Even with the delete skipped, a revoked
+    /// credential's session answers for nothing.
+    #[test]
+    fn a_revoked_credential_has_no_live_sessions() {
+        let dir = tempdir();
+        insert(&dir, "a", "the browser", "hash-a").unwrap();
+        session_insert(&dir, "sess-a", "a", Utc::now() + chrono::TimeDelta::seconds(3600)).unwrap();
+        revoke(&dir, "a").unwrap();
+        assert!(session_live(&dir).unwrap().is_empty());
+
+        session_revoke_for(&dir, "a").unwrap();
+        let conn = open(&dir).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM surface_session", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "and the cleanup actually removes the row");
+    }
 
     #[test]
     fn a_device_is_registered_to_a_person_and_can_be_unregistered() {

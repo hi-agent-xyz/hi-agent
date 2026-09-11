@@ -45,6 +45,12 @@ const T = {
     pairWith: "Open this address on the other device and enter this code. It lasts ten minutes.",
     pairAt: "or scan with the Hi Agent app",
     done: "Done",
+    // — devices asking to be let in
+    waiting: "Waiting to be let in",
+    waitingWhy: "Check the code matches the one on that device before you let it in.",
+    approve: "Let in",
+    deny: "No",
+    asked: (when) => `asked ${when}`,
     // Registering a device to a person. The copy has to say what it changes and what
     // it does not, because "whose phone is this" sounds like it should cover the
     // microphone and it deliberately does not.
@@ -75,6 +81,11 @@ const T = {
     pairWith: "在另一台设备上打开这个地址，输入这个码。十分钟内有效。",
     pairAt: "或者用 Hi Agent App 扫码",
     done: "好了",
+    waiting: "有设备在等着进来",
+    waitingWhy: "放行之前，先核对那台设备上显示的码是不是这一个。",
+    approve: "放进来",
+    deny: "不行",
+    asked: (when) => `${when}问的`,
     whose: "谁的设备",
     nobody: "没指定",
     whoseWhy: "在上面打的字、递过来的文件、点开的页面，都算在这个人名下。麦克风听到的不算——那由声音本身回答。",
@@ -104,6 +115,10 @@ export default function Reach() {
   // control that would only ever be refused.
   const [people, setPeople] = useState([]);
   const [settable, setSettable] = useState(false);
+  // Devices that have asked to be let in and are waiting on a person. This page is
+  // the only place they appear — the agent is deliberately never told, because the
+  // endpoint that files them is unauthenticated.
+  const [waiting, setWaiting] = useState([]);
 
   const loadDevices = useCallback(
     () =>
@@ -128,6 +143,17 @@ export default function Reach() {
     [],
   );
 
+  const loadRequests = useCallback(
+    () =>
+      fetch("/api/access/requests")
+        .then((r) => r.json())
+        .then((d) => setWaiting(d.requests || []))
+        // Keep the last answer on a failed read: a request blinking out of a list
+        // somebody is about to click is worse than one shown a tick too long.
+        .catch(() => {}),
+    [],
+  );
+
   const loadHandle = useCallback(
     () =>
       // Always answers: a core with no name is a normal core, and the reason it
@@ -148,6 +174,7 @@ export default function Reach() {
       <div style={S.h1}>{L.title}</div>
       <Name state={handle} onChanged={loadHandle} />
       <Devices list={devices} people={people} settable={settable}
+        waiting={waiting} reloadRequests={loadRequests}
         reload={loadDevices} reloadPeople={loadPeople} />
     </div>
   );
@@ -234,7 +261,7 @@ function stripScheme(u) {
 
 // ── the devices ───────────────────────────────────────────────────────────────
 
-function Devices({ list, people, settable, reload, reloadPeople }) {
+function Devices({ list, people, settable, waiting, reloadRequests, reload, reloadPeople }) {
   const [pairing, setPairing] = useState(null); // {code, url, app_url}
   const [busy, setBusy] = useState("");
 
@@ -255,6 +282,10 @@ function Devices({ list, people, settable, reload, reloadPeople }) {
   // sees somebody it cannot place — so the picker is refreshed on the same clock as
   // the list it sits in.
   useLive(reloadPeople, { period: TEMPO.ledger, hold: () => busy !== "" });
+  // Whoever is asking is standing there holding the device, so this one is always
+  // the watching clock: on the ledger's eight seconds they stare at a screen that
+  // says nothing happened, which is what "is this broken" feels like.
+  useLive(reloadRequests, { period: TEMPO.watching, hold: () => busy !== "" });
 
   async function register(id, subject) {
     setBusy(id);
@@ -292,8 +323,64 @@ function Devices({ list, people, settable, reload, reloadPeople }) {
     }
   }
 
+  // Approving mints a credential the waiting device then claims, so both lists
+  // change: the request leaves this one and a device appears in the other.
+  async function answer(id, letIn) {
+    setBusy(id);
+    try {
+      await fetch(letIn ? `/api/access/requests/${id}/approve` : `/api/access/requests/${id}`, {
+        method: letIn ? "POST" : "DELETE",
+        headers: WRITE,
+      });
+    } finally {
+      setBusy("");
+    }
+    reloadRequests();
+    if (letIn) reload();
+  }
+
   return (
     <Section title={L.devices} why={settable ? `${L.devicesWhy} ${L.whoseWhy}` : L.devicesWhy}>
+      {waiting.length > 0 && (
+        <div style={S.waiting}>
+          <div style={S.waitingHead}>{L.waiting}</div>
+          <div style={S.hint}>{L.waitingWhy}</div>
+          {waiting.map((r) => (
+            <div key={r.id} style={S.askCard}>
+              {/* The code and whose device it is are one reading — "216948, the TV" —
+                  so they travel together and the buttons are the thing that wraps.
+                  Split across the card's full width the label lands at the far margin
+                  and stops looking like a caption for the number beside it. */}
+              <div style={S.askWho}>
+                {/* Big enough to read across a desk: the whole point of the code is
+                    that two people compare it from where they are standing. */}
+                <div style={S.askCode}>{r.code}</div>
+                <div style={S.cardMain}>
+                  <div style={S.cardName}>{r.label}</div>
+                  <div style={S.cardWhen}>{L.asked(ago(r.asked_at))}</div>
+                </div>
+              </div>
+              <div style={S.row}>
+                <button
+                  style={S.button}
+                  onClick={() => answer(r.id, true)}
+                  disabled={busy === r.id}
+                >
+                  {L.approve}
+                </button>
+                <button
+                  style={S.danger}
+                  onClick={() => answer(r.id, false)}
+                  disabled={busy === r.id}
+                >
+                  {L.deny}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {list === null ? null : list.length === 0 ? (
         <div style={S.note}>{L.noDevices}</div>
       ) : (
@@ -453,6 +540,17 @@ const S = {
   whoseLabel: { fontSize: 11.5, color: "var(--fg-mute)" },
   whosePick: { font: "inherit", fontSize: 12, padding: "3px 6px", borderRadius: 7,
     border: "1px solid var(--line-strong)", background: "transparent", color: "var(--fg)" },
+
+  waiting: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16,
+    padding: "12px 14px", borderRadius: 14, background: "var(--accent-soft)",
+    border: "1px solid var(--accent-line)" },
+  waitingHead: { fontSize: 13.5, fontWeight: 750, letterSpacing: "-.01em", color: "var(--accent)" },
+  askCard: { display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between",
+    background: "var(--surface-strong)", borderRadius: 12, boxShadow: "var(--v-shadow)",
+    padding: "11px 14px", flexWrap: "wrap" },
+  askWho: { display: "flex", gap: 12, alignItems: "center", minWidth: 0, flex: "1 1 auto" },
+  askCode: { fontFamily: "var(--font-mono)", fontSize: 26, fontWeight: 800, letterSpacing: ".1em",
+    color: "var(--fg)", flex: "0 0 auto" },
 
   pair: { background: "var(--surface-strong)", borderRadius: 14, boxShadow: "var(--v-shadow)",
     padding: "16px 18px", display: "flex", flexDirection: "column", alignItems: "flex-start",

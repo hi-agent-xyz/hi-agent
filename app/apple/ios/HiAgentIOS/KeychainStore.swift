@@ -9,11 +9,11 @@ enum KeychainError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .save(let status):
-            return "Could not save the core credential (\(status))."
+            return "Could not save this agent's credential (\(status))."
         case .read(let status):
-            return "Could not read the core credential (\(status))."
+            return "Could not read this agent's credential (\(status))."
         case .delete(let status):
-            return "Could not remove the core credential (\(status))."
+            return "Could not remove this agent's credential (\(status))."
         }
     }
 }

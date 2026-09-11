@@ -64,7 +64,7 @@ struct ShowScreenSetupView: View {
                     Text(
                         """
                         The first time it runs, iOS asks whether the shortcut may take \
-                        a screenshot. It goes to the core you are attached to, and \
+                        a screenshot. It goes to the agent you are attached to, and \
                         nowhere else.
                         """
                     )

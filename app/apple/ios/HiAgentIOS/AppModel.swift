@@ -14,8 +14,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var entries: [RosterEntry] = []
     @Published var selectedID: String?
     @Published private(set) var isRefreshing = false
-    @Published var pairingRequest: PairingRequest?
-    @Published var pairingLinkError: String?
+    @Published var addRequest: AddAgentRequest?
+    @Published var addLinkError: String?
     @Published private(set) var credentialRevision = 0
     /// Where the last screen the person showed got to, or `nil` if they have not
     /// shown one this launch.
@@ -39,18 +39,62 @@ final class AppModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) {
         do {
-            pairingRequest = try PairingRequest(url: url)
-            pairingLinkError = nil
+            addRequest = try AddAgentRequest(url: url)
+            addLinkError = nil
         } catch {
-            pairingLinkError = error.localizedDescription
+            addLinkError = error.localizedDescription
         }
     }
 
-    func pair(baseURL rawBaseURL: String, code rawCode: String, label rawLabel: String) async throws {
+    /// Ask an agent, by name, to let this device in.
+    ///
+    /// Nothing is stored by this call: what comes back is a code to show and a
+    /// secret to wait on. The roster only grows once [`join`] lands.
+    func askToJoin(name: String) async throws -> JoinInvitation {
+        let baseURL = try CoreClient.address(forName: name)
+        let ticket = try await CoreClient.askToJoin(at: baseURL, label: UIDevice.current.name)
+        return JoinInvitation(
+            baseURL: baseURL,
+            label: agentLabel(for: name, at: baseURL),
+            code: ticket.code,
+            secret: ticket.secret
+        )
+    }
+
+    /// Wait out one invitation, and take the credential the moment it is approved.
+    ///
+    /// Polls until answered or cancelled — the caller's `Task` is what ends it, so
+    /// closing the sheet stops the wait. Past the request's own ten-minute life the
+    /// agent answers `expired` and this throws, which is the same clock rather than
+    /// a second one kept here.
+    func join(_ invitation: JoinInvitation) async throws {
+        while true {
+            try Task.checkCancellation()
+            switch try await CoreClient.pollJoin(at: invitation.baseURL, secret: invitation.secret) {
+            case .approved(let credential):
+                // From here it is the ordinary add: the credential goes to the
+                // keychain, the agent joins the roster, and the stage opens it.
+                try await add(
+                    baseURL: invitation.baseURL.absoluteString,
+                    code: credential,
+                    label: invitation.label
+                )
+                return
+            case .denied:
+                throw CoreClientError.requestFailed("That was turned down.")
+            case .expired:
+                throw CoreClientError.requestFailed("Nobody answered in time. Ask again.")
+            case .waiting:
+                try await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    func add(baseURL rawBaseURL: String, code rawCode: String, label rawLabel: String) async throws {
         let baseURL = try CoreClient.normalizeBaseURL(rawBaseURL)
         let code = rawCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !code.isEmpty else {
-            throw CoreClientError.requestFailed("Enter the pairing code from the core.")
+            throw CoreClientError.requestFailed("Enter the one-time code the agent is showing.")
         }
         let requestedLabel = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         let coreLabel = requestedLabel.isEmpty ? defaultCoreLabel(for: baseURL) : requestedLabel
@@ -175,7 +219,7 @@ final class AppModel: ObservableObject {
         guard let entry = attachedEntry else {
             pendingScreen = screen
             showScreenState = .failed(
-                reason: "This device isn't paired with a core yet, so there's nobody to show it to."
+                reason: "This device hasn't been added to an agent yet, so there's nobody to show it to."
             )
             return
         }
@@ -202,7 +246,7 @@ final class AppModel: ObservableObject {
         } catch let error as KeychainError {
             if case .read = error {
                 showScreenState = .failed(
-                    reason: "This device is no longer paired with \(entry.label). Pair it again."
+                    reason: "This device no longer has access to \(entry.label). Add it again."
                 )
             } else {
                 showScreenState = .failed(reason: error.localizedDescription)
@@ -246,8 +290,30 @@ final class AppModel: ObservableObject {
     }
 
     private func defaultCoreLabel(for baseURL: URL) -> String {
-        let host = baseURL.host ?? "Core"
+        let host = baseURL.host ?? "Agent"
         let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return path.isEmpty ? host : "\(host)/\(path)"
     }
+
+    /// What to call an agent added by name. The name itself when that is what was
+    /// typed — "iloahz" reads better in the roster than "iloahz.hi-agent.xyz" — and
+    /// the host when somebody pasted a whole address.
+    private func agentLabel(for name: String, at baseURL: URL) -> String {
+        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let bare = typed.hasPrefix("@") ? String(typed.dropFirst()) : typed
+        if !bare.isEmpty, !bare.contains("."), !bare.contains("/") {
+            return bare
+        }
+        return defaultCoreLabel(for: baseURL)
+    }
+}
+
+/// One outstanding "let me in", held only while the sheet is open.
+struct JoinInvitation: Equatable {
+    let baseURL: URL
+    let label: String
+    /// Shown here and on the agent's Reach view, for the two to be compared. It
+    /// authorizes nothing.
+    let code: String
+    let secret: String
 }

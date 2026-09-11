@@ -280,7 +280,7 @@ and a roster entry *is* a base URL, so the format cannot simply change under the
 
 **One mechanism, at the core, identical in every shape.**
 
-A long-lived **credential**, exchanged once for a short session:
+A long-lived **credential**, exchanged once for a session:
 
 ```
 POST /api/session      Authorization: Bearer <credential>
@@ -289,6 +289,20 @@ POST /api/session      Authorization: Bearer <credential>
 
 `Path=/` and no `Domain=`: the cookie covers the whole of this core because the origin *is*
 this core, and it is host-only so it reaches no other one.
+
+**The session is durable and rolling.** It lives in the same table the credential does, and
+survives a restart — because a browser's only durable secret *is* the cookie. An app
+re-exchanges what it keeps in the OS keychain and never notices a restart; a page at
+`https://ana.hi-agent.xyz/` has nothing to re-present, so a session held in process memory
+made every restart a walk to the machine for a fresh code, while the `Set-Cookie` already
+sent claimed thirty days. The server was forgetting something it had promised to remember.
+
+Rolling: a use more than a day into a session's life extends it to a fresh thirty, and the
+gate re-sends the same cookie. Open the address once a month and it keeps working; leave it
+thirty days and it asks again. **The token is not rotated** — rotation breaks concurrent
+in-flight requests from one page, and buys a guarantee nothing here relies on, since the row
+is what revocation removes either way. A second refresh token is likewise not the shape:
+it would add a credential type to do what extending one row does.
 
 Two presentations of one credential, because a header alone cannot carry a browser:
 `EventSource` cannot set headers, browser `WebSocket` cannot set headers, and neither can
@@ -308,9 +322,34 @@ call rather than a capability the architecture withholds. There is no guest, no 
 scoping and no permission tier; who is *speaking* is a question the agent answers the way it
 answers it in a room — by voice, by face, by asking.
 
-**Storage.** `(id, label, hash, created_at, last_seen_at, revoked_at)`. The label is what
-makes a device list readable and revocation meaningful. Compare in constant time, and
-rate-limit failures.
+**Three ways a surface is admitted**, and the third is the only one that works from across
+the house:
+
+1. a credential it already holds;
+2. a one-time pairing code, read off the core's screen or scanned from its QR;
+3. **asking** — the device states the agent's name, the core files a request, and the person
+   approves it from the `reach` view. Both screens show the same six digits so the approver
+   can tell which device is theirs. That code is **not a secret and authorizes nothing**; the
+   secret is handed to the asking device in the response body and spent once for the
+   credential.
+
+The third exists because the first two need a keyboard or a camera pointed at the machine,
+and a TV has neither. `POST /api/access/request` is therefore **unauthenticated**, and what
+bounds it is a cap on how many may be waiting at once (eight; a ninth is refused `429`) and
+the ten-minute life they share with pairing codes. The poll secret is bounded by its own 32
+bytes: a wrong one counts a failure, but an open path is answered before the throttle is
+consulted, exactly as `POST /api/session` is — a bootstrap route that refuses on a spent
+budget locks a device out of the only way it has in.
+
+**The agent is never told a request is waiting.** Anything that let an unauthenticated write
+reach Cognition would let a stranger make someone else's agent speak. The `reach` view is the
+only place a request appears.
+
+**Storage.** `(id, label, hash, created_at, last_seen_at, revoked_at)` for the credential, and
+`(hash, credential_id, created_at, expires_at)` for each session standing on it. The label is
+what makes a device list readable and revocation meaningful; revoking drops both halves, so a
+revoked phone stops working at once rather than when its session lapses. Compare in constant
+time, and rate-limit failures.
 
 **Hash with SHA-256, not argon2id.** A slow KDF exists to frustrate guessing of low-entropy
 *passwords*; a 32-byte random credential is not guessable, so argon2 buys nothing and costs
@@ -326,10 +365,14 @@ passwords — this is a different thing, and the reason belongs in a comment or 
 | off-box (relayed or directly public) | gated |
 | `/up/{token}`, `/api/up/{token}` | own one-time token, stays open |
 | `/healthz`, `POST /api/session`, pairing | open by definition |
+| `/api/access/request` — **singular**, `POST` and `GET` | open: the caller is a device with no way in. Capped, timed, throttled |
+| `/api/access/request**s**` — the approver's side | gated. A device that could read this could read every waiting code |
 | a shared view, and only the paths its share derives | its own grant, public or keyed — [`sharing.md`](sharing.md) |
 
-Off-box HTML navigation without a session serves a small "enter your pairing code" page
-rather than a bare 401 — which is also how browser-direct onboarding starts.
+Off-box HTML navigation without a session serves a small page with both ways in rather than a
+bare 401 — which is also how browser-direct onboarding starts. **Asking leads there**, because
+that page is most often reached by a browser whose session lapsed, on a machine that is not the
+one the agent runs on; a code would mean walking to the other one.
 
 ### CSRF
 

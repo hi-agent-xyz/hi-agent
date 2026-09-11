@@ -15,12 +15,12 @@
 		A10000000000000000000006 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ContentView.swift */; };
 		A10000000000000000000007 /* CoreWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* CoreWebView.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* Assets.xcassets */; };
-		A10000000000000000000009 /* PairingRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* PairingRequest.swift */; };
-		A1000000000000000000000A /* PairingQRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* PairingQRScannerView.swift */; };
+		A10000000000000000000009 /* AddAgentRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* AddAgentRequest.swift */; };
+		A1000000000000000000000A /* AgentQRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* AgentQRScannerView.swift */; };
 		A1000000000000000000000B /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* NetworkMonitor.swift */; };
 		A1000000000000000000000C /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* Theme.swift */; };
 		A1000000000000000000000D /* RosterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* RosterView.swift */; };
-		A1000000000000000000000E /* PairCoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* PairCoreView.swift */; };
+		A1000000000000000000000E /* AddAgentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* AddAgentView.swift */; };
 		A1000000000000000000000F /* ShowScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* ShowScreen.swift */; };
 		A10000000000000000000010 /* ShowScreenIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* ShowScreenIntent.swift */; };
 		A10000000000000000000011 /* ShowScreenBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* ShowScreenBanner.swift */; };
@@ -37,12 +37,12 @@
 		B10000000000000000000007 /* CoreWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreWebView.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		B1000000000000000000000A /* PairingRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingRequest.swift; sourceTree = "<group>"; };
-		B1000000000000000000000B /* PairingQRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingQRScannerView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A /* AddAgentRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAgentRequest.swift; sourceTree = "<group>"; };
+		B1000000000000000000000B /* AgentQRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentQRScannerView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		B1000000000000000000000E /* RosterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterView.swift; sourceTree = "<group>"; };
-		B1000000000000000000000F /* PairCoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairCoreView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* AddAgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAgentView.swift; sourceTree = "<group>"; };
 		B10000000000000000000010 /* ShowScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreen.swift; sourceTree = "<group>"; };
 		B10000000000000000000011 /* ShowScreenIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenIntent.swift; sourceTree = "<group>"; };
 		B10000000000000000000012 /* ShowScreenBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenBanner.swift; sourceTree = "<group>"; };
@@ -77,7 +77,7 @@
 				B10000000000000000000003 /* KeychainStore.swift */,
 				B10000000000000000000004 /* CoreClient.swift */,
 				B10000000000000000000005 /* AppModel.swift */,
-				B1000000000000000000000A /* PairingRequest.swift */,
+				B1000000000000000000000A /* AddAgentRequest.swift */,
 				B1000000000000000000000C /* NetworkMonitor.swift */,
 				B10000000000000000000010 /* ShowScreen.swift */,
 				B10000000000000000000011 /* ShowScreenIntent.swift */,
@@ -101,10 +101,10 @@
 			children = (
 				B10000000000000000000006 /* ContentView.swift */,
 				B10000000000000000000007 /* CoreWebView.swift */,
-				B1000000000000000000000B /* PairingQRScannerView.swift */,
+				B1000000000000000000000B /* AgentQRScannerView.swift */,
 				B1000000000000000000000D /* Theme.swift */,
 				B1000000000000000000000E /* RosterView.swift */,
-				B1000000000000000000000F /* PairCoreView.swift */,
+				B1000000000000000000000F /* AddAgentView.swift */,
 				B10000000000000000000012 /* ShowScreenBanner.swift */,
 				B10000000000000000000013 /* ShowScreenSetupView.swift */,
 			);
@@ -185,12 +185,12 @@
 				A10000000000000000000005 /* AppModel.swift in Sources */,
 				A10000000000000000000006 /* ContentView.swift in Sources */,
 				A10000000000000000000007 /* CoreWebView.swift in Sources */,
-				A10000000000000000000009 /* PairingRequest.swift in Sources */,
-				A1000000000000000000000A /* PairingQRScannerView.swift in Sources */,
+				A10000000000000000000009 /* AddAgentRequest.swift in Sources */,
+				A1000000000000000000000A /* AgentQRScannerView.swift in Sources */,
 				A1000000000000000000000B /* NetworkMonitor.swift in Sources */,
 				A1000000000000000000000C /* Theme.swift in Sources */,
 				A1000000000000000000000D /* RosterView.swift in Sources */,
-				A1000000000000000000000E /* PairCoreView.swift in Sources */,
+				A1000000000000000000000E /* AddAgentView.swift in Sources */,
 				A1000000000000000000000F /* ShowScreen.swift in Sources */,
 				A10000000000000000000010 /* ShowScreenIntent.swift in Sources */,
 				A10000000000000000000011 /* ShowScreenBanner.swift in Sources */,

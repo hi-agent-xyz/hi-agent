@@ -24,6 +24,13 @@ end.
 colleague does. Reaching someone means messaging them from its account, not calling an API
 on the user's behalf.
 
+**A surface is admitted three ways**, and the third is what makes a device with no keyboard
+and no camera reachable at all: a credential it holds, a one-time pairing code read off the
+core's screen, or **asking** — it states the agent's name, and the person approves it from
+`reach`. See [`topology.md`](topology.md#auth); the point here is that admission is a property
+of the surface layer and not of any one channel, so a TV, a browser and a phone all get in the
+same way.
+
 **Devices** — phones and machines it owns. The dual role is the thing to keep straight:
 
 - **as a surface** — the world initiates. Someone messages hi-agent's account on a phone

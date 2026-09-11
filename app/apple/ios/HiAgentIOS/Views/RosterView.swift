@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The core switcher. A place you drop into from the stage and leave again —
+/// The agent switcher. A place you drop into from the stage and leave again —
 /// so it is a sheet with a medium detent, not a screen you have to navigate
 /// back out of.
 struct RosterView: View {
@@ -32,7 +32,7 @@ struct RosterView: View {
                                 Button {
                                     select(entry)
                                 } label: {
-                                    Label("Use this core", systemImage: "checkmark.circle")
+                                    Label("Use this agent", systemImage: "checkmark.circle")
                                 }
                             }
                             Button(role: .destructive) {
@@ -43,7 +43,7 @@ struct RosterView: View {
                         }
                     }
                 } footer: {
-                    Text("Pull down to re-check whether each core is answering.")
+                    Text("Pull down to re-check whether each agent is answering.")
                         .font(.footnote)
                 }
 
@@ -77,7 +77,7 @@ struct RosterView: View {
             .refreshable {
                 await model.refresh()
             }
-            .navigationTitle("Cores")
+            .navigationTitle("Agents")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -86,20 +86,20 @@ struct RosterView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        model.pairingRequest = .scan
+                        model.addRequest = .ask
                         dismiss()
                     } label: {
                         Image(systemName: "plus")
                     }
-                    .accessibilityLabel("Pair a core")
+                    .accessibilityLabel("Add a remote hi-agent")
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
-                    model.pairingRequest = .scan
+                    model.addRequest = .ask
                     dismiss()
                 } label: {
-                    Label("Pair another core", systemImage: "qrcode.viewfinder")
+                    Label("Add another agent", systemImage: "plus.circle.fill")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity)
                 }
@@ -137,7 +137,7 @@ struct RosterView: View {
     }
 }
 
-/// One core. Name, address, and — only when it is worth saying — what the last
+/// One agent. Name, address, and — only when it is worth saying — what the last
 /// health check found. A healthy roster stays quiet.
 private struct CoreRow: View {
     let entry: RosterEntry
@@ -187,7 +187,7 @@ private struct CoreRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(entry.label), \(entry.health.title)\(entry.attached ? ", current core" : "")"
+            "\(entry.label), \(entry.health.title)\(entry.attached ? ", current agent" : "")"
         )
     }
 }
