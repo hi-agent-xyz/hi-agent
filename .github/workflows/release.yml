@@ -165,7 +165,7 @@ jobs:
             echo
             echo "The Android packages are unsigned."
             echo "Windows is not in this release — its shell has never completed a build;"
-            echo "see docs/platforms/windows.md. iPhone and iPad ship through TestFlight.""
+            echo "see docs/platforms/windows.md. iPhone and iPad ship through TestFlight."
             echo
             echo "\`manifest.json\` lists every file with its size and SHA-256."
             echo "The latest release's copy is always at"

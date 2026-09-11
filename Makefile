@@ -14,7 +14,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version build dev run test test-live test-views docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
+.PHONY: help check-version check-workflows build dev run test test-live test-views docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -41,9 +41,16 @@ run: ## run the release binary
 	./target/release/hi-agent
 
 test: ## run rust + web tests
+	$(MAKE) check-workflows
 	cargo test
 	$(MAKE) test-web
 	$(MAKE) test-views
+
+# Valid YAML can still carry shell that will not parse, and a workflow's shell
+# is only ever run by GitHub — so the cheapest place to find a stray quote is
+# here, not forty seconds into a run that has already been tagged and pushed.
+check-workflows: ## syntax-check the shell inside every workflow run: block
+	@./scripts/check-workflows.sh
 
 test-live: ## run the tests that need a real server (see each test for its env)
 # Kept out of `test` rather than skipped inside it: these reach a third party over the
