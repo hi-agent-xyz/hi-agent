@@ -324,6 +324,13 @@ jobs:
         # ffmpeg bindings, libssl-dev for openssl-sys, unzip for the browser
         # provisioner's .zip). A dev box has libssl-dev from some earlier
         # apt-get, so its absence shows up only in this bare container.
+        #
+        # `gh` is the last one, and it is here for the same reason: it comes
+        # preinstalled on GitHub's own runner images, so nothing that assumes
+        # it is in PATH — like this job's upload of the .deb to the draft
+        # release — notices it is missing until a bare container reaches that
+        # step, builds for ten minutes first, and then says
+        # `gh: command not found`. Trixie packages 2.46.
         shell: bash
         run: |
           set -euo pipefail
@@ -331,7 +338,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential pkg-config \
-            cmake libclang-dev libssl-dev unzip xz-utils dpkg-dev \
+            cmake libclang-dev libssl-dev unzip xz-utils dpkg-dev gh \
             libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libsecret-1-dev
           rm -rf /var/lib/apt/lists/*
           # The container runs as root over a workspace the runner owns, which

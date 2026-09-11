@@ -169,7 +169,7 @@ among the hosts this repo is developed from, and for a long time that meant the
 shell had never been near a compiler: the C# and XAML here were written the way
 the Phase 1 SwiftUI window was, blind and fix-forward.
 
-The v0.1.0 release run (2026-09-10) changed that by half. `.github/workflows/release.yml`
+The v0.1.0 release runs (2026-09-10, 2026-09-11) changed that by half. `.github/workflows/release.yml`
 builds this project on a hosted `windows-latest` runner, so a Windows box with a
 .NET SDK has now attempted it — and stopped at NuGet restore, before a single
 line was compiled:
@@ -185,16 +185,30 @@ because there is no build. All three package versions are now pinned to what
 that run resolved, `H.NotifyIcon.WinUI` back to 2.3.2 — the newest still
 shipping a net8.0 lib.
 
-So what is verified is one line long, and it is less than it sounds: **the
-project file is well-formed enough that NuGet read it, understood its target
-framework, and rejected a package against it.** Restore did not succeed —
-that is what NU1202 is. Whether the pins above fix it is itself unwitnessed.
-Nothing has compiled, nothing has linked, nothing has run. The two API details most likely to be wrong are still
-`TaskbarIcon.IconSource` (H.NotifyIcon's image type) and
-`CoreWebView2Environment.CreateWithOptionsAsync`'s signature, both flagged where
-they are used, and neither will be settled by anything short of a compile.
-`make exe` and `make installer` are verified to *build* on the Mac mini and have
-never been run on Windows either.
+The second run, the same day, got past that and into the compiler — and the
+compiler found exactly one thing, in one of the two places this section had
+already named as most likely wrong:
+
+    Views/CoreWebView.cs(165,31): error CS1729:
+    'CoreWebView2EnvironmentOptions' does not contain a constructor that
+    takes 1 arguments
+
+The four-argument constructor belongs to the standalone
+`Microsoft.Web.WebView2` package; the copy bundled with the Windows App SDK
+exposes a parameterless one and `AdditionalBrowserArguments` as a property.
+Fixed that way, still blind. A `XamlCompiler.exe` failure (MSB3073) rode along
+behind it, and whether that is its own fault or a cascade from the C# error is
+not yet known.
+
+So, precisely: **restore succeeds, and the C# has been through a compiler
+once.** It did not get through. Nothing has linked and nothing has run, so
+`TaskbarIcon.IconSource` — the other API flagged as probably wrong — is still
+unsettled, and so is every runtime question behind it: whether the tray
+appears, whether the WebView loads, whether the engine child is adopted. What
+this run bought is that the *category* of error has moved from "does it even
+resolve" to "does this specific API call exist", which is the kind a compiler
+answers one round trip at a time. `make exe` and `make installer` are verified
+to *build* on the Mac mini and have never been run on Windows either.
 
 ## See also
 

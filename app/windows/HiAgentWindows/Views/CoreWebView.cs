@@ -162,7 +162,16 @@ internal sealed class CoreWebView
         _initializing = true;
         try
         {
-            var options = new CoreWebView2EnvironmentOptions(BrowserArguments);
+            // Property, not a constructor argument. The WebView2 SDK bundled
+            // with the Windows App SDK exposes only a parameterless
+            // constructor here — the four-argument one belongs to the
+            // standalone Microsoft.Web.WebView2 package, and writing it blind
+            // cost a release run to `CS1729: does not contain a constructor
+            // that takes 1 arguments`.
+            var options = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = BrowserArguments,
+            };
             // An explicit profile directory, under the shell's own state. An
             // unpackaged app otherwise writes its browser profile next to the
             // executable, which is inside the install directory the uninstaller
