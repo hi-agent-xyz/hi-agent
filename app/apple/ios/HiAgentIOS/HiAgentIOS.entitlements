@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- The share extension's only way back into this app: it opens
+	     `https://hi-agent.xyz/ios-share/<id>`, and this is what makes iOS route
+	     that here instead of to Safari. Every other way an extension can wake its
+	     containing app is closed or crashes — see HiAgentShare/OpenHost.swift.
+
+	     The apex, not `*.hi-agent.xyz`: a core lives on a subdomain and a shared
+	     view is an ordinary page on one, so claiming the zone would mean a link
+	     somebody sent you opens your app, pointed at their agent's page. The
+	     apex's own claim is narrowed to `/ios-share/*` on the server side. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:hi-agent.xyz</string>
+	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.xiaoyuanzhu.hiagent</string>

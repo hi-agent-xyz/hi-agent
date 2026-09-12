@@ -62,6 +62,18 @@ struct HandedDrop {
     let directory: URL
     let manifest: Manifest
 
+    /// The directory's name, which is what the hand-off link carries
+    /// (`https://hi-agent.xyz/ios-share/<id>`).
+    ///
+    /// **The app does not look it up.** Coming forward drains the whole queue,
+    /// oldest first, because that is what has to happen anyway for the drops nobody
+    /// opened a link for. The id is in the URL so each hand-off is a distinct
+    /// address rather than one URL opened repeatedly, and so a log line can say
+    /// which share a launch came from.
+    var id: String {
+        directory.lastPathComponent
+    }
+
     struct Manifest: Codable {
         let createdAt: Date
         /// What the person effectively said. Empty for an ordinary share — a photo

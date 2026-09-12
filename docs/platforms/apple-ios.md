@@ -100,35 +100,66 @@ read, no second full-size copy on a phone that may be nearly full, and
 `URLSession.upload(fromFile:)` streams it without ever holding a 3 GB video. One
 request per file, so a drop of nine photos retries the one that failed.
 
-### Opening the app is best-effort, and quarantined
+### Opening the app: one call works, three do not
 
-**There is no sanctioned way for a share extension to open its host app.**
-`UIApplication.shared` does not compile under app-extension API restrictions, and
-`NSExtensionContext.open(_:)` is documented for widgets. `OpenHost` walks the
-responder chain for the old `openURL:` selector, which works and is what apps that do
-this use — and is the one part of sharing that could fail App Review.
+The extension's last act is to bring Hi Agent forward, because the reason to share
+something to your agent is to say a thing about it. Getting there is the single most
+misleading corner of this whole feature — **three of the four ways look right,
+compile, and fail silently or crash on a current device**:
 
-It is in its own file with one call site because **nothing depends on it**. Delete
-`OpenHost.swift` and the line that calls it and sharing still works end to end: the
-drop is already on disk and the app drains the queue whenever it next comes forward.
-The person taps Hi Agent themselves instead of arriving there. That is why the open
-happens *after* the enqueue rather than instead of it.
+| | what happens |
+|---|---|
+| `UIApplication.shared.open` | does not compile under app-extension API rules |
+| `NSExtensionContext.open(_:)` | documented Today-widget-only; completion fires `success = false` |
+| responder-chain `openURL:` | force-returns NO since iOS 18, logging `BUG IN CLIENT OF UIKIT` |
+| responder-chain `openURL:options:completionHandler:` | **crashes** inside UIKit's KVC probe |
+
+What works is SwiftUI's own `OpenURLAction`, reached by instantiating
+`EnvironmentValues()` directly rather than through a view's environment — public API,
+no runtime reflection, no deprecated selector. This repo shipped the third row first
+and it never once ran; the list, and the fix, come from a build of the same hand-off
+that does work ([xiaoyuanzhu-com/my-life-db-apple](https://github.com/xiaoyuanzhu-com/my-life-db-apple)).
+
+Two consequences shape everything around the call:
+
+**It must be a Universal Link, so the extension needs a screen.** A custom scheme
+goes through the machinery Apple has been closing; an `https` URL claimed in
+`apple-app-site-association` is routed by Associated Domains, which is a different
+path and the one still open. The link is `https://hi-agent.xyz/ios-share/<id>` — the
+apex, not the person's own core, because a Universal Link only works for a domain in
+the app's entitlement and `ana.hi-agent.xyz` is a tunnel into somebody's machine. The
+claim is narrowed server-side to `/ios-share/*` so that a **shared view link never
+opens somebody else's app**; see `backend/internal/server/applinks.go` in the
+hi-agent.xyz repo. And because the open is reliably driven by a tap, the extension
+has a screen with one button (`ShareView`) instead of the no-interface design it
+started as.
+
+**The teardown races the open.** Completing the extension request tears its UI down
+and cancels an open that has not finished registering — silently, with nothing in any
+log. So the open gets a runloop tick (50 ms, borrowed from the working build) before
+`completeRequest`.
+
+Still nothing depends on it: the drop is on disk before the button exists, and the
+app drains the queue whenever it next comes forward. If the open fails the person
+taps Hi Agent themselves and their share goes out — which is also the fallback for
+anyone who picks *Not now*.
 
 On Android none of this exists — `ACTION_SEND` starts the activity, so there is no
-queue, no entitlement, and no trick. See [android.md](android.md).
+queue, no entitlement, and no hand-off. See [android.md](android.md).
 
 ### Verified, and not
 
 `xcodebuild` builds the app with the extension embedded and validated
-(2026-09-11). `NSExtensionActivationRule` is an enumerated dictionary rather than
+(2026-09-12). `NSExtensionActivationRule` is an enumerated dictionary rather than
 `TRUEPREDICATE`: the latter builds fine and is an automatic App Store rejection, which
 the embedded-binary validator says in as many words.
 
 **Nothing here has been run.** Not on a device, not in the Simulator — no share sheet
 has been opened, no drop has been queued, no queued drop has reached a core, and the
-responder-chain open has never been observed either working or failing. The App Group
-also cannot work in a `CODE_SIGNING_ALLOWED=NO` build, so a Simulator run has to be
-ad-hoc signed the same way the pairing path does (above).
+hand-off link has never been seen to open anything. Two things make this path
+**unverifiable anywhere but a real device**: the App Group does not work in a
+`CODE_SIGNING_ALLOWED=NO` build (ad-hoc sign it, as above), and a Universal Link
+needs the association file fetched from the live domain against the real App ID.
 
 ## Ownership
 

@@ -68,16 +68,25 @@ struct ContentView: View {
             await model.refresh()
         }
         .onOpenURL { url in
-            // `hiagent://shared` is the share extension saying it left something in
-            // the queue and brought us forward for it. It is not a link to open, so
-            // it must not reach the pairing parser — which answers everything it does
-            // not recognise with "Could not open that link".
-            if url.scheme == "hiagent", url.host == "shared" {
-                Task { await model.deliverQueued() }
+            showingRoster = false
+            model.handleIncomingURL(url)
+        }
+        // Universal Links land here rather than in `onOpenURL`, and the share
+        // extension's hand-off is one: `https://hi-agent.xyz/ios-share/<id>`, which
+        // iOS routes to this app instead of Safari because the domain's
+        // `apple-app-site-association` claims that path. It is the only way an
+        // extension can still bring its containing app forward — see
+        // `HiAgentShare/OpenHost.swift` for the three that no longer work.
+        //
+        // The id is not read. Coming forward drains the whole queue, which has to
+        // happen anyway for drops nobody opened a link for, so the arrival is the
+        // signal and the address is just what makes each one distinct.
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            guard let url = activity.webpageURL, url.path.hasPrefix("/ios-share/") else {
                 return
             }
             showingRoster = false
-            model.handleIncomingURL(url)
+            Task { await model.deliverQueued() }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else {

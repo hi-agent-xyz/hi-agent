@@ -29,6 +29,7 @@
 		A10000000000000000000014 /* HandedDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* HandedDrop.swift */; };
 		A10000000000000000000015 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ShareViewController.swift */; };
 		A10000000000000000000016 /* OpenHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* OpenHost.swift */; };
+		A10000000000000000000018 /* ShareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* ShareView.swift */; };
 		A10000000000000000000017 /* HiAgentShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* HiAgentShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -57,6 +58,7 @@
 		B10000000000000000000016 /* OpenHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenHost.swift; sourceTree = "<group>"; };
 		B10000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10000000000000000000018 /* HiAgentIOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HiAgentIOS.entitlements; sourceTree = "<group>"; };
+		B1000000000000000000001A /* ShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareView.swift; sourceTree = "<group>"; };
 		B10000000000000000000019 /* HiAgentShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HiAgentShare.entitlements; sourceTree = "<group>"; };
 		C10000000000000000000001 /* HiAgentIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HiAgentIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000000000000000000002 /* HiAgentShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HiAgentShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -134,6 +136,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000015 /* ShareViewController.swift */,
+				B1000000000000000000001A /* ShareView.swift */,
 				B10000000000000000000016 /* OpenHost.swift */,
 				B10000000000000000000019 /* HiAgentShare.entitlements */,
 				B10000000000000000000017 /* Info.plist */,
@@ -300,6 +303,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000015 /* ShareViewController.swift in Sources */,
+				A10000000000000000000018 /* ShareView.swift in Sources */,
 				A10000000000000000000016 /* OpenHost.swift in Sources */,
 				A10000000000000000000014 /* HandedDrop.swift in Sources */,
 			);

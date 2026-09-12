@@ -97,8 +97,14 @@ and tries to open the app; the **app** does the upload, on the next foreground.
 
 The reasons for that split — no shared keychain, no race with the extension's
 lifetime, a retry buffer that survives a crash, and a person who ends up in the
-conversation — are written on `HandedDrop`, and the App Review risk in `OpenHost` is
-written on `OpenHost`. See
+conversation — are written on `HandedDrop`.
+
+Bringing the app forward is `OpenHost`, and it is worth reading before touching:
+**three of the four ways to do it are dead and one of them crashes**, so what is
+there is `EnvironmentValues().openURL` pointed at a Universal Link
+(`https://hi-agent.xyz/ios-share/<id>`, claimed by the site's
+`apple-app-site-association`). That is also why the extension has a screen with a
+button rather than no interface at all. See
 [docs/platforms/apple-ios.md](../../../docs/platforms/apple-ios.md) for the shape.
 
 The extension is a second target in the same project, embedded into the app's
