@@ -93,3 +93,33 @@ WebView. The existing web face owns the channel protocol and sends
 `X-HI-Surface: 1` on state-changing browser-shaped requests.
 
 The long-lived credential must never be passed to the WebView.
+
+## Handing something over
+
+Both clients are system share targets, and both use the same two doors the web face
+already uses — with the **long-lived credential as a Bearer token rather than an
+exchanged session**. A session exists so a WebView can carry something a cookie jar
+understands; these are single requests from native code, and exchanging first would
+cost a round trip and a CSRF header to say what the Bearer already says.
+
+| What was shared | Where it goes |
+|---|---|
+| a photo, a video, a document, any file | `POST /api/in/file`, multipart |
+| a link, a selection of text | `POST /api/in/text`, the body verbatim |
+
+**A link is words.** Filed through the file channel it would be a few bytes on disk
+under a generated name that the agent has to open to discover is a link.
+
+Neither door has a size limit and neither client holds what it sends: the core writes
+each multipart field through to a blob as it arrives, and the clients stream from
+disk (`upload(fromFile:)`) or from the sharing app's content provider (OkHttp's
+`writeTo`). A phone video is an ordinary case.
+
+`POST /api/in/file` answers **207** when some parts landed and some did not — success
+codes are not enough on their own, and a client that sends one file per request must
+read a 207 as a failure.
+
+The `note` multipart part is the line the person effectively said as they handed
+something over. **A share sends none**: what was shared is the whole of what was
+communicated. The iOS screen gesture is the one carrier that fills it, because it is
+the one with no conversation for the person to type into.

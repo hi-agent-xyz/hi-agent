@@ -83,9 +83,31 @@ The app currently supports:
 11. Fitting an iPad: one column at `Theme.measure` rather than a stretched phone
     screen, the stage chrome grouped, and show-your-screen instructions that name
     buttons the device actually has.
+12. Being a share target for anything — photos, files, links, text — through the
+    `HiAgentShare` extension.
 
 Push notifications, physical-device coverage, and release packaging remain
 separate follow-up work.
+
+## Sharing
+
+`HiAgentShare` is a no-interface share extension. It copies what was shared into the
+`group.com.xiaoyuanzhu.hiagent` container as a [`HandedDrop`](Shared/HandedDrop.swift)
+and tries to open the app; the **app** does the upload, on the next foreground.
+
+The reasons for that split — no shared keychain, no race with the extension's
+lifetime, a retry buffer that survives a crash, and a person who ends up in the
+conversation — are written on `HandedDrop`, and the App Review risk in `OpenHost` is
+written on `OpenHost`. See
+[docs/platforms/apple-ios.md](../../../docs/platforms/apple-ios.md) for the shape.
+
+The extension is a second target in the same project, embedded into the app's
+`PlugIns`. Its bundle identifier must stay a child of the app's, which is why both
+derive from the `HI_BUNDLE_ID` build setting rather than spelling their own: the
+TestFlight job overrides the identifier on the `xcodebuild` command line, and a
+command-line `PRODUCT_BUNDLE_IDENTIFIER=` applies to every target at once.
+
+**None of it has ever been run.**
 
 ## Showing your screen
 

@@ -17,17 +17,15 @@ final class AppModel: ObservableObject {
     @Published var addRequest: AddAgentRequest?
     @Published var addLinkError: String?
     @Published private(set) var credentialRevision = 0
-    /// Where the last screen the person showed got to, or `nil` if they have not
-    /// shown one this launch.
-    @Published private(set) var showScreenState: ShowScreenState?
+    /// Where the last thing the person handed over got to, or `nil` if they have not
+    /// handed anything over this launch. The bytes behind a failure are not here —
+    /// they are in the queue on disk ([`HandedDrop`]), which is what makes "Try
+    /// again" survive the app being killed.
+    @Published private(set) var handoffState: HandoffState?
 
     private let defaults = UserDefaults.standard
     private let keychain = KeychainStore()
     private let storageKey = "hi.agent.ios.roster.v1"
-    /// The bytes behind a `.failed` state, kept so "Try again" is a retry and not a
-    /// request that the person go back and make the gesture a second time. Dropped
-    /// as soon as it lands.
-    private var pendingScreen: PendingScreen?
 
     init() {
         load()
@@ -187,73 +185,134 @@ final class AppModel: ObservableObject {
         entries[index].health = state
     }
 
-    // MARK: - Showing the screen
+    // MARK: - Handing things over
 
-    /// Hand a screenshot to the attached core (see [`ShowScreen`]). Called from the
-    /// intent, so it reports rather than throws: the app is already coming to the
-    /// front, and the banner is where a person can act on what happened.
+    /// Hand a screenshot to the attached core (see [`ShowScreen`]).
+    ///
+    /// It goes onto the same queue a share does rather than straight out over the
+    /// wire. The app is on screen either way, so the queue buys one thing here: a
+    /// screen that failed to send is still on disk tomorrow. It used to live in a
+    /// property and die with the process.
     func showScreen(data: Data, type: UTType?, note: String?) async {
-        let screen = PendingScreen(
-            data: data,
-            filename: ShowScreen.filename(for: type, at: Date()),
-            mime: ShowScreen.mime(for: type),
-            note: note ?? ShowScreen.note
-        )
-        await send(screen)
-    }
-
-    /// Try the kept screen again. No-op once it has landed.
-    func retryShowScreen() async {
-        guard let screen = pendingScreen else {
+        do {
+            let drop = try HandedDrop.enqueue(
+                note: note ?? ShowScreen.note,
+                text: nil,
+                files: [
+                    HandedDrop.PendingFile(
+                        filename: ShowScreen.filename(for: type, at: Date()),
+                        mime: ShowScreen.mime(for: type),
+                        source: .data(data)
+                    )
+                ]
+            )
+            // `nil` means no group container, which is a missing entitlement rather
+            // than a runtime condition. Said out loud because the alternative is the
+            // worst shape a failure can have here: the gesture appears to work, and
+            // nothing ever arrives.
+            guard drop != nil else {
+                handoffState = .failed(reason: HandedDropError.noContainer.localizedDescription)
+                return
+            }
+        } catch {
+            handoffState = .failed(reason: error.localizedDescription)
             return
         }
-        await send(screen)
+        await deliverQueued()
     }
 
-    func dismissShowScreen() {
-        pendingScreen = nil
-        showScreenState = nil
-    }
-
-    private func send(_ screen: PendingScreen) async {
+    /// Send everything waiting, oldest first.
+    ///
+    /// Called when the app comes forward, and on the `hiagent://shared` the share
+    /// extension opens — **not on a timer and not from a background task.** The queue
+    /// is drained where its result can be seen, because a failure that nobody is
+    /// looking at is a file that quietly stops existing.
+    ///
+    /// Reports rather than throws: the caller is a scene phase or a URL, neither of
+    /// which has anywhere to put an error. The banner does.
+    func deliverQueued() async {
+        let drops = HandedDrop.queued()
+        guard !drops.isEmpty else {
+            return
+        }
         guard let entry = attachedEntry else {
-            pendingScreen = screen
-            showScreenState = .failed(
-                reason: "This device hasn't been added to an agent yet, so there's nobody to show it to."
+            handoffState = .failed(
+                reason: "This device hasn't been added to an agent yet, so there's nobody to hand it to."
             )
             return
         }
         guard let baseURL = URL(string: entry.baseURL) else {
-            pendingScreen = screen
-            showScreenState = .failed(reason: CoreClientError.invalidAddress.localizedDescription)
+            handoffState = .failed(reason: CoreClientError.invalidAddress.localizedDescription)
             return
         }
 
-        pendingScreen = screen
-        showScreenState = .sending
+        let credential: String
         do {
-            let credential = try keychain.read(account: credentialAccount(id: entry.id))
-            try await CoreClient.hand(
-                at: baseURL,
-                credential: credential,
-                data: screen.data,
-                filename: screen.filename,
-                mime: screen.mime,
-                note: screen.note
-            )
-            pendingScreen = nil
-            showScreenState = .sent(coreLabel: entry.label)
+            credential = try keychain.read(account: credentialAccount(id: entry.id))
         } catch let error as KeychainError {
             if case .read = error {
-                showScreenState = .failed(
+                handoffState = .failed(
                     reason: "This device no longer has access to \(entry.label). Add it again."
                 )
             } else {
-                showScreenState = .failed(reason: error.localizedDescription)
+                handoffState = .failed(reason: error.localizedDescription)
             }
+            return
         } catch {
-            showScreenState = .failed(reason: error.localizedDescription)
+            handoffState = .failed(reason: error.localizedDescription)
+            return
         }
+
+        handoffState = .sending(count: drops.reduce(0) { $0 + $1.itemCount })
+        var sent = 0
+        var failure: String?
+        for drop in drops {
+            do {
+                // Words first. When a drop has both — a link shared with a picture of
+                // it — the sentence lands ahead of the artifact, which is the order
+                // the person did it in.
+                if let text = drop.manifest.text, !text.isEmpty {
+                    try await CoreClient.say(at: baseURL, credential: credential, text: text)
+                    sent += 1
+                }
+                for part in drop.manifest.parts {
+                    try await CoreClient.hand(
+                        at: baseURL,
+                        credential: credential,
+                        body: drop.url(for: part),
+                        boundary: drop.manifest.boundary
+                    )
+                    sent += 1
+                }
+                // Only now: a drop that died halfway is retried whole rather than
+                // half-delivered and forgotten. The cost of that choice is a possible
+                // duplicate; the cost of the other is a file the person believes they
+                // sent.
+                drop.discard()
+            } catch {
+                // **Kept, and the others are still tried.** Nothing here can tell a
+                // refusal apart from a tunnel, and discarding on the wrong guess
+                // throws away something a person chose to send. Carrying on past it
+                // is the other half: a drop that can never land must not become a
+                // wall that everything shared afterwards queues up behind.
+                failure = failure ?? error.localizedDescription
+            }
+        }
+        if let failure {
+            handoffState = .failed(reason: failure)
+            return
+        }
+        handoffState = .sent(coreLabel: entry.label, count: sent)
+    }
+
+    /// Try the queue again. The drops are still on disk, so this is a retry and not a
+    /// request that the person go back and share it a second time.
+    func retryHandoff() async {
+        await deliverQueued()
+    }
+
+    func dismissHandoff() {
+        handoffState = nil
     }
 
     /// The core everything this device does goes to — the same one the stage shows.

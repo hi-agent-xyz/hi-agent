@@ -43,6 +43,7 @@ fun ContentScreen(model: AppModel, modifier: Modifier = Modifier) {
     val selectedId by model.selectedId.collectAsStateWithLifecycle()
     val pairingRequest by model.pairingRequest.collectAsStateWithLifecycle()
     val pairingLinkError by model.pairingLinkError.collectAsStateWithLifecycle()
+    val handoff by model.handoff.collectAsStateWithLifecycle()
 
     var showingRoster by remember { mutableStateOf(false) }
 
@@ -74,6 +75,15 @@ fun ContentScreen(model: AppModel, modifier: Modifier = Modifier) {
                 )
             }
         }
+
+        // Above the stage rather than inside it: something shared before this device
+        // was ever paired has no stage to sit on, and that is exactly the case where
+        // the person most needs to be told why nothing happened.
+        HandoffBanner(
+            state = handoff,
+            onDismiss = { model.dismissHandoff() },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 
     if (showingRoster) {

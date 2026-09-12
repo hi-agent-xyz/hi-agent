@@ -131,7 +131,7 @@ jobs:
             -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
             -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
             "DEVELOPMENT_TEAM=$APPLE_TEAM_ID" \
-            "PRODUCT_BUNDLE_IDENTIFIER=$IOS_BUNDLE_ID" \
+            "HI_BUNDLE_ID=$IOS_BUNDLE_ID" \
             "MARKETING_VERSION=$MARKETING_VERSION" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
             COMPILER_INDEX_STORE_ENABLE=NO \

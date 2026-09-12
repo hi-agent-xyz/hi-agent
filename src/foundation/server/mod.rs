@@ -456,10 +456,6 @@ impl AppState {
     }
 }
 
-/// Max total multipart body for one handed-file request. Generous enough for a
-/// batch of photos/scans/PDFs; the rest of the channels keep axum's small default.
-const MAX_UPLOAD: usize = 50 * 1024 * 1024;
-
 /// How far back the boot seed reads. The live window is bounded anyway, so this
 /// only has to be long enough that a quiet week still opens on a conversation
 /// rather than on nothing; older messages are reached by scrolling.
@@ -667,12 +663,14 @@ pub fn build(
         // The file channel — handing the agent a file (handed artifact, not a
         // sense). Drag-drop posts to /api/in/file; the phone handoff mints a
         // token (/api/handoff), serves an uploader at /up/<token>, receives at
-        // /api/up/<token>, and renders the QR via /api/qr. Uploads get a generous
-        // body limit; everything else keeps axum's small default.
-        .route("/api/in/file", post(files::post_file).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
+        // /api/up/<token>, and renders the QR via /api/qr. Both upload routes carry
+        // no body limit — the field is written through to disk as it arrives, so a
+        // ceiling here would only be a guess at how big a thing a person may hand
+        // over. Everything else keeps axum's small default.
+        .route("/api/in/file", post(files::post_file).layer(DefaultBodyLimit::disable()))
         .route("/api/handoff", post(files::post_handoff))
         .route("/up/{token}", get(files::get_up_page))
-        .route("/api/up/{token}", post(files::post_up).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
+        .route("/api/up/{token}", post(files::post_up).layer(DefaultBodyLimit::disable()))
         .route("/api/qr", get(files::get_qr))
         // A standing duty's own inbound door: the agent-provisioned listener keeping a
         // `serving` task alive says something arrived, and the working session holding

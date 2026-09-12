@@ -55,6 +55,81 @@ iPhone 17 run alongside showing the phone layout unchanged. **No build of this h
 ever run on physical iPad hardware**, and `ShowScreenPlacement`'s iPad copy — the
 Control Centre and Home Screen routes — has never been followed through on a device.
 
+## Sharing into the agent
+
+Hi Agent is in the iOS share sheet for everything a share sheet can offer — a photo,
+a file, a link, a selection. The target is `app/apple/ios/HiAgentShare`, a share
+extension with **no interface**: every other share extension asks you to pick an
+album or a recipient, this one has exactly one destination and nothing to ask.
+
+Two doors, chosen by what was shared. Files go to `POST /api/in/file`; a link or a
+selection goes to `POST /api/in/text`, because **a link is something a person says,
+not an artifact they hand over**. Order matters in `Attachment.read`:
+`public.file-url` conforms to `public.url`, so a document from Files answers yes to
+both, and asking about links first would file every attachment as a path that stops
+existing when the extension does.
+
+**Nothing is written as a note.** What was shared is the whole of what was
+communicated. The screen gesture still writes one — it has no conversation to type
+into — and that asymmetry is the whole difference between the two carriers now.
+
+### The extension queues; the app sends
+
+The extension copies what was shared into an App Group container and stops.
+`AppModel.deliverQueued()` does the HTTP, when the app next comes forward.
+
+That is not the obvious arrangement — a share extension could do its own HTTP — and
+four things fall out of it:
+
+- **The extension never touches a credential**, so the Keychain does not have to be
+  shared between the targets. `group.com.xiaoyuanzhu.hiagent` is the only entitlement
+  either target gains; there is no keychain access group and no roster migration.
+- **Nothing races the extension's lifetime.** A share extension is killed when its
+  sheet goes away, which for a phone video over cellular is long before an upload
+  finishes.
+- **The queue is the retry buffer**, and it outlives both processes — a send that
+  failed is still on disk after a crash or a week in a tunnel. The screen gesture was
+  moved onto the same queue for this: its pending bytes used to die with the process.
+- **The person ends up in the conversation**, which is the point of sharing something
+  to your agent.
+
+Each file is stored **already framed as a complete multipart body**. The extension has
+to copy the bytes anyway — an item provider's URL is security-scoped and does not
+survive the process — so it copies them into the shape the wire wants: one write, one
+read, no second full-size copy on a phone that may be nearly full, and
+`URLSession.upload(fromFile:)` streams it without ever holding a 3 GB video. One
+request per file, so a drop of nine photos retries the one that failed.
+
+### Opening the app is best-effort, and quarantined
+
+**There is no sanctioned way for a share extension to open its host app.**
+`UIApplication.shared` does not compile under app-extension API restrictions, and
+`NSExtensionContext.open(_:)` is documented for widgets. `OpenHost` walks the
+responder chain for the old `openURL:` selector, which works and is what apps that do
+this use — and is the one part of sharing that could fail App Review.
+
+It is in its own file with one call site because **nothing depends on it**. Delete
+`OpenHost.swift` and the line that calls it and sharing still works end to end: the
+drop is already on disk and the app drains the queue whenever it next comes forward.
+The person taps Hi Agent themselves instead of arriving there. That is why the open
+happens *after* the enqueue rather than instead of it.
+
+On Android none of this exists — `ACTION_SEND` starts the activity, so there is no
+queue, no entitlement, and no trick. See [android.md](android.md).
+
+### Verified, and not
+
+`xcodebuild` builds the app with the extension embedded and validated
+(2026-09-11). `NSExtensionActivationRule` is an enumerated dictionary rather than
+`TRUEPREDICATE`: the latter builds fine and is an automatic App Store rejection, which
+the embedded-binary validator says in as many words.
+
+**Nothing here has been run.** Not on a device, not in the Simulator — no share sheet
+has been opened, no drop has been queued, no queued drop has reached a core, and the
+responder-chain open has never been observed either working or failing. The App Group
+also cannot work in a `CODE_SIGNING_ALLOWED=NO` build, so a Simulator run has to be
+ad-hoc signed the same way the pairing path does (above).
+
 ## Ownership
 
 The iOS app owns:

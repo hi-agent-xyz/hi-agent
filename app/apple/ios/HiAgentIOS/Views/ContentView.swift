@@ -37,10 +37,10 @@ struct ContentView: View {
         // was ever paired has no stage to sit on, and that is exactly the case where
         // the person most needs to be told why nothing happened.
         .overlay(alignment: .bottom) {
-            ShowScreenBanner(
-                state: model.showScreenState,
-                onRetry: { Task { await model.retryShowScreen() } },
-                onDismiss: { model.dismissShowScreen() }
+            HandoffBanner(
+                state: model.handoffState,
+                onRetry: { Task { await model.retryHandoff() } },
+                onDismiss: { model.dismissHandoff() }
             )
         }
         .sheet(isPresented: $showingRoster) {
@@ -68,6 +68,14 @@ struct ContentView: View {
             await model.refresh()
         }
         .onOpenURL { url in
+            // `hiagent://shared` is the share extension saying it left something in
+            // the queue and brought us forward for it. It is not a link to open, so
+            // it must not reach the pairing parser — which answers everything it does
+            // not recognise with "Could not open that link".
+            if url.scheme == "hiagent", url.host == "shared" {
+                Task { await model.deliverQueued() }
+                return
+            }
             showingRoster = false
             model.handleIncomingURL(url)
         }
@@ -77,6 +85,10 @@ struct ContentView: View {
             }
             Task {
                 await model.refresh()
+                // The other half of sharing, and the half that always works: if the
+                // extension could not bring the app forward, the person did it
+                // themselves, and this is where what they shared actually goes out.
+                await model.deliverQueued()
             }
         }
         .onChange(of: model.selectedID) { _, selectedID in

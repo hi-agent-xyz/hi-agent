@@ -88,7 +88,13 @@ async fn html_navigation_gets_somewhere_to_start_rather_than_a_bare_401() {
         .expect("send");
     assert_eq!(res.status(), 401);
     let body = res.text().await.expect("text");
-    assert!(body.contains("Pair this surface"), "the pairing page, not a bare 401");
+    // On what the page *does*, not what it is headed. The old assertion was on the
+    // heading, which the copy moved out from under when asking to be let in replaced
+    // typing a pairing code — leaving a red test that said nothing about the gate.
+    assert!(
+        body.contains(r#"fetch("/api/session""#),
+        "a page that can let you in, not a bare 401"
+    );
 }
 
 #[tokio::test]

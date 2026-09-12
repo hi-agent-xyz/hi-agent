@@ -1,7 +1,12 @@
 package com.xiaoyuanzhu.hiagent.android.core
 
+import java.io.InputStream
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody
+import okio.BufferedSink
+import okio.source
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -75,6 +80,36 @@ data class RosterEntry(
 
         fun listToJson(entries: List<RosterEntry>): String =
             JSONArray().apply { entries.forEach { put(it.toJson()) } }.toString()
+    }
+}
+
+/**
+ * One file on its way to a core, as a thing that can be *opened* rather than as
+ * bytes.
+ *
+ * What a share hands over is a `content://` URI belonging to another app, and the
+ * only sane thing to do with it is stream it: [open] is called once, when OkHttp is
+ * ready to write the body, and the bytes go from the other app's file to the socket
+ * without this process ever holding them. That is what lets a two-gigabyte video be
+ * shared from a phone with a few hundred megabytes of heap.
+ *
+ * [length] is `-1` when the provider will not say, which is normal for some content
+ * providers; the upload is then chunked, which the core reads just the same.
+ */
+class HandedFile(
+    val name: String,
+    private val mime: String,
+    private val length: Long,
+    private val open: () -> InputStream,
+) {
+    fun body(): RequestBody = object : RequestBody() {
+        override fun contentType() = mime.toMediaTypeOrNull()
+
+        override fun contentLength() = length
+
+        override fun writeTo(sink: BufferedSink) {
+            open().use { stream -> sink.writeAll(stream.source()) }
+        }
     }
 }
 

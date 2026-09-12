@@ -135,19 +135,15 @@ enum ShowScreenPlacement {
     }
 }
 
-/// One screen on its way to a core — kept whole so a send that failed can be tried
-/// again from the banner rather than asking the person to make the gesture twice.
-struct PendingScreen: Equatable {
-    let data: Data
-    let filename: String
-    let mime: String
-    let note: String
-}
-
-/// Where a screen got to. `nil` on `AppModel` means nothing has been shown this
-/// launch; the banner is absent, not empty.
-enum ShowScreenState: Equatable {
-    case sending
-    case sent(coreLabel: String)
+/// Where the last thing handed over got to. `nil` on `AppModel` means nothing has
+/// been handed over this launch; the banner is absent, not empty.
+///
+/// One state for the screen gesture and for the share sheet, because by the time
+/// anything reaches here they are the same act: bytes queued for one agent. What
+/// differs is only the sentence the banner writes, and `count` is what it needs to
+/// write it — "Shown to" reads wrong over three photos from Safari.
+enum HandoffState: Equatable {
+    case sending(count: Int)
+    case sent(coreLabel: String, count: Int)
     case failed(reason: String)
 }

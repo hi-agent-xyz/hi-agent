@@ -33,6 +33,25 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="hiagent" android:host="pair" />
             </intent-filter>
+
+            <!-- Hi Agent in the system share sheet, for anything: a photo, a
+                 download, a link from the browser, a selection of text.
+                 `mimeType="*/*"` rather than a list, because the file channel's
+                 premise is that a person may hand their agent whatever they like.
+
+                 **Sharing lands on the activity itself, not on a separate
+                 component** — `singleTask` above means it arrives in the running
+                 app — and that is the whole difference from iOS, where a share
+                 extension is another process that cannot open its host. Here the
+                 conversation is simply on screen a moment later, which is where
+                 the person says what they wanted to say about the thing they
+                 shared. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
     </application>
 

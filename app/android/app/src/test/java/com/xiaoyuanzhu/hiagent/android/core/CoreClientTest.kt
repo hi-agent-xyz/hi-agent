@@ -13,10 +13,20 @@ import org.junit.Test
  * `NSAllowsLocalNetworking` gives iOS for free. That makes it worth pinning.
  */
 class CoreClientTest {
+    /**
+     * The trailing slash is `HttpUrl`'s, not ours: a URL with an empty path does not
+     * exist in OkHttp's model, so the root renders as `/` however it was typed. The
+     * iOS client's `URLComponents` keeps the path genuinely empty and its canonical
+     * form has no slash — the two strings differ and that is fine, because each
+     * device's roster is its own and every path is built by
+     * [CoreClient.endpoint], which trims before joining.
+     *
+     * This assertion was written to the iOS spelling and had never passed.
+     */
     @Test
     fun `https is accepted for any host`() {
         assertEquals(
-            "https://ana.hi-agent.xyz",
+            "https://ana.hi-agent.xyz/",
             CoreClient.normalizeBaseUrl("https://ana.hi-agent.xyz").toString(),
         )
     }

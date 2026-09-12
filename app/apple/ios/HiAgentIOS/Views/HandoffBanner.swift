@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// What happened to the screen you just showed.
+/// What happened to the thing you just handed over.
 ///
-/// The gesture happens somewhere else — you press the Action Button inside another
-/// app — and its whole result is a message in a conversation you are not looking at
-/// yet. By the time Hi Agent is on screen the face may still be loading, so without
-/// this the successful case and the "not paired with anything" case look identical:
-/// the app opened, and nothing visibly happened.
+/// The act happens somewhere else — you press the Action Button inside another app,
+/// or you share a photo from Photos — and its whole result is a message in a
+/// conversation you are not looking at yet. By the time Hi Agent is on screen the
+/// face may still be loading, so without this the successful case and the "not paired
+/// with anything" case look identical: the app opened, and nothing visibly happened.
 ///
 /// It says its piece and goes. Only a failure stays, because only a failure is
-/// something to act on.
-struct ShowScreenBanner: View {
-    let state: ShowScreenState?
+/// something to act on — and its "Try again" reaches a queue on disk, so it works
+/// even if the share happened yesterday.
+struct HandoffBanner: View {
+    let state: HandoffState?
     let onRetry: () -> Void
     let onDismiss: () -> Void
 
@@ -50,22 +51,22 @@ struct ShowScreenBanner: View {
     }
 
     @ViewBuilder
-    private func content(for state: ShowScreenState) -> some View {
+    private func content(for state: HandoffState) -> some View {
         switch state {
-        case .sending:
+        case .sending(let count):
             row {
                 ProgressView()
                     .controlSize(.small)
-                Text("Showing your screen…")
+                Text(count > 1 ? "Sending \(count) things…" : "Sending…")
                     .font(.subheadline.weight(.medium))
                 Spacer(minLength: 0)
             }
 
-        case .sent(let coreLabel):
+        case .sent(let coreLabel, let count):
             row {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("Shown to \(coreLabel)")
+                Text(count > 1 ? "Sent \(count) to \(coreLabel)" : "Sent to \(coreLabel)")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                 Spacer(minLength: 0)

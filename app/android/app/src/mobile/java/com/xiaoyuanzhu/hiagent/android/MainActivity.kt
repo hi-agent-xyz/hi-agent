@@ -38,24 +38,35 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        handlePairingIntent(intent)
+        handle(intent)
     }
 
     /**
-     * `singleTask` in the manifest means a `hiagent://pair` link arriving while
-     * the app is already running lands here rather than starting a second copy —
-     * which is what makes scanning from the Camera app work when Hi Agent is
-     * already open behind it.
+     * `singleTask` in the manifest means a `hiagent://pair` link — or a share —
+     * arriving while the app is already running lands here rather than starting a
+     * second copy. That is what makes scanning from the Camera app work when Hi Agent
+     * is already open behind it, and what puts a shared photo into the conversation
+     * that is already on screen.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handlePairingIntent(intent)
+        handle(intent)
     }
 
-    private fun handlePairingIntent(intent: Intent?) {
-        val uri = intent?.data ?: return
-        if (intent.action != Intent.ACTION_VIEW) return
-        model.handleIncomingUri(uri)
+    private fun handle(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data?.let(model::handleIncomingUri)
+            Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE -> {
+                // Consumed by clearing the action: a share is a one-time event, and
+                // `onCreate` runs again on a rotation with the same intent still
+                // attached. Without this, turning the phone sideways sends the photo
+                // a second time.
+                val shared = SharedIntent.from(intent, contentResolver)
+                intent.action = null
+                shared?.let { model.share(it.text, it.files) }
+            }
+        }
     }
 }

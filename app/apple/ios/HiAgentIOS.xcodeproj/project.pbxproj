@@ -23,8 +23,13 @@
 		A1000000000000000000000E /* AddAgentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* AddAgentView.swift */; };
 		A1000000000000000000000F /* ShowScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* ShowScreen.swift */; };
 		A10000000000000000000010 /* ShowScreenIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* ShowScreenIntent.swift */; };
-		A10000000000000000000011 /* ShowScreenBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* ShowScreenBanner.swift */; };
+		A10000000000000000000011 /* HandoffBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* HandoffBanner.swift */; };
 		A10000000000000000000012 /* ShowScreenSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ShowScreenSetupView.swift */; };
+		A10000000000000000000013 /* HandedDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* HandedDrop.swift */; };
+		A10000000000000000000014 /* HandedDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* HandedDrop.swift */; };
+		A10000000000000000000015 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ShareViewController.swift */; };
+		A10000000000000000000016 /* OpenHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* OpenHost.swift */; };
+		A10000000000000000000017 /* HiAgentShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* HiAgentShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,9 +50,16 @@
 		B1000000000000000000000F /* AddAgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAgentView.swift; sourceTree = "<group>"; };
 		B10000000000000000000010 /* ShowScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreen.swift; sourceTree = "<group>"; };
 		B10000000000000000000011 /* ShowScreenIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenIntent.swift; sourceTree = "<group>"; };
-		B10000000000000000000012 /* ShowScreenBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenBanner.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* HandoffBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandoffBanner.swift; sourceTree = "<group>"; };
 		B10000000000000000000013 /* ShowScreenSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowScreenSetupView.swift; sourceTree = "<group>"; };
+		B10000000000000000000014 /* HandedDrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandedDrop.swift; sourceTree = "<group>"; };
+		B10000000000000000000015 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		B10000000000000000000016 /* OpenHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenHost.swift; sourceTree = "<group>"; };
+		B10000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10000000000000000000018 /* HiAgentIOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HiAgentIOS.entitlements; sourceTree = "<group>"; };
+		B10000000000000000000019 /* HiAgentShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HiAgentShare.entitlements; sourceTree = "<group>"; };
 		C10000000000000000000001 /* HiAgentIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HiAgentIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C10000000000000000000002 /* HiAgentShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HiAgentShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,15 +70,75 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D10000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F30000000000000000000004 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000017 /* HiAgentShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		020000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 010000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F10000000000000000000002;
+			remoteInfo = HiAgentShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		030000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F10000000000000000000002 /* HiAgentShare */;
+			targetProxy = 020000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXGroup section */
 		E10000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				E10000000000000000000005 /* Shared */,
 				E10000000000000000000002 /* HiAgentIOS */,
+				E10000000000000000000006 /* HiAgentShare */,
 				E10000000000000000000003 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		E10000000000000000000005 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000014 /* HandedDrop.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000006 /* HiAgentShare */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000015 /* ShareViewController.swift */,
+				B10000000000000000000016 /* OpenHost.swift */,
+				B10000000000000000000019 /* HiAgentShare.entitlements */,
+				B10000000000000000000017 /* Info.plist */,
+			);
+			path = HiAgentShare;
 			sourceTree = "<group>";
 		};
 		E10000000000000000000002 /* HiAgentIOS */ = {
@@ -83,6 +155,7 @@
 				B10000000000000000000011 /* ShowScreenIntent.swift */,
 				E10000000000000000000004 /* Views */,
 				B10000000000000000000009 /* Assets.xcassets */,
+				B10000000000000000000018 /* HiAgentIOS.entitlements */,
 				B10000000000000000000008 /* Info.plist */,
 			);
 			path = HiAgentIOS;
@@ -92,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				C10000000000000000000001 /* HiAgentIOS.app */,
+				C10000000000000000000002 /* HiAgentShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -105,7 +179,7 @@
 				B1000000000000000000000D /* Theme.swift */,
 				B1000000000000000000000E /* RosterView.swift */,
 				B1000000000000000000000F /* AddAgentView.swift */,
-				B10000000000000000000012 /* ShowScreenBanner.swift */,
+				B10000000000000000000012 /* HandoffBanner.swift */,
 				B10000000000000000000013 /* ShowScreenSetupView.swift */,
 			);
 			path = Views;
@@ -121,15 +195,33 @@
 				F30000000000000000000001 /* Sources */,
 				D10000000000000000000001 /* Frameworks */,
 				F30000000000000000000002 /* Resources */,
+				F30000000000000000000004 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				030000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = HiAgentIOS;
 			productName = HiAgentIOS;
 			productReference = C10000000000000000000001 /* HiAgentIOS.app */;
 			productType = "com.apple.product-type.application";
+		};
+		F10000000000000000000002 /* HiAgentShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F20000000000000000000003 /* Build configuration list for PBXNativeTarget "HiAgentShare" */;
+			buildPhases = (
+				F30000000000000000000003 /* Sources */,
+				D10000000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = HiAgentShare;
+			productName = HiAgentShare;
+			productReference = C10000000000000000000002 /* HiAgentShare.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -140,6 +232,9 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					F10000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					F10000000000000000000002 = {
 						CreatedOnToolsVersion = 16.0;
 					};
 				};
@@ -158,6 +253,7 @@
 			projectRoot = "";
 			targets = (
 				F10000000000000000000001 /* HiAgentIOS */,
+				F10000000000000000000002 /* HiAgentShare */,
 			);
 		};
 /* End PBXProject section */
@@ -193,8 +289,19 @@
 				A1000000000000000000000E /* AddAgentView.swift in Sources */,
 				A1000000000000000000000F /* ShowScreen.swift in Sources */,
 				A10000000000000000000010 /* ShowScreenIntent.swift in Sources */,
-				A10000000000000000000011 /* ShowScreenBanner.swift in Sources */,
+				A10000000000000000000011 /* HandoffBanner.swift in Sources */,
 				A10000000000000000000012 /* ShowScreenSetupView.swift in Sources */,
+				A10000000000000000000013 /* HandedDrop.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F30000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000015 /* ShareViewController.swift in Sources */,
+				A10000000000000000000016 /* OpenHost.swift in Sources */,
+				A10000000000000000000014 /* HandedDrop.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -207,6 +314,14 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
+				/* The app's identifier, and the stem every other bundle in the build
+				   derives from — the share extension must be `<app>.something` or
+				   installation fails. It is one user-defined setting rather than a
+				   literal in each target because CI overrides the identifier on the
+				   xcodebuild command line, and a command-line
+				   `PRODUCT_BUNDLE_IDENTIFIER=` applies to *every* target at once,
+				   which would give the extension the app's own identifier. */
+				HI_BUNDLE_ID = com.xiaoyuanzhu.hiagent.ios;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SDKROOT = iphoneos;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -220,6 +335,14 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
+				/* The app's identifier, and the stem every other bundle in the build
+				   derives from — the share extension must be `<app>.something` or
+				   installation fails. It is one user-defined setting rather than a
+				   literal in each target because CI overrides the identifier on the
+				   xcodebuild command line, and a command-line
+				   `PRODUCT_BUNDLE_IDENTIFIER=` applies to *every* target at once,
+				   which would give the extension the app's own identifier. */
+				HI_BUNDLE_ID = com.xiaoyuanzhu.hiagent.ios;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -233,6 +356,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HiAgentIOS/HiAgentIOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = R3845XW5FZ;
@@ -240,7 +364,7 @@
 				INFOPLIST_FILE = HiAgentIOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.xiaoyuanzhu.hiagent.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(HI_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -253,6 +377,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HiAgentIOS/HiAgentIOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = R3845XW5FZ;
@@ -260,9 +385,51 @@
 				INFOPLIST_FILE = HiAgentIOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.xiaoyuanzhu.hiagent.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(HI_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		F50000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HiAgentShare/HiAgentShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R3845XW5FZ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HiAgentShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(HI_BUNDLE_ID).share";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F50000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HiAgentShare/HiAgentShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R3845XW5FZ;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HiAgentShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(HI_BUNDLE_ID).share";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -285,6 +452,15 @@
 			buildConfigurations = (
 				F50000000000000000000001 /* Debug */,
 				F50000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F20000000000000000000003 /* Build configuration list for PBXNativeTarget "HiAgentShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F50000000000000000000003 /* Debug */,
+				F50000000000000000000004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

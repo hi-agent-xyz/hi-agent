@@ -8,9 +8,13 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
+import okio.source
 import org.json.JSONObject
 
 /**
@@ -230,6 +234,102 @@ object CoreClient {
                 // "no expiry", not "expires in 292 million years".
                 expiresAt = parsed.expiresAt.takeIf { at -> at != Long.MAX_VALUE },
             )
+        }
+    }
+
+    /**
+     * Hand files to a core through its `file` channel — `POST /api/in/file`, the
+     * same door a drag-drop onto the face goes through.
+     *
+     * **The bytes are streamed out of the `ContentResolver` and never held.** What
+     * arrives from a share is a `content://` URI owned by another app; opening it and
+     * copying it into a `ByteArray` first would put a phone video in this process's
+     * heap, which is a few hundred megabytes short of working. OkHttp's
+     * [RequestBody.writeTo] is given the stream instead, so the upload is a pipe from
+     * the other app's file to the socket. The core's half of the arrangement is that
+     * `/api/in/file` writes each part through to a blob as it arrives and declares no
+     * size limit at all.
+     *
+     * No `note` part: what was shared is the whole of what was communicated, and the
+     * person is looking at a conversation they can type into.
+     *
+     * The long-lived credential is presented directly as a Bearer token rather than
+     * exchanged for a session first. A session exists so a `WebView` can carry
+     * something a cookie jar understands; this is one request from native code.
+     */
+    @Throws(CoreClientException::class)
+    suspend fun hand(
+        baseUrl: HttpUrl,
+        credential: String,
+        files: List<HandedFile>,
+    ): Unit = withContext(Dispatchers.IO) {
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .apply {
+                files.forEach { file ->
+                    addFormDataPart("file", file.name, file.body())
+                }
+            }
+            .build()
+
+        val request = Request.Builder()
+            .url(endpoint(baseUrl, "api/in/file"))
+            .post(multipart)
+            .header("Authorization", "Bearer $credential")
+            .build()
+        send(request)
+    }
+
+    /**
+     * Say something to a core — `POST /api/in/text`, the typed-input door.
+     *
+     * This is where a shared **link** goes, and the choice is deliberate: a URL is
+     * something a person says, not an artifact they hand over. Filed through the file
+     * channel it would be a few bytes on disk under a generated name, which the agent
+     * would have to open to discover was a link; said, it is a line in the
+     * conversation that reads exactly as it would if they had typed it.
+     */
+    @Throws(CoreClientException::class)
+    suspend fun say(
+        baseUrl: HttpUrl,
+        credential: String,
+        text: String,
+    ): Unit = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(endpoint(baseUrl, "api/in/text"))
+            .post(text.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+            .header("Authorization", "Bearer $credential")
+            .build()
+        send(request)
+    }
+
+    private fun send(request: Request) {
+        // Uploading is not a four-second business; the health check's timeout is its
+        // own and stays where it is.
+        val client = http.newBuilder()
+            .callTimeout(java.time.Duration.ofMinutes(30))
+            .writeTimeout(java.time.Duration.ofMinutes(30))
+            .build()
+
+        val response = try {
+            client.newCall(request).execute()
+        } catch (e: Exception) {
+            throw CoreClientException.RequestFailed(
+                e.message ?: "The core could not be reached.",
+            )
+        }
+        response.use {
+            val detail = try {
+                it.body.string().trim()
+            } catch (_: Exception) {
+                ""
+            }
+            // 207 is `/api/in/file` saying some parts landed and some did not.
+            // Reading it as success is how a file that never landed would be
+            // reported as sent.
+            if (!it.isSuccessful || it.code == 207) {
+                throw CoreClientException.Rejected(it.code, detail)
+            }
         }
     }
 

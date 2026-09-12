@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 /// roster, and a screen to report on. It never throws — a failure here would surface
 /// as a Shortcuts error banner over the app the person was using, while the app it
 /// just opened, holding the bytes and able to retry, said nothing. Everything that
-/// can go wrong is reported through `AppModel.showScreenState` instead.
+/// can go wrong is reported through `AppModel.handoffState` instead.
 struct ShowScreenIntent: AppIntent {
     static var title: LocalizedStringResource = "Show My Screen"
 

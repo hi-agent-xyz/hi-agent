@@ -9,6 +9,8 @@ import com.xiaoyuanzhu.hiagent.android.core.CoreClient
 import com.xiaoyuanzhu.hiagent.android.core.CoreClientException
 import com.xiaoyuanzhu.hiagent.android.core.CoreSession
 import com.xiaoyuanzhu.hiagent.android.core.CredentialStore
+import com.xiaoyuanzhu.hiagent.android.core.HandedFile
+import com.xiaoyuanzhu.hiagent.android.core.HandoffState
 import com.xiaoyuanzhu.hiagent.android.core.HealthState
 import com.xiaoyuanzhu.hiagent.android.core.NetworkMonitor
 import com.xiaoyuanzhu.hiagent.android.core.PairingLinkException
@@ -56,6 +58,15 @@ class AppModel(application: Application) : AndroidViewModel(application) {
      */
     private val _credentialRevision = MutableStateFlow(0)
     val credentialRevision: StateFlow<Int> = _credentialRevision.asStateFlow()
+
+    /**
+     * Where the last thing handed over got to, or null if nothing has been this
+     * launch — the banner is then absent, not empty. A share arrives while the face
+     * is still painting, so without this the successful case and the "not paired with
+     * anything" case look identical: the app opened, and nothing visibly happened.
+     */
+    private val _handoff = MutableStateFlow<HandoffState?>(null)
+    val handoff: StateFlow<HandoffState?> = _handoff.asStateFlow()
 
     val isConnected: StateFlow<Boolean> = network.isConnected
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
@@ -176,6 +187,72 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val baseUrl = entry(entryId)?.baseUrl?.toHttpUrlOrNull() ?: return
         setHealth(entryId, HealthState.CHECKING)
         setHealth(entryId, CoreClient.health(baseUrl))
+    }
+
+    // MARK: Handing things over
+
+    /**
+     * Send what the person just shared to the attached core.
+     *
+     * **Straight out over the wire, with no queue** — unlike iOS, where a share
+     * extension is a separate short-lived process that cannot reach the credential or
+     * outlive its sheet. `ACTION_SEND` starts this activity, so by the time this runs
+     * the app is open, the roster is loaded, the keychain is readable and there is a
+     * conversation on screen to report into. There is nothing to park.
+     *
+     * Words go first when there are both: a link shared with a picture of it lands as
+     * the sentence and then the artifact, which is the order the person did it in.
+     *
+     * Reports rather than throws: the caller is an intent, which has nowhere to put an
+     * error.
+     *
+     * **A send that outlives the screen is not handled, and it is the known gap here.**
+     * The upload runs in `viewModelScope` and reads through a `content://` grant that
+     * belongs to the activity, so walking away from a large video mid-upload can lose
+     * both: the scope is cancelled with the activity, and the grant is revoked with
+     * the task. Small things — the photos and links that are almost all of sharing —
+     * land long before that matters. Closing it means a foreground service holding the
+     * upload and a copy of the bytes taken while the grant is live, which is the
+     * Android shape of what iOS does with its on-disk queue.
+     */
+    fun share(text: String?, files: List<HandedFile>) {
+        if (text.isNullOrBlank() && files.isEmpty()) return
+
+        val entry = current
+        if (entry == null) {
+            _handoff.value = HandoffState.Failed(
+                "This device hasn't been paired with an agent yet, so there's nobody to hand it to.",
+            )
+            return
+        }
+        val baseUrl = entry.baseUrl.toHttpUrlOrNull()
+        if (baseUrl == null) {
+            _handoff.value = HandoffState.Failed("This core's address is no longer usable.")
+            return
+        }
+
+        val count = files.size + if (text.isNullOrBlank()) 0 else 1
+        _handoff.value = HandoffState.Sending(count)
+        viewModelScope.launch {
+            try {
+                val credential = credentials.read(CredentialStore.account(entry.id))
+                if (!text.isNullOrBlank()) {
+                    CoreClient.say(baseUrl, credential, text.trim())
+                }
+                if (files.isNotEmpty()) {
+                    CoreClient.hand(baseUrl, credential, files)
+                }
+                _handoff.value = HandoffState.Sent(entry.label, count)
+            } catch (e: Exception) {
+                _handoff.value = HandoffState.Failed(
+                    e.message ?: "That could not be sent.",
+                )
+            }
+        }
+    }
+
+    fun dismissHandoff() {
+        _handoff.value = null
     }
 
     /**

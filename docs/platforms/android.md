@@ -42,6 +42,42 @@ also re-check the selected core. Camera and microphone capture requests are
 granted only when the WebView reports the selected core's exact scheme, host,
 and port, and only for permissions the app itself holds.
 
+## Sharing into the agent
+
+Hi Agent is in the system share sheet for **anything** — `mimeType="*/*"` on an
+`ACTION_SEND` / `ACTION_SEND_MULTIPLE` filter, because the file channel's premise is
+that a person may hand their agent whatever they like. A photo, a download, a
+selection of text, a link from the browser.
+
+Two doors, chosen by what was shared. `EXTRA_STREAM` is an artifact and goes to
+`POST /api/in/file`; `EXTRA_TEXT` is a link or a selection and goes to
+`POST /api/in/text`. **A link is something a person says, not something they hand
+over** — filed through the file channel it would be a few bytes on disk under a
+generated name that the agent has to open to discover is a link. `EXTRA_SUBJECT`
+(the page title) is deliberately dropped: it is the page's sentence, not the
+person's, and the agent can open the link and read a better one.
+
+**Nothing is written as a note.** What was shared is the whole of what was
+communicated, and the conversation is on screen a moment later for the person to say
+the rest into.
+
+**Nothing is read into memory.** `HandedFile` hands OkHttp a closure that opens the
+`content://` URI, so the bytes go from the other app's file to the socket; the core's
+half is that `/api/in/file` writes each part through to a blob as it arrives and
+declares no size limit. A phone video is an ordinary case rather than an OOM.
+
+Sharing lands on `MainActivity` itself — `singleTask`, so it arrives in the app that
+is already running — and that is the one place this platform is *simpler* than iOS,
+where a share extension is a separate process that cannot reach the credential, must
+finish before its sheet closes, and has no sanctioned way to open its host. See
+[apple-ios.md](apple-ios.md) for the queue that exists to work around all three.
+
+**A send that outlives the screen is the known gap.** The upload runs in
+`viewModelScope` and reads through a `content://` grant belonging to the activity, so
+walking away from a large video mid-upload can lose both. Closing it means a
+foreground service and a copy taken while the grant is live — the Android shape of
+what iOS does with its queue.
+
 ## Where Android differs from iOS
 
 Five things do not port, and each is solved in one named place rather than

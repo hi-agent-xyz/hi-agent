@@ -6,7 +6,7 @@
 
 ## Steps & expected UX
 
-1. **在任意 app 里按下操作按钮** → 屏幕不跳走,截图当场拍下(拍的是**那个 app**,不是 hi agent)→ hi agent 打开,底部一条"正在把你的屏幕给它看…";落地后变"已给 <core 名字>",两秒自己收走。
+1. **在任意 app 里按下操作按钮** → 屏幕不跳走,截图当场拍下(拍的是**那个 app**,不是 hi agent)→ hi agent 打开,底部一条"正在发送…";落地后变"已发给 <core 名字>",两秒自己收走。这条 banner 现在和[分享](40-share-anything-to-the-agent.md)共用一条:到了这一层,两件事都只是"字节排队发给某个 agent"。
 2. **对话里是两条自己的消息**:一句 "Here's my iPhone screen right now.",和那张图 —— 一次到达,一件事一条消息,不是一句把图裹进去的旁白。
 3. **agent 醒过来就图说事**:Reaction 只读到那句话(它不开文件),据此判断这是"当下的屏幕、人要我看"→ 交给 Cognition 打开图 → 回的是屏幕上那件事(这条报错怎么修 / 这家店几点关),不是"你发来一张图"。
 4. **想连着说点什么** → 在快捷指令里给 Show My Screen 填 Note("这段报错什么意思")→ 那句话**代替**默认那句,仍旧排在图前面。
@@ -18,7 +18,7 @@
 
 ## Edge cases & failure modes
 
-- **还没配对任何 core** → banner 直说"这台设备还没配对,没人可看",截图**留在手上**,配好后"再试一次"就发出去,不用重按一遍。
+- **还没配对任何 core** → banner 直说"这台设备还没配对,没人可接",截图**落在磁盘队列上**(和分享同一个队列),配好后下次打开 app 自动发出去,不用重按一遍 —— 现在连 app 被杀掉都还在。
 - **core 不在 / 网断** → 同上:一条能读懂的原因 + 再试一次。
 - **凭证没了(core 那边解绑)** → "这台设备已不再和 <core> 配对,请重新配对",不是一个 HTTP 数字。
 - **首次运行** → iOS 自己会问"允许这个快捷指令截屏吗",一次性,和本 app 无关。
@@ -33,6 +33,6 @@
 - 桌面那句是 "Here's my screen right now.",手机这句多带了机型。两句要不要收敛成一句,取决于"是手机屏"这件事对怎么看图有没有用。
 - 手势只有"看这一屏"。桌面还有按住 ⌘ 的持续注意([15](15-talk-over-the-agent.md) 那路),手机上对应的东西是什么,没想。
 
-_机制:iOS 上**任何 app 都不能给别的 app 拍照**,能拍的只有系统自己 —— 快捷指令的 Take Screenshot 动作,而操作按钮跑快捷指令时不离开当前 app。所以图由系统拍,`ShowScreenIntent`(App Intent,`openAppWhenRun`)只是接过来的载体:它把字节 POST 给 `POST /api/in/file`,并在 multipart 里带一个 `note` 部分说这是什么 —— 和桌面 ⌘⌘ 在进程内填的是同一个字段(`files::ingest_file` 的 `note`)。截图必须先于开 app 拍好,否则拍到的是 hi agent 自己。_
+_机制:iOS 上**任何 app 都不能给别的 app 拍照**,能拍的只有系统自己 —— 快捷指令的 Take Screenshot 动作,而操作按钮跑快捷指令时不离开当前 app。所以图由系统拍,`ShowScreenIntent`(App Intent,`openAppWhenRun`)只是接过来的载体:它把字节 POST 给 `POST /api/in/file`,并在 multipart 里带一个 `note` 部分说这是什么 —— 和桌面 ⌘⌘ 在进程内填的是同一个字段(`files::deliver_artifact` 的 `note`)。截图必须先于开 app 拍好,否则拍到的是 hi agent 自己。_
 
 _状态:Rust 那半有集成测试(`tests/transcript.rs::a_carriers_note_precedes_the_file_it_frames`);iOS 那半 `make ios` 编译通过,**没在真机上跑过** —— 操作按钮和 Take Screenshot 都只有真机有,模拟器没有,所以第 1 步至今没人看着它发生。_

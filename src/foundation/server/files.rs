@@ -23,16 +23,25 @@
 //! carrier's because the carrier is the rung that knows what the gesture *was*; the
 //! core cannot tell a screenshot from any other PNG.
 //!
-//! Every door funnels into [`receive_file`], which mirrors the text path: store
-//! the bytes ([`media::store_blob`]), journal a `SignalIn`, echo to observers,
+//! Every door funnels into [`ingest_field`], which mirrors the text path: write the
+//! bytes through to a blob as they arrive, journal a `SignalIn`, echo to observers,
 //! and — crucially — send the `Signal` inbound so the reaction *wakes* and the
 //! agent reacts — as a presence change does ([`super::vision`], which journals
 //! *and* sends `Inbound::Observed`). A handed file must wake the mind.
+//!
+//! **There is no size limit on a handed file, and that is why the write is a
+//! stream.** The two routes here run `DefaultBodyLimit::disable()`, as the typed
+//! channel already did; what bounds an upload is the disk it lands on. A declared
+//! ceiling would be a number nobody can pick — the things people actually hand over
+//! include a phone video and a database dump — and the old 50 MiB one was in any case
+//! not the real ceiling, because the field was read into memory first.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
 use axum::body::Bytes;
+use axum::extract::multipart::Field;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -135,6 +144,18 @@ fn ext_for(name: &str, mime: &str) -> String {
 /// or the macOS "come and see this" gesture ([`receive_screenshot`]) — and this appends
 /// the locator, so no caller can frame a file the mind then cannot open.
 ///
+/// **The bytes are never held whole.** The field is written through to the blob as
+/// it arrives, the same way an oversized typed body is
+/// ([`crate::foundation::server::text::post_text`]) — which is what lets this route
+/// carry no size limit at all. Reading the field into a `Bytes` first, as this did,
+/// meant the ceiling on a handed file was the box's spare RAM, and raising the
+/// declared limit without changing that only moves where it fails: from a 413 the
+/// carrier can report to an allocation that takes the process down.
+///
+/// A read that dies mid-file leaves the partial blob on disk unreferenced rather
+/// than journalling a signal that claims to be the whole of what somebody handed
+/// over. Same policy as the typed path, for the same reason.
+///
 /// **The locator is the whole point of the signal.** `docs/arch/agents.md` retires
 /// the perception tool on the grounds that "a photo or a file arrives as a **ref**,
 /// a ref is a path, and an agent that can read files can open it" — and
@@ -149,19 +170,40 @@ fn ext_for(name: &str, mime: &str) -> String {
 /// invariant 11 forbids persisting a host path into `data/`. The absolute root
 /// reaches the rung through its prompt (`{raw_dir}`), which is reinstalled from
 /// the binary every boot and so may hold one.
-async fn ingest_file(
+async fn ingest_field(
     state: &AppState,
     name: &str,
     mime: &str,
-    bytes: &Bytes,
+    field: &mut Field<'_>,
     note: Option<String>,
     sender: Sender,
-) -> Result<(), String> {
+) -> Result<(), IngestError> {
+    use tokio::io::AsyncWriteExt as _;
+
     let ts = Utc::now();
     let ext = ext_for(name, mime);
-    let rel = media::store_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, &ext, bytes)
-        .await
-        .map_err(|e| format!("store file: {e}"))?;
+    let (rel, mut blob) =
+        media::create_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, &ext)
+            .await
+            .map_err(|e| IngestError::Store(format!("store file: {e}")))?;
+
+    let mut total: u64 = 0;
+    loop {
+        match field.chunk().await {
+            Ok(Some(chunk)) => {
+                total += chunk.len() as u64;
+                blob.write_all(&chunk)
+                    .await
+                    .map_err(|e| IngestError::Store(format!("store file: {e}")))?;
+            }
+            Ok(None) => break,
+            Err(e) => return Err(IngestError::Stream(e.to_string())),
+        }
+    }
+    blob.flush().await.map_err(|e| IngestError::Store(format!("store file: {e}")))?;
+    blob.sync_data().await.map_err(|e| IngestError::Store(format!("store file: {e}")))?;
+    drop(blob);
+
     let reff = media::signal_ref(Channel::File, ts, &rel);
 
     crate::foundation::channel_log::inbound(Channel::File, name);
@@ -173,7 +215,7 @@ async fn ingest_file(
             reff,
             mime: mime.to_string(),
             name: name.to_string(),
-            bytes: Some(bytes.len() as u64),
+            bytes: Some(total),
             // No peek: a carrier that hands over a photo or a PDF has no opening
             // worth quoting, and this one does not read what it stores. The typed
             // channel's own artifacts take theirs from the bytes as they arrive.
@@ -183,6 +225,21 @@ async fn ingest_file(
         sender,
     )
     .await
+    .map_err(IngestError::Store)
+}
+
+/// Why one file part did not land.
+///
+/// The split is the whole reason this is not a `String`: a store failure is *this*
+/// file's problem and its siblings in the same body can still be attempted, while a
+/// malformed or truncated body means there are no trustworthy siblings left to read —
+/// the multipart framing itself is gone. [`drain_multipart`] answers the first with an
+/// entry in `failed` and the second by abandoning the request.
+enum IngestError {
+    /// The disk, or the journal, would not take it.
+    Store(String),
+    /// The body stopped being parseable.
+    Stream(String),
 }
 
 /// Put an artifact whose bytes are already on disk into the conversation: journal it,
@@ -309,18 +366,43 @@ pub async fn get_media(
 /// read files" — so this sentence is the entire basis on which it decides to hand the
 /// turn down. "My screen right now" is decidable on that basis; a keystroke and a
 /// payload size are not.
+///
+/// Unlike every other door here, this one legitimately holds the whole image: the
+/// picture was taken into memory by the window server a moment ago, so there is no
+/// stream to write through and [`media::store_blob`] is the honest call. It joins the
+/// others at [`deliver_artifact`], which is where the shared work actually starts.
 #[cfg(target_os = "macos")]
 pub(crate) async fn receive_screenshot(
     state: &AppState,
     bytes: &Bytes,
 ) -> Result<(), String> {
-    let name = format!("screen-{}.png", Utc::now().format("%Y%m%d-%H%M%S"));
+    let ts = Utc::now();
+    let name = format!("screen-{}.png", ts.format("%Y%m%d-%H%M%S"));
     // The screenshot gesture is a key held on this machine — no device credential is
     // involved and none could be, so this is the owner default or nothing.
     let sender = Sender::owner_or_unknown(
         crate::foundation::config::owner(&state.data_dir).as_deref(),
     );
-    ingest_file(state, &name, "image/png", bytes, Some("Here's my screen right now.".to_string()), sender).await
+    let rel = media::store_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, "png", bytes)
+        .await
+        .map_err(|e| format!("store file: {e}"))?;
+
+    crate::foundation::channel_log::inbound(Channel::File, &name);
+
+    deliver_artifact(
+        state,
+        ts,
+        FileRef {
+            reff: media::signal_ref(Channel::File, ts, &rel),
+            mime: "image/png".to_string(),
+            name,
+            bytes: Some(bytes.len() as u64),
+            peek: None,
+        },
+        Some("Here's my screen right now.".to_string()),
+        sender,
+    )
+    .await
 }
 
 /// Drain a multipart body, storing every file part. A failed file does not hide
@@ -342,7 +424,7 @@ async fn drain_multipart(
     let mut note: Option<String> = None;
     loop {
         match mp.next_field().await {
-            Ok(Some(field)) => {
+            Ok(Some(mut field)) => {
                 // Only parts that carry a filename are files; skip plain fields,
                 // but still drain their bytes so the stream advances.
                 let field_name = field.name().map(str::to_owned);
@@ -362,15 +444,15 @@ async fn drain_multipart(
                 };
                 let index = result.attempted;
                 result.attempted += 1;
-                match field.bytes().await {
-                    Ok(bytes) => match ingest_file(state, &name, &mime, &bytes, note.take(), sender.clone()).await {
-                        Ok(()) => result.received += 1,
-                        Err(error) => {
-                            tracing::error!(file = %name, %error, "file upload failed");
-                            result.failed.push(UploadFailure { index, name, error });
-                        }
+                match ingest_field(state, &name, &mime, &mut field, note.take(), sender.clone()).await {
+                    Ok(()) => result.received += 1,
+                    Err(IngestError::Store(error)) => {
+                        tracing::error!(file = %name, %error, "file upload failed");
+                        result.failed.push(UploadFailure { index, name, error });
                     }
-                    Err(e) => return Err((StatusCode::BAD_REQUEST, format!("reading upload: {e}"))),
+                    Err(IngestError::Stream(e)) => {
+                        return Err((StatusCode::BAD_REQUEST, format!("reading upload: {e}")))
+                    }
                 }
             }
             Ok(None) => break,

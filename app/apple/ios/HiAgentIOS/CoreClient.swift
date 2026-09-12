@@ -238,9 +238,14 @@ enum CoreClient {
     }
 
     /// Hand a file to a core through its `file` channel — the same door a drag-drop
-    /// onto the face goes through (`POST /api/in/file`). `note` is the line the
-    /// person effectively said as they handed it over; the core makes it their own
-    /// message just ahead of the artifact.
+    /// onto the face goes through (`POST /api/in/file`).
+    ///
+    /// **The body is a file on disk, and is never read into this process.** It was
+    /// written as a complete multipart body when the drop was queued (see
+    /// [`HandedDrop`]), so `upload(fromFile:)` streams it straight out; a phone video
+    /// crosses without a buffer its size existing at either end. The core's half of
+    /// the same arrangement is that `/api/in/file` writes the field through to a blob
+    /// as it arrives and declares no size limit.
     ///
     /// The long-lived credential is presented directly as a Bearer token instead of
     /// being exchanged for a session first. A session exists so a `WKWebView` can
@@ -250,12 +255,9 @@ enum CoreClient {
     static func hand(
         at baseURL: URL,
         credential: String,
-        data: Data,
-        filename: String,
-        mime: String,
-        note: String?
+        body: URL,
+        boundary: String
     ) async throws {
-        let boundary = "hi-agent.\(UUID().uuidString)"
         var request = URLRequest(url: endpoint(baseURL, path: "api/in/file"))
         request.httpMethod = "POST"
         request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
@@ -263,60 +265,53 @@ enum CoreClient {
             "multipart/form-data; boundary=\(boundary)",
             forHTTPHeaderField: "Content-Type"
         )
-        // A screenshot over a phone connection is not a 4-second request; the health
-        // check's timeout would fail a send that was going to land.
-        request.timeoutInterval = 60
-        request.httpBody = multipart(
-            boundary: boundary,
-            note: note,
-            data: data,
-            filename: filename,
-            mime: mime
-        )
+        // What is being handed over may be a video, so the timeout is on the whole
+        // resource rather than the request, and it is generous: the health check's
+        // four seconds would fail a send that was going to land.
+        request.timeoutInterval = 300
 
-        let (body, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.upload(for: request, fromFile: body)
+        try check(response, data)
+    }
+
+    /// Say something to a core — `POST /api/in/text`, the typed-input door.
+    ///
+    /// This is where a shared **link** goes, and the choice is deliberate: a URL is
+    /// something a person says, not an artifact they hand over. Filed through the
+    /// file channel it would be a few bytes on disk under a generated name, which the
+    /// agent would have to open to discover was a link; said, it is a line in the
+    /// conversation that reads exactly as it would if they had typed it.
+    static func say(
+        at baseURL: URL,
+        credential: String,
+        text: String
+    ) async throws {
+        var request = URLRequest(url: endpoint(baseURL, path: "api/in/text"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        request.httpBody = Data(text.utf8)
+
+        let (data, response) = try await urlSession.data(for: request)
+        try check(response, data)
+    }
+
+    private static func check(_ response: URLResponse, _ body: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             throw CoreClientError.invalidResponse
         }
-        guard (200..<300).contains(http.statusCode) else {
+        // 207 is `/api/in/file` saying some parts landed and some did not. These
+        // bodies carry exactly one file, so for this caller it is a plain failure —
+        // and reading it as success is how a file that never landed would be dropped
+        // from the queue.
+        guard (200..<300).contains(http.statusCode), http.statusCode != 207 else {
             throw CoreClientError.rejected(
                 status: http.statusCode,
                 detail: String(data: body, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             )
         }
-    }
-
-    /// One multipart body: the note first — the core spends it on the file that
-    /// follows — then the bytes.
-    ///
-    /// Hand-rolled because `URLSession` has no multipart encoder and this body has
-    /// one shape. `filename` and `mime` are never user text: the caller builds the
-    /// name and reads the type from the file's UTI, so neither can carry a quote or
-    /// a newline into a header.
-    private static func multipart(
-        boundary: String,
-        note: String?,
-        data: Data,
-        filename: String,
-        mime: String
-    ) -> Data {
-        var body = Data()
-        func append(_ text: String) {
-            body.append(Data(text.utf8))
-        }
-        if let note, !note.isEmpty {
-            append("--\(boundary)\r\n")
-            append("Content-Disposition: form-data; name=\"note\"\r\n\r\n")
-            append(note)
-            append("\r\n")
-        }
-        append("--\(boundary)\r\n")
-        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-        append("Content-Type: \(mime)\r\n\r\n")
-        body.append(data)
-        append("\r\n--\(boundary)--\r\n")
-        return body
     }
 
     static func health(at baseURL: URL) async -> HealthState {

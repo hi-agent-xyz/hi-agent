@@ -80,9 +80,12 @@ function uploadFailureFeedback(
       feedback: {
         state: "error",
         kind: "files",
+        // The core itself sets no upload ceiling, so a 413 is something in front of
+        // it saying no — a reverse proxy, a CDN. Naming a number here would be
+        // inventing one, and a retry would hit the same wall.
         message:
           error.status === 413
-            ? "Files must total 50 MB or less"
+            ? "Something between here and the agent rejected a file that size"
             : "File upload failed",
         retryable: error.status !== 413,
       },
