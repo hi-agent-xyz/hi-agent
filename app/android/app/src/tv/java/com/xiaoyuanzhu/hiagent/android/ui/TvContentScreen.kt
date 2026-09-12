@@ -21,7 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xiaoyuanzhu.hiagent.android.AppModel
-import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentRequest
 
 /**
  * The root, on a television.
@@ -36,7 +36,7 @@ import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
 fun TvContentScreen(model: AppModel, modifier: Modifier = Modifier) {
     val entries by model.entries.collectAsStateWithLifecycle()
     val selectedId by model.selectedId.collectAsStateWithLifecycle()
-    val pairingRequest by model.pairingRequest.collectAsStateWithLifecycle()
+    val addRequest by model.addRequest.collectAsStateWithLifecycle()
 
     var showingRoster by remember { mutableStateOf(false) }
 
@@ -49,20 +49,20 @@ fun TvContentScreen(model: AppModel, modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) { model.refreshAll() }
 
     Box(modifier.fillMaxSize()) {
-        val request = pairingRequest
+        val request = addRequest
         when {
-            request != null -> TvPairScreen(
+            request != null -> TvAddAgentScreen(
                 model = model,
                 request = request,
-                onDismiss = { model.requestPairing(null) },
+                onDismiss = { model.requestAdd(null) },
             )
 
             showingRoster -> TvRosterScreen(
                 model = model,
                 onDismiss = { showingRoster = false },
-                onPair = {
+                onAdd = {
                     showingRoster = false
-                    model.requestPairing(PairingRequest.manual())
+                    model.requestAdd(AddAgentRequest.ask())
                 },
             )
 
@@ -73,7 +73,7 @@ fun TvContentScreen(model: AppModel, modifier: Modifier = Modifier) {
             )
 
             else -> TvWelcomeScreen(
-                onPair = { model.requestPairing(PairingRequest.manual()) },
+                onAdd = { model.requestAdd(AddAgentRequest.ask()) },
             )
         }
     }
@@ -85,7 +85,7 @@ fun TvContentScreen(model: AppModel, modifier: Modifier = Modifier) {
  * started.
  */
 @Composable
-private fun TvWelcomeScreen(onPair: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvWelcomeScreen(onAdd: () -> Unit, modifier: Modifier = Modifier) {
     val pairButton = remember { FocusRequester() }
     LaunchedEffect(Unit) { pairButton.requestFocus() }
 
@@ -98,15 +98,15 @@ private fun TvWelcomeScreen(onPair: () -> Unit, modifier: Modifier = Modifier) {
             CoreMark(size = 132.dp)
             Text("Hi Agent", style = MaterialTheme.typography.displayMedium)
             Text(
-                text = "Pair a core to put it on this screen.",
+                text = "Add your agent to put it on this screen.",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.widthIn(max = 520.dp),
             )
             TvButton(
-                text = "Pair a core",
-                onClick = onPair,
+                text = "Add a remote hi-agent",
+                onClick = onAdd,
                 focusRequester = pairButton,
             )
         }

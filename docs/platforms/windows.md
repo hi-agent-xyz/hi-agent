@@ -91,6 +91,14 @@ would repeat the mistake in a second language.
 
 The credential never enters JavaScript, the roster file, or WebView2's storage.
 
+**Adding a remote agent leads with its name**, matching iOS, Android and the GTK shell:
+`AddAgentWindow` takes a name, calls `POST /api/access/request`, shows the six-digit code it
+gets back, and polls until somebody approves it on the agent. The address-and-code form is
+folded into an `Expander` for a self-hosted core with no name in the default zone. One
+button drives both, because only one of the two is ever the thing being filled in.
+
+Written 2026-09-11 and, like everything else here, **never compiled** — see § *Verification*.
+
 ## Where Windows differs from the phones
 
 Four things do not port, and each is solved in one named place.

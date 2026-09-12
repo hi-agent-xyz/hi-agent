@@ -52,7 +52,7 @@ impl MainWindow {
             .height_request(32)
             .build();
         let retry = gtk::Button::with_label("Try again");
-        let add_core = gtk::Button::with_label("Add a core…");
+        let add_core = gtk::Button::with_label("Add an agent…");
         add_core.add_css_class("suggested-action");
 
         let buttons = gtk::Box::builder()
@@ -94,7 +94,7 @@ impl MainWindow {
         let menu = gio::Menu::new();
         menu.append_section(None, &cores);
         let places = gio::Menu::new();
-        places.append(Some("Add a core…"), Some("win.add-core"));
+        places.append(Some("Add an agent…"), Some("win.add-core"));
         menu.append_section(None, &places);
         let files = gio::Menu::new();
         files.append(Some("Open the agent's folder"), Some("win.open-data"));
@@ -173,8 +173,8 @@ impl MainWindow {
         ));
         actions.add_action(&attach);
 
-        // Destructive and not undoable — the credential goes with the entry,
-        // and getting the core back means a fresh pairing code from it.
+        // Destructive and not undoable — the credential goes with the entry, and
+        // getting the agent back means asking it to let this machine in again.
         let forget = gio::SimpleAction::new("forget", Some(glib::VariantTy::STRING));
         forget.connect_activate(clone!(
             #[weak(rename_to = this)]
@@ -189,8 +189,8 @@ impl MainWindow {
                 let confirm = adw::AlertDialog::new(
                     Some(&format!("Forget {}?", entry.label)),
                     Some(
-                        "This computer will drop its credential for that core. \
-                         Adding it again needs a new pairing code from it.",
+                        "This computer will drop its credential for that agent. \
+                         Adding it again means asking to be let in again.",
                     ),
                 );
                 confirm.add_response("cancel", "Cancel");

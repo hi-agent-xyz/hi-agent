@@ -20,9 +20,11 @@ import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,7 +95,16 @@ fun HiAgentTheme(content: @Composable () -> Unit) {
             surface = Color.White,
         )
     }
-    MaterialTheme(colorScheme = colors, content = content)
+    // `LocalContentColor` defaults to **black**, and only a `Surface` changes it.
+    // The television's screens are a `Box` with `hiCanvas()` — a background
+    // modifier, not a `Surface` — so every `Text` that did not pass a colour of its
+    // own rendered black on a near-black canvas. The body copy passed
+    // `onSurfaceVariant` and survived; the headlines did not, so "Cores" and the
+    // add screen's own title were invisible. Provided here rather than at each call
+    // site, because the next screen would forget it too.
+    MaterialTheme(colorScheme = colors) {
+        CompositionLocalProvider(LocalContentColor provides colors.onBackground, content = content)
+    }
 }
 
 /** Full-bleed app canvas. Applied once per native screen. */

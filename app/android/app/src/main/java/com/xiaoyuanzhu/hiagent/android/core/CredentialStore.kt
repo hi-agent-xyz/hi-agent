@@ -47,7 +47,7 @@ class CredentialStore(context: Context) {
                 .putString(account, Base64.encodeToString(packed, Base64.NO_WRAP))
                 .apply()
         } catch (e: Exception) {
-            throw CredentialException("Could not save the core credential.", e)
+            throw CredentialException("Could not save this agent's credential.", e)
         }
     }
 

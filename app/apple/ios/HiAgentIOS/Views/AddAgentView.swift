@@ -138,6 +138,13 @@ struct AddAgentView: View {
         .monospacedSystemFont(ofSize: namePointSize, weight: .semibold)
     }
 
+    /// Whether what has been typed is still a bare label.
+    private var isBareLabel: Bool {
+        let bare = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "@", with: "")
+        return !bare.contains(".") && !bare.contains("/")
+    }
+
     /// How wide the name box has to be to hold exactly what is in it — the
     /// placeholder when it is empty. Plus two points, so the caret at the end of the
     /// text has somewhere to stand.
@@ -169,10 +176,16 @@ struct AddAgentView: View {
                     .onSubmit { Task { await ask() } }
                     .frame(width: nameWidth)
 
-                Text(".\(CoreClient.defaultZone)")
-                    .font(nameFont)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                // Only while what is typed is still a bare label, which is the
+                // only case `address(forName:)` appends the zone in. A field
+                // reading `example.com.hi-agent.xyz` describes a request nobody is
+                // about to make.
+                if isBareLabel {
+                    Text(".\(CoreClient.defaultZone)")
+                        .font(nameFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity)
             // The whole card is the target — a caret-width box is not something to

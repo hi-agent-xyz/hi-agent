@@ -45,7 +45,7 @@ import com.xiaoyuanzhu.hiagent.android.core.RosterEntry
 fun RosterSheet(
     model: AppModel,
     onDismiss: () -> Unit,
-    onPair: () -> Unit,
+    onAdd: () -> Unit,
 ) {
     val entries by model.entries.collectAsStateWithLifecycle()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
@@ -64,14 +64,14 @@ fun RosterSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Cores",
+                    text = "Agents",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = { model.refreshAll() }) {
                     Icon(
                         Icons.Rounded.Refresh,
-                        contentDescription = "Re-check every core",
+                        contentDescription = "Re-check every agent",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -91,7 +91,7 @@ fun RosterSheet(
             }
 
             Button(
-                onClick = onPair,
+                onClick = onAdd,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
@@ -99,7 +99,7 @@ fun RosterSheet(
                 shape = RoundedCornerShape(14.dp),
             ) {
                 Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
-                Text("  Pair another core")
+                Text("  Add another agent")
             }
         }
     }
@@ -150,7 +150,7 @@ private fun CoreRow(
             Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                 Icon(
                     Icons.Rounded.Check,
-                    contentDescription = "Current core",
+                    contentDescription = "Current agent",
                     tint = Theme.ink,
                     modifier = Modifier.size(18.dp),
                 )

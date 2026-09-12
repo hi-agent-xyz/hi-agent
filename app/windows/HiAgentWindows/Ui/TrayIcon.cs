@@ -82,7 +82,7 @@ internal sealed class TrayIcon : IDisposable
             _menu.Items.Add(new MenuFlyoutSeparator());
         }
 
-        _menu.Items.Add(Item("Add a core…", () => _window.ShowPairWindow()));
+        _menu.Items.Add(Item("Add an agent…", () => _window.ShowPairWindow()));
         _menu.Items.Add(new MenuFlyoutSeparator());
         _menu.Items.Add(Item("Open the agent's folder", () => Reveal(AppPaths.EngineData)));
         _menu.Items.Add(Item("Open the app's logs", () => Reveal(AppPaths.ShellData)));

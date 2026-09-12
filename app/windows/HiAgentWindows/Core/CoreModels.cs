@@ -97,16 +97,58 @@ internal class CoreClientException(string message) : Exception(message)
 {
     internal sealed class InvalidAddress(string message) : CoreClientException(message);
 
+    internal sealed class InvalidName()
+        : CoreClientException("A name is lowercase letters, digits and hyphens.");
+
+    /// <summary>
+    /// Nothing answers at that name — the relay has no such handle, or the core
+    /// behind it is asleep. One message, because to the person typing they are
+    /// the same thing.
+    /// </summary>
+    internal sealed class NoSuchAgent()
+        : CoreClientException("No agent answers to that name yet.");
+
+    internal sealed class TooManyWaiting() : CoreClientException(
+        "Too many devices are already waiting there. Try again in a few minutes.");
+
     internal sealed class MissingSessionCookie()
-        : CoreClientException("The core did not return a session cookie.");
+        : CoreClientException("That agent did not return a session cookie.");
 
     internal sealed class RequestFailed(string detail) : CoreClientException(detail);
 
     internal sealed class Rejected(int status, string detail) : CoreClientException(
         detail.Length == 0
-            ? $"The core rejected the request (HTTP {status})."
-            : $"The core rejected the request (HTTP {status}): {detail}")
+            ? $"That agent rejected the request (HTTP {status})."
+            : $"That agent rejected the request (HTTP {status}): {detail}")
     {
         internal int Status { get; } = status;
     }
 }
+
+/// <summary>
+/// What an agent handed back when this machine asked to be let in: a code to show
+/// the person, and a secret to poll with. Neither is stored — the secret is spent
+/// once for a credential and dropped.
+/// </summary>
+internal sealed record JoinTicket(string Code, string Secret);
+
+/// <summary>Where one wait got to.</summary>
+internal abstract record JoinState
+{
+    internal sealed record Waiting : JoinState;
+
+    internal sealed record Approved(string Credential) : JoinState;
+
+    internal sealed record Denied : JoinState;
+
+    internal sealed record Expired : JoinState;
+}
+
+/// <summary>One outstanding "let me in", held only while the add window is open.</summary>
+internal sealed record JoinInvitation(
+    Uri BaseUrl,
+    string Label,
+    /// Shown here and on the agent's Reach view, for the two to be compared. It
+    /// authorizes nothing.
+    string Code,
+    string Secret);

@@ -29,13 +29,29 @@ import org.json.JSONObject
 sealed class CoreClientException(message: String) : Exception(message) {
     class InvalidAddress(message: String) : CoreClientException(message)
 
+    object InvalidName :
+        CoreClientException("A name is lowercase letters, digits and hyphens.") {
+        private fun readResolve(): Any = InvalidName
+    }
+
+    object NoSuchAgent :
+        CoreClientException("No agent answers to that name yet.") {
+        private fun readResolve(): Any = NoSuchAgent
+    }
+
+    object TooManyWaiting : CoreClientException(
+        "Too many devices are already waiting there. Try again in a few minutes.",
+    ) {
+        private fun readResolve(): Any = TooManyWaiting
+    }
+
     object InvalidResponse :
-        CoreClientException("The core returned an invalid response.") {
+        CoreClientException("The agent returned an invalid response.") {
         private fun readResolve(): Any = InvalidResponse
     }
 
     object MissingSessionCookie :
-        CoreClientException("The core did not return a session cookie.") {
+        CoreClientException("The agent did not return a session cookie.") {
         private fun readResolve(): Any = MissingSessionCookie
     }
 
@@ -43,11 +59,31 @@ sealed class CoreClientException(message: String) : Exception(message) {
 
     class Rejected(val status: Int, val detail: String) : CoreClientException(
         if (detail.isEmpty()) {
-            "The core rejected the request (HTTP $status)."
+            "The agent rejected the request (HTTP $status)."
         } else {
-            "The core rejected the request (HTTP $status): $detail"
+            "The agent rejected the request (HTTP $status): $detail"
         },
     )
+}
+
+/**
+ * What the agent handed back when this device asked to be let in: a code to show
+ * the person, and a secret to poll with.
+ *
+ * Neither is stored. The secret is spent once for a credential and dropped; if the
+ * app closes mid-wait the request expires on its own at the agent.
+ */
+data class JoinTicket(val code: String, val secret: String)
+
+/** Where one wait got to. */
+sealed interface JoinState {
+    object Waiting : JoinState
+
+    data class Approved(val credential: String) : JoinState
+
+    object Denied : JoinState
+
+    object Expired : JoinState
 }
 
 /** The `Set-Cookie` line for the session, kept verbatim. */
@@ -64,6 +100,14 @@ data class SessionExchange(val id: String, val credential: String?)
 object CoreClient {
     private const val SESSION_COOKIE_NAME = "hi_surface"
     private val jsonMediaType = "application/json".toMediaType()
+
+    /**
+     * Where a name without a dot in it lives. An agent's name is a label in this
+     * zone, which is why the add screen draws the zone beside the field instead of
+     * asking anybody to type it — on a television that difference is the difference
+     * between six key presses on a remote and forty-three.
+     */
+    const val DEFAULT_ZONE = "hi-agent.xyz"
 
     /**
      * Cookies are installed into the WebView's own `CookieManager`, so this
@@ -96,22 +140,22 @@ object CoreClient {
         val value = raw.trim()
         val url = value.toHttpUrlOrNull()
             ?: throw CoreClientException.InvalidAddress(
-                "Enter a core address beginning with http:// or https://.",
+                "Enter an address beginning with http:// or https://.",
             )
 
         if (url.scheme != "http" && url.scheme != "https") {
             throw CoreClientException.InvalidAddress(
-                "Enter a core address beginning with http:// or https://.",
+                "Enter an address beginning with http:// or https://.",
             )
         }
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
             throw CoreClientException.InvalidAddress(
-                "A core address cannot carry a username or password.",
+                "An address cannot carry a username or password.",
             )
         }
         if (url.scheme == "http" && !isLocalHost(url.host)) {
             throw CoreClientException.InvalidAddress(
-                "Plain http:// only works for a core on this network. " +
+                "Plain http:// only works for an agent on this network. " +
                     "Use https:// to reach ${url.host}.",
             )
         }
@@ -124,6 +168,32 @@ object CoreClient {
             .fragment(null)
             .encodedPath(normalizedPath(url.encodedPath))
             .build()
+    }
+
+    /**
+     * The address an agent's name resolves to — `iloahz` is
+     * `https://iloahz.hi-agent.xyz`.
+     *
+     * Something with a dot or a scheme in it is taken as a whole address rather
+     * than turned into a nonsense third-level name: a person who types a dot means
+     * an address, and a self-hosted agent has one. That also means the local-network
+     * rules in [normalizeBaseUrl] still get their say — typing `hi-core` here
+     * reaches the box on this network over plain http, exactly as pasting it would.
+     */
+    @Throws(CoreClientException::class)
+    fun addressForName(raw: String): HttpUrl {
+        var name = raw.trim().lowercase().removePrefix("@").trim('/')
+        if (name.isEmpty()) throw CoreClientException.InvalidName
+        if (name.contains("://")) return normalizeBaseUrl(name)
+        // A single label is ambiguous: `hi-core` is a machine on this network and
+        // `iloahz` is a name in the zone. The zone wins — a self-hosted core is
+        // reached by pasting its address, which is the branch above.
+        if (name.contains('.')) return normalizeBaseUrl("https://$name")
+        // The same rule the core states under the name field on its own Reach view.
+        if (!name.all { it.isDigit() || (it in 'a'..'z') || it == '-' }) {
+            throw CoreClientException.InvalidName
+        }
+        return normalizeBaseUrl("https://$name.$DEFAULT_ZONE")
     }
 
     /** Whether `http://` to this host is the local-network case iOS also allows. */
@@ -191,7 +261,7 @@ object CoreClient {
             http.newCall(request).execute()
         } catch (e: Exception) {
             throw CoreClientException.RequestFailed(
-                e.message ?: "The core could not be reached.",
+                e.message ?: "The agent could not be reached.",
             )
         }
 
@@ -217,7 +287,7 @@ object CoreClient {
                 )
             } catch (_: Exception) {
                 throw CoreClientException.RequestFailed(
-                    "The core returned an unexpected session response.",
+                    "The agent returned an unexpected session response.",
                 )
             }
 
@@ -332,6 +402,107 @@ object CoreClient {
             }
         }
     }
+
+    /**
+     * `POST /api/access/request` — ask an agent to let this device in.
+     *
+     * Open at the core, because the caller is by definition a device with no way
+     * in. What comes back is a code to show the person and a secret to poll with —
+     * no access yet, and nothing worth storing.
+     */
+    @Throws(CoreClientException::class)
+    suspend fun askToJoin(baseUrl: HttpUrl, label: String): JoinTicket =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("label", label.trim()).toString()
+            val request = Request.Builder()
+                .url(endpoint(baseUrl, "api/access/request"))
+                .post(body.toRequestBody(jsonMediaType))
+                .build()
+
+            val response = try {
+                http.newCall(request).execute()
+            } catch (e: Exception) {
+                throw CoreClientException.RequestFailed(
+                    e.message ?: "That agent could not be reached.",
+                )
+            }
+
+            response.use {
+                val text = try {
+                    it.body.string()
+                } catch (_: Exception) {
+                    ""
+                }
+                // A name nobody has claimed reaches the relay and stops there; an
+                // address with no core awake behind it answers 503. To the person
+                // typing, both mean the same thing: nothing is there under that name.
+                if (it.code == 404 || it.code == 503) throw CoreClientException.NoSuchAgent
+                if (it.code == 429) throw CoreClientException.TooManyWaiting
+                if (!it.isSuccessful) {
+                    throw CoreClientException.Rejected(it.code, text.trim())
+                }
+                try {
+                    val json = JSONObject(text)
+                    JoinTicket(
+                        code = json.getString("code"),
+                        secret = json.getString("secret"),
+                    )
+                } catch (_: Exception) {
+                    throw CoreClientException.RequestFailed(
+                        "The agent returned an unexpected answer.",
+                    )
+                }
+            }
+        }
+
+    /**
+     * `GET /api/access/request` — read where one request got to, presenting the
+     * secret that came back with it.
+     */
+    @Throws(CoreClientException::class)
+    suspend fun pollJoin(baseUrl: HttpUrl, secret: String): JoinState =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(endpoint(baseUrl, "api/access/request"))
+                .get()
+                .header("Authorization", "Bearer $secret")
+                .build()
+            val client = http.newBuilder()
+                .callTimeout(java.time.Duration.ofSeconds(10))
+                .build()
+
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: Exception) {
+                throw CoreClientException.RequestFailed(
+                    e.message ?: "That agent could not be reached.",
+                )
+            }
+
+            response.use {
+                val text = try {
+                    it.body.string()
+                } catch (_: Exception) {
+                    ""
+                }
+                if (!it.isSuccessful) throw CoreClientException.InvalidResponse
+                val json = try {
+                    JSONObject(text)
+                } catch (_: Exception) {
+                    throw CoreClientException.InvalidResponse
+                }
+                when (json.optString("state")) {
+                    "approved" -> {
+                        val credential = json.optString("credential").ifEmpty { null }
+                            ?: throw CoreClientException.InvalidResponse
+                        JoinState.Approved(credential)
+                    }
+                    "denied" -> JoinState.Denied
+                    "expired" -> JoinState.Expired
+                    else -> JoinState.Waiting
+                }
+            }
+        }
 
     /** `GET /healthz` — open, and the only thing the roster polls. */
     suspend fun health(baseUrl: HttpUrl): HealthState = withContext(Dispatchers.IO) {

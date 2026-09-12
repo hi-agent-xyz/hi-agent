@@ -332,8 +332,14 @@ Two things the run corrected that reading could not have:
   macOS. Nothing in `app/linux` touches them yet.
 - **The Secret Service.** A headless box has no unlocked login keyring, so
   `credentials::save` / `load` have never round-tripped. Everything watched above
-  used the local core, which needs no credential. **A remote core has therefore
-  never been paired from this shell** — the code path is written and unexercised.
+  used the local core, which needs no credential. **A remote agent has therefore
+  never been added from this shell** — the code path is written and unexercised,
+  and that now includes the whole request-to-join path in `ui/pair.rs`
+  (`ask_to_join` → a six-digit code → `join`), which is the one that finally suits
+  this machine: no camera to scan with, and no walking to another screen to read a
+  code off it. Written 2026-09-11 and **never compiled** — the dev box lost its
+  Rust toolchain and `static.rust-lang.org` answers at ~27 KB/s from it, so
+  `make linux-app` could not be run at all.
 - **The mic and camera.** `set_media_playback_requires_user_gesture(false)` and
   the `permission-request` handler are the fix and the whole implementation
   respectively, and neither has been exercised against a real capture device.

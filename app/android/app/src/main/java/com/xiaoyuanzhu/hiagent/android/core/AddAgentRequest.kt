@@ -3,54 +3,55 @@ package com.xiaoyuanzhu.hiagent.android.core
 import android.net.Uri
 import java.util.UUID
 
-class PairingLinkException(message: String) : Exception(message)
+class AddAgentLinkException(message: String) : Exception(message)
 
 /**
- * A `hiagent://pair?url=…&code=…` link, from the QR the core's Reach view draws
- * or from a link handed to the app by anything else on the handset.
+ * What opened the add screen, and what it should arrive holding.
  *
- * The core builds this in `pairing_app_url()` and knows nothing about which
- * platform will read it, so nothing here is Android-specific.
+ * The `hiagent://pair?url=…&code=…` link it parses is **unchanged** — that is the
+ * wire, minted by the core's `pairing_app_url()` and read by four other clients.
+ * Only the words on this side moved.
  */
-data class PairingRequest(
+data class AddAgentRequest(
     val baseUrl: String,
     val code: String,
     val label: String,
-    /** Scanning is the intended path, so the sheet can arrive with the camera up. */
+    /** Set when the person picked "scan", so the sheet arrives with the camera up. */
     val opensScanner: Boolean = false,
     val id: String = UUID.randomUUID().toString(),
 ) {
     companion object {
-        fun manual() = PairingRequest("", "", "")
+        /** The ordinary way in: a name, and a person to approve it. */
+        fun ask() = AddAgentRequest("", "", "")
 
-        fun scan() = PairingRequest("", "", "", opensScanner = true)
+        fun scan() = AddAgentRequest("", "", "", opensScanner = true)
 
-        @Throws(PairingLinkException::class)
-        fun fromUri(uri: Uri): PairingRequest {
+        @Throws(AddAgentLinkException::class)
+        fun fromUri(uri: Uri): AddAgentRequest {
             if (!uri.scheme.equals("hiagent", ignoreCase = true) ||
                 !uri.host.equals("pair", ignoreCase = true)
             ) {
-                throw PairingLinkException("This is not a Hi Agent pairing link.")
+                throw AddAgentLinkException("This is not a Hi Agent link.")
             }
 
             val rawBaseUrl = singleValue(uri, "url")
                 ?.takeIf { it.isNotBlank() }
-                ?: throw PairingLinkException(
-                    "The pairing link does not contain a core address.",
+                ?: throw AddAgentLinkException(
+                    "That link does not contain an agent's address.",
                 )
             val rawCode = singleValue(uri, "code")
                 ?.takeIf { it.isNotBlank() }
-                ?: throw PairingLinkException(
-                    "The pairing link does not contain a pairing code.",
+                ?: throw AddAgentLinkException(
+                    "That link does not contain a one-time code.",
                 )
 
             val baseUrl = try {
                 CoreClient.normalizeBaseUrl(rawBaseUrl).toString()
             } catch (e: CoreClientException) {
-                throw PairingLinkException(e.message ?: "The core address is not usable.")
+                throw AddAgentLinkException(e.message ?: "That address is not usable.")
             }
 
-            return PairingRequest(
+            return AddAgentRequest(
                 baseUrl = baseUrl,
                 code = rawCode.trim(),
                 label = singleValue(uri, "label")?.trim().orEmpty(),

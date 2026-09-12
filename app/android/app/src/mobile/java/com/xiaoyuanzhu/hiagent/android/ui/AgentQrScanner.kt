@@ -55,8 +55,8 @@ import com.google.zxing.DecodeHintType
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.qrcode.QRCodeReader
-import com.xiaoyuanzhu.hiagent.android.core.PairingLinkException
-import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentLinkException
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentRequest
 import java.util.concurrent.Executors
 
 private enum class CameraState { CHECKING, READY, DENIED }
@@ -70,9 +70,9 @@ private enum class CameraState { CHECKING, READY, DENIED }
  * is a plain JAR, and a QR at arm's length is not a hard decode.
  */
 @Composable
-fun PairingQrScanner(
+fun AgentQrScanner(
     onDismiss: () -> Unit,
-    onScan: (PairingRequest) -> Unit,
+    onScan: (AddAgentRequest) -> Unit,
 ) {
     val context = LocalContext.current
     var cameraState by remember {
@@ -124,8 +124,8 @@ fun PairingQrScanner(
                     CameraFeed(
                         onPayload = { payload ->
                             try {
-                                onScan(PairingRequest.fromUri(Uri.parse(payload)))
-                            } catch (e: PairingLinkException) {
+                                onScan(AddAgentRequest.fromUri(Uri.parse(payload)))
+                            } catch (e: AddAgentLinkException) {
                                 scanError = e.message
                             } catch (_: Exception) {
                                 scanError = "This is not a Hi Agent pairing link."
@@ -156,7 +156,7 @@ fun PairingQrScanner(
                             )
                         }
                         Text(
-                            text = "Point the camera at the pairing code your core " +
+                            text = "Point the camera at the code your agent " +
                                 "is showing.",
                             color = Color.White,
                             textAlign = TextAlign.Center,

@@ -31,7 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xiaoyuanzhu.hiagent.android.AppModel
-import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentRequest
 
 /**
  * The root. The attached core's face *is* the app, edge to edge; the roster is a
@@ -41,8 +41,8 @@ import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
 fun ContentScreen(model: AppModel, modifier: Modifier = Modifier) {
     val entries by model.entries.collectAsStateWithLifecycle()
     val selectedId by model.selectedId.collectAsStateWithLifecycle()
-    val pairingRequest by model.pairingRequest.collectAsStateWithLifecycle()
-    val pairingLinkError by model.pairingLinkError.collectAsStateWithLifecycle()
+    val addRequest by model.addRequest.collectAsStateWithLifecycle()
+    val addLinkError by model.addLinkError.collectAsStateWithLifecycle()
     val handoff by model.handoff.collectAsStateWithLifecycle()
 
     var showingRoster by remember { mutableStateOf(false) }
@@ -70,8 +70,8 @@ fun ContentScreen(model: AppModel, modifier: Modifier = Modifier) {
                 )
             } else {
                 WelcomeScreen(
-                    onScan = { model.requestPairing(PairingRequest.scan()) },
-                    onManual = { model.requestPairing(PairingRequest.manual()) },
+                    onAdd = { model.requestAdd(AddAgentRequest.ask()) },
+                    onScan = { model.requestAdd(AddAgentRequest.scan()) },
                 )
             }
         }
@@ -90,28 +90,28 @@ fun ContentScreen(model: AppModel, modifier: Modifier = Modifier) {
         RosterSheet(
             model = model,
             onDismiss = { showingRoster = false },
-            onPair = {
+            onAdd = {
                 showingRoster = false
-                model.requestPairing(PairingRequest.scan())
+                model.requestAdd(AddAgentRequest.ask())
             },
         )
     }
 
-    pairingRequest?.let { request ->
-        PairCoreSheet(
+    addRequest?.let { request ->
+        AddAgentSheet(
             model = model,
             request = request,
-            onDismiss = { model.requestPairing(null) },
+            onDismiss = { model.requestAdd(null) },
         )
     }
 
-    pairingLinkError?.let { message ->
+    addLinkError?.let { message ->
         AlertDialog(
-            onDismissRequest = { model.clearPairingLinkError() },
+            onDismissRequest = { model.clearAddLinkError() },
             confirmButton = {
-                TextButton(onClick = { model.clearPairingLinkError() }) { Text("OK") }
+                TextButton(onClick = { model.clearAddLinkError() }) { Text("OK") }
             },
-            title = { Text("Could not open pairing link") },
+            title = { Text("Could not open that link") },
             text = { Text(message) },
         )
     }
@@ -123,8 +123,8 @@ fun ContentScreen(model: AppModel, modifier: Modifier = Modifier) {
  */
 @Composable
 private fun WelcomeScreen(
+    onAdd: () -> Unit,
     onScan: () -> Unit,
-    onManual: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier.hiCanvas()) {
@@ -136,7 +136,7 @@ private fun WelcomeScreen(
             CoreMark(size = 104.dp)
             Text("Hi Agent", style = MaterialTheme.typography.displaySmall)
             Text(
-                text = "Pair a core to open the conversation.",
+                text = "Add your agent to open the conversation.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -154,14 +154,14 @@ private fun WelcomeScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Button(
-                onClick = onScan,
+                onClick = onAdd,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
             ) {
                 Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
-                Text("  Scan pairing code")
+                Text("  Add a remote hi-agent")
             }
-            TextButton(onClick = onManual) { Text("Enter details manually") }
+            TextButton(onClick = onScan) { Text("Scan a QR code") }
         }
     }
 }

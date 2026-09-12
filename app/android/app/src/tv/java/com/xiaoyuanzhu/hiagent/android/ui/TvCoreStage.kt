@@ -37,7 +37,7 @@ import com.xiaoyuanzhu.hiagent.android.AppModel
 import com.xiaoyuanzhu.hiagent.android.core.CoreClientException
 import com.xiaoyuanzhu.hiagent.android.core.CoreSession
 import com.xiaoyuanzhu.hiagent.android.core.CredentialException
-import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentRequest
 import com.xiaoyuanzhu.hiagent.android.core.RosterEntry
 import com.xiaoyuanzhu.hiagent.android.web.CoreWebView
 import com.xiaoyuanzhu.hiagent.android.web.CoreWebViewEvent
@@ -188,12 +188,12 @@ fun TvCoreStage(
 
             else -> StatusScreen(
                 icon = Icons.Rounded.SignalWifiOff,
-                title = "Can't reach this core",
+                title = "Can't reach this agent",
                 message = errorMessage ?: "Check the core address and try again.",
                 primary = StatusAction("Try again") { openToken += 1 },
-                secondary = StatusAction("Pair again") {
-                    model.requestPairing(
-                        PairingRequest(
+                secondary = StatusAction("Add again") {
+                    model.requestAdd(
+                        AddAgentRequest(
                             baseUrl = entry.baseUrl,
                             code = "",
                             label = entry.label,
@@ -265,10 +265,10 @@ private fun TvStageChrome(
 /** What to tell the reader when opening a core did not work. */
 private fun connectionMessage(error: Throwable, label: String): String = when {
     error is CoreClientException.Rejected && error.status == 401 ->
-        "This television's credential was not accepted. Pair it with the core again."
+        "This television's credential was not accepted. Add the agent again."
 
     error is CredentialException ->
-        "This television is no longer paired with $label. Pair it again."
+        "This television no longer has access to $label. Add it again."
 
     else -> error.message ?: "The core could not be reached."
 }

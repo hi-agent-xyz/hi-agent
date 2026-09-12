@@ -42,7 +42,7 @@ import com.xiaoyuanzhu.hiagent.android.core.RosterEntry
 fun TvRosterScreen(
     model: AppModel,
     onDismiss: () -> Unit,
-    onPair: () -> Unit,
+    onAdd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val entries by model.entries.collectAsStateWithLifecycle()
@@ -61,7 +61,7 @@ fun TvRosterScreen(
             modifier = Modifier.overscan().widthIn(max = 760.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Text("Cores", style = MaterialTheme.typography.headlineMedium)
+            Text("Agents", style = MaterialTheme.typography.headlineMedium)
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(entries, key = { it.id }) { entry ->
@@ -79,9 +79,9 @@ fun TvRosterScreen(
             }
 
             TvButton(
-                text = "Pair another core",
+                text = "Add another agent",
                 leading = Icons.Rounded.Add,
-                onClick = onPair,
+                onClick = onAdd,
                 focusRequester = if (entries.isEmpty()) first else null,
             )
         }

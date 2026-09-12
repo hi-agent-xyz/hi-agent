@@ -29,6 +29,10 @@ class CoreClientTest {
             "https://ana.hi-agent.xyz/",
             CoreClient.normalizeBaseUrl("https://ana.hi-agent.xyz").toString(),
         )
+        assertEquals(
+            "https://example.com/agent",
+            CoreClient.normalizeBaseUrl("https://example.com/agent").toString(),
+        )
     }
 
     @Test
@@ -128,5 +132,52 @@ class CoreClientTest {
         assertTrue(CoreClient.isLocalHost("fd00::1"))
         assertTrue(CoreClient.isLocalHost("fe80::1"))
         assertFalse(CoreClient.isLocalHost("2001:4860:4860::8888"))
+    }
+
+    /**
+     * A name is a label in the default zone, and that is the whole point of the
+     * add screen's one field: `iloahz` is six presses on a remote control where the
+     * address is thirty-three and a one-time code is another forty-three.
+     */
+    @Test
+    fun `a bare name resolves into the default zone`() {
+        assertEquals(
+            "https://iloahz.hi-agent.xyz/",
+            CoreClient.addressForName("iloahz").toString(),
+        )
+        // Typed on a television, with whatever the on-screen keyboard did to it.
+        assertEquals(
+            "https://iloahz.hi-agent.xyz/",
+            CoreClient.addressForName("  @ILoahz/ ").toString(),
+        )
+    }
+
+    /**
+     * A dot or a scheme means the person meant a whole address, so it is taken as
+     * one rather than becoming a nonsense third-level name — and it then faces the
+     * same cleartext rules anything pasted does.
+     */
+    @Test
+    fun `an address is honoured rather than turned into a name`() {
+        assertEquals(
+            "https://ana.hi-agent.xyz/",
+            CoreClient.addressForName("ana.hi-agent.xyz").toString(),
+        )
+        assertEquals(
+            "http://192.168.1.24:12358/",
+            CoreClient.addressForName("http://192.168.1.24:12358").toString(),
+        )
+        assertFailsWith<CoreClientException.InvalidAddress> {
+            CoreClient.addressForName("http://example.com")
+        }
+    }
+
+    @Test
+    fun `a name that could not be a label is refused`() {
+        listOf("", "   ", "hello world", "ILoahz!", "under_score").forEach { bad ->
+            assertFailsWith<CoreClientException.InvalidName> {
+                CoreClient.addressForName(bad)
+            }
+        }
     }
 }

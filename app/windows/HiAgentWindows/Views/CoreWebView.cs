@@ -360,7 +360,7 @@ internal sealed class CoreWebView
         }
 
         _model.ReportFailure(args.HttpStatusCode > 0
-            ? $"The core answered with HTTP {args.HttpStatusCode}."
+            ? $"That agent answered with HTTP {args.HttpStatusCode}."
             : Describe(args.WebErrorStatus));
     }
 
@@ -412,19 +412,19 @@ internal sealed class CoreWebView
 
     private static string Describe(CoreWebView2WebErrorStatus status) => status switch
     {
-        CoreWebView2WebErrorStatus.HostNameNotResolved => "The core address could not be found.",
+        CoreWebView2WebErrorStatus.HostNameNotResolved => "That address could not be found.",
         CoreWebView2WebErrorStatus.ConnectionAborted or
             CoreWebView2WebErrorStatus.ConnectionReset or
-            CoreWebView2WebErrorStatus.Disconnected => "The connection to the core was lost.",
-        CoreWebView2WebErrorStatus.Timeout => "The core took too long to respond.",
-        CoreWebView2WebErrorStatus.CannotConnect => "Nothing answered at the core's address.",
-        CoreWebView2WebErrorStatus.ServerUnreachable => "The core could not be reached.",
+            CoreWebView2WebErrorStatus.Disconnected => "The connection to the agent was lost.",
+        CoreWebView2WebErrorStatus.Timeout => "That agent took too long to respond.",
+        CoreWebView2WebErrorStatus.CannotConnect => "Nothing answered at that address.",
+        CoreWebView2WebErrorStatus.ServerUnreachable => "That agent could not be reached.",
         CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect or
             CoreWebView2WebErrorStatus.CertificateExpired or
             CoreWebView2WebErrorStatus.CertificateIsInvalid or
             CoreWebView2WebErrorStatus.ClientCertificateContainsErrors or
             CoreWebView2WebErrorStatus.CertificateRevoked =>
-            "The core's secure connection could not be verified.",
-        _ => "The core could not be reached.",
+            "That agent's secure connection could not be verified.",
+        _ => "That agent could not be reached.",
     };
 }

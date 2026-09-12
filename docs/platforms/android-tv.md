@@ -28,13 +28,22 @@ codes; that is a distribution question, and Play is not the intended channel.
 
 ## What a remote changes
 
-**Pairing is typed.** The QR is the path a core offers and a television has no camera, so
-the handset's fallback is the whole screen here. An address and a one-time code, once per
-core, after which the roster remembers the core and the Keystore remembers the credential.
-Nothing about the wire changes for it: `POST /api/session` takes the same code from a
-television, and the core is not told what kind of device spent it. The `hiagent://pair`
-intent filter is deliberately **not** declared here — nothing on a television can deliver
-that link, and an entry point on paper only is worse than none.
+**Adding an agent is a name, not a code — and this is the client that needed it most.**
+This section used to say the handset's typed fallback was the whole screen here, because a
+television has no camera. That was the one real cost of this client: an address plus a
+43-character one-time code, on an on-screen keyboard, with a remote control. The
+[request-to-join path](../arch/topology.md#auth) replaces it with the agent's *name* — six
+or so presses — after which somebody approves it on a device that already has a keyboard.
+The television shows a six-digit code to compare, and never types one.
+
+So the order here is not the handset's order with the camera rung removed. There is no
+camera rung at all: a name, and underneath it the address-and-code form for a self-hosted
+agent, which is now the rare case rather than the only one.
+
+Nothing about the wire changes for it: `POST /api/access/request` takes the same body from a
+television, and the core is not told what kind of device asked. The `hiagent://pair` intent
+filter is still deliberately **not** declared here — nothing on a television can deliver that
+link, and an entry point on paper only is worse than none.
 
 **Back is the navigation, and it is a ladder out of the app.** The face's own surfaces close
 first, then the shell's chrome appears, then the system closes the activity. The face's rungs

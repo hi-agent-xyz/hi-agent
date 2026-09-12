@@ -95,7 +95,7 @@ impl LocalCore {
 
         let Some(bin) = engine_bin() else {
             self.fail(
-                "hi-agent is not installed beside this app. Reinstall, or add a core that runs elsewhere.",
+                "hi-agent is not installed beside this app. Reinstall, or add an agent that runs elsewhere.",
             );
             return None;
         };

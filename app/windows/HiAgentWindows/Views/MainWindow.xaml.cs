@@ -115,7 +115,7 @@ public sealed partial class MainWindow : Window
 
     internal void ShowPairWindow()
     {
-        var window = new PairCoreWindow(_model);
+        var window = new AddAgentWindow(_model);
         window.Activate();
     }
 

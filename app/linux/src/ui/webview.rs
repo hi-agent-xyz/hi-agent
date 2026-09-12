@@ -173,7 +173,7 @@ impl CoreWebView {
             .connect_load_failed_with_tls_errors(move |_, _, _, _| {
                 if let Some(this) = this.upgrade() {
                     this.model
-                        .report_failure("The core's secure connection could not be verified.");
+                        .report_failure("That agent's secure connection could not be verified.");
                 }
                 true
             });
@@ -362,7 +362,7 @@ impl CoreWebView {
             }
             other => self
                 .model
-                .report_failure(format!("The core answered with HTTP {other}.")),
+                .report_failure(format!("That agent answered with HTTP {other}.")),
         }
     }
 
@@ -403,8 +403,8 @@ fn open_externally(uri: &str) {
 fn describe(error: &glib::Error) -> String {
     if let Some(resolver) = error.kind::<gio::ResolverError>() {
         return match resolver {
-            gio::ResolverError::NotFound => "The core address could not be found.".into(),
-            _ => "The core address could not be looked up.".into(),
+            gio::ResolverError::NotFound => "That address could not be found.".into(),
+            _ => "That address could not be looked up.".into(),
         };
     }
     if let Some(network) = error.kind::<webkit::NetworkError>() {

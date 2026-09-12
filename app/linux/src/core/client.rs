@@ -12,7 +12,9 @@ use std::str::FromStr;
 use glib::translate::IntoGlib;
 use soup::prelude::*;
 
-use super::models::{CoreError, HealthState, SessionExchange, cookie_name, cookie_value};
+use super::models::{
+    CoreError, HealthState, JoinState, JoinTicket, SessionExchange, cookie_name, cookie_value,
+};
 
 /// Two sessions for the whole shell, and no more: libsoup's timeout is a
 /// property of the session rather than of a message, so "wait 20s for a pairing
@@ -59,7 +61,7 @@ pub fn normalize_base_url(raw: &str) -> Result<String, CoreError> {
     let value = raw.trim();
     let invalid = || {
         CoreError::InvalidAddress(
-            "Enter a core address beginning with http:// or https://.".into(),
+            "Enter an address beginning with http:// or https://.".into(),
         )
     };
 
@@ -71,7 +73,7 @@ pub fn normalize_base_url(raw: &str) -> Result<String, CoreError> {
     }
     if uri.userinfo().is_some_and(|info| !info.is_empty()) {
         return Err(CoreError::InvalidAddress(
-            "A core address cannot carry a username or password.".into(),
+            "An address cannot carry a username or password.".into(),
         ));
     }
     let host = uri.host().ok_or_else(invalid)?;
@@ -80,7 +82,7 @@ pub fn normalize_base_url(raw: &str) -> Result<String, CoreError> {
     }
     if scheme == "http" && !is_local_host(&host) {
         return Err(CoreError::InvalidAddress(format!(
-            "Plain http:// only works for a core on this network. Use https:// to reach {host}."
+            "Plain http:// only works for an agent on this network. Use https:// to reach {host}."
         )));
     }
 
@@ -98,6 +100,37 @@ pub fn normalize_base_url(raw: &str) -> Result<String, CoreError> {
         None,
     )
     .to_string())
+}
+
+/// Where a name without a dot in it lives. An agent's name is a label in this
+/// zone, which is why the add dialog draws the zone beside the field rather than
+/// asking anybody to type it.
+pub const DEFAULT_ZONE: &str = "hi-agent.xyz";
+
+/// The address an agent's name resolves to — `iloahz` is
+/// `https://iloahz.hi-agent.xyz`.
+///
+/// Something with a dot or a scheme in it is taken as a whole address rather than
+/// turned into a nonsense third-level name: a person who types a dot means an
+/// address, and a self-hosted core has one. It then faces the same cleartext rules
+/// anything pasted does.
+pub fn address_for_name(raw: &str) -> Result<String, CoreError> {
+    let name = raw.trim().to_lowercase();
+    let name = name.strip_prefix('@').unwrap_or(&name).trim_matches('/');
+    if name.is_empty() {
+        return Err(CoreError::InvalidName);
+    }
+    if name.contains("://") {
+        return normalize_base_url(name);
+    }
+    if name.contains('.') {
+        return normalize_base_url(&format!("https://{name}"));
+    }
+    // The same rule the core states under the name field on its own Reach view.
+    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return Err(CoreError::InvalidName);
+    }
+    normalize_base_url(&format!("https://{name}.{DEFAULT_ZONE}"))
 }
 
 /// Whether `http://` to this host is the local-network case.
@@ -190,7 +223,7 @@ pub async fn exchange(
         .map_err(|e| {
             let detail = e.to_string();
             CoreError::RequestFailed(if detail.is_empty() {
-                "The core could not be reached.".into()
+                "That agent could not be reached.".into()
             } else {
                 detail
             })
@@ -206,12 +239,12 @@ pub async fn exchange(
     }
 
     let parsed: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|_| CoreError::RequestFailed("The core returned an unexpected session response.".into()))?;
+        .map_err(|_| CoreError::RequestFailed("That agent returned an unexpected session response.".into()))?;
     let id = parsed
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            CoreError::RequestFailed("The core returned an unexpected session response.".into())
+            CoreError::RequestFailed("That agent returned an unexpected session response.".into())
         })?
         .to_string();
     let credential = parsed
@@ -234,6 +267,113 @@ pub async fn exchange(
         .ok_or(CoreError::MissingSessionCookie)?;
 
     Ok((SessionExchange { id, credential }, cookie))
+}
+
+/// `POST /api/access/request` — ask an agent to let this machine in.
+///
+/// Open at the core, because the caller is by definition a device with no way in.
+/// What comes back is a code to show the person and a secret to poll with — no
+/// access yet, and nothing worth storing. **This is the path a headless box can
+/// actually use**: it needs no camera and no code read off another screen, only a
+/// name and somebody to say yes.
+pub async fn ask_to_join(base_url: &str, label: &str) -> Result<JoinTicket, CoreError> {
+    let message = soup::Message::new("POST", &endpoint(base_url, "api/access/request"))
+        .map_err(|e| CoreError::InvalidAddress(e.to_string()))?;
+
+    let body = serde_json::json!({ "label": label.trim() }).to_string();
+    message.set_request_body_from_bytes(
+        Some("application/json"),
+        Some(&glib::Bytes::from_owned(body.into_bytes())),
+    );
+
+    let bytes = session()
+        .send_and_read_future(&message, glib::Priority::DEFAULT)
+        .await
+        .map_err(|e| {
+            let detail = e.to_string();
+            CoreError::RequestFailed(if detail.is_empty() {
+                "That agent could not be reached.".into()
+            } else {
+                detail
+            })
+        })?;
+
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let status = message.status().into_glib() as u32;
+    // A name nobody has claimed reaches the relay and stops there; an address with
+    // no core awake behind it answers 503. To the person typing, both mean the same
+    // thing: nothing is there under that name.
+    if status == 404 || status == 503 {
+        return Err(CoreError::NoSuchAgent);
+    }
+    if status == 429 {
+        return Err(CoreError::TooManyWaiting);
+    }
+    if !(200..300).contains(&status) {
+        return Err(CoreError::Rejected { status, detail: text.trim().to_string() });
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| CoreError::RequestFailed("That agent returned an unexpected answer.".into()))?;
+    let field = |name: &str| {
+        parsed
+            .get(name)
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                CoreError::RequestFailed("That agent returned an unexpected answer.".into())
+            })
+    };
+    Ok(JoinTicket { code: field("code")?, secret: field("secret")? })
+}
+
+/// `GET /api/access/request` — read where one request got to, presenting the
+/// secret that came back with it.
+pub async fn poll_join(base_url: &str, secret: &str) -> Result<JoinState, CoreError> {
+    let message = soup::Message::new("GET", &endpoint(base_url, "api/access/request"))
+        .map_err(|e| CoreError::InvalidAddress(e.to_string()))?;
+    message
+        .request_headers()
+        .expect("a message built by soup always has request headers")
+        .append("Authorization", &format!("Bearer {secret}"));
+
+    let bytes = session()
+        .send_and_read_future(&message, glib::Priority::DEFAULT)
+        .await
+        .map_err(|e| {
+            let detail = e.to_string();
+            CoreError::RequestFailed(if detail.is_empty() {
+                "That agent could not be reached.".into()
+            } else {
+                detail
+            })
+        })?;
+
+    let status = message.status().into_glib() as u32;
+    if !(200..300).contains(&status) {
+        return Err(CoreError::RequestFailed("That agent stopped answering.".into()));
+    }
+
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| CoreError::RequestFailed("That agent returned an unexpected answer.".into()))?;
+    Ok(match parsed.get("state").and_then(|v| v.as_str()).unwrap_or("") {
+        "approved" => {
+            let credential = parsed
+                .get("credential")
+                .and_then(|v| v.as_str())
+                .filter(|c| !c.is_empty())
+                .ok_or_else(|| {
+                    CoreError::RequestFailed("That agent approved without a credential.".into())
+                })?
+                .to_string();
+            JoinState::Approved(credential)
+        }
+        "denied" => JoinState::Denied,
+        "expired" => JoinState::Expired,
+        _ => JoinState::Waiting,
+    })
 }
 
 /// `GET /healthz` — open, and the only thing the roster polls.

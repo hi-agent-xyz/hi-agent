@@ -106,6 +106,14 @@ pub enum CoreStage {
 pub enum CoreError {
     /// The address could not be used at all.
     InvalidAddress(String),
+    /// What was typed could not be a name in the default zone.
+    InvalidName,
+    /// Nothing answers at that name — the relay has no such handle, or the core
+    /// behind it is asleep. One message, because to the person typing they are the
+    /// same thing.
+    NoSuchAgent,
+    /// That agent already has its maximum of devices waiting to be let in.
+    TooManyWaiting,
     /// The request did not complete.
     RequestFailed(String),
     /// The core answered, and said no.
@@ -118,17 +126,42 @@ impl std::fmt::Display for CoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidAddress(detail) | Self::RequestFailed(detail) => f.write_str(detail),
+            Self::InvalidName => {
+                f.write_str("A name is lowercase letters, digits and hyphens.")
+            }
+            Self::NoSuchAgent => f.write_str("No agent answers to that name yet."),
+            Self::TooManyWaiting => f.write_str(
+                "Too many devices are already waiting there. Try again in a few minutes.",
+            ),
             Self::MissingSessionCookie => {
-                f.write_str("The core did not return a session cookie.")
+                f.write_str("That agent did not return a session cookie.")
             }
             Self::Rejected { status, detail } if detail.is_empty() => {
-                write!(f, "The core rejected the request (HTTP {status}).")
+                write!(f, "That agent rejected the request (HTTP {status}).")
             }
             Self::Rejected { status, detail } => {
-                write!(f, "The core rejected the request (HTTP {status}): {detail}")
+                write!(f, "That agent rejected the request (HTTP {status}): {detail}")
             }
         }
     }
 }
 
 impl std::error::Error for CoreError {}
+
+/// What an agent handed back when this machine asked to be let in: a code to show
+/// the person, and a secret to poll with. Neither is stored — the secret is spent
+/// once for a credential and dropped.
+#[derive(Debug, Clone)]
+pub struct JoinTicket {
+    pub code: String,
+    pub secret: String,
+}
+
+/// Where one wait got to.
+#[derive(Debug, Clone)]
+pub enum JoinState {
+    Waiting,
+    Approved(String),
+    Denied,
+    Expired,
+}

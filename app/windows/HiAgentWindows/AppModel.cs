@@ -78,7 +78,7 @@ internal sealed class AppModel : IDisposable
             var entry = _roster.Find(id);
             if (entry is null)
             {
-                Set(CoreStage.Failed, "That core is no longer in the roster.");
+                Set(CoreStage.Failed, "That agent is no longer in the roster.");
                 return;
             }
 
@@ -101,7 +101,7 @@ internal sealed class AppModel : IDisposable
             var credential = CredentialStore.Load(entry.Id);
             if (credential is null)
             {
-                Set(CoreStage.Failed, $"{entry.Label} has no credential on this computer. Add it again with a pairing code.");
+                Set(CoreStage.Failed, $"{entry.Label} has no credential on this computer. Add it again.");
                 return;
             }
 
@@ -129,9 +129,80 @@ internal sealed class AppModel : IDisposable
     }
 
     /// <summary>
-    /// Add a core the person typed an address and a pairing code for. The core
-    /// tells a pairing code from a credential, so this presents whatever it was
+    /// Add an agent the person typed an address and a one-time code for. The core
+    /// tells a one-time code from a credential, so this presents whatever it was
     /// given and stores whatever comes back.
+    /// </summary>
+    /// <summary>
+    /// Ask an agent, by name, to let this machine in.
+    ///
+    /// Nothing is stored by this call: what comes back is a code to show and a
+    /// secret to wait on. The roster only grows once <see cref="JoinAsync"/> lands.
+    /// </summary>
+    internal async Task<JoinInvitation> AskToJoinAsync(string name)
+    {
+        var baseUrl = CoreClient.AddressForName(name);
+        var ticket = await CoreClient
+            .AskToJoinAsync(baseUrl, DeviceLabel(), _stopping.Token)
+            .ConfigureAwait(false);
+        return new JoinInvitation(baseUrl, AgentLabel(name, baseUrl), ticket.Code, ticket.Secret);
+    }
+
+    /// <summary>
+    /// Wait out one invitation, and take the credential the moment it is approved.
+    ///
+    /// Polls until answered or cancelled. Past the request's own ten-minute life
+    /// the agent answers `expired` and this throws, which is the same clock rather
+    /// than a second one kept here.
+    /// </summary>
+    internal async Task JoinAsync(JoinInvitation invitation, CancellationToken token = default)
+    {
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            var state = await CoreClient
+                .PollJoinAsync(invitation.BaseUrl, invitation.Secret, token)
+                .ConfigureAwait(false);
+            switch (state)
+            {
+                case JoinState.Approved approved:
+                    // From here it is the ordinary add: the credential goes to the
+                    // credential store, the agent joins the roster, and the window
+                    // opens it.
+                    await AddCoreAsync(
+                            invitation.BaseUrl.ToString(),
+                            approved.Credential,
+                            invitation.Label)
+                        .ConfigureAwait(false);
+                    return;
+                case JoinState.Denied:
+                    throw new CoreClientException.RequestFailed("That was turned down.");
+                case JoinState.Expired:
+                    throw new CoreClientException.RequestFailed(
+                        "Nobody answered in time. Ask again.");
+                default:
+                    await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// What to call an agent added by name. The name itself when that is what was
+    /// typed — "iloahz" reads better in the roster than "iloahz.hi-agent.xyz" — and
+    /// the host when somebody pasted a whole address.
+    /// </summary>
+    private static string AgentLabel(string name, Uri baseUrl)
+    {
+        var bare = name.Trim().ToLowerInvariant().TrimStart('@');
+        return bare.Length > 0 && !bare.Contains('.') && !bare.Contains('/')
+            ? bare
+            : baseUrl.Host;
+    }
+
+    /// <summary>
+    /// Exchange a one-time code — or a credential a <see cref="JoinAsync"/> just
+    /// claimed — and remember the agent.
     /// </summary>
     internal async Task AddCoreAsync(string address, string pairingCode, string label)
     {
@@ -160,7 +231,7 @@ internal sealed class AppModel : IDisposable
             // was presented already was one, for a core this machine has since
             // forgotten. Nothing to store and nothing that will work later.
             throw new CoreClientException.RequestFailed(
-                "That core returned no credential. Ask it for a fresh pairing code.");
+                "That agent returned no credential. Ask it to let this machine in again.");
         }
 
         _roster.Put(entry);

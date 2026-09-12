@@ -36,7 +36,7 @@
                            Visibility="Collapsed" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
                     <Button x:Name="RetryButton" Content="Try again" Click="OnRetry" Visibility="Collapsed" />
-                    <Button x:Name="AddCoreButton" Content="Add a core…" Click="OnAddCore" />
+                    <Button x:Name="AddCoreButton" Content="Add an agent…" Click="OnAddCore" />
                 </StackPanel>
             </StackPanel>
         </Grid>

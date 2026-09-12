@@ -36,6 +36,12 @@ The credential never enters JavaScript, `SharedPreferences` in the clear, or the
 WebView's storage. `POST /api/pair`'s `hiagent://pair` URL is registered as an
 `intent-filter`, so a QR the core draws for any client scans here unchanged.
 
+**Three ways in, in the order the sheet offers them**, matching iOS: the agent's *name*
+(`POST /api/access/request`, then a six-digit code while somebody approves it there), a QR
+code, and a full address plus a one-time code folded into a disclosure for a self-hosted
+agent. The user-facing noun is **agent** throughout; the wire names — `/api/pair`,
+`hiagent://pair`, `hi_surface` — are unchanged, because four other clients speak them.
+
 If the web session is rejected, the shell exchanges the Keystore credential
 again and reloads with the new cookie. Foregrounding and network restoration
 also re-check the selected core. Camera and microphone capture requests are

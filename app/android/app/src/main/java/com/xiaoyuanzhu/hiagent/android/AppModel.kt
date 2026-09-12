@@ -12,9 +12,10 @@ import com.xiaoyuanzhu.hiagent.android.core.CredentialStore
 import com.xiaoyuanzhu.hiagent.android.core.HandedFile
 import com.xiaoyuanzhu.hiagent.android.core.HandoffState
 import com.xiaoyuanzhu.hiagent.android.core.HealthState
+import com.xiaoyuanzhu.hiagent.android.core.JoinState
 import com.xiaoyuanzhu.hiagent.android.core.NetworkMonitor
-import com.xiaoyuanzhu.hiagent.android.core.PairingLinkException
-import com.xiaoyuanzhu.hiagent.android.core.PairingRequest
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentLinkException
+import com.xiaoyuanzhu.hiagent.android.core.AddAgentRequest
 import com.xiaoyuanzhu.hiagent.android.core.RosterEntry
 import com.xiaoyuanzhu.hiagent.android.core.RosterStore
 import java.time.Instant
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -45,15 +47,15 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
-    private val _pairingRequest = MutableStateFlow<PairingRequest?>(null)
-    val pairingRequest: StateFlow<PairingRequest?> = _pairingRequest.asStateFlow()
+    private val _addRequest = MutableStateFlow<AddAgentRequest?>(null)
+    val addRequest: StateFlow<AddAgentRequest?> = _addRequest.asStateFlow()
 
-    private val _pairingLinkError = MutableStateFlow<String?>(null)
-    val pairingLinkError: StateFlow<String?> = _pairingLinkError.asStateFlow()
+    private val _addLinkError = MutableStateFlow<String?>(null)
+    val addLinkError: StateFlow<String?> = _addLinkError.asStateFlow()
 
     /**
      * Bumped whenever a credential is written. The stage restarts its open on a
-     * change, so re-pairing a core that was failing recovers without the person
+     * change, so adding an agent that was failing recovers without the person
      * having to find a Reload.
      */
     private val _credentialRevision = MutableStateFlow(0)
@@ -84,37 +86,86 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             ?: _entries.value.firstOrNull { it.attached }
             ?: _entries.value.firstOrNull()
 
-    // MARK: Pairing
+    // MARK: Adding an agent
 
-    fun requestPairing(request: PairingRequest?) {
-        _pairingRequest.value = request
+    fun requestAdd(request: AddAgentRequest?) {
+        _addRequest.value = request
     }
 
-    fun clearPairingLinkError() {
-        _pairingLinkError.value = null
+    fun clearAddLinkError() {
+        _addLinkError.value = null
     }
 
     fun handleIncomingUri(uri: Uri) {
         try {
-            _pairingRequest.value = PairingRequest.fromUri(uri)
-            _pairingLinkError.value = null
-        } catch (e: PairingLinkException) {
-            _pairingLinkError.value = e.message
+            _addRequest.value = AddAgentRequest.fromUri(uri)
+            _addLinkError.value = null
+        } catch (e: AddAgentLinkException) {
+            _addLinkError.value = e.message
         }
     }
 
     /**
-     * Exchange a pairing code for a credential and remember the core.
+     * Ask an agent, by name, to let this device in.
      *
-     * `label` on the wire is what the *core* will call this device; the roster
-     * label is what this device calls the core. They are different strings for
+     * Nothing is stored by this call: what comes back is a code to show and a
+     * secret to wait on. The roster only grows once [join] lands.
+     */
+    suspend fun askToJoin(name: String): JoinInvitation {
+        val baseUrl = CoreClient.addressForName(name)
+        val ticket = CoreClient.askToJoin(baseUrl, deviceName())
+        return JoinInvitation(
+            baseUrl = baseUrl.toString(),
+            label = agentLabel(name, baseUrl.toString()),
+            code = ticket.code,
+            secret = ticket.secret,
+        )
+    }
+
+    /**
+     * Wait out one invitation, and take the credential the moment it is approved.
+     *
+     * Polls until answered or cancelled — the caller's coroutine is what ends it,
+     * so leaving the screen stops the wait. Past the request's own ten-minute life
+     * the agent answers `expired` and this throws, which is the same clock rather
+     * than a second one kept here.
+     */
+    suspend fun join(invitation: JoinInvitation) {
+        val baseUrl = CoreClient.normalizeBaseUrl(invitation.baseUrl)
+        while (true) {
+            when (val state = CoreClient.pollJoin(baseUrl, invitation.secret)) {
+                is JoinState.Approved -> {
+                    // From here it is the ordinary add: the credential goes to the
+                    // Keystore, the agent joins the roster, and the stage opens it.
+                    add(invitation.baseUrl, state.credential, invitation.label)
+                    return
+                }
+                JoinState.Denied ->
+                    throw CoreClientException.RequestFailed("That was turned down.")
+                JoinState.Expired ->
+                    throw CoreClientException.RequestFailed(
+                        "Nobody answered in time. Ask again.",
+                    )
+                JoinState.Waiting -> delay(2_000)
+            }
+        }
+    }
+
+    /**
+     * Exchange a one-time code — or a credential a [join] just claimed — and
+     * remember the agent.
+     *
+     * `label` on the wire is what the *agent* will call this device; the roster
+     * label is what this device calls the agent. They are different strings for
      * different readers, which is why only one of them is sent.
      */
-    suspend fun pair(rawBaseUrl: String, rawCode: String, rawLabel: String) {
+    suspend fun add(rawBaseUrl: String, rawCode: String, rawLabel: String) {
         val baseUrl = CoreClient.normalizeBaseUrl(rawBaseUrl)
         val code = rawCode.trim()
         if (code.isEmpty()) {
-            throw CoreClientException.RequestFailed("Enter the pairing code from the core.")
+            throw CoreClientException.RequestFailed(
+                "Enter the one-time code the agent is showing.",
+            )
         }
         val coreLabel = rawLabel.trim().ifEmpty { defaultCoreLabel(baseUrl.toString()) }
 
@@ -221,13 +272,13 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val entry = current
         if (entry == null) {
             _handoff.value = HandoffState.Failed(
-                "This device hasn't been paired with an agent yet, so there's nobody to hand it to.",
+                "This device hasn't been added to an agent yet, so there's nobody to hand it to.",
             )
             return
         }
         val baseUrl = entry.baseUrl.toHttpUrlOrNull()
         if (baseUrl == null) {
-            _handoff.value = HandoffState.Failed("This core's address is no longer usable.")
+            _handoff.value = HandoffState.Failed("This agent's address is no longer usable.")
             return
         }
 
@@ -262,11 +313,11 @@ class AppModel(application: Application) : AndroidViewModel(application) {
      */
     suspend fun open(id: String): CoreSession {
         val entry = entry(id) ?: throw CoreClientException.InvalidAddress(
-            "This core is no longer in the roster.",
+            "This agent is no longer in the roster.",
         )
         val baseUrl = entry.baseUrl.toHttpUrlOrNull()
             ?: throw CoreClientException.InvalidAddress(
-                "This core's address is no longer usable.",
+                "This agent's address is no longer usable.",
             )
         val credential = credentials.read(CredentialStore.account(id))
         val (_, cookie) = CoreClient.exchange(baseUrl, credential, entry.label)
@@ -283,9 +334,23 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private fun persist() = roster.save(_entries.value)
 
     private fun defaultCoreLabel(baseUrl: String): String {
-        val url = baseUrl.toHttpUrlOrNull() ?: return "Core"
+        val url = baseUrl.toHttpUrlOrNull() ?: return "Agent"
         val path = url.encodedPath.trim('/')
         return if (path.isEmpty()) url.host else "${url.host}/$path"
+    }
+
+    /**
+     * What to call an agent added by name. The name itself when that is what was
+     * typed — "iloahz" reads better in the roster than "iloahz.hi-agent.xyz" — and
+     * the host when somebody pasted a whole address.
+     */
+    private fun agentLabel(name: String, baseUrl: String): String {
+        val bare = name.trim().lowercase().removePrefix("@")
+        return if (bare.isNotEmpty() && !bare.contains('.') && !bare.contains('/')) {
+            bare
+        } else {
+            defaultCoreLabel(baseUrl)
+        }
     }
 
     /**
@@ -306,3 +371,15 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
+
+/** One outstanding "let me in", held only while the add screen is open. */
+data class JoinInvitation(
+    val baseUrl: String,
+    val label: String,
+    /**
+     * Shown here and on the agent's Reach view, for the two to be compared. It
+     * authorizes nothing.
+     */
+    val code: String,
+    val secret: String,
+)

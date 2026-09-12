@@ -36,10 +36,21 @@
 - **agent 不会被告知有人在等** —— 这个接口不需要凭证，任何能通到 Cognition 的路都等于让陌生人支使别人的 agent 说话。等待只出现在 `reach` 页上。
 - **撤销** → 撤掉设备，它的 session 跟着一起没，不是等它自己过期。
 
-## Open questions
+## 每种设备都走这条路了
 
-- Android / Android TV / Windows / Linux / macOS Settings 还是今天的两条路（凭证、配对码）。core 这边的接口都在了，等 iOS 这套被看过之后再铺。
-- 电视上那一屏还没画——iOS 先行。
+iOS 先做、看过之后，其余四个客户端（Android 手机 / Android TV / Windows / Linux GTK）在
+2026-09-11 铺开，**都是同一条名字优先的路**。macOS 的 Settings 窗口不在其中——它根本没有加设备
+这件事，那里的 "credential" 指的是模型厂商的 key。
+
+**电视是这件事最该做的那一台。** `TvPairScreen` 自己的注释写着"这是这个客户端唯一真正的代价"：
+没有摄像头，所以打字不是退路而是唯一的路，而要打的是一个地址加 43 个字符的一次性码——用遥控器，
+在屏幕键盘上。换成名字之后是六次左右按键，剩下的由手里那台有键盘的设备回答。
+
+Linux 那边是另一种"终于合适"：一台无头机器没有摄像头可扫，读码意味着走到另一块屏幕前；而机架上
+那台没有另一块屏幕。
+
+每个客户端的形状都一样（名字打头、完整地址折叠在下面），差别只在工具箱：手机是 bottom sheet，
+电视是整屏 + 焦点，Windows 是 `Expander`，GTK 是 `AdwPreferencesGroup` + `GtkExpander`。
 
 ---
 
@@ -61,3 +72,62 @@ core 跑在 `--port 12381 --off-box 127.0.0.1:12382`，gate 只在 off-box 那�
 - 🔲 **真机上的手机↔桌面放行**。以上都是模拟器 + 本机 loopback core，不是两台真设备隔着 relay。
 - 🔲 **浏览器 401 页上的"让我进去"按钮**没在浏览器里点过——页面源码里的两个 fetch 路径有单测守着，但没人看它跑。
 - ⚠️ **`make ios` 出来的包写不了 Keychain**：走到最后一步报 `-34018`（缺 entitlement），因为 `make ios` 带 `CODE_SIGNING_ALLOWED=NO`。改成 ad-hoc 签名（`CODE_SIGN_IDENTITY="-"`）就一路走通。**和本改动无关**（`KeychainStore` 没动，老的配对路径同样会撞上），但凡是在模拟器上验到"存凭证"这一步的，都得记得签一下。
+
+---
+
+## 实测 2026-09-11 · `9b756de` + 本改动（其余四个客户端铺开）
+
+core 跑在 Mac mini 上 `--port 12391 --off-box 127.0.0.1:12392`；Android 模拟器经 `10.0.2.2`
+打到宿主的 loopback，所以对它而言这是一个货真价实的远端 agent。
+
+- ✅ **Android TV 整条链路在真 core 上跑通**（TV 模拟器，`android-34;android-tv;arm64-v8a`）：
+  名字那一屏 → "Ask to be let in" → 屏上出现 `672448` → `reach` 列表里是**同一个码**、设备名
+  `Google sdk_google_atv64_arm64` → `approve` → TV 领走凭证并 `POST /api/session`，core 的设备
+  列表把它的 `last_seen_at` 记了下来。**只差最后一步没成**，见下。
+- ✅ **三屏都看过**：欢迎页（"Add your agent to put it on this screen."）、名字页（`.hi-agent.xyz`
+  贴在输入框后面）、等待页（六位数，across-the-room 大小）。
+- ✅ **Android 手机那张 sheet 组合得出来**：文案、名字框 + 后缀、"Scan a QR code instead"、
+  "Use a full address" 都在，无崩溃。**但它是在 TV 模拟器上跑的**（手机镜像要 7.4 GB，而 Mac mini
+  只剩 6.9 GB，不值得为一张截图把共用机器塞满），所以形状是错的——这不是手机布局的验证。
+- ✅ `make android` / `make android-tv` / `make ios` 全绿，引擎 1221 个测试全过。
+- ✅ **给名字解析补了单测**（`addressForName`：裸标签进默认 zone、带点/带 scheme 的按整地址走、
+  不合法的被拒）。
+
+**🔴 修掉的第三个既有缺陷：遥控器出不了输入框。** `TvField` 的注释原本写着 `singleLine` 就够让
+上下键"自由地离开"——不够：`BasicTextField` 自己就吃掉方向键，所以在电视上按下键根本到不了下面的
+按钮，键盘能用 `TAB` 跳出去（这就是它一直没被发现的原因：遥控器上没有 TAB 键）。加了
+`onPreviewKeyEvent` + `moveFocus`；又发现 Compose 的二维焦点搜索按几何选，输入框横跨整行，于是
+下键落在**中间**那颗按钮上（"Hide address"）——按一下名字然后展开地址表单，不是任何人要的。再用
+`focusProperties { down = askButton }` 把它指到主操作上。
+
+**纯遥控器路径已实测跑通，全程没有 TAB：**
+CENTER（欢迎页）→ CENTER（进输入框）→ 打字 → BACK（只关键盘，不退出）→ DOWN → CENTER
+→ core 收到请求，屏上是同一个六位数。等待页还顺手修了一处：进这一屏时主动收起键盘，否则它正好
+压住那行"去哪儿放行"的字。
+
+**修掉的另外两个既有缺陷：**
+
+- 🔴 **`make android` 在 `main` 上本来就是红的**。`9f463da` 把地址从 `hi-agent.xyz/ana` 改成
+  `ana.hi-agent.xyz` 时改了测试里的字符串，没改**期望的形状**：根地址的 path 就是 `/`，
+  `HttpUrl.toString()` 一定带尾斜杠，那条期望改完之后没有任何输入能满足。在基线 commit 上复现过
+  才动的手。
+- 🔴 **电视上所有标题都是黑字黑底**。`LocalContentColor` 默认是黑色，只有 `Surface` 会改它；
+  TV 的屏是 `Box` + `hiCanvas()`（一个背景 modifier，不是 `Surface`），所以凡是没自己传颜色的
+  `Text` 都在近黑的底上画黑字。正文传了 `onSurfaceVariant` 所以活下来了，标题没有——"Cores" 和
+  旧的 "Pair a core" 一直是看不见的。在 `HiAgentTheme` 里一次性修好。
+
+**还发现并修掉了一个 iOS 也有的显示问题：** 地址栏后缀 `.hi-agent.xyz` 原本一直显示，于是打完整
+地址时会读成 `http://10.0.2.2:12392.hi-agent.xyz`——描述了一个根本不会发出的请求。现在只在输入还是
+裸标签时才显示，四个客户端加 iOS 一起改。
+
+**没看过的：**
+
+- 🔲 **最后一步：凭证落盘**。TV 模拟器的镜像**不支持锁屏**，keystore 因此没有 user super key，
+  `CredentialStore.save` 报 `keystore2: User ECDH key missing / Failed to handle super encryption`。
+  这和 iOS 那边 `make ios` 无签名导致的 `-34018` 是同一类事：**环境，不是代码**（`CredentialStore`
+  这次没动，旧的配对路径走的是同一个调用）。真机 keystore 正常。
+- 🔲 **Android 手机的真实布局**，理由见上。
+- 🔲 **Windows 与 Linux 一行都没编译过**。Windows 没有主机（一直如此）；Linux 这次是因为开发机的
+  Rust 工具链没了，而 `static.rust-lang.org` 从这台机器上只有 ~27 KB/s，装不回来。两边都是照着已经
+  验证过的 iOS/Android 形状写的，但**没有任何编译器看过它们**。
+

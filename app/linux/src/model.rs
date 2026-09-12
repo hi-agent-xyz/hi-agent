@@ -12,7 +12,9 @@ use std::time::Duration;
 use crate::core::client;
 use crate::core::credentials;
 use crate::core::engine::LocalCore;
-use crate::core::models::{CoreError, CoreSession, CoreStage, HealthState, RosterEntry};
+use crate::core::models::{
+    CoreError, CoreSession, CoreStage, HealthState, JoinState, RosterEntry,
+};
 use crate::core::roster::RosterStore;
 use crate::paths::log;
 
@@ -185,6 +187,60 @@ impl AppModel {
     /// Add a core the person typed an address and a pairing code for. The core
     /// tells a pairing code from a credential, so this presents whatever it was
     /// given and stores whatever comes back.
+    /// Ask an agent, by name, to let this machine in.
+    ///
+    /// Nothing is stored by this call: what comes back is a code to show and a
+    /// secret to wait on. The roster only grows once [`Self::join`] lands.
+    ///
+    /// **This is the path that finally suits a Linux box.** A headless machine has
+    /// no camera to scan with, and reading a one-time code off another screen means
+    /// walking to it; asking needs a name and somebody to say yes.
+    pub async fn ask_to_join(
+        self: &Rc<Self>,
+        name: &str,
+    ) -> Result<JoinInvitation, CoreError> {
+        let base_url = client::address_for_name(name)?;
+        let ticket = client::ask_to_join(&base_url, &device_label()).await?;
+        Ok(JoinInvitation {
+            label: agent_label(name, &base_url),
+            base_url,
+            code: ticket.code,
+            secret: ticket.secret,
+        })
+    }
+
+    /// Wait out one invitation, and take the credential the moment it is approved.
+    ///
+    /// Polls until answered. Past the request's own ten-minute life the agent
+    /// answers `expired` and this returns an error, which is the same clock rather
+    /// than a second one kept here.
+    pub async fn join(self: &Rc<Self>, invitation: &JoinInvitation) -> Result<(), CoreError> {
+        loop {
+            match client::poll_join(&invitation.base_url, &invitation.secret).await? {
+                // From here it is the ordinary add: the credential goes to the
+                // keyring, the agent joins the roster, and the window opens it.
+                JoinState::Approved(credential) => {
+                    return self
+                        .add_core(&invitation.base_url, &credential, &invitation.label)
+                        .await;
+                }
+                JoinState::Denied => {
+                    return Err(CoreError::RequestFailed("That was turned down.".into()));
+                }
+                JoinState::Expired => {
+                    return Err(CoreError::RequestFailed(
+                        "Nobody answered in time. Ask again.".into(),
+                    ));
+                }
+                JoinState::Waiting => {
+                    glib::timeout_future(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+
+    /// Exchange a one-time code — or a credential a [`Self::join`] just claimed —
+    /// and remember the agent.
     pub async fn add_core(
         self: &Rc<Self>,
         address: &str,
@@ -215,7 +271,7 @@ impl AppModel {
         match exchange.credential {
             Some(credential) => credentials::save(&entry.id, &credential).await.map_err(|e| {
                 CoreError::RequestFailed(format!(
-                    "That core paired, but its credential could not be stored in the keyring: {e}"
+                    "That agent let this machine in, but its credential could not be stored in the keyring: {e}"
                 ))
             })?,
             // A pairing code always mints a credential; a null here means what
@@ -223,7 +279,7 @@ impl AppModel {
             // forgotten. Nothing to store and nothing that will work later.
             None if credentials::load(&entry.id).await.is_none() => {
                 return Err(CoreError::RequestFailed(
-                    "That core returned no credential. Ask it for a fresh pairing code.".into(),
+                    "That agent returned no credential. Ask it to let this machine in again.".into(),
                 ));
             }
             None => {}
@@ -378,4 +434,31 @@ impl AppModel {
 /// name, because that is what a person recognises when they come to revoke one.
 fn device_label() -> String {
     glib::host_name().to_string()
+}
+
+/// One outstanding "let me in", held only while the add dialog is open.
+#[derive(Debug, Clone)]
+pub struct JoinInvitation {
+    pub base_url: String,
+    pub label: String,
+    /// Shown here and on the agent's Reach view, for the two to be compared. It
+    /// authorizes nothing.
+    pub code: String,
+    pub secret: String,
+}
+
+/// What to call an agent added by name. The name itself when that is what was
+/// typed — "iloahz" reads better in the roster than "iloahz.hi-agent.xyz" — and the
+/// host when somebody pasted a whole address.
+fn agent_label(name: &str, base_url: &str) -> String {
+    let bare = name.trim().to_lowercase();
+    let bare = bare.strip_prefix('@').unwrap_or(&bare);
+    if !bare.is_empty() && !bare.contains('.') && !bare.contains('/') {
+        return bare.to_string();
+    }
+    glib::Uri::parse(base_url, glib::UriFlags::NONE)
+        .ok()
+        .and_then(|uri| uri.host())
+        .map(|host| host.to_string())
+        .unwrap_or_else(|| base_url.to_string())
 }

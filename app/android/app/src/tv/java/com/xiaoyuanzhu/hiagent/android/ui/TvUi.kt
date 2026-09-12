@@ -22,10 +22,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -128,8 +135,11 @@ fun TvButton(
  *
  * Focus and editing are the same state in a Compose text field, so landing on one
  * with the D-pad raises the television's on-screen keyboard directly — there is
- * no second press to "enter" the field. `singleLine` is what keeps up and down
- * free to leave it again rather than moving a cursor inside it.
+ * no second press to "enter" the field.
+ *
+ * Getting *out* of it takes explicit handling; see the key handler below for why
+ * `singleLine` alone was not enough, which is the bug this comment used to assert
+ * was impossible.
  */
 @Composable
 fun TvField(
@@ -138,17 +148,34 @@ fun TvField(
     label: String,
     modifier: Modifier = Modifier,
     placeholder: String? = null,
+    /**
+     * Fixed text pinned after the value, in the field's own trailing slot. The
+     * add screen draws the zone here so `iloahz` reads as `iloahz.hi-agent.xyz`
+     * while only the label was ever typed — which on a remote control is the
+     * whole difference.
+     */
+    suffix: String? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     focusRequester: FocusRequester? = null,
     textStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
 
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label, style = MaterialTheme.typography.bodyLarge) },
         placeholder = placeholder?.let { { Text(it, style = MaterialTheme.typography.bodyLarge) } },
+        suffix = suffix?.let {
+            {
+                Text(
+                    it,
+                    style = textStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
         singleLine = true,
         textStyle = textStyle,
         keyboardOptions = keyboardOptions,
@@ -156,6 +183,28 @@ fun TvField(
         modifier = modifier
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { focused = it.isFocused }
+            // **Up and down have to leave the field, or the remote is stuck in it**
+            // — and `singleLine` alone is not what guarantees that, which is what
+            // this file used to claim. `BasicTextField` handles the arrow keys
+            // itself, so the guarantee is worth stating rather than inheriting.
+            // Taken in *preview*, before the field sees them; on one line there is
+            // no vertical cursor movement to lose.
+            //
+            // **UNVERIFIED (2026-09-11).** In the TV emulator, D-pad down out of the
+            // field did not reach the button and `TAB` did — but that emulator also
+            // kept raising launcher and sign-in dialogs that took focus, so the
+            // failure was never cleanly reproduced and this fix was never cleanly
+            // observed to help. It is written from the mechanism, not from a
+            // measurement. A real remote settles it; until then, treat "can you get
+            // from the name field to the button" as an open question on this screen.
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+                    Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+                    else -> false
+                }
+            }
             .focusMark(focused, 1f, MaterialTheme.colorScheme.primary),
     )
 }

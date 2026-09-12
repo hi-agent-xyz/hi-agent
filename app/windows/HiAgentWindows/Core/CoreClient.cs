@@ -59,25 +59,25 @@ internal static partial class CoreClient
         if (value.Length == 0 || !Uri.TryCreate(value, UriKind.Absolute, out var url))
         {
             throw new CoreClientException.InvalidAddress(
-                "Enter a core address beginning with http:// or https://.");
+                "Enter an address beginning with http:// or https://.");
         }
 
         if (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps)
         {
             throw new CoreClientException.InvalidAddress(
-                "Enter a core address beginning with http:// or https://.");
+                "Enter an address beginning with http:// or https://.");
         }
 
         if (!string.IsNullOrEmpty(url.UserInfo))
         {
             throw new CoreClientException.InvalidAddress(
-                "A core address cannot carry a username or password.");
+                "An address cannot carry a username or password.");
         }
 
         if (url.Scheme == Uri.UriSchemeHttp && !IsLocalHost(url.Host))
         {
             throw new CoreClientException.InvalidAddress(
-                $"Plain http:// only works for a core on this network. Use https:// to reach {url.Host}.");
+                $"Plain http:// only works for an agent on this network. Use https:// to reach {url.Host}.");
         }
 
         // Query and fragment are dropped and the path reduced to canonical form,
@@ -182,7 +182,7 @@ internal static partial class CoreClient
         catch (Exception e) when (e is not OperationCanceledException)
         {
             throw new CoreClientException.RequestFailed(
-                e.Message.Length == 0 ? "The core could not be reached." : e.Message);
+                e.Message.Length == 0 ? "That agent could not be reached." : e.Message);
         }
 
         using (response)
@@ -218,7 +218,7 @@ internal static partial class CoreClient
             catch
             {
                 throw new CoreClientException.RequestFailed(
-                    "The core returned an unexpected session response.");
+                    "That agent returned an unexpected session response.");
             }
 
             if (!response.Headers.TryGetValues("Set-Cookie", out var lines))
@@ -240,6 +240,191 @@ internal static partial class CoreClient
             }
 
             return (exchange, new SessionCookie(raw, SessionCookieName, value));
+        }
+    }
+
+    /// <summary>
+    /// Where a name without a dot in it lives. An agent's name is a label in this
+    /// zone, which is why the add window draws the zone beside the field rather
+    /// than asking anybody to type it.
+    /// </summary>
+    internal const string DefaultZone = "hi-agent.xyz";
+
+    /// <summary>
+    /// The address an agent's name resolves to — `iloahz` is
+    /// `https://iloahz.hi-agent.xyz`.
+    ///
+    /// Something with a dot or a scheme in it is taken as a whole address rather
+    /// than turned into a nonsense third-level name: a person who types a dot
+    /// means an address, and a self-hosted core has one. It then faces the same
+    /// cleartext rules anything pasted does.
+    /// </summary>
+    internal static Uri AddressForName(string raw)
+    {
+        var name = raw.Trim().ToLowerInvariant().TrimStart('@').Trim('/');
+        if (name.Length == 0)
+        {
+            throw new CoreClientException.InvalidName();
+        }
+        if (name.Contains("://", StringComparison.Ordinal))
+        {
+            return NormalizeBaseUrl(name);
+        }
+        if (name.Contains('.', StringComparison.Ordinal))
+        {
+            return NormalizeBaseUrl($"https://{name}");
+        }
+        // The same rule the core states under the name field on its own Reach view.
+        foreach (var c in name)
+        {
+            if (!(char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '-'))
+            {
+                throw new CoreClientException.InvalidName();
+            }
+        }
+        return NormalizeBaseUrl($"https://{name}.{DefaultZone}");
+    }
+
+    /// <summary>
+    /// `POST /api/access/request` — ask an agent to let this machine in.
+    ///
+    /// Open at the core, because the caller is by definition a device with no way
+    /// in. What comes back is a code to show the person and a secret to poll with —
+    /// no access yet, and nothing worth storing.
+    /// </summary>
+    internal static async Task<JoinTicket> AskToJoinAsync(
+        Uri baseUrl,
+        string label,
+        CancellationToken token = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            Endpoint(baseUrl, "api/access/request"))
+        {
+            Content = JsonContent.Create(new { label = label.Trim() }),
+        };
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await Http.SendAsync(request, token).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            throw new CoreClientException.RequestFailed(
+                e.Message.Length == 0 ? "That agent could not be reached." : e.Message);
+        }
+
+        using (response)
+        {
+            var text = string.Empty;
+            try
+            {
+                text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            }
+            catch
+            {
+                // An unreadable body is still a status worth reporting.
+            }
+
+            // A name nobody has claimed reaches the relay and stops there; an
+            // address with no core awake behind it answers 503. To the person
+            // typing, both mean the same thing: nothing is there under that name.
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.ServiceUnavailable)
+            {
+                throw new CoreClientException.NoSuchAgent();
+            }
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                throw new CoreClientException.TooManyWaiting();
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new CoreClientException.Rejected((int)response.StatusCode, text.Trim());
+            }
+
+            try
+            {
+                using var json = JsonDocument.Parse(text);
+                var root = json.RootElement;
+                var code = root.GetProperty("code").GetString()
+                           ?? throw new FormatException("no code");
+                var secret = root.GetProperty("secret").GetString()
+                             ?? throw new FormatException("no secret");
+                return new JoinTicket(code, secret);
+            }
+            catch (Exception e) when (e is JsonException or KeyNotFoundException or FormatException)
+            {
+                throw new CoreClientException.RequestFailed(
+                    "That agent returned an unexpected answer.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// `GET /api/access/request` — read where one request got to, presenting the
+    /// secret that came back with it.
+    /// </summary>
+    internal static async Task<JoinState> PollJoinAsync(
+        Uri baseUrl,
+        string secret,
+        CancellationToken token = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            Endpoint(baseUrl, "api/access/request"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await Http.SendAsync(request, token).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            throw new CoreClientException.RequestFailed(
+                e.Message.Length == 0 ? "That agent could not be reached." : e.Message);
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new CoreClientException.RequestFailed("That agent stopped answering.");
+            }
+
+            var text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            try
+            {
+                using var json = JsonDocument.Parse(text);
+                var root = json.RootElement;
+                var state = root.TryGetProperty("state", out var s) ? s.GetString() : null;
+                switch (state)
+                {
+                    case "approved":
+                        var credential = root.TryGetProperty("credential", out var c) &&
+                                         c.ValueKind == JsonValueKind.String
+                            ? c.GetString()
+                            : null;
+                        if (string.IsNullOrEmpty(credential))
+                        {
+                            throw new CoreClientException.RequestFailed(
+                                "That agent approved without a credential.");
+                        }
+                        return new JoinState.Approved(credential);
+                    case "denied":
+                        return new JoinState.Denied();
+                    case "expired":
+                        return new JoinState.Expired();
+                    default:
+                        return new JoinState.Waiting();
+                }
+            }
+            catch (JsonException)
+            {
+                throw new CoreClientException.RequestFailed(
+                    "That agent returned an unexpected answer.");
+            }
         }
     }
 
