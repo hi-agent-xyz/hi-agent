@@ -714,7 +714,6 @@ export function useAgentSession(): AgentSession {
         };
         for (const ev of events) window.addEventListener(ev, resumeOnGesture, true);
         const voice = new VoicePlayer(
-          audioBus,
           () => setTtsPlaying(true),
           () => setTtsPlaying(false),
         );

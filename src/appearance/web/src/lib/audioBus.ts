@@ -1,10 +1,14 @@
 // AudioBus — one AudioContext + AnalyserNode that the Presence reads each frame.
 //
-// In Phase 1 the only source is the microphone, so the dot-matrix reflects the
-// user's voice. In Phase 2 the playing TTS element is attached too, and the
-// session switches which source feeds the analyser so the dots ride the agent's
-// voice while it speaks. `read()` returns a level + log-spaced frequency bands,
-// the same mapping the chosen `demos/dot-matrix.html` reference uses.
+// The microphone is the only source, and it is the only one this graph may ever
+// have: the agent's own voice was attached here once, and rendering it through
+// Web Audio is what hid it from the platform's echo canceller and let the agent
+// hear itself back through the mic (see `voicePlayer.ts`). So the dot-matrix
+// reflects the room, not the agent — restoring the agent's half has to come from
+// outside this graph.
+//
+// `read()` returns a level + log-spaced frequency bands, the same mapping the
+// chosen `demos/dot-matrix.html` reference uses.
 
 export interface Reading {
   /** RMS amplitude, 0..1. */
@@ -61,12 +65,6 @@ export class AudioBus {
   /** Connect a mic source node into the analyser (never the speakers). */
   attachMic(node: AudioNode): void {
     node.connect(this.analyser);
-  }
-
-  /** Phase 2: connect a playback node into both the analyser and the speakers. */
-  attachPlayback(node: AudioNode): void {
-    node.connect(this.analyser);
-    node.connect(this.ctx.destination);
   }
 
   get bandCount(): number {

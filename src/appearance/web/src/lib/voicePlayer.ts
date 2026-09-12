@@ -1,9 +1,20 @@
-import type { AudioBus } from "./audioBus";
-
 /**
- * Plays the agent's voice through the AudioBus so the dot-matrix rides the real
- * voice while it speaks. One <audio> element + one MediaElementSource (created
- * once) feeds the shared analyser and the speakers.
+ * Plays the agent's voice through one plain <audio> element — deliberately NOT
+ * through the AudioBus.
+ *
+ * It used to run through a MediaElementSource into the shared analyser, so the
+ * dot-matrix rode the real voice while it spoke. That is what made the agent
+ * re-hear itself: `getUserMedia`'s `echoCancellation` cancels the audio the
+ * platform's own media path renders, and audio a Web Audio graph renders is not
+ * on that path. The flag stayed on the whole time, pointed at a speaker it could
+ * not hear — so on a phone held at arm's length the TTS came back through the
+ * mic, was transcribed, and arrived as a message from the person. Playing the
+ * element normally hands the canceller its reference signal back.
+ *
+ * The price is that the dots no longer ride the agent's own voice. Restoring
+ * that has to come from somewhere other than the output graph — the arriving
+ * chunks' own amplitude, say. Nothing may put this playback back inside Web
+ * Audio.
  *
  * A turn's speech is one continuous stream from the backend, so this plays it
  * as one stream: `beginTurn` opens a fresh MediaSource, `pushChunk` appends the
@@ -36,14 +47,11 @@ export class VoicePlayer {
   private blobMime = "";
 
   constructor(
-    bus: AudioBus,
     private onStart: () => void,
     private onEnd: () => void,
   ) {
     this.el = new Audio();
     this.el.preload = "auto";
-    const node = bus.ctx.createMediaElementSource(this.el);
-    bus.attachPlayback(node); // → analyser + speakers
     this.el.addEventListener("ended", () => this.handleEnded());
     this.el.addEventListener("error", () => this.handleEnded());
   }
