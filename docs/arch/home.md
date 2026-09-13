@@ -49,9 +49,11 @@ fit, because a surface carrying only the work in hand has nothing to hide from.
   - **A result with no picture is never a node**, however many there are. Twenty-one
     liveness JSONs are a log, and a filename is what a count is for.
   - **The tiles are capped.** A task that makes forty screenshots hangs six and says forty.
-  - The picture on the card is the first shot-bearing view in the task's own `refs` order.
-    That is not claimed to be the latest — view records carry no timestamp, and the `?v=`
-    cache-buster on a shot URL is not declared to mean recency.
+  - The picture on the card is the first shot-bearing view in the task's `refs` order, and
+    that order carries intent: `view_refs` walks the task's timeline newest entry first so
+    that "a row that has been through three deliverables is about the last one". It is the
+    most recently *mentioned* view, never the most recently made — a view record has no
+    time on it, and the `?v=` cache-buster on its shot URL is not declared to mean one.
 - **A ref is a mention, and a system view is never a product.** A task whose prose named
   `factory/home` had it counted as a result and drawn as its picture. The app's own
   surfaces are excluded. A mention of *another task's* result is the same confusion with
@@ -113,14 +115,15 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   it as its own — on the instance this was written against, `research-two-pairs` is a
   counted result of an unrelated KTV task. The fix belongs where the match is made
   (`view_refs` in `foundation/server/tasks.rs`), not in a reader of it.
-- **Nothing marks which result is the deliverable.** A task has a report and it has the
+- **Nothing marks which result the task is *for*.** A task has a report and it has the
   material it gathered on the way, and that difference is real to the person and absent
-  from every record: `refs` is an undifferentiated list, `latest` is the task's most recent
-  note rather than a pointer, and no field says "this view is the output". So the card
-  wears whichever picture comes first and the rest go below it, which is arbitrary where it
-  should be meaningful — a research task in flight should be able to show an empty report
-  slot above a rank of process pictures, and cannot. Marking the deliverable belongs to
-  whatever writes the task, not to a reader guessing from ref order.
+  from every record. Ordering is not the distinction and cannot stand in for it: `refs` is
+  ordered newest-mention-first on purpose, but a log is mentioned every time it is
+  appended, so the most recently mentioned result is the one least likely to be the point.
+  `latest` is the task's most recent note rather than a pointer, and no field says "this
+  view is what the task is for". So a research task in flight cannot show an empty report
+  slot above a rank of process pictures. Naming the face is a judgment and belongs to
+  whatever writes the task, not to a reader ranking mentions.
 - **A view record carries no time.** Nothing on it says when it was made or last changed,
   so no surface can order a task's results or show its newest. `bookmarked` and `shared`
   exist on the record and are set on none of 195, so neither can pick a representative one
