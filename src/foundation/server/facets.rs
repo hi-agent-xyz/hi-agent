@@ -92,10 +92,10 @@ fn normalize_ts(s: &str) -> Option<String> {
 /// facet in full to find out — one request per subject, for a number this side already holds
 /// from a `stat` it does anyway.
 ///
-/// **No bundled view reads it today.** `factory/home` asks this endpoint for the names alone,
-/// which is what decides whether a one-row topic earns a rank of its own on that chart; the
-/// run of chips that carried each project's age is gone from it. The field stays because it
-/// is what a listing is for, not because anything is waiting on it.
+/// **No bundled view reads this listing today, `factory/home` included.** That chart does
+/// decide whether a one-row topic earns a rank of its own, but it decides it from the tags
+/// on the tasks it already has, never from a read of this. The field stays because it is
+/// what a listing is for, not because anything is waiting on it.
 #[derive(Serialize)]
 struct SubjectDto {
     subject: String,

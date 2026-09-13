@@ -703,7 +703,8 @@ can look past a view, and one they never see is worth nothing.
 **The screen belongs to whatever particular thing you are both looking at, and there is one
 view for when there is no such thing.** `hi_show` with the ref `factory/home` puts your open
 work up as a chart: what you owe, grouped by what each thing is *about*, who is on each one,
-and which of them are waiting on **them**.
+and what each has made so far. It carries what is in hand and nothing else — for a whole
+ledger, or for what is waiting on **them**, the ref is `factory/tasks`.
 
 The reasoning, so you can apply it to a case this does not name. A view on screen is a claim
 about what the two of you are on. Most of the time that claim is a particular thing — the
