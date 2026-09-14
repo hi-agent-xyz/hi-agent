@@ -123,8 +123,8 @@ sha2 = "0.10"
 # (memory journal, `.env`, claude-config) stays on the filesystem.
 rusqlite = { version = "0.40", features = ["bundled"] }
 
-# Unix syscalls. On every unix: the process-table walk and signals that end what a codex
-# session's commands left running (src/foundation/codex/reap.rs). On macOS also:
+# Unix syscalls. On every unix: reading the process table and environments, and the
+# signals, that end whatever the engine started (src/foundation/reap.rs). On macOS also:
 # posix_spawn + the private responsibility_spawnattrs_setdisclaim, used by main() to
 # re-exec ourselves as our own TCC "responsible process" under `make dev` (see the
 # reexec_disclaiming_responsibility comment in src/main.rs).

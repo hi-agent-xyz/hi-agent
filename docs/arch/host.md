@@ -470,6 +470,20 @@ tree**, owned by the worker that owns the duty and dying when the engine does.
 Nothing is restricted to keep it that way: the agent keeps every tool it has, and
 what follows is a rule about what to do with them.
 
+**"Dying when the engine does" is enforced, in two layers.** The first is codex's own: a
+codex is ended by closing its stdin, never by killing it, because on a closed stdin codex
+ends every process it started and on SIGKILL it ends none — and an engine that dies any
+way at all closes that pipe too. The second is for what escapes codex — a daemon that made
+a session of its own, a codex that had to be killed, the engine's other children after a
+crash — and the process tree cannot carry it, since a daemon belongs to init while its
+session is live and a crash leaves nothing linking anything. So ownership is written into
+every process as environment it inherits — the engine's `<pid>.<start>` and the codex
+session — and read back from the process table: a session closing ends what carries that
+session, a clean stop ends what carries this engine, and a boot ends what carries an
+engine no longer running. All of it is events; nothing sweeps. What cannot be read back
+(macOS hides its own binaries' environments) is reached through the relatives that can;
+[`reap.rs`](../../src/foundation/reap.rs) says what still is not.
+
 ##### One background item, and it is this process
 
 **Do not register OS-level keepalive** — no `launchd` agent, no crontab, no systemd
@@ -668,15 +682,6 @@ where fix-forward genuinely does not apply.
 - **`record_reflex` is declared to no role.** The recognizer and `POST /api/reflex/invoke` are
   live, so a reflex can be *fired* but never *written* — the authoring end is reachable by name
   only. Give it a live role or delete the module.
-- **An engine that dies without unwinding still orphans every command its sessions were
-  running.** What an agent starts ends with its session and with a clean engine stop —
-  [`reap.rs`](../../src/foundation/codex/reap.rs) walks the tree below each codex while that
-  codex is alive and ends it first, because codex puts every command in a session of its own
-  and nothing done to codex reaches them. A SIGKILL, an abort or a power loss runs none of
-  that, and afterwards nothing links the survivors to this process. Covering it needs a mark
-  each command carries that the next boot can find — an inherited environment variable naming
-  the data dir is the obvious one — and whether codex's shell environment policy passes such a
-  variable through has not been checked.
 
 
 ## See also

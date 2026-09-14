@@ -82,6 +82,14 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         normalize_dir(&config.data_dir).context("resolving cwd to absolutize data dir")?;
     tracing::debug!(?config, "starting hi-agent");
 
+    // End whatever an engine that is no longer running left behind — a crash, a SIGKILL, a
+    // restart that could not unwind. First, before this engine starts anything of its own,
+    // though the marks would keep the two apart regardless. See `foundation::reap`.
+    let leftovers = foundation::reap::end_detached(foundation::reap::Scope::DeadEngines);
+    if leftovers == 0 {
+        tracing::info!("no processes left over from a previous engine");
+    }
+
     // Snapshot the cognition tunables (reflection cadence, compact ceiling,
     // vendor-down thresholds, …) and the declared owner from the config store into the
     // process global the reaction's argless helpers read. Once, before anything reads
@@ -617,6 +625,17 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         .is_err()
     {
         tracing::warn!("codex subprocess reaping timed out");
+    }
+
+    // End everything else this engine started: what codex's commands left running,
+    // detached or not, and any other subsystem's children. Killing a process never ended
+    // what it started (`foundation::reap`). The grace is awaited here rather than left to a
+    // thread, because this process is about to exit past it.
+    let started = foundation::reap::terminate(foundation::reap::Scope::Engine);
+    if !started.is_empty() {
+        tracing::info!(processes = started.len(), pids = ?started.pids(), "ending what this engine started");
+        tokio::time::sleep(foundation::reap::GRACE).await;
+        started.kill_survivors();
     }
 
     // Close whatever is still on the switchboard, so the session directory records that
