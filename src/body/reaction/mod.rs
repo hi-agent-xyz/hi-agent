@@ -253,7 +253,8 @@ fn reflect_max_interval() -> Duration {
 /// a throttled gateway.
 const DEFAULT_VENDOR_PROBE: Duration = Duration::from_secs(30);
 /// Default consecutive *generic* terminal failures before flipping to an informed
-/// backoff. Each terminal failure is already up to 3 model calls, so 2 = a real
+/// backoff. Each terminal failure is already two model calls — codex retries once
+/// ([`crate::foundation::config::AgentConfig::thread_config`]) — so 2 = a real
 /// outage, not a one-off blip. A managed 402 pauses immediately; everything else
 /// follows the classifier below.
 const DEFAULT_VENDOR_DOWN_AFTER: u32 = 2;

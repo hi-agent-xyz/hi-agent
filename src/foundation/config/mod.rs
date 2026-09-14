@@ -25,6 +25,10 @@ pub const DEFAULT_AI_API_BASE: &str = "https://api.openai.com/v1";
 /// have to agree; both are produced by [`AgentConfig::thread_config`].
 const PROVIDER_ID: &str = "hi-agent-gateway";
 
+/// How many times codex itself retries a failed model request, and separately a stream
+/// that drops mid-response, before the turn fails. See [`AgentConfig::thread_config`].
+const CODEX_MAX_RETRIES: u64 = 1;
+
 /// Env var carrying the upstream key. Codex reads the key by *name* — a provider block
 /// says `env_key = "…"` and the process env supplies the value — which is why the
 /// credential never appears in the thread config we send over the wire.
@@ -291,6 +295,17 @@ impl AgentConfig {
     /// and an otherwise empty `CODEX_HOME` reaches the configured endpoint. Re-checked
     /// on 0.147 at the bump — the thread still opens with this block; the endpoint leg
     /// was not re-exercised.
+    ///
+    /// **Codex retries once, not five times.** Left at its defaults every failed call went
+    /// out up to six times before the host heard anything, and each attempt re-sends the
+    /// whole thread. Measured on 2026-09-14: one worker logged `Reconnecting... 1/5`
+    /// through `5/5` on 38 consecutive turns in twenty minutes, each a ~190K-token request
+    /// into a broker that was already down. One retry still absorbs a dropped connection;
+    /// anything longer is an outage, and outages belong to the
+    /// [vendor gate](../../../docs/arch/host.md#vendor-gate), which hears about them once
+    /// for every rung and backs off where codex would hammer per session. Both keys are
+    /// provider fields in codex's config and the pinned binary carries both names; no live
+    /// run has yet watched a failure surface after exactly one retry.
     pub fn thread_config(&self) -> serde_json::Map<String, serde_json::Value> {
         let mut config = serde_json::Map::new();
         if let Some(model) = &self.model {
@@ -308,6 +323,8 @@ impl AgentConfig {
                     "base_url": self.upstream_base_url,
                     "env_key": ENV_LLM_KEY,
                     "wire_api": "responses",
+                    "request_max_retries": CODEX_MAX_RETRIES,
+                    "stream_max_retries": CODEX_MAX_RETRIES,
                 }
             }),
         );
@@ -477,6 +494,9 @@ mod tests {
         let provider = &config["model_providers"][PROVIDER_ID];
         assert_eq!(provider["base_url"], "https://gateway.example/v1");
         assert_eq!(provider["wire_api"], "responses");
+        // Codex's own retries stay at one: past that, a failure is the host gate's.
+        assert_eq!(provider["request_max_retries"], 1);
+        assert_eq!(provider["stream_max_retries"], 1);
         // The provider names the key's env var; the key itself must never be in here,
         // because a thread config is logged and tapped verbatim.
         assert_eq!(provider["env_key"], ENV_LLM_KEY);

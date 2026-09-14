@@ -312,7 +312,11 @@ rung — Reaction, Cognition, Reflection and every worker share one upstream.
 - **Backoff, absorbed and capped.** A blip is absorbed before anything is declared down; from
   there the retry gap doubles to a ceiling. A rate limit is not an outage worth mentioning; a
   string of failures is — and the absorb count *is* that sentence, so nothing else needs to
-  encode it.
+  encode it. **The agent runtime retries once, not more.** Its own retries are a second
+  absorb layer below this one, per session and invisible to the gate, and each attempt
+  re-sends the whole thread: left at codex's defaults a single failure went out six times,
+  and one duty worker put 38 turns of that — ~190K tokens a request — into a broker that
+  was already down. One retry absorbs a dropped connection; anything longer is this gate's.
 - **One apology, once — and it is a state, not a sentence.** The transition, not each
   failed turn, is what earns a word to the person. What the gate publishes is therefore
   the **condition** — one of *unreachable* (still retrying), *out of energy*, *refused
