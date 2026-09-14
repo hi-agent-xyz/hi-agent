@@ -29,6 +29,6 @@ pub mod tap;
 pub mod thread;
 
 pub use messages::{Folded, Message, fold};
-pub use process::{CodexProcess, ProcessRegistry, SessionOpts};
+pub use process::{CodexProcess, ProcessRegistry, SessionOpts, upstream_answered};
 pub use tap::{Dir, RawFrame, WireTap};
 pub use thread::{AgentSession, PromptResult, SessionRun, SessionUpdate, StopReason, WindowFill};

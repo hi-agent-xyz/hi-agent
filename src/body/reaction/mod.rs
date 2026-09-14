@@ -260,6 +260,18 @@ const DEFAULT_VENDOR_PROBE: Duration = Duration::from_secs(30);
 const DEFAULT_VENDOR_DOWN_AFTER: u32 = 2;
 /// A transient-outage retry never waits longer than this — the 1h ceiling.
 const BACKOFF_CAP: Duration = Duration::from_secs(3600);
+/// How long the one rung that took a backoff's attempt has the upstream to itself before
+/// another may try ([`Vendor::claim`]).
+///
+/// **It is the bound on a probe that never reports, not on a probe.** Recovery does not wait
+/// for it: the upstream answering anything reopens the gate the moment it happens
+/// ([`Reaction::note_upstream_answered`]). What it covers is a probe whose session died, or
+/// whose turn ended in a way that says nothing about the upstream — without a lease that
+/// claim would park every other rung until the process restarts. Three minutes is longer
+/// than a healthy first response on a full window and shorter than one hung request
+/// (codex's stream idle timeout is five), so a broker that accepts and never answers draws
+/// one attempt per lease rather than one per rung.
+const PROBE_LEASE: Duration = Duration::from_secs(180);
 /// Once a managed 402 is observed, the process-wide vendor gate checks the
 /// broker frequently enough that a subscription or refill clears the view and
 /// wakes held work without waiting for the normal account cadence.
@@ -396,11 +408,23 @@ enum VendorState {
     /// not exist. What it was standing in for — *"a rate limit is not an outage worth
     /// mentioning; a string of failures is"* ([`host.md`](../../../docs/arch/host.md)) —
     /// is `down_after`, which absorbs the blip before anything is declared down.
-    Backoff { try_at: Instant, attempt: u32 },
+    ///
+    /// `probe` is when a rung took the attempt this backoff allows ([`Vendor::claim`]);
+    /// `None` until the deadline passes and somebody asks.
+    Backoff { try_at: Instant, attempt: u32, probe: Option<Instant> },
     /// Stopped, with no deadline of our own. Managed energy and unrelated permanent
     /// failures are tracked independently so a balance refill cannot clear an invalid
     /// key or another condition it does not own.
     Paused { energy: bool, permanent: bool },
+}
+
+/// When a backoff next offers its attempt: the deadline, or — with a probe out — the end of
+/// that probe's lease, whichever is later.
+fn next_try(try_at: Instant, probe: Option<Instant>) -> Instant {
+    match probe {
+        Some(taken) => try_at.max(taken + PROBE_LEASE),
+        None => try_at,
+    }
 }
 
 /// Shared, process-wide view of the upstream LLM vendor and how to recover from an
@@ -465,11 +489,40 @@ impl Vendor {
     }
 
     /// The reaction loop's scheduling read: drive now (Go) or retry at a deadline (Retry).
+    ///
+    /// A deadline that has passed is an offer, not a permission: the rung that reaches it
+    /// takes the attempt with [`Self::claim`], and a deadline with a probe already out is
+    /// the end of that probe's lease.
     fn turn_gate(&self) -> TurnGate {
         match *self.state.lock().unwrap() {
             VendorState::Up => TurnGate::Go,
-            VendorState::Backoff { try_at, .. } => TurnGate::Retry { at: try_at },
+            VendorState::Backoff { try_at, probe, .. } => TurnGate::Retry { at: next_try(try_at, probe) },
             VendorState::Paused { .. } => TurnGate::Hold,
+        }
+    }
+
+    /// Take the one attempt a backoff allows. `true` means this caller is the probe and
+    /// should run its turn; `false` means keep waiting — the deadline has not passed, or
+    /// somebody else holds it, or the upstream is paused.
+    ///
+    /// **One attempt, not one per rung.** Every held rung used to wake on the same deadline
+    /// and try at once, so a single outage was rediscovered by Reaction, Cognition,
+    /// Reflection and every held worker in the same instant, each with a whole thread in
+    /// the request — against a broker that had just fallen over for exactly that reason.
+    /// `host.md` says an outage is decided once; this is that sentence for the retry.
+    fn claim(&self) -> bool {
+        let mut st = self.state.lock().unwrap();
+        match *st {
+            VendorState::Up => true,
+            VendorState::Backoff { try_at, attempt, probe } => {
+                let now = Instant::now();
+                if now < next_try(try_at, probe) {
+                    return false;
+                }
+                *st = VendorState::Backoff { try_at, attempt, probe: Some(now) };
+                true
+            }
+            VendorState::Paused { .. } => false,
         }
     }
 
@@ -533,16 +586,27 @@ impl Vendor {
     fn note_unreachable(&self) -> bool {
         let mut st = self.state.lock().unwrap();
         match *st {
-            // Already backing off — a failed retry just grows the gap.
-            VendorState::Backoff { attempt, .. } => {
+            // Already backing off — the probe failed, so the gap grows and the attempt is
+            // offered again at the new deadline.
+            //
+            // **Only a probe's failure is news.** Turns already in flight when the gate went
+            // down keep failing for minutes after it — a hung upstream holds each one until
+            // its stream times out — and every one of those used to double the gap, so a
+            // dozen stragglers carried a 30s backoff to the one-hour cap inside a single
+            // outage. With no probe out, a failure is one of those and changes nothing.
+            // (A straggler that lands while a probe *is* out is taken for the probe's; that
+            // costs one step of gap, and telling them apart would mean every rung carrying
+            // its claim back here.)
+            VendorState::Backoff { attempt, probe: Some(_), .. } => {
                 let a = attempt.saturating_add(1);
-                *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(a), attempt: a };
+                *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(a), attempt: a, probe: None };
                 false
             }
+            VendorState::Backoff { probe: None, .. } => false,
             VendorState::Up => {
                 let n = self.generic_failures.fetch_add(1, Ordering::Relaxed) + 1;
                 if n >= self.down_after {
-                    *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(0), attempt: 0 };
+                    *st = VendorState::Backoff { try_at: Instant::now() + self.backoff(0), attempt: 0, probe: None };
                     true
                 } else {
                     false
@@ -739,6 +803,104 @@ mod vendor_tests {
         assert!(v.resume_energy());
         assert!(matches!(v.turn_gate(), TurnGate::Hold));
         assert!(v.is_down());
+    }
+
+    /// A backed-off gate whose deadline has already passed, with nobody probing yet.
+    fn due() -> Vendor {
+        let v = fresh();
+        *v.state.lock().unwrap() = VendorState::Backoff {
+            try_at: Instant::now() - Duration::from_secs(1),
+            attempt: 0,
+            probe: None,
+        };
+        v
+    }
+
+    /// **The herd.** Every held rung reaches the same deadline; exactly one of them may go.
+    #[test]
+    fn a_due_deadline_is_one_attempt_not_one_per_rung() {
+        let v = due();
+        assert!(v.claim(), "the first rung to reach a passed deadline is the probe");
+        assert!(!v.claim(), "and nobody else goes while it is out");
+        assert!(!v.claim());
+        match v.turn_gate() {
+            TurnGate::Retry { at } => assert!(
+                at > Instant::now() + PROBE_LEASE - Duration::from_secs(5),
+                "the others wait on the probe's lease, not on the deadline that already passed"
+            ),
+            other => panic!("still backing off, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_deadline_not_yet_passed_is_nobodys() {
+        let v = fresh();
+        v.note_unreachable();
+        v.note_unreachable();
+        assert!(!v.claim(), "a 30s backoff that began just now offers nothing yet");
+    }
+
+    /// A probe that never reports — its session died — must not park everyone for good.
+    #[test]
+    fn a_probe_that_never_reports_gives_the_attempt_back() {
+        let v = due();
+        *v.state.lock().unwrap() = VendorState::Backoff {
+            try_at: Instant::now() - PROBE_LEASE - Duration::from_secs(10),
+            attempt: 0,
+            probe: Some(Instant::now() - PROBE_LEASE - Duration::from_secs(1)),
+        };
+        assert!(v.claim(), "past the lease, the attempt is on offer again");
+    }
+
+    /// **The stragglers.** Turns already in flight when the gate went down fail after it,
+    /// one by one; none of them is the retry, so none of them may grow the gap.
+    #[test]
+    fn failures_with_no_probe_out_do_not_grow_the_gap() {
+        let v = fresh();
+        v.note_unreachable();
+        v.note_unreachable();
+        let before = v.turn_gate();
+        for _ in 0..12 {
+            v.note_unreachable();
+        }
+        match (before, v.turn_gate()) {
+            (TurnGate::Retry { at: a }, TurnGate::Retry { at: b }) => {
+                assert_eq!(a, b, "twelve stragglers moved the deadline")
+            }
+            other => panic!("expected a backoff both times, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_probe_grows_the_gap_and_offers_the_attempt_again_later() {
+        let v = due();
+        assert!(v.claim());
+        v.note_unreachable();
+        match *v.state.lock().unwrap() {
+            VendorState::Backoff { attempt, probe, try_at } => {
+                assert_eq!(attempt, 1, "the probe's failure is the one that counts");
+                assert!(probe.is_none(), "the attempt is released with the new deadline");
+                assert!(try_at > Instant::now() + Duration::from_secs(50), "30s doubled");
+            }
+            other => panic!("still backing off, got {other:?}"),
+        }
+        assert!(!v.claim(), "not before the new deadline");
+    }
+
+    #[test]
+    fn an_answer_while_a_probe_is_out_opens_the_gate_for_everyone() {
+        let v = due();
+        assert!(v.claim());
+        assert!(v.note_success(), "the upstream answering is the recovery edge");
+        assert!(matches!(v.turn_gate(), TurnGate::Go));
+        assert!(v.claim(), "an open gate is everybody's");
+    }
+
+    #[test]
+    fn a_pause_offers_no_attempt() {
+        let v = fresh();
+        v.note_energy_paused();
+        assert!(!v.claim(), "a pause is cleared by whoever owns its reason, never by trying");
     }
 
     #[test]
@@ -1089,6 +1251,20 @@ pub async fn start(
             }
         }
     });
+    // The recovery edge: any model request coming back, on any session, reopens a backed-off
+    // gate at once rather than when some turn next finishes. See
+    // [`Reaction::note_upstream_answered`].
+    let answered_reaction = reaction.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = crate::foundation::codex::upstream_answered().notified() => {
+                    answered_reaction.note_upstream_answered().await;
+                }
+                _ = answered_reaction.inner.shutdown.cancelled() => break,
+            }
+        }
+    });
     let dispatch_reaction = reaction.clone();
 
     tokio::spawn(async move {
@@ -1269,6 +1445,22 @@ impl Reaction {
         self.publish_condition().await;
     }
 
+    /// The upstream answered a model request — on any session, in any rung, mid-turn.
+    ///
+    /// **This is the recovery edge, not a turn finishing.** A turn is many requests, and the
+    /// first one coming back already says everything the gate wants to know. Waiting for the
+    /// turn to end meant a probe that happened to be a long worker errand held every other
+    /// rung parked for as long as the errand ran, with the upstream answering it the whole
+    /// time. Publishes only on the edge: this fires once per request, and in the ordinary
+    /// case the gate is already up and there is nothing to say.
+    async fn note_upstream_answered(&self) {
+        if self.inner.vendor.note_success() {
+            tracing::info!("vendor answered; turns resume");
+            self.inner.vendor_wake.notify_waiters();
+            self.publish_condition().await;
+        }
+    }
+
     /// Park until the upstream is worth trying again, or until shutdown.
     ///
     /// Returns `false` if the process is going down. A rung with mail in hand calls this
@@ -1303,6 +1495,12 @@ impl Reaction {
                     }
                     return true;
                 }
+                // A due deadline is taken by whoever gets here first, and only by them;
+                // everyone else goes back to waiting, now on that probe's lease.
+                TurnGate::Retry { at } if at <= Instant::now() && self.inner.vendor.claim() => {
+                    tracing::info!("vendor retry due; this rung is the probe");
+                    return true;
+                }
                 TurnGate::Retry { at } => Some(at),
                 // No deadline of this rung's own: whoever owns the reason owns the
                 // recovery — for managed energy, the gate task's broker poll.
@@ -1315,17 +1513,15 @@ impl Reaction {
                     "vendor down; a rung holds its mail rather than opening a session",
                 );
             }
-            // A passed deadline returns rather than looping: the caller is meant to go
-            // and *try*, which is what turns a backoff into either recovery or a longer
-            // gap. Looping here on a stale deadline would spin instead.
+            // A passed deadline goes round again rather than returning: the top of the loop
+            // is where the attempt is claimed, so a rung that loses the race parks on the
+            // winner's lease instead of trying beside it. That cannot spin — a failed claim
+            // means [`Vendor::turn_gate`] now names a later deadline, or no longer offers one.
             match deadline {
                 Some(at) => {
                     tokio::select! {
                         _ = notified => {}
-                        _ = sleep_until(at) => {
-                            tracing::info!("vendor retry due; a held rung tries again");
-                            return true;
-                        }
+                        _ = sleep_until(at) => {}
                         _ = self.inner.shutdown.cancelled() => return false,
                     }
                 }
@@ -1781,9 +1977,12 @@ async fn reaction_loop(
                     if down {
                         // Only a transient backoff drives a model retry, and only with
                         // mail to deliver.
+                        // …and only as the probe. Losing the claim re-reads the gate, which
+                        // now names the winner's lease as the deadline.
                         if let TurnGate::Retry { at } = gate
                             && at <= now
                             && !batch.is_empty()
+                            && reaction.inner.vendor.claim()
                         {
                             tracing::info!(mail = batch.len(), "backoff retry firing");
                             break 'wait;

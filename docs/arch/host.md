@@ -317,6 +317,18 @@ rung — Reaction, Cognition, Reflection and every worker share one upstream.
   re-sends the whole thread: left at codex's defaults a single failure went out six times,
   and one duty worker put 38 turns of that — ~190K tokens a request — into a broker that
   was already down. One retry absorbs a dropped connection; anything longer is this gate's.
+- **While down, one rung tries.** When the backoff deadline passes, the first rung to ask
+  takes the attempt and every other rung keeps holding. Waking them all on one deadline
+  rediscovered a single outage once per rung in the same instant, each with a whole thread
+  in the request. Only the probe's failure grows the gap: a turn that was already in flight
+  when the gate went down fails after it for reasons the gap has already accounted for, and
+  a dozen of those used to carry a thirty-second backoff to the one-hour cap inside one
+  outage. A probe that never reports gives the attempt back after a lease, so a session
+  that died mid-probe cannot park the rest for good.
+- **The upstream answering is what reopens it, not a turn finishing.** Any model response
+  on any session is proof, and it arrives with the first request of a turn rather than at
+  its end — so a probe that turns out to be a long errand does not hold everyone else
+  parked while the upstream answers it.
 - **One apology, once — and it is a state, not a sentence.** The transition, not each
   failed turn, is what earns a word to the person. What the gate publishes is therefore
   the **condition** — one of *unreachable* (still retrying), *out of energy*, *refused

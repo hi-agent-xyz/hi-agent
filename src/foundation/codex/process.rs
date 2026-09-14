@@ -43,6 +43,34 @@ static CONN_SEQ: AtomicU64 = AtomicU64::new(0);
 /// `clientInfo.name` to identify integrations, so it should name us, not a library.
 const CLIENT_NAME: &str = "hi_agent";
 
+/// Fires each time any codex child reports that a model request came back — on every
+/// connection, whichever rung or worker it hosts.
+///
+/// **One process-wide edge, because the question it answers is process-wide:** is the
+/// upstream answering at all. Each session's stream sees only its own frames, and the rung
+/// reading that stream learns about a response only when its whole turn ends; this is the
+/// one place every response passes. `notify_one`, so the single reader (the vendor gate)
+/// keeps one permit across a moment it was not listening, and a burst of responses costs it
+/// one wake.
+pub fn upstream_answered() -> &'static tokio::sync::Notify {
+    static ANSWERED: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+    ANSWERED.get_or_init(tokio::sync::Notify::new)
+}
+
+/// Whether a notification is codex reporting a completed model request.
+///
+/// `thread/tokenUsage/updated` is sent when a response finishes, carrying that request's
+/// usage as `last`. **A `last.inputTokens` of zero is not one**: codex sends that shape when
+/// a thread opens or resumes and when a compaction ends, none of which proves anything
+/// reached the upstream.
+fn reports_upstream_answer(msg: &Value) -> bool {
+    msg.get("method").and_then(Value::as_str) == Some("thread/tokenUsage/updated")
+        && msg
+            .pointer("/params/tokenUsage/last/inputTokens")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0)
+}
+
 /// Options for opening a session's codex thread.
 #[derive(Debug, Default, Clone)]
 pub struct SessionOpts {
@@ -776,6 +804,9 @@ fn dispatch(
         return;
     }
 
+    if reports_upstream_answer(&msg) {
+        upstream_answered().notify_one();
+    }
     if notifications.send(msg).is_err() {
         tracing::debug!("session receiver dropped while a notification arrived");
     }
@@ -871,6 +902,28 @@ fn error_text(err: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frames that count as the upstream answering, against the shapes codex actually
+    /// sends — the two zero-input ones copied from a 2026-09-13 worker's wire log.
+    #[test]
+    fn only_a_request_with_input_counts_as_the_upstream_answering() {
+        let usage = |last_input: u64| {
+            json!({"method": "thread/tokenUsage/updated", "params": {"threadId": "t", "tokenUsage": {
+                "total": {"inputTokens": 9_301_868},
+                "last": {"inputTokens": last_input, "outputTokens": 0},
+                "modelContextWindow": 258_400,
+            }}})
+        };
+        assert!(reports_upstream_answer(&usage(190_247)), "a finished request on a full window");
+        assert!(
+            !reports_upstream_answer(&usage(0)),
+            "a thread opening, resuming or finishing a compaction reports zero, and proves nothing"
+        );
+        assert!(!reports_upstream_answer(&json!({"method": "turn/completed", "params": {}})));
+        assert!(!reports_upstream_answer(
+            &json!({"method": "thread/tokenUsage/updated", "params": {}})
+        ));
+    }
 
     /// Spawn `program` the way [`CodexProcess::spawn`] does, with a writer task owning its
     /// stdin, and hand back what [`close_codex`] takes.
