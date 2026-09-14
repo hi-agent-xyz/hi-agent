@@ -32,6 +32,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::foundation::codex::reap;
 use crate::foundation::codex::tap::{Dir, WireTap};
 
 /// Allocates the per-connection id the tap uses to group one session's frames
@@ -158,11 +159,18 @@ pub struct CodexProcess {
 /// Each [`CodexProcess::spawn`] registers its driver here under the per-connection id;
 /// the driver removes its own entry when it exits (its session handle was dropped,
 /// which signals shutdown), so the map only ever holds *live* processes.
-/// [`shutdown`](Self::shutdown) aborts whatever remains — dropping a driver future
-/// drops the [`Child`], which was spawned `kill_on_drop`.
+/// [`shutdown`](Self::shutdown) ends the commands below each codex, then aborts whatever
+/// remains — dropping a driver future drops the [`Child`], which was spawned `kill_on_drop`.
 #[derive(Clone, Default)]
 pub struct ProcessRegistry {
-    inner: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
+    inner: Arc<Mutex<HashMap<u64, LiveProcess>>>,
+}
+
+struct LiveProcess {
+    driver: JoinHandle<()>,
+    /// Codex's pid, the root of the tree [`reap`] walks. `None` only if the child had
+    /// already exited by the time it was spawned, in which case there is nothing below it.
+    pid: Option<u32>,
 }
 
 impl ProcessRegistry {
@@ -170,8 +178,8 @@ impl ProcessRegistry {
         Self::default()
     }
 
-    fn insert(&self, id: u64, driver: JoinHandle<()>) {
-        self.inner.lock().expect("process registry mutex").insert(id, driver);
+    fn insert(&self, id: u64, driver: JoinHandle<()>, pid: Option<u32>) {
+        self.inner.lock().expect("process registry mutex").insert(id, LiveProcess { driver, pid });
     }
 
     /// Drop a driver handle from the live map. Called by the driver's own guard when it
@@ -180,26 +188,70 @@ impl ProcessRegistry {
         let _ = self.inner.lock().expect("process registry mutex").remove(&id);
     }
 
-    /// Reap every live codex subprocess. Aborting a driver future drops its [`Child`]
-    /// (killing the process); awaiting the aborted handle confirms the kill ran before
-    /// we return. The caller should bound this with a timeout so a wedged child cannot
-    /// hang process exit.
+    /// Reap every live codex subprocess, and everything its commands left running.
+    ///
+    /// **The commands go first, and all together.** Each driver's [`ReapCommands`] would end
+    /// its own tree on abort, but it can only send SIGTERM and leave the SIGKILL to a thread
+    /// the process is about to exit past, so a command that ignores SIGTERM would outlive a
+    /// clean stop. Here the grace is awaited once for every tree, and only then are the codex
+    /// processes killed.
+    ///
+    /// Aborting a driver future drops its [`Child`] (killing the process); awaiting the
+    /// aborted handle confirms the kill ran before we return. The caller should bound this
+    /// with a timeout so a wedged child cannot hang process exit.
     pub async fn shutdown(&self) {
-        let drivers: Vec<JoinHandle<()>> = {
+        let live: Vec<LiveProcess> = {
             let mut map = self.inner.lock().expect("process registry mutex");
-            map.drain().map(|(_, driver)| driver).collect()
+            map.drain().map(|(_, live)| live).collect()
         };
-        if drivers.is_empty() {
+        if live.is_empty() {
             tracing::info!("no live codex subprocesses to reap");
             return;
         }
-        let n = drivers.len();
+        let n = live.len();
         tracing::info!(sessions = n, "reaping codex subprocesses");
-        for driver in drivers {
+
+        let trees: Vec<reap::Tree> =
+            live.iter().filter_map(|l| l.pid).map(reap::Tree::below).filter(|t| !t.is_empty()).collect();
+        if !trees.is_empty() {
+            let processes: usize = trees.iter().map(reap::Tree::len).sum();
+            tracing::info!(processes, "ending what codex's commands left running");
+            trees.iter().for_each(reap::Tree::terminate);
+            tokio::time::sleep(reap::GRACE).await;
+            trees.iter().for_each(reap::Tree::kill_survivors);
+        }
+
+        for LiveProcess { driver, .. } in live {
             driver.abort();
             let _ = driver.await;
         }
         tracing::info!(sessions = n, "codex subprocesses reaped");
+    }
+}
+
+/// Ends the commands below one codex when its driver ends — by the session being dropped,
+/// by abort, or by the runtime going away — and before that codex is killed. See [`reap`]
+/// for why killing codex does not do this by itself.
+///
+/// Declared in the driver *after* the [`Child`], so it drops first: the walk needs codex
+/// alive, because the parent links it follows are gone the moment codex exits.
+struct ReapCommands(Option<u32>);
+
+impl Drop for ReapCommands {
+    fn drop(&mut self) {
+        let Some(pid) = self.0 else { return };
+        let tree = reap::Tree::below(pid);
+        if tree.is_empty() {
+            return;
+        }
+        tracing::info!(codex = pid, processes = tree.len(), "codex closing; ending its command processes");
+        tree.terminate();
+        // Waited out on a plain thread: this runs inside a task's drop, where sleeping
+        // would stall a runtime worker for the whole grace.
+        std::thread::spawn(move || {
+            std::thread::sleep(reap::GRACE);
+            tree.kill_survivors();
+        });
     }
 }
 
@@ -389,6 +441,7 @@ impl CodexProcess {
         let mut child: Child = command
             .spawn()
             .with_context(|| format!("spawning {}", program.display()))?;
+        let pid = child.id();
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("codex child has no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("codex child has no stdout"))?;
@@ -525,10 +578,12 @@ impl CodexProcess {
             // Owning the child here is what makes reaping work: aborting this future
             // drops it, and it was spawned `kill_on_drop`.
             let _child = child;
+            // After `_child`, so it drops before it: the commands end while codex is alive.
+            let _reap_commands = ReapCommands(pid);
             let _ = shutdown_rx.await;
             tracing::info!("codex driver received shutdown signal");
         });
-        registry.insert(conn, driver);
+        registry.insert(conn, driver, pid);
 
         let process = Self {
             out: out_tx,

@@ -668,6 +668,15 @@ where fix-forward genuinely does not apply.
 - **`record_reflex` is declared to no role.** The recognizer and `POST /api/reflex/invoke` are
   live, so a reflex can be *fired* but never *written* — the authoring end is reachable by name
   only. Give it a live role or delete the module.
+- **An engine that dies without unwinding still orphans every command its sessions were
+  running.** What an agent starts ends with its session and with a clean engine stop —
+  [`reap.rs`](../../src/foundation/codex/reap.rs) walks the tree below each codex while that
+  codex is alive and ends it first, because codex puts every command in a session of its own
+  and nothing done to codex reaches them. A SIGKILL, an abort or a power loss runs none of
+  that, and afterwards nothing links the survivors to this process. Covering it needs a mark
+  each command carries that the next boot can find — an inherited environment variable naming
+  the data dir is the obvious one — and whether codex's shell environment policy passes such a
+  variable through has not been checked.
 
 
 ## See also

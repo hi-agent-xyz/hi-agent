@@ -123,6 +123,14 @@ sha2 = "0.10"
 # (memory journal, `.env`, claude-config) stays on the filesystem.
 rusqlite = { version = "0.40", features = ["bundled"] }
 
+# Unix syscalls. On every unix: the process-table walk and signals that end what a codex
+# session's commands left running (src/foundation/codex/reap.rs). On macOS also:
+# posix_spawn + the private responsibility_spawnattrs_setdisclaim, used by main() to
+# re-exec ourselves as our own TCC "responsible process" under `make dev` (see the
+# reexec_disclaiming_responsibility comment in src/main.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # macOS effector capabilities (input actuation + window capture). `core-graphics`
 # gives CGEvent (synthesize mouse/keyboard input) and CGWindowList (enumerate
 # on-screen windows); `core-foundation` reads the CFDictionary window records.
@@ -130,10 +138,6 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.25"
 core-foundation = "0.10"
-# posix_spawn + the private responsibility_spawnattrs_setdisclaim, used by main() to
-# re-exec ourselves as our own TCC "responsible process" under `make dev` (see the
-# reexec_disclaiming_responsibility comment in src/main.rs).
-libc = "0.2"
 
 # macOS menu-bar (tray) status item — see `crate::vendors::macos_tray`. The tray
 # needs an Objective-C action target for the menu clicks, so this uses the modern

@@ -25,6 +25,7 @@
 
 pub mod messages;
 pub mod process;
+mod reap;
 pub mod tap;
 pub mod thread;
 
