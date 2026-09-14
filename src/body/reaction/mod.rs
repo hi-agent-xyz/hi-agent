@@ -1696,18 +1696,25 @@ async fn reaction_loop(
                 break 'wait;
             }
             let down = !matches!(gate, TurnGate::Go);
-            // Reaction's own check-in. Suppressed while down — it calls the model and
-            // would just fail — but *not* dropped: an owed word is still owed after an
-            // outage, and later rather than never is the whole point of it.
             // While down, the recovery timer: the backoff retry deadline (429/generic).
             // Up → no such timer.
+            //
+            // **Armed only with mail in hand.** The deadline exists to retry a turn, and
+            // a turn is driven only by held mail (the `Woke::Timer` arm below), so with an
+            // empty batch it has nothing to act on. Worse, `Backoff` is cleared only by a
+            // turn that succeeds, so once `at` has passed it stays passed: re-arming it
+            // resolves the `sleep_until` immediately, `Woke::Timer` finds no mail and
+            // continues, and the loop spins a core until something else arrives — the
+            // same stale-deadline spin [`Reaction::wait_for_vendor`] returns to avoid.
+            // Mail that lands while down fills the batch and re-enters here, where the
+            // deadline, passed or not, then fires the retry.
             let recover_at = match gate {
                 TurnGate::Go => None,
                 TurnGate::Retry { at } => Some(at),
                 // No conversation-local deadline: the process-wide gate owns recovery.
                 TurnGate::Hold => None,
             };
-            let deadline = recover_at;
+            let deadline = recover_at.filter(|_| !batch.is_empty());
             let woke = match deadline {
                 Some(deadline) => tokio::select! {
                     biased;
