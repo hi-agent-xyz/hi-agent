@@ -19,7 +19,7 @@ import { flextree } from "d3-flextree";
 
 const COPY = {
   en: {
-    task: "Task", activity: "Activity", topic: "Topic", overview: "Overview",
+    task: "Task", activity: "Activity", overview: "Overview",
     core: "Hi Agent", context: "Our conversation", update: "Latest update",
     nothing: "Nothing in hand", reading: "Loading work...",
     failed: "Some sources could not be refreshed", retry: "Retry", stale: "Earlier context",
@@ -34,7 +34,7 @@ const COPY = {
     ago: (n, unit) => `${n}${unit} ago`,
   },
   zh: {
-    task: "任务", activity: "活动", topic: "主题", overview: "概览",
+    task: "任务", activity: "活动", overview: "概览",
     core: "Hi Agent", context: "我们的交流", update: "最新更新",
     nothing: "手头没有在办的事", reading: "正在读取工作...",
     failed: "部分数据未能刷新", retry: "重试", stale: "较早的上下文",
@@ -54,8 +54,6 @@ const L = typeof document !== "undefined" && /^zh/i.test(document.documentElemen
 const WINDOW_MS = 24 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition", "reflection"]);
 const OPEN = new Set(["todo", "doing", "serving"]);
-/** A topic below this is structure with nothing in it. See `dissolveThinTopics`. */
-const TOPIC_MIN = 2;
 /**
  * How many process pictures a task hangs below itself before the count alone carries them.
  *
@@ -68,7 +66,7 @@ const TOPIC_MIN = 2;
 const RESULT_TILES = 6;
 /** Where a card hands off. Home owns no detail of its own. */
 const TASK_BOARD = "factory/tasks", SESSION_BOARD = "factory/workers";
-const TONE = { core: "var(--accent)", topic: "var(--fg-mute)", todo: "var(--fg-mute)",
+const TONE = { core: "var(--accent)", todo: "var(--fg-mute)",
   doing: "var(--accent)", serving: "var(--accent-2)", done: "var(--fg-mute)", cancelled: "var(--fg-mute)",
   running: "var(--accent)", waiting: "var(--accent-2)", idle: "var(--fg-mute)",
   failed: "var(--danger)", interrupted: "var(--danger)", overview: "var(--accent)",
@@ -82,7 +80,7 @@ const TONE = { core: "var(--accent)", topic: "var(--fg-mute)", todo: "var(--fg-m
  * - core: { sessions: SessionState[], overviewIds: string[] }
  * - task: { task: TaskDto, status, endedAt, results: Result[] }
  * - activity: { session: SessionState, taskId?, ownerSessionId?, currentAction? }
- * - topic: { label }; overview: { category, text, updatedAt, freshness, relatedNodeIds }
+ * - overview: { category, text, updatedAt, freshness, relatedNodeIds }
  * HomeEdge = { id, from, to, relation, primary }
  * Every non-root node has ONE primary parent; non-primary edges reference an existing
  * object without duplicating it. Nodes have no x/y or selected properties.
@@ -96,11 +94,10 @@ const TONE = { core: "var(--accent)", topic: "var(--fg-mute)", todo: "var(--fg-m
  * 3. Reaction/Cognition/Reflection sessions compose the one core. All other live sessions
  *    become activities, even without a task.
  * 4. subject is the authoritative activity -> task join. owner is a technical session
- *    relationship only; it must not pretend that two independent tasks are one topic.
+ *    relationship only; it must not pretend that two independent tasks are one piece of work.
  * 5. Overview uses useMessages()'s USER-VISIBLE transcript and factual task transitions.
  *    No registry tail, raw reasoning, or tool log is used to manufacture a public plan.
- * 6. Task extra.project / extra.systems provide explicit topic names. Similar prose is
- *    not evidence of ownership. A topic that does not group reaching TOPIC_MIN dissolves.
+ * 6. Every task is its own branch off the core. There is no grouping rank — see below.
  * 7. A task's results are a COUNT on the task, not nodes. They were 60.2% of the canvas.
  *
  * A view is a single-file transform. Pure model/layout functions stay here rather than
@@ -149,12 +146,6 @@ function normalizeSession(raw) {
   };
 }
 
-function taskTopics(task) {
-  const field = (key) => (task.extra || []).find((f) => f.key === key && !f.clipped)?.value;
-  const names = String(field("project") || field("systems") || "").split(",").map(plain).filter(Boolean);
-  return [...new Set(names)];
-}
-
 function taskResults(task, views) {
   // The row names what it mentions and this decides what that means. Matching moved to the
   // server (`view_refs` in `foundation/server/tasks.rs`) when the row stopped carrying the
@@ -194,28 +185,6 @@ function taskResults(task, views) {
  */
 const previewOf = (node) => (node.kind === "task" ? node.data.results.find((r) => r.shot) : null) || null;
 
-/**
- * A topic earns a rank by grouping. One that holds a single task adds a level and groups
- * nothing; one that holds none is a grouping of nothing at all. Measured on the instance
- * this was written against: of sixteen topics, ten held nothing and five held exactly one.
- * Dissolving re-links the children onto the core rather than dropping them.
- */
-function dissolveThinTopics(nodes, edges, primaryChildCount) {
-  const thin = new Set(nodes.filter((n) => n.kind === "topic"
-    && (primaryChildCount.get(n.id) || 0) < TOPIC_MIN).map((n) => n.id));
-  if (!thin.size) return { nodes, edges };
-  const seen = new Set();
-  return {
-    nodes: nodes.filter((n) => !thin.has(n.id)),
-    // A non-primary edge off a dissolved topic is a second reference to a node that still
-    // has its primary parent elsewhere. Promoting it would give that node two primary
-    // parents and break the one invariant the tree has, so it goes with the topic.
-    edges: edges.filter((e) => !thin.has(e.to) && (!thin.has(e.from) || e.primary))
-      .map((e) => (thin.has(e.from) ? { ...e, id: `core/${e.relation}/${e.to}`, from: "core" } : e))
-      .filter((e) => !seen.has(e.id) && seen.add(e.id)),
-  };
-}
-
 function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now = Date.now()) {
   const nodes = [];
   const edges = [];
@@ -235,7 +204,6 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
   const activities = [...sessions.values()].filter((s) => !CORE_ROLES.has(s.role));
   const core = add({ id: "core", kind: "core", title: L.core,
     sourceRefs: coreSessions.map((s) => ref("session", s.id)), data: { sessions: coreSessions, overviewIds: [] } });
-  const topicLoad = new Map();
   for (const task of tasks) {
     // **A live session no longer re-admits its expired task.** That rule kept a closed task
     // present "as context" whenever anything recent still named it, and it was the single
@@ -246,18 +214,13 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
         endedAt: taskEnd(task), results: taskResults(task, views) } });
-    const topics = taskTopics(task);
-    // Multiple explicit tags are references; the first declared tag is the stable parent.
-    for (const [i, name] of topics.entries()) {
-      const id = `topic:${name.toLocaleLowerCase()}`;
-      if (!byId.has(id)) {
-        add({ id, kind: "topic", title: name, sourceRefs: [ref("task", task.subject)], data: { label: name } });
-        link("core", id);
-      }
-      link(id, node.id, "contains", i === 0);
-      if (i === 0) topicLoad.set(id, (topicLoad.get(id) || 0) + 1);
-    }
-    if (!topics.length) link("core", node.id);
+    // **Every task is its own branch off the core, and nothing groups them.** There used to be
+    // a topic rank, named by the task's `project` or, failing that, its `systems`. No writer
+    // has ever produced a `project`, so every topic drawn was a `systems` value — and `systems`
+    // says which operational records a task touches, not what it belongs to. A birthday deck
+    // whose photos arrived over Feishu sat under a "feishu" topic beside a client brief. A
+    // grouping is a claim someone has to make; until something writes one, there is none.
+    link("core", node.id);
     // The first picture is on the card; the rest are second-level, the way a sub-step or a
     // sub-result is. A task mid-flight often has process pictures and no deliverable yet.
     for (const result of node.data.results.filter((r) => r.shot).slice(1, 1 + RESULT_TILES)) {
@@ -300,8 +263,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
     link("core", id, "explains"); link(id, node.id, "explains", false);
     core.data.overviewIds.push(id);
   }
-  const kept = dissolveThinTopics(nodes, edges, topicLoad);
-  return { rootId: "core", asOf: new Date(now).toISOString(), nodes: kept.nodes, edges: kept.edges };
+  return { rootId: "core", asOf: new Date(now).toISOString(), nodes, edges };
 }
 
 function childIndex(model) {
@@ -354,7 +316,6 @@ const GAP_X = 48, GAP_Y = 14, MARGIN = 24;
  */
 const FIT_FLOOR = 0.7;
 function dimensions(node) {
-  if (node.kind === "topic") return { w: 220, h: 78 };
   if (node.kind === "result") return { w: 120, h: 76 };
   return { w: previewOf(node) ? NODE_W + THUMB_W : NODE_W, h: NODE_H };
 }
@@ -780,7 +741,6 @@ const CSS = `
 .hi-work__overview p { margin:5px 0 0; font-size:16px; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
 .hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-left:3px solid var(--node-tone); border-radius:6px; display:flex; flex-direction:column; }
-.hi-work__node[data-kind=topic] { border:0; border-bottom:1px solid var(--work-line); border-radius:0; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
 .hi-work__node[data-picture] { flex-direction:row; }
 .hi-work__preview { display:block; flex:0 0 112px; padding:0; margin:-10px 14px -10px -14px; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); border-radius:3px 0 0 3px; overflow:hidden; }

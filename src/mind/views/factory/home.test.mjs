@@ -17,7 +17,7 @@ const { buildHome, arrange, fit, stage, zoomAround, clampZoom, TONE, stateOf, ch
 const NOW = Date.parse("2026-09-11T12:00:00Z");
 const hoursAgo = (h) => new Date(NOW - h * 3600000).toISOString();
 const task = (subject, status = "doing", hours = 1) => ({ subject, title: subject, status, statusSince: hoursAgo(hours), refs: [], extra: [], files: [] });
-const tagged = (subject, names, status = "doing") => ({ ...task(subject, status), extra: [{ key: "project", value: names }] });
+const tagged = (subject, names, status = "doing") => ({ ...task(subject, status), extra: [{ key: "systems", value: names }] });
 const worker = (id, role = "worker", extra = {}) => ({ run: "0123456789ab", id, role, state: "running", title: `Work ${id}`, started: hoursAgo(2), state_since: hoursAgo(1), ...extra });
 const project = (input) => buildHome(input, NOW);
 const ofKind = (model, kind) => model.nodes.filter((n) => n.kind === kind);
@@ -129,24 +129,13 @@ test("overview uses public messages and factual transitions, never worker tail o
   assert.equal(ofKind(quiet, "overview").length, 0);
 });
 
-test("a topic that does not group dissolves, and its task keeps its place", () => {
-  // A rank has to earn itself. One topic over one task is a level that groups nothing.
-  const thin = project({ tasks: [tagged("a", "Solo")] });
-  assert.equal(ofKind(thin, "topic").length, 0);
-  assert.deepEqual(list(childIndex(thin).get("core").map((n) => n.id)), ["task:a"]);
-  const grouped = project({ tasks: [tagged("a", "Both"), tagged("b", "Both")] });
-  assert.deepEqual(titles(grouped, "topic"), ["Both"]);
-  assert.equal(childIndex(grouped).get("topic:both").length, 2);
-  assertConnected(thin); assertConnected(grouped);
-});
-
-test("dissolving a topic never leaves a node with two primary parents", () => {
-  // `a` names Kept first (its primary) and Thin second (a reference). Thin groups nothing
-  // and dissolves; promoting its reference edge would have made core a second primary.
-  const model = project({ tasks: [tagged("a", "Kept,Thin"), tagged("b", "Kept")] });
-  assert.deepEqual(titles(model, "topic"), ["Kept"]);
+test("every task is its own branch off the core, whatever systems it touches", () => {
+  // `systems` names the records a task touches, not what it belongs to: a birthday deck
+  // whose photos came over Feishu is not part of a Feishu project. Nothing groups tasks.
+  const model = project({ tasks: [tagged("deck", "feishu, wecom"), tagged("brief", "feishu"), task("plain")] });
+  assert.deepEqual(list(childIndex(model).get("core").map((n) => n.id)).sort(), ["task:brief", "task:deck", "task:plain"]);
+  assert.deepEqual(list(new Set(model.nodes.map((n) => n.kind))).sort(), ["core", "task"]);
   assertConnected(model);
-  assert.equal(childIndex(model).get("topic:kept").length, 2);
 });
 
 test("a result is a count on the task, never a card of its own", () => {
@@ -263,7 +252,7 @@ test("layout supports deeper nodes, rather than flattening every row into a hub 
   let parent = "task:a";
   for (let i = 0; i < 6; i++) {
     const id = `deep:${i}`;
-    model.nodes.push({ id, kind: "topic", title: id, sourceRefs: [], data: {} });
+    model.nodes.push({ id, kind: "result", title: id, sourceRefs: [], data: {} });
     model.edges.push({ id, from: parent, to: id, relation: "contains", primary: true }); parent = id;
   }
   assertConnected(model);

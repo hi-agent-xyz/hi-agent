@@ -12,12 +12,10 @@ or produced is reached by handing off to the surface that owns it.
 ## Nodes and relationships
 
 `HomeNode` has a stable identity, a semantic kind, a title, typed data and source
-references. Kinds are `core`, `topic`, `task`, `activity`, `result`, and `overview`.
+references. Kinds are `core`, `task`, `activity`, `result`, and `overview`.
 `HomeEdge` carries `contains`, `works-on`, `produces`, or `explains`, plus whether it is a
-primary edge. Every
-non-root node has one primary parent and reaches `core`. Additional references do not
-duplicate the destination, and a dissolved topic never promotes one into a second primary
-parent. The primary tree is acyclic.
+primary edge. Every non-root node has one primary parent and reaches `core`. Additional
+references do not duplicate the destination. The primary tree is acyclic.
 
 Nodes may have children at any depth. Selection and coordinates belong to the window,
 never to a task or a session. Overview nodes are embedded in the core rather than drawn
@@ -52,10 +50,14 @@ costs width. That took the chart from 1936x1422 to 1652x766px, which is 0.91 in 
 - A session's `subject` joins it to a task. Without a resolvable task it connects to the
   core and keeps its own title. Its technical `owner` remains inspectable but does not
   determine semantic placement or create a new task grouping.
-- Explicit project/system metadata supplies topic membership. Similar wording is not
-  evidence of ownership. **A topic is drawn only where it groups at least two children**;
-  one that groups fewer dissolves and its children re-link to the core. A rank that
-  groups one thing is a level that groups nothing.
+- **Every task is its own branch off the core, and nothing groups tasks.** There was a topic
+  rank, named by a task's `project` or else its `systems`. Nothing has ever written a
+  `project`, so every topic drawn was a `systems` value — and `systems` names the operational
+  records a task touches, not what it belongs to: a birthday deck whose photos arrived over
+  Feishu was drawn under "feishu" beside a client brief. Similar wording is not evidence of
+  ownership, and neither is a shared system. A grouping is a claim somebody makes; if tasks
+  are ever to be grouped, the grouping has to be written by whoever files the task, and Home
+  reads it — it is not inferred here.
 - **A task's results are a count, one picture on the card, and the rest one rank below.**
   Drawn as sibling cards they were 60.2% of the canvas on a real instance — 125 of them,
   106 nothing but a filename. A count is right for what a duty writes and wrong for what a
