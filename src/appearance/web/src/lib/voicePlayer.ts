@@ -1,20 +1,16 @@
+import { VoiceRoute } from "./voiceRoute";
+
 /**
- * Plays the agent's voice through one plain <audio> element — deliberately NOT
- * through the AudioBus.
+ * Plays the agent's voice: one <audio> element decodes the turn, and its output
+ * leaves the page through a {@link VoiceRoute} — a WebRTC loopback — rather than
+ * straight to the speakers.
  *
- * It used to run through a MediaElementSource into the shared analyser, so the
- * dot-matrix rode the real voice while it spoke. That is what made the agent
- * re-hear itself: `getUserMedia`'s `echoCancellation` cancels the audio the
- * platform's own media path renders, and audio a Web Audio graph renders is not
- * on that path. The flag stayed on the whole time, pointed at a speaker it could
- * not hear — so on a phone held at arm's length the TTS came back through the
- * mic, was transcribed, and arrived as a message from the person. Playing the
- * element normally hands the canceller its reference signal back.
- *
- * The price is that the dots no longer ride the agent's own voice. Restoring
- * that has to come from somewhere other than the output graph — the arriving
- * chunks' own amplitude, say. Nothing may put this playback back inside Web
- * Audio.
+ * The route is the echo defense. Chromium's canceller only subtracts audio it
+ * received over a peer connection, so a plain element (what this was until
+ * 2026-09-14) and a Web Audio graph (what it was before that) were both
+ * invisible to it, and the agent heard its own sentences back as the person's.
+ * The element is therefore captured by a MediaElementSource, which takes its
+ * output off the speakers and hands it to the route.
  *
  * A turn's speech is one continuous stream from the backend, so this plays it
  * as one stream: `beginTurn` opens a fresh MediaSource, `pushChunk` appends the
@@ -31,6 +27,7 @@ type TurnMode = "mse" | "blob" | "off";
 
 export class VoicePlayer {
   private el: HTMLAudioElement;
+  private route: VoiceRoute;
   private muted = false;
   private playing = false;
 
@@ -47,11 +44,14 @@ export class VoicePlayer {
   private blobMime = "";
 
   constructor(
+    ctx: AudioContext,
     private onStart: () => void,
     private onEnd: () => void,
   ) {
     this.el = new Audio();
     this.el.preload = "auto";
+    this.route = new VoiceRoute(ctx);
+    ctx.createMediaElementSource(this.el).connect(this.route.input);
     this.el.addEventListener("ended", () => this.handleEnded());
     this.el.addEventListener("error", () => this.handleEnded());
   }
@@ -145,6 +145,14 @@ export class VoicePlayer {
     if (on) this.stop();
   }
 
+  /**
+   * A microphone just started capturing. If the loopback could not connect
+   * before, this is the moment it can — see `VoiceRoute.retry`.
+   */
+  micStarted(): void {
+    this.route.retry();
+  }
+
   /** Whether a turn's audio is audibly playing right now. */
   isPlaying(): boolean {
     return this.playing;
@@ -194,6 +202,7 @@ export class VoicePlayer {
     void this.el.play().catch(() => {
       /* autoplay race; the next chunk/play retries */
     });
+    this.route.play();
   }
 
   private handleEnded(): void {

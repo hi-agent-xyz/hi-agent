@@ -442,7 +442,9 @@ export function useAgentSession(): AgentSession {
       void audioBus.resume().catch(() => {});
       const stream = await navigator.mediaDevices.getUserMedia({
         // echoCancellation MUST stay on: with the mic and speaker both open, the
-        // agent's own TTS loops back into the mic and gets re-transcribed. (We
+        // agent's own TTS loops back into the mic and gets re-transcribed. It
+        // only cancels what arrives over WebRTC, which is why the voice plays
+        // through a loopback (`lib/voiceRoute.ts`). (We
         // tried disabling AEC+NS to shed the ~1-core CPU in the "Graphics and
         // Media" process — it neither helped CPU nor was worth the loopback, so
         // it's back on. The media-process CPU burn is AEC-independent; hunt it
@@ -473,6 +475,9 @@ export function useAgentSession(): AgentSession {
       micStreamRef.current = stream;
       micNodeRef.current = micNode;
       micRef.current = streamer;
+      // Capturing is what lets the voice's WebRTC loopback connect, and that
+      // loopback is the only thing that lets the canceller hear the agent.
+      voiceRef.current?.micStarted();
       setAudioError(null);
       setAudioInput(true);
     } catch (err) {
@@ -714,6 +719,7 @@ export function useAgentSession(): AgentSession {
         };
         for (const ev of events) window.addEventListener(ev, resumeOnGesture, true);
         const voice = new VoicePlayer(
+          audioBus.ctx,
           () => setTtsPlaying(true),
           () => setTtsPlaying(false),
         );

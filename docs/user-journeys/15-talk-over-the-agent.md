@@ -61,3 +61,12 @@ _机制:嘴串行 + 字按语速逐句揭示;识别到人声即停声并清空�
 
 - ✅ 机制已实现,**8 条单测全过**(`no_barge_in_no_skip` / `first_barge_in_wins` / `barge_in_marks_its_turn_for_skip` / `speech_after_reply_finished_is_not_a_barge_in` 等)。
 - 🧱 **真打断演练仍待补**:barge-in 只走音频/STT 路径(`note_speech` 由 STT 识别触发、`audio_began` 由 TTS span 触发),纯文字 POST 不触发;真测需合成语音卡在 TTS 播放窗口内打断,curl/文字 harness 无法忠实驱动——与本文"实测待补"一致。
+
+## 实测缺口 2026-09-14 · 它听见自己说的话
+
+- ❌ **老板实测:agent 说的话被麦克风收回去,转写成老板的消息。** 09-12 的 `762dcb2` 把播放从 Web Audio 挪到普通 `<audio>`,理由是这样回声消除能拿到参考;提交里写明没在真机看过,两天后原样复现。哪台设备、哪个 core 没有记录。
+- 回声对本文不只是一条假消息:回声的 partial 会让客户端停声、floor 推断一次打断自己的 barge-in——**它会被自己的声音打断**,本文的"一开口就让路"在外放时是坏的。
+- **原因:** Chromium 的回声消除只把经 `RTCPeerConnection` 收到的音频当作远端参考,`<audio>`、MediaSource、Web Audio 都不算([crbug 687574](https://crbug.com/687574))。我们前后两种播法它都看不见。
+- 🔧 **改法(业界做法,不动 host):** 语音经页面内的 WebRTC 回环播放——解码后的声音从一个本地 peer 发出、另一个收回,收到的远端音轨才进扬声器([`voiceRoute.ts`](../../src/appearance/web/src/lib/voiceRoute.ts))。回环没连上前直接出扬声器,绝不静音。
+- ✅ **无头 Chrome 里看过的:** 回环连上后,收端 `inbound-rtp` 的 `totalAudioEnergy` 随一段 5.6s 的 mp3 从 ~0 涨到 0.69,直出通路关闭;**没有麦克风权限时 Chrome 只给 `.local` 候选,两端卡在 `checking` 连不上**,于是回退直出、语音照常;授权并开麦后调 `micStarted()` 重连,立即连上并接管。
+- 🧱 **没看过的,只有真机能定:** 回声是否真被消掉。复测:Android 和 iPhone 各一次,外放、agent 说一段长话、人不出声 → 会话里不应出现人的气泡;中途插一句"等一下" → 声音当场停。iOS 另需确认开麦后(WebKit 切到 play-and-record)远端音轨不会被降到听筒或变小声。

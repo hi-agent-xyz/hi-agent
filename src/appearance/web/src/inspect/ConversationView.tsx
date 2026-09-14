@@ -97,6 +97,7 @@ function AudioMonitor({ direction }: { direction: "in" | "out" }) {
       void bus.resume();
       if (!voice)
         voice = new VoicePlayer(
+          bus.ctx,
           () => {},
           () => {},
         );

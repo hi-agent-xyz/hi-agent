@@ -1,11 +1,9 @@
 // AudioBus — one AudioContext + AnalyserNode that the Presence reads each frame.
 //
-// The microphone is the only source, and it is the only one this graph may ever
-// have: the agent's own voice was attached here once, and rendering it through
-// Web Audio is what hid it from the platform's echo canceller and let the agent
-// hear itself back through the mic (see `voicePlayer.ts`). So the dot-matrix
-// reflects the room, not the agent — restoring the agent's half has to come from
-// outside this graph.
+// The analyser reads the microphone only, so the dot-matrix reflects the room,
+// not the agent. The agent's voice shares this context — `VoicePlayer` routes it
+// through the same graph on its way to a WebRTC loopback (`voiceRoute.ts`) — but
+// is not connected to the analyser.
 //
 // `read()` returns a level + log-spaced frequency bands, the same mapping the
 // chosen `demos/dot-matrix.html` reference uses.
