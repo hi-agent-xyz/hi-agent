@@ -13,7 +13,7 @@
 // learned this lesson: "closed work is not hidden, it is *thin*"), and `factory/workers`
 // carries every session. Home does not repeat them. It shows what is open, what is live,
 // and what we are talking about, and hands off for anything else.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLive, useWatched, useMessages, useViews, TEMPO } from "@hi/core";
 import { flextree } from "d3-flextree";
 
@@ -25,6 +25,7 @@ const COPY = {
     failed: "Some sources could not be refreshed", retry: "Retry", stale: "Earlier context",
     unknown: "Time unknown", untitled: "Untitled activity", noMessages: "No conversation yet",
     results: (n) => `${n} result${n === 1 ? "" : "s"}`,
+    zoom: "Zoom", zoomIn: "Zoom in", zoomOut: "Zoom out", fit: "Fit to window",
     status: { todo: "To do", doing: "In progress", serving: "On duty", done: "Completed", cancelled: "Cancelled",
       running: "Working", waiting: "Work queued", idle: "Idle",
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
@@ -39,6 +40,7 @@ const COPY = {
     failed: "部分数据未能刷新", retry: "重试", stale: "较早的上下文",
     unknown: "时间未知", untitled: "未命名活动", noMessages: "还没有对话",
     results: (n) => `${n} 项成果`,
+    zoom: "缩放", zoomIn: "放大", zoomOut: "缩小", fit: "适应窗口",
     status: { todo: "待开始", doing: "进行中", serving: "值守", done: "已完成", cancelled: "已取消",
       running: "正在处理", waiting: "有工作待处理", idle: "空闲",
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
@@ -359,9 +361,9 @@ function dimensions(node) {
 
 /**
  * The scale that puts the whole chart in the window, never above 1 and never below the floor.
- * It is a function of the window, not a control: resizing the window re-fits it and there is
- * nothing to press. The 1px keeps rounding from producing an overflow whose scrollbar would
- * narrow the window and re-fit it again.
+ * It is the default, not a mode the person has to find: until they zoom, the scale follows the
+ * window, and resizing the window re-fits it. The 1px keeps rounding from producing an
+ * overflow whose scrollbar would narrow the window and re-fit it again.
  */
 function fit(chart, frame) {
   const scale = Math.min(1, (frame.w - 1) / chart.width, (frame.h - 1) / chart.height);
@@ -369,15 +371,39 @@ function fit(chart, frame) {
 }
 
 /**
+ * How far the person can zoom, which is wider than `fit` ever goes on its own: out far enough
+ * to see the shape of a day that has outgrown the floor, in far enough to read a picture tile.
+ * The floor is a limit on what is chosen for them, not on what they may choose.
+ */
+const ZOOM_MIN = 0.25, ZOOM_MAX = 2, ZOOM_STEP = 1.25;
+const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
+
+/** Where the drawing sits at a scale: centred on an axis it is smaller than the window on. */
+function stage(chart, frame, scale) {
+  const drawn = { w: chart.width * scale, h: chart.height * scale };
+  const canvas = { w: Math.max(Math.floor(frame.w), Math.ceil(drawn.w)),
+    h: Math.max(Math.floor(frame.h), Math.ceil(drawn.h)) };
+  return { canvas, offset: { x: (canvas.w - drawn.w) / 2, y: (canvas.h - drawn.h) / 2 } };
+}
+
+/** The scroll that keeps the chart point under `point` (window pixels) there across a zoom. */
+function zoomAround(chart, frame, from, to, scroll, point) {
+  const before = stage(chart, frame, from).offset, after = stage(chart, frame, to).offset;
+  const x = (scroll.left + point.x - before.x) / from, y = (scroll.top + point.y - before.y) / from;
+  return { left: after.x + x * to - point.x, top: after.y + y * to - point.y };
+}
+
+/**
  * Semantic edges determine the hierarchy; flextree only computes its geometry.
  * Overview children are embedded INSIDE the core, not duplicated as peripheral cards.
  *
- * **The whole tree is drawn, always, and drawn to fit the window.** There is no collapse,
+ * **The whole tree is drawn, always, and opens fitted to the window.** There is no collapse,
  * because with the work in hand and nothing else there is nothing to hide from: the instance
  * that laid out 225 cards over 2556x16529px lays out 20. But 20 cards at full size were still
  * about 88% of a laptop window's area before a single gap or wire, so no arrangement of them
- * fits at 1x and `fit` scales the drawing instead. What was removed — Fit and zoom as
- * controls — stays removed; the scale follows the window, and nobody operates it.
+ * fits at 1x and `fit` scales the drawing instead. The zoom that came back is not the zoom
+ * that was removed: that one was the only way to see a canvas that could never fit, and this
+ * one starts from a chart that already does.
  */
 function arrange(model) {
   const children = childIndex(model);
@@ -432,7 +458,7 @@ export default function Home() {
   const [errors, setErrors] = useState([]);
   const [now, setNow] = useState(Date.now);
   const [frame, setFrame] = useState({ w: 1200, h: 760 });
-  const viewport = useRef(null), drag = useRef(null), inFlight = useRef(false);
+  const viewport = useRef(null), inFlight = useRef(false);
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -491,23 +517,89 @@ export default function Home() {
     const observer = new ResizeObserver(([entry]) => setFrame({ w: entry.contentRect.width, h: entry.contentRect.height }));
     observer.observe(el); return () => observer.disconnect();
   }, []);
-  // The drawing is scaled into the window and centred in it; only past the floor does the
-  // canvas outgrow the window, and then only on the axis that overflows.
-  const scale = fit(chart, frame);
-  const drawn = { w: chart.width * scale, h: chart.height * scale };
-  const canvas = { w: Math.max(Math.floor(frame.w), Math.ceil(drawn.w)), h: Math.max(Math.floor(frame.h), Math.ceil(drawn.h)) };
-  const offset = { x: (canvas.w - drawn.w) / 2, y: (canvas.h - drawn.h) / 2 };
-  // Centre the core once there is something to centre on — which does nothing while the chart
-  // fits. Not a control, and not restored afterwards: past that first paint the scroll
-  // position is the person's.
-  const centred = useRef(false);
-  useEffect(() => {
-    if (!loaded || centred.current || mobile || !viewport.current) return;
-    centred.current = true;
+  // Fit is the default and zoom is the person's. `zoom` is null while the scale follows the
+  // window; the first zoom takes it over, and Fit hands it back.
+  const [zoom, setZoom] = useState(null);
+  const scale = zoom ?? fit(chart, frame);
+  const { canvas, offset } = stage(chart, frame, scale);
+  // Wheel and gesture events arrive faster than renders, so each zoom composes on the scale and
+  // scroll the previous one asked for rather than on what is on screen yet.
+  const live = useRef({ scale, chart, frame }), pending = useRef(null);
+  live.current = { scale: pending.current?.scale ?? scale, chart, frame };
+  const zoomTo = useCallback((next, point) => {
+    const el = viewport.current;
+    if (!el) return;
+    const { scale: from, chart, frame } = live.current;
+    const to = clampZoom(next);
+    if (to === from) return;
+    const scroll = pending.current || { left: el.scrollLeft, top: el.scrollTop };
+    const at = point || { x: frame.w / 2, y: frame.h / 2 };
+    pending.current = { scale: to, ...zoomAround(chart, frame, from, to, scroll, at) };
+    live.current.scale = to;
+    setZoom(to);
+  }, []);
+  useLayoutEffect(() => {
+    if (!pending.current || !viewport.current) return;
+    viewport.current.scrollTo({ left: pending.current.left, top: pending.current.top, behavior: "instant" });
+    pending.current = null;
+  }, [scale]);
+  // Centre the core on first paint and on Fit — which does nothing while the chart fits.
+  // Past that the scroll position is the person's.
+  const [fitted, setFitted] = useState(0);
+  const centredFor = useRef(-1);
+  useLayoutEffect(() => {
+    if (!loaded || mobile || !viewport.current || centredFor.current === fitted) return;
+    centredFor.current = fitted;
     const core = chart.placed[0];
     viewport.current.scrollTo({ left: offset.x + (core.x + core.w / 2) * scale - frame.w / 2,
       top: offset.y + (core.y + core.h / 2) * scale - frame.h / 2, behavior: "instant" });
-  }, [loaded, mobile, chart, frame, scale, offset.x, offset.y]);
+  }, [loaded, mobile, chart, frame, scale, offset.x, offset.y, fitted]);
+  const fitWindow = () => { pending.current = null; setZoom(null); setFitted((n) => n + 1); };
+  const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
+  // Pinch and ⌘/Ctrl-wheel zoom at the pointer. A plain wheel still scrolls. These are
+  // registered by hand because React's wheel listener is passive and cannot stop the page
+  // itself from zooming; `gesture*` is how Safari and WKWebView report a trackpad pinch.
+  useEffect(() => {
+    const el = viewport.current;
+    if (!el || mobile) return;
+    const at = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    const wheel = (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const dy = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+      zoomTo(live.current.scale * Math.exp(-dy * 0.005), at(e));
+    };
+    let base = 1;
+    // iOS reports a touch pinch as gesture events AND as pointers; the pointers already zoom it.
+    const start = (e) => { e.preventDefault(); base = live.current.scale; };
+    const change = (e) => { e.preventDefault(); if (pointers.current.size < 2) zoomTo(base * e.scale, at(e)); };
+    el.addEventListener("wheel", wheel, { passive: false });
+    el.addEventListener("gesturestart", start);
+    el.addEventListener("gesturechange", change);
+    return () => {
+      el.removeEventListener("wheel", wheel);
+      el.removeEventListener("gesturestart", start);
+      el.removeEventListener("gesturechange", change);
+    };
+  }, [mobile, zoomTo]);
+  // Drag pans from anywhere, cards included, and two touches pinch. A press only becomes a
+  // drag past a few pixels, so a tap on a card still opens it, and the click that ends a real
+  // drag is swallowed rather than opening whatever the pointer happened to be over.
+  const beginPan = (el, id) => {
+    const p = pointers.current.get(id);
+    gesture.current = { id, x: p.x, y: p.y, left: el.scrollLeft, top: el.scrollTop };
+  };
+  // A lifted finger ends a pinch; the one still down carries on as a pan from where it is.
+  const release = (e) => {
+    pointers.current.delete(e.pointerId);
+    const [rest] = pointers.current.keys();
+    gesture.current = null;
+    if (rest !== undefined) beginPan(e.currentTarget, rest);
+  };
+  const pinchOf = (el) => {
+    const [a, b] = [...pointers.current.values()], r = el.getBoundingClientRect();
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, at: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } };
+  };
   const branches = children.get("core")?.filter((n) => n.kind !== "overview") || [];
   const common = { now, children, openRef };
   return (
@@ -515,15 +607,38 @@ export default function Home() {
       <style>{CSS}</style>
       {errors.length > 0 && <div className="hi-work__error" role="status">{L.failed}: {errors.map((key) => L.source[key]).join(" · ")}
         <button onClick={refresh}>{L.retry}</button></div>}
-      <div className="hi-work__viewport" ref={viewport} onPointerDown={(e) => {
-        if (mobile || e.button !== 0 || e.target.closest("button,a,article")) return;
-        drag.current = { x: e.clientX, y: e.clientY, left: e.currentTarget.scrollLeft, top: e.currentTarget.scrollTop };
-        e.currentTarget.setPointerCapture(e.pointerId);
+      <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} onPointerDown={(e) => {
+        if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
+        const el = e.currentTarget;
+        pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.current.size === 1) { dragged.current = false; beginPan(el, e.pointerId); }
+        if (pointers.current.size === 2) {
+          dragged.current = true;
+          for (const id of pointers.current.keys()) el.setPointerCapture(id);
+          gesture.current = { pinch: pinchOf(el), scale: live.current.scale };
+        }
       }} onPointerMove={(e) => {
-        if (!drag.current) return;
-        e.currentTarget.scrollLeft = drag.current.left - e.clientX + drag.current.x;
-        e.currentTarget.scrollTop = drag.current.top - e.clientY + drag.current.y;
-      }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
+        const el = e.currentTarget, g = gesture.current;
+        if (!g || !pointers.current.has(e.pointerId)) return;
+        pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (g.pinch) {
+          const pinch = pinchOf(el);
+          zoomTo(g.scale * pinch.dist / g.pinch.dist, pinch.at);
+          return;
+        }
+        const dx = e.clientX - g.x, dy = e.clientY - g.y;
+        if (!dragged.current) {
+          if (Math.hypot(dx, dy) < 5) return;
+          dragged.current = true;
+          el.setPointerCapture(e.pointerId);
+        }
+        el.scrollLeft = g.left - dx;
+        el.scrollTop = g.top - dy;
+      }} onPointerUp={release} onPointerCancel={release} onClickCapture={(e) => {
+        if (!dragged.current) return;
+        dragged.current = false;
+        e.stopPropagation(); e.preventDefault();
+      }}>
         {!loaded && <p className="hi-work__loading" role="status">{L.reading}</p>}
         {loaded && !branches.length && <p className="hi-work__loading" role="status">{L.nothing}</p>}
         {mobile ? <div className="hi-work__flow">
@@ -543,6 +658,11 @@ export default function Home() {
           </div>
         </div>}
       </div>
+      {!mobile && loaded && <div className="hi-work__zoom" role="group" aria-label={L.zoom}>
+        <button onClick={() => zoomTo(scale / ZOOM_STEP)} disabled={scale <= ZOOM_MIN} aria-label={L.zoomOut} title={L.zoomOut}>−</button>
+        <button onClick={fitWindow} aria-pressed={zoom === null} title={L.fit}>{Math.round(scale * 100)}%</button>
+        <button onClick={() => zoomTo(scale * ZOOM_STEP)} disabled={scale >= ZOOM_MAX} aria-label={L.zoomIn} title={L.zoomIn}>+</button>
+      </div>}
     </div>
   );
 }
@@ -623,14 +743,23 @@ function Branch({ nodes, ...props }) {
 }
 
 const CSS = `
-.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 28%, transparent); height:100%; min-height:0; display:flex; flex-direction:column; color:var(--fg); background:var(--bg); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
+.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 28%, transparent); height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:var(--bg); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
 .hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .hi-work__error { padding:8px 24px; color:var(--danger); font-size:13px; display:flex; align-items:center; gap:12px; }
 .hi-work__error button { text-decoration:underline; min-height:36px; }
 .hi-work__viewport { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; position:relative; touch-action:pan-x pan-y; padding-bottom:100px; }
-.hi-work__canvas { position:relative; }
+.hi-work__viewport[data-chart] { touch-action:none; cursor:grab; }
+.hi-work__viewport[data-chart]:active { cursor:grabbing; }
+.hi-work__canvas { position:relative; user-select:none; -webkit-user-select:none; }
+.hi-work__canvas img { -webkit-user-drag:none; }
+.hi-work__zoom { position:absolute; z-index:3; right:max(16px, calc(var(--hi-safe-right, 0px) + 16px)); bottom:64px; display:flex; align-items:stretch; background:var(--bg); border:1px solid var(--work-line); border-radius:8px; overflow:hidden; box-shadow:0 2px 10px color-mix(in srgb, var(--fg) 8%, transparent); }
+.hi-work .hi-work__zoom button { min-width:34px; height:34px; text-align:center; font-size:16px; color:var(--fg-dim, var(--fg)); }
+.hi-work .hi-work__zoom button:nth-child(2) { min-width:56px; font-size:12px; font-variant-numeric:tabular-nums; border-inline:1px solid var(--work-line); }
+.hi-work .hi-work__zoom button[aria-pressed=true] { color:var(--fg-mute); }
+.hi-work .hi-work__zoom button:disabled { opacity:.35; cursor:default; }
+.hi-work .hi-work__zoom button:hover:not(:disabled) { background:color-mix(in srgb, var(--fg-mute) 12%, transparent); }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
 .hi-work__wires path { fill:none; stroke-width:1.6; opacity:.7; }

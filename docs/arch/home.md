@@ -24,11 +24,16 @@ never to a task or a session. Overview nodes are embedded in the core rather tha
 as peripheral cards. **The whole tree is drawn**: there is no collapse, because a surface
 carrying only the work in hand has nothing to hide from.
 
-**And it is drawn to fit the window.** The chart is scaled to the largest size, never above
-1x, at which all of it is inside the window, and the scale follows the window rather than
-a control: there is no zoom and no Fit button, and nothing to operate. Scaling stops at a
-legibility floor of 0.7, past which the chart scrolls on the axis that overflows instead —
-a chart that fits and cannot be read has not fitted. No arrangement fits at 1x: on the
+**It opens fitted to the window, and zoom is the person's.** By default the chart is scaled
+to the largest size, never above 1x, at which all of it is inside the window, and that scale
+follows the window as it resizes. The default stops at a legibility floor of 0.7, past which
+the chart scrolls on the axis that overflows instead — a chart that fits and cannot be read
+has not fitted. The person can take the scale over: pinch or ⌘/Ctrl-wheel zooms at the
+pointer, a − / percentage / + control zooms about the centre, and dragging pans from anywhere
+a tap would not open. Their range, 0.25 to 2, is wider than the default's, because the floor
+limits what is chosen *for* them, not what they may choose. Pressing the percentage hands the
+scale back to the window. This is not the zoom that was removed: that was the only way to see
+a canvas that could never fit, and this one starts from a chart that already does. No arrangement fits at 1x: on the
 instance this was measured on, the 20 cards in hand were about 88% of a 1511x727 window's
 area before a single gap or wire. So the geometry is shaped to need as little scale as it
 can, and a card's picture sits **beside** its text rather than above it. Above, it doubled
@@ -141,6 +146,6 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   either.
 - **A busy day still outgrows the floor.** Fitting holds while the work in hand is about
   this size, but every open task is present however old, so a ledger of forty open tasks
-  scrolls at 0.7 like any chart that cannot be both whole and legible. What should give way
-  first when it does — the tiles, the rank below, or the thinnest tasks — is undecided, and a
-  zoom control is not the answer to it.
+  opens at 0.7 and scrolls, and the person zooms out to see its shape. What should give way
+  first by default when it does — the tiles, the rank below, or the thinnest tasks — is
+  undecided, and handing the person a zoom does not decide it.

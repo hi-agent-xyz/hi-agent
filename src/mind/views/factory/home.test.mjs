@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, fit, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, fit, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
+const { buildHome, arrange, fit, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, fit, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -234,6 +234,28 @@ test("the chart is scaled to the window, never enlarged, and never shrunk past l
   assert.ok(laptop >= 0.85, `and not by shrinking it to a thumbnail (${laptop})`);
   assert.equal(fit(chart, { w: 4000, h: 3000 }), 1, "a big window does not enlarge it");
   assert.equal(fit(chart, { w: 800, h: 400 }), 0.7, "a small one scrolls rather than go illegible");
+});
+
+test("a zoom keeps the point under the pointer where it was, fitted or overflowing", () => {
+  const chart = { width: 1600, height: 800 }, frame = { w: 1000, h: 700 };
+  const under = (scale, scroll, point) => {
+    const { offset } = stage(chart, frame, scale);
+    return [(scroll.left + point.x - offset.x) / scale, (scroll.top + point.y - offset.y) / scale];
+  };
+  // From a centred, fitted drawing into one that overflows both ways, and back out again.
+  for (const [from, to, scroll] of [[0.6, 1.5, { left: 0, top: 0 }], [1.5, 0.8, { left: 700, top: 300 }]]) {
+    const point = { x: 310, y: 220 };
+    const next = zoomAround(chart, frame, from, to, scroll, point);
+    const [ax, ay] = under(from, scroll, point), [bx, by] = under(to, next, point);
+    assert.ok(Math.abs(ax - bx) < 1e-9 && Math.abs(ay - by) < 1e-9, `${from} -> ${to}`);
+  }
+  // A drawing smaller than the window is centred in it; one larger starts at the origin.
+  assert.deepEqual({ ...stage(chart, frame, 0.5).offset }, { x: 100, y: 150 });
+  assert.deepEqual({ ...stage(chart, frame, 2).offset }, { x: 0, y: 0 });
+  // The person's range is wider than the default's floor in both directions.
+  assert.equal(clampZoom(0.01), 0.25);
+  assert.equal(clampZoom(9), 2);
+  assert.ok(clampZoom(0.5) < fit(chart, { w: 10, h: 10 }), "they may zoom out past what the default would pick");
 });
 
 test("layout supports deeper nodes, rather than flattening every row into a hub child", () => {
