@@ -37,7 +37,6 @@ pub mod models;
 pub mod observatory;
 pub mod pcm;
 pub mod privacy;
-pub mod reap;
 pub mod registry;
 pub mod run;
 pub mod segment;

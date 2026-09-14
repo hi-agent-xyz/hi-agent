@@ -470,19 +470,23 @@ tree**, owned by the worker that owns the duty and dying when the engine does.
 Nothing is restricted to keep it that way: the agent keeps every tool it has, and
 what follows is a rule about what to do with them.
 
-**"Dying when the engine does" is enforced, in two layers.** The first is codex's own: a
-codex is ended by closing its stdin, never by killing it, because on a closed stdin codex
-ends every process it started and on SIGKILL it ends none — and an engine that dies any
-way at all closes that pipe too. The second is for what escapes codex — a daemon that made
-a session of its own, a codex that had to be killed, the engine's other children after a
-crash — and the process tree cannot carry it, since a daemon belongs to init while its
-session is live and a crash leaves nothing linking anything. So ownership is written into
-every process as environment it inherits — the engine's `<pid>.<start>` and the codex
-session — and read back from the process table: a session closing ends what carries that
-session, a clean stop ends what carries this engine, and a boot ends what carries an
-engine no longer running. All of it is events; nothing sweeps. What cannot be read back
-(macOS hides its own binaries' environments) is reached through the relatives that can;
-[`reap.rs`](../../src/foundation/reap.rs) says what still is not.
+**"Dying when the engine does" is codex's to carry, and the host's job is to let it.**
+Codex runs every command in a session of its own, so nothing done *to* codex reaches them —
+but closed on its stdin, codex ends every process it started, a detached one included, and
+SIGKILLed it ends none. So a codex is ended by closing its stdin, never by killing it, and
+killed only if it has not exited within a short grace. An engine that dies any way at all
+closes that pipe too, which is what covers a crash.
+
+**What escapes codex is not chased, by decision.** A daemon that made a session of its own,
+or the commands of a codex that had to be killed, keep running. Reaching them means inferring
+ownership from the process table — marks in inherited environment, parent links, process
+groups — and that was built and removed: macOS hides the environment of its own binaries, so
+the inference was half blind, and a wrong one kills somebody else's process. An occasional
+leak that the log names beats a mechanism that can take down the wrong thing. Revisit only
+with a leak observed in a live run, not with a shape imagined here.
+
+**Still owed a live run:** the closed-stdin behaviour was measured through `command/exec`,
+which is not the path a turn's commands take.
 
 ##### One background item, and it is this process
 

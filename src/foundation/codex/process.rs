@@ -32,7 +32,6 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::foundation::reap;
 use crate::foundation::shutdown::Shutdown;
 use crate::foundation::codex::tap::{Dir, WireTap};
 
@@ -208,31 +207,38 @@ impl ProcessRegistry {
     }
 }
 
-/// End one codex, and everything it started.
+/// How long a codex gets to exit on a closed stdin before it is killed.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
+
+/// End one codex, and — by codex's own doing — everything it started.
 ///
-/// **Close its stdin; do not kill it.** Measured against the 0.147 pin, model-free through
-/// `command/exec`, with a command that runs one child and detaches another: on a closed
-/// stdin codex exits 0 at once and neither child survives; on SIGKILL codex dies and both do.
-/// SIGKILL was all this used to send — `kill_on_drop` — and it is how two Chrome trees
-/// spun twelve cores for three days after a restart (see [`reap`]). The same measurement is
-/// what covers a crash: an engine that dies any way at all closes this pipe, and codex ends
-/// its own work.
+/// **Close its stdin; do not kill it.** Codex puts every command in a session of its own, so
+/// nothing done *to* codex reaches them, but codex ends them itself on the way out. Measured
+/// against the 0.147 pin, model-free through `command/exec`, with a command that runs one
+/// child and detaches another: on a closed stdin codex exits 0 at once and neither child
+/// survives; on SIGKILL codex dies and both do. SIGKILL was all this used to send
+/// (`kill_on_drop`), and it is how two headless Chrome trees from a hung view-reviewer
+/// command spun twelve cores for three days after the restart that closed their session.
+/// The same fact covers a crash: an engine that dies any way at all closes this pipe.
 ///
-/// Force is for a codex that does not exit within the grace. Its session is ended through
-/// the marks *before* codex is killed, while codex is still alive to link its commands to
-/// it. Either way the session's marks are swept once more afterwards, for anything that left
-/// codex's reach before codex ended — a daemon that made a session of its own.
-async fn close_codex(mut child: Child, close_stdin: tokio::task::AbortHandle, conn: u64) {
+/// **Not yet watched on a live session:** `command/exec` is not the path a turn's commands
+/// take, so whether codex ends *those* on a closed stdin is the premise still owed a live run
+/// (`docs/arch/host.md` § *One background item*).
+///
+/// A codex that has not exited by [`CLOSE_GRACE`] is killed, and whatever it started stays
+/// running — nothing here chases it. That is a decision, not an omission: finding processes
+/// codex let go of means inferring ownership from the process table, and a wrong inference
+/// kills somebody else's process. The warning is what makes such a leak visible.
+async fn close_codex(mut child: Child, close_stdin: tokio::task::AbortHandle) {
     // The writer owns stdin; ending it closes the pipe, which is the whole request.
     close_stdin.abort();
-    if tokio::time::timeout(reap::GRACE, child.wait()).await.is_err() {
-        tracing::warn!(conn, "codex did not exit on a closed stdin; ending its session by force");
-        let marked = reap::terminate(reap::Scope::Session(conn));
-        tokio::time::sleep(reap::GRACE).await;
-        marked.kill_survivors();
+    if tokio::time::timeout(CLOSE_GRACE, child.wait()).await.is_err() {
+        tracing::warn!(
+            pid = child.id(),
+            "codex did not exit on a closed stdin; killing it — the commands it started are left running"
+        );
         let _ = child.kill().await;
     }
-    reap::end_detached(reap::Scope::Session(conn));
 }
 
 /// Removes one driver's entry from the [`ProcessRegistry`] when the driver task ends —
@@ -419,14 +425,8 @@ impl CodexProcess {
             command.env(key, value);
         }
         // One id per subprocess (= per thread), so the tap can group this connection's
-        // frames — including its pre-`threadId` handshake — and so everything this session
-        // starts carries it (see [`reap`]). The engine mark rides along explicitly as well:
-        // `main` stamps it process-wide, but a host entered any other way (a test) has not.
+        // frames — including its pre-`threadId` handshake.
         let conn = CONN_SEQ.fetch_add(1, Ordering::Relaxed);
-        command.env(reap::SESSION_VAR, conn.to_string());
-        if let Some(mark) = reap::engine_mark() {
-            command.env(reap::ENGINE_VAR, mark);
-        }
         let mut child: Child = command
             .spawn()
             .with_context(|| format!("spawning {}", program.display()))?;
@@ -568,7 +568,7 @@ impl CodexProcess {
                 _ = shutdown_rx => tracing::info!("codex driver received shutdown signal"),
                 _ = closing.cancelled() => tracing::info!("codex driver closing with the host"),
             }
-            close_codex(child, close_stdin, conn).await;
+            close_codex(child, close_stdin).await;
         });
         registry.insert(conn, driver);
 
@@ -871,6 +871,43 @@ fn error_text(err: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spawn `program` the way [`CodexProcess::spawn`] does, with a writer task owning its
+    /// stdin, and hand back what [`close_codex`] takes.
+    fn spawn_with_writer(program: &str, args: &[&str]) -> (Child, tokio::task::AbortHandle) {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn");
+        let stdin = child.stdin.take().expect("stdin");
+        let writer = tokio::spawn(async move {
+            let _stdin = stdin;
+            std::future::pending::<()>().await;
+        });
+        (child, writer.abort_handle())
+    }
+
+    /// Our half of the mechanism: aborting the writer is what closes the pipe. `cat` exits on
+    /// EOF, so it is gone well inside the grace — it was asked, not killed.
+    #[tokio::test]
+    async fn aborting_the_writer_closes_stdin_and_the_child_exits_on_its_own() {
+        let (child, close_stdin) = spawn_with_writer("cat", &[]);
+        let started = std::time::Instant::now();
+        close_codex(child, close_stdin).await;
+        assert!(started.elapsed() < CLOSE_GRACE, "took {:?}: killed, not closed", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn a_child_that_ignores_its_closed_stdin_is_killed_after_the_grace() {
+        let (child, close_stdin) = spawn_with_writer("sleep", &["30"]);
+        let started = std::time::Instant::now();
+        close_codex(child, close_stdin).await;
+        let took = started.elapsed();
+        assert!(took >= CLOSE_GRACE && took < CLOSE_GRACE + Duration::from_secs(3), "took {took:?}");
+    }
 
     /// The record that produced this test, verbatim off the wire on 2026-08-10.
     const STYLED_ERROR: &str = "\u{1b}[2m2026-08-10T10:26:00.471756Z\u{1b}[0m \u{1b}[31mERROR\u{1b}[0m \u{1b}[2mcodex_core::tools::router\u{1b}[0m\u{1b}[2m:\u{1b}[0m \u{1b}[3merror\u{1b}[0m\u{1b}[2m=\u{1b}[0mexec_command failed for `/bin/zsh -lc 'if [ ! -d /Users/iloahz/projects/KTV/.git ]; then";

@@ -379,12 +379,6 @@ fn main() -> anyhow::Result<()> {
         });
     }
 
-    // From here on this process is an engine, and everything it starts — every codex, every
-    // command, however detached — must carry that, so it can be ended when this engine is
-    // gone. After the helper modes above, which exit and are part of whoever ran them.
-    // SAFETY: no thread exists yet; the tray and the runtime are both built below.
-    unsafe { hi_agent::foundation::reap::mark_engine() };
-
     // Read on every platform (so the flag is never dead code); only consulted on
     // macOS, where it selects the headless/server-owns-main-thread path.
     let no_tray = cli.no_tray;
