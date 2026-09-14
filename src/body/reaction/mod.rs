@@ -1299,7 +1299,7 @@ pub async fn start(
 
     // The upkeep sweep. The only clock left in this host, and it wakes nobody to think —
     // see [`upkeep`] for why that is a different thing from the three cadences removed.
-    tokio::spawn(upkeep::sweep_forever());
+    tokio::spawn(upkeep::sweep_forever(reaction.clone()));
 
     // Consolidated reflection ("sleep"): one pass over the shared frontier on
     // one global clock. One writer touches the shared facet/people stores.

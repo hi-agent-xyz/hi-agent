@@ -45,7 +45,7 @@ use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate, StopRea
 use crate::foundation::observatory::{EventKind, Observatory, WorkerState};
 use crate::identity::{Role, WorkerType};
 
-use super::{LoopInput, Reaction};
+use super::{Disposition, LoopInput, Reaction};
 
 use crate::foundation::registry;
 use crate::foundation::registry::{SessionSlug, TurnOutcome};
@@ -330,6 +330,7 @@ impl WorkerRegistry {
         // through, and the drive task needs the session to run turns on. Same `Arc`.
         let handle = Arc::clone(&session);
         let drive = tokio::spawn(drive_worker(
+            reaction.clone(),
             id.clone(),
             title.clone(),
             opening,
@@ -665,6 +666,7 @@ pub(super) fn render_report_plainly(report: &WorkerReport) -> String {
 /// wedged Cognition came back, and the roster showed five identical "ended 7m ago" cards.
 /// A worker is the thing that knows it has ended, so it is the thing that says so.
 async fn drive_worker(
+    reaction: Reaction,
     id: SessionSlug,
     title: String,
     initial_task: Option<String>,
@@ -678,13 +680,17 @@ async fn drive_worker(
 ) {
     // Wrapped so *every* way out of the drive loop unregisters, including ones added
     // later. The one exit this cannot cover is an abort, and [`Drop`] holds that case.
-    drive(&id, &title, initial_task, session, transcript, inbound, observatory, mail, busy, owner)
-        .await;
+    drive(
+        &reaction, &id, &title, initial_task, session, transcript, inbound, observatory, mail, busy,
+        owner,
+    )
+    .await;
     registry::global().unregister(&id);
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn drive(
+    reaction: &Reaction,
     id: &SessionSlug,
     // The errand's name, carried the whole way down so every report this loop posts can
     // say what it was without quoting the prompt it ran. A follow-up turn is driven by a
@@ -701,8 +707,6 @@ async fn drive(
     owner: Option<SessionSlug>,
 ) {
     let mut next_task = initial_task;
-    let mut energy = crate::foundation::energy_state::subscribe();
-    let mut energy_paused = crate::foundation::energy_state::is_out();
     // A worker made by `create_worker` runs its errand and ends. It is not bounded by
     // size from here — the underlying agent compacts its own context (see
     // [`crate::body::reaction::heartbeat`]).
@@ -719,10 +723,16 @@ async fn drive(
             },
         };
 
-        // Workers follow the same reactive contract as every other rung: no balance
-        // preflight, hold the current task after a managed 402, then rerun that exact
-        // task when the balance broadcasts Resume. The agent session stays alive.
-        if !wait_for_energy_resume(&mut energy, &mut energy_paused).await {
+        // **Ask the gate every other rung asks.** A worker used to know one reason a turn
+        // could not run — a managed 402, from its own subscription — and nothing of the rest,
+        // so through a generic outage it ran every task straight into the wall while the
+        // standing rungs beside it were correctly parked. Measured on 2026-09-14: a duty
+        // handler whose listener re-posts every thirty seconds took 38 turns in twenty
+        // minutes, each a ~190K-token request into a broker that was already down. Parked
+        // here instead, those re-posts pile up in the inbox and leave as one prompt.
+        // `host.md` lists workers among the rungs that share one upstream; this is them
+        // reading it.
+        if !reaction.wait_for_vendor().await {
             return;
         }
         busy.store(true, Ordering::Relaxed);
@@ -740,31 +750,44 @@ async fn drive(
             "working session turn start"
         );
         let kind = match run_worker(id.clone(), &task, &session, &transcript).await {
+            // An interrupt says nothing about the upstream either way, so the gate hears
+            // nothing; a response that did come back has already told it.
             Ok((partial, StopReason::Interrupted)) => WorkerReportKind::Interrupted(partial),
-            Ok((answer, _)) => WorkerReportKind::Done(answer),
-            Err(err)
-                if crate::foundation::energy_state::is_402_error(&err)
-                    && crate::foundation::energy_state::is_out() =>
-            {
-                tracing::warn!(
-                    worker = %id,
-                    "working session paused on 402; task and session held"
-                );
-                busy.store(false, Ordering::Relaxed);
-                // A hold is still a turn that ended, and it ended badly — the 402 is the
-                // truest thing the roster can say about why this session is quiet. It is
-                // overwritten by the outcome of the rerun the moment energy comes back.
-                registry::global().finish_turn(id, TurnOutcome::Failed(err.to_string()));
-                // **And the task goes somewhere a stop can see it.** Held only in the local
-                // below, it is invisible to everything: the session reads as idle, so a
-                // restart brings it back with nothing to do and it waits forever on an
-                // instruction it was already holding. See [`registry::Registry::hold`].
-                registry::global().hold(id, Some(task.clone()));
-                energy_paused = true;
-                next_task = Some(task);
-                continue;
+            Ok((answer, _)) => {
+                reaction.note_turn_succeeded().await;
+                WorkerReportKind::Done(answer)
             }
-            Err(err) => WorkerReportKind::Failed(err.to_string()),
+            Err(err) => {
+                // **And tell it**, so an outage a worker finds first parks the rungs too.
+                let disposition = reaction.note_turn_failed(&err).await;
+                // Held when the upstream is what failed: the gate is now down — this failure
+                // flipped it, or it was already down — and the task is the same task once it
+                // is back. Reporting it as failed instead was the other half of the storm: the
+                // owner took a turn to read each failure, on the same dead upstream. A worker
+                // whose *session* broke, or whose error is a lone one the gate absorbed, still
+                // reports, because rerunning that on the same session gets the same answer.
+                if disposition != Disposition::Restart && reaction.inner.vendor.is_down() {
+                    tracing::warn!(
+                        worker = %id,
+                        error = %format!("{err:#}"),
+                        ?disposition,
+                        "working session held while the vendor is down; task and session kept"
+                    );
+                    busy.store(false, Ordering::Relaxed);
+                    // A hold is still a turn that ended, and it ended badly — the failure is
+                    // the truest thing the roster can say about why this session is quiet. It
+                    // is overwritten by the outcome of the rerun once the gate reopens.
+                    registry::global().finish_turn(id, TurnOutcome::Failed(err.to_string()));
+                    // **And the task goes somewhere a stop can see it.** Held only in the
+                    // local below, it is invisible to everything: the session reads as idle,
+                    // so a restart brings it back with nothing to do and it waits forever on
+                    // an instruction it was already holding. See [`registry::Registry::hold`].
+                    registry::global().hold(id, Some(task.clone()));
+                    next_task = Some(task);
+                    continue;
+                }
+                WorkerReportKind::Failed(err.to_string())
+            }
         };
         busy.store(false, Ordering::Relaxed);
         // Read once, for the three readers of one fact: the lifecycle event, the log line,
@@ -810,37 +833,6 @@ async fn drive(
         // says so — reporting is not resigning.
         next_task = None;
     }
-}
-
-async fn wait_for_energy_resume(
-    energy: &mut tokio::sync::broadcast::Receiver<crate::foundation::energy_state::EnergyEvent>,
-    paused: &mut bool,
-) -> bool {
-    // Apply lifecycle messages already queued for this session before starting work.
-    // This is event consumption, not an account/state preflight before the provider
-    // call. The process flag is consulted only if this receiver actually lagged.
-    loop {
-        match energy.try_recv() {
-            Ok(crate::foundation::energy_state::EnergyEvent::Pause) => *paused = true,
-            Ok(crate::foundation::energy_state::EnergyEvent::Resume) => *paused = false,
-            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
-                *paused = crate::foundation::energy_state::is_out();
-            }
-            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return false,
-        }
-    }
-    while *paused {
-        match energy.recv().await {
-            Ok(crate::foundation::energy_state::EnergyEvent::Resume) => *paused = false,
-            Ok(crate::foundation::energy_state::EnergyEvent::Pause) => *paused = true,
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                *paused = crate::foundation::energy_state::is_out();
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
-        }
-    }
-    true
 }
 
 /// Block until this session has mail to act on, returning it as one prompt — or `None`

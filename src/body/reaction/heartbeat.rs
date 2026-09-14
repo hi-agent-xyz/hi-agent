@@ -260,8 +260,20 @@ async fn run_consolidation(
     // re-dispatched readers it had already dispatched and could not close what it had
     // opened. `reflection.md` and the role prompt ride the session, so neither is built
     // here any more.
-    let run = session.prompt(prompt).await?;
-    run.wait().await?;
+    // **The pass reports to the gate like any other turn.** It waited on the gate before
+    // starting and then told it nothing, so an outage it hit stayed invisible to every other
+    // rung — and the loop re-ran the same frontier on its next wake, a full thread each time.
+    // Only the model call reports: a frontier that could not be read above is this disk's
+    // problem, and must not tell the other rungs the upstream is down.
+    let turned = async { session.prompt(prompt).await?.wait().await }.await;
+    match &turned {
+        Ok(_) => reaction.note_turn_succeeded().await,
+        Err(_) if reaction.inner.shutdown.is_triggered() => {}
+        Err(err) => {
+            reaction.note_turn_failed(err).await;
+        }
+    }
+    turned?;
 
     tracing::info!("reflection finished");
     Ok(Pass::Swept)

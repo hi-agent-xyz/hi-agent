@@ -893,6 +893,27 @@ Cognition 和 Reflection 各自那套只认 402 的 `energy_state` 订阅 + `ene
 
 🔴 **未复测。** 要看的是:真实故障期间 `cognition turn failed` 不再每两分钟出现一次,且 `spawning codex subprocess role="cognition"` 在故障窗口内归零。
 
+**实测 2026-09-14 · 本机实例,songguo 所在 VM(xyz-bj-1)内存耗尽宕机 —— 三个 rung 接上了,gate 之外还剩四条路。**
+
+2026-09-10 那次改动之后,本条的标题其实已经窄了:**不看 gate 的不只是 Cognition,是除了三个常驻 rung 以外的一切**。这一轮故障窗口里的证据(帧日志 `data/memory/raw/sessions/0b9974e7f96b/`):
+
+- **worker 完全不看 gate。** `general-hi-agent-managed-auto-deployer-l` 在 01:47:37–02:07:23 之间失败了 **38 个 turn**,每约 30s 一次,输入全是同一条 `[managed auto-deployer] abacad failure event=…`;每个 turn 都是 `Reconnecting... 1/5` 到 `5/5`,共 266 条 `stream disconnected before completion`,线程当时 `inputTokens: 190247`。节拍来自它自己的 duty listener 每 30s 重投未 ack 的事件,worker 循环只等 402。
+- **codex 自己的重试是第二层吸收,gate 看不见。** 默认 4 次请求重试 + 5 次流重试,一次失败出去六次,每次都是整条线程。
+- **consolidation 失败不报 gate**,**upkeep 压缩不问 gate**——都是整窗请求。
+- **gate 到点把所有 held rung 同时放出去**,于是一次故障被每个 rung 在同一瞬间各重新发现一次。
+
+另外测到但**不属于本条**的:07:27 那次真正压垮 broker 的是图片——songguo 自己抓到的请求体里,最大一个 24.1 MB,其中 23.5 MB 是 18 张 base64 PNG,都是 `view_image` 看过、之后每一步都要重发的。那是另一个轴(看过的图留在线程里),单独处理。
+
+**改动 2026-09-14 · `vendor-gate-everywhere` —— 其余几条路接上 gate,重试只放一个出去,未复测。**
+
+- codex provider 块里 `request_max_retries` / `stream_max_retries` 设为 1。
+- worker 开 turn 前 `wait_for_vendor`,结束后报 gate;上游挂了的失败**不再作为 Failed 报给 owner**,而是 hold 住 task、等 gate 重开后在同一 session 上重跑——等待期间 duty 重投堆在 inbox 里,出来时是一个 prompt。worker 自己那套只认 402 的订阅删掉。
+- consolidation 的模型调用失败报 gate(读 frontier 的磁盘错误不报);upkeep 在 gate 不开时整轮跳过。
+- gate 到点只让**一个** rung 去试(`Vendor::claim`),其余等它的租期(3 分钟);只有这个 probe 的失败才让间隔翻倍,故障前已在飞的 turn 陆续失败不再把 30s 推到 1h。
+- **任何一个 session 上的模型请求回来**(`thread/tokenUsage/updated` 且 `last.inputTokens > 0`)即重开 gate,不等 turn 结束。
+
+🔴 **未复测。** 要看的是:故障窗口里 (1) 帧日志的 `Reconnecting...` 只到 `1/1`;(2) `working session held while the vendor is down` 出现,而同一 worker 的 `turn/start` 在窗口内不再每 30s 一次;(3) `vendor retry due; this rung is the probe` 每个 backoff 周期只出现一次;(4) 恢复时 `vendor answered; turns resume` 早于 probe turn 的 `turn/completed`。造故障最便宜的办法是把配置库里 LLM 的 base URL 指到一个只 accept 不应答的端口,而不是等 broker 真挂。
+
 ---
 
 ## 26 · 活儿一长就没声了,进度全靠老板追问 · ✅ **已修 `feat/check-in`,未复测**

@@ -76,9 +76,18 @@ pub(super) fn attend(id: &SessionSlug, session: &Arc<AgentSession>) {
 /// when a turn holds the session rather than colliding with it. What this replaces is a
 /// message routed back through the owning loop — real plumbing standing in for ownership
 /// the design already claimed to have.
-pub(super) async fn sweep_forever() {
+pub(super) async fn sweep_forever(reaction: super::Reaction) {
     loop {
         tokio::time::sleep(SWEEP_EVERY).await;
+        // **Nothing while the upstream is down.** A compaction is a full-window model call,
+        // and one that fails leaves its session exactly as full as it was — which correctly
+        // selects it again — so through an outage this re-sent every quiet full thread every
+        // ten minutes, asking no one. Maintenance is never urgent: it waits for the gate to
+        // be open rather than holding a place in line, and never takes a backoff's attempt.
+        if !matches!(reaction.inner.vendor.turn_gate(), super::TurnGate::Go) {
+            tracing::debug!("upkeep: vendor down; sweep skipped");
+            continue;
+        }
         for id in due() {
             let Some(session) = live()
                 .lock()
