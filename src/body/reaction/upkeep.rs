@@ -120,6 +120,54 @@ pub(super) async fn sweep_forever(reaction: super::Reaction) {
     }
 }
 
+/// How much image a thread may carry out of a turn before that turn's end is spent
+/// compacting it — in bytes, as [`AgentSession::image_bytes`] counts them.
+///
+/// **Well under the smallest request cap we route to, not at it.** The check is made when a
+/// turn ends, so a single long turn keeps adding on top of whatever it started with: the
+/// heaviest one on record (2026-09-14) viewed 36 images inside one turn. Anthropic caps a
+/// request at 32 MB, DeepSeek at 48 MiB, and a thread that crosses a cap cannot be compacted
+/// out of it either, since a compaction is itself a request carrying the whole thread. Eight
+/// leaves most of the room to the turn. Replayed over 2026-09-11..14 it would have compacted
+/// 22 times in four days and roughly halved the image bytes re-sent; 4 and 16 differ by a few
+/// points, so the number is a margin, not a tuning.
+const IMAGE_BUDGET: u64 = 8 * 1024 * 1024;
+
+/// Compact a session whose turn just ended carrying more image than [`IMAGE_BUDGET`].
+///
+/// **The same compaction the sweep asks for, on a different reading and at a different
+/// moment.** The sweep acts on codex's own window number after an hour of quiet; this acts
+/// on bytes nobody else counts, at the end of the turn that put them there, because a thread
+/// carrying 20 MB of screenshots is re-sending them on every step of its *next* turn and an
+/// hour of quiet may never come. It keeps every other property of the sweep: it never
+/// declares anything, it does nothing while the vendor gate is shut (the next turn to end
+/// asks again), and `compact` steps aside if a turn has already taken the session.
+///
+/// Awaited rather than spawned, so the owner's next turn starts after the compaction instead
+/// of racing it for the session and usually winning.
+pub(super) async fn shed_images(reaction: &super::Reaction, id: &SessionSlug, session: &AgentSession) {
+    let carried = session.image_bytes();
+    if carried <= IMAGE_BUDGET {
+        return;
+    }
+    if !matches!(reaction.inner.vendor.turn_gate(), super::TurnGate::Go) {
+        tracing::debug!(session = %id, image_bytes = carried, "images over budget; vendor down, not compacting");
+        return;
+    }
+    tracing::info!(session = %id, image_bytes = carried, "images over budget; compacting");
+    let outcome = session.compact().await;
+    // Same reason as the sweep: a compaction reaches no turn boundary, so nothing else would
+    // take the pre-compaction window reading off the switchboard.
+    super::note_window(id, Some(session));
+    match outcome {
+        Ok(true) => tracing::info!(session = %id, "images shed"),
+        Ok(false) => tracing::info!(session = %id, "images not shed; the next turn to end asks again"),
+        Err(err) => {
+            tracing::warn!(session = %id, error = %format!("{err:#}"), "images not shed; compaction refused")
+        }
+    }
+}
+
 /// The sessions worth compacting: quiet, quiet for a while, and full enough to be worth a
 /// model call. Every session in the directory is a candidate — a worker that has genuinely
 /// been idle an hour with a full window is as worth tidying as a rung, and the reason
@@ -162,6 +210,15 @@ mod tests {
     #[test]
     fn the_sweep_and_the_decision_share_one_threshold() {
         assert_eq!(super::super::COMPACT_ABOVE_PERCENT, 50);
+    }
+
+    /// The budget is checked when a turn ends, so it has to leave a turn room to grow before
+    /// the smallest request cap on any vendor we route to (Anthropic's 32 MB). The heaviest
+    /// single turn on record added roughly three times the budget on its own.
+    #[test]
+    fn the_image_budget_leaves_a_turn_room_under_the_smallest_request_cap() {
+        let smallest_cap: u64 = 32 * 1000 * 1000;
+        assert!(IMAGE_BUDGET * 3 < smallest_cap, "a turn that triples the budget must still fit");
     }
 
     /// Slack is the point. The sweep's grain is deliberately coarse against the idle

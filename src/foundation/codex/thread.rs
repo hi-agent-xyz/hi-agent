@@ -3,6 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::anyhow;
 use serde_json::{Value, json};
@@ -61,6 +62,9 @@ pub struct AgentSession {
     /// [`WindowFill`]. Lives on the session rather than the run because the moment to act
     /// on it is *after* a turn, when the [`SessionRun`] that measured it is gone.
     window: Arc<std::sync::Mutex<Option<WindowFill>>>,
+    /// Roughly how many bytes of image this thread carries — see [`image_bytes_in_item`].
+    /// On the session for the same reason as `window`.
+    images: Arc<AtomicU64>,
 }
 
 /// Why a turn stopped.
@@ -284,6 +288,57 @@ fn absorb_compaction(
     }
 }
 
+/// Roughly how many bytes an item puts into every later request on its thread, as image.
+///
+/// **This counts bytes, and nothing else in the stack does.** Codex budgets the thread in
+/// tokens, and in tokens an image is small — it estimates ~1,800 whatever the file, which is
+/// about what providers bill — so a thread can be comfortably inside its window while every
+/// request carries tens of megabytes. Measured on 2026-09-14: a 24.1 MB request, 23.5 MB of
+/// it eighteen base64 PNGs a worker had looked at, sent again on each step of its turn into
+/// a gateway that held whole bodies in memory and fell over. The window reading is codex's
+/// own number and the host must not second-guess it (`host.md`, session layer); this is a
+/// different quantity that no one was measuring.
+///
+/// Two shapes carry an image into history, both as they appear on the wire:
+/// - `imageView` — codex's own image tool, naming a file. Counted as the file's size inflated
+///   to base64. Codex shrinks anything past 2048 px first, so a large photo counts high;
+///   the budget this feeds is a trigger, not a meter, and high errs toward compacting.
+/// - `mcpToolCall` whose result carries `image` content — base64 already, counted exactly.
+///
+/// Anything else is zero, including a file that can no longer be read.
+fn image_bytes_in_item(item: &Value) -> u64 {
+    match item.get("type").and_then(Value::as_str) {
+        Some("imageView") => item
+            .get("path")
+            .and_then(Value::as_str)
+            .and_then(|path| std::fs::metadata(path).ok())
+            .map_or(0, |meta| meta.len().div_ceil(3) * 4),
+        Some("mcpToolCall") => item
+            .pointer("/result/content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+            .filter_map(|block| block.get("data").and_then(Value::as_str))
+            .map(|data| data.len() as u64)
+            .sum(),
+        _ => 0,
+    }
+}
+
+/// Fold one `item/completed` into the thread's image count: add what the item carries, and
+/// clear it on a compaction, which rebuilds the history without tool-output images.
+fn absorb_image_item(images: &AtomicU64, item: &Value) {
+    if item.get("type").and_then(Value::as_str) == Some("contextCompaction") {
+        images.store(0, Ordering::Relaxed);
+        return;
+    }
+    let bytes = image_bytes_in_item(item);
+    if bytes > 0 {
+        images.fetch_add(bytes, Ordering::Relaxed);
+    }
+}
+
 pub struct SessionRun {
     rx_slot: Arc<Mutex<Option<mpsc::UnboundedReceiver<Value>>>>,
     rx: Option<mpsc::UnboundedReceiver<Value>>,
@@ -313,6 +368,8 @@ pub struct SessionRun {
     /// Shared with the session, so the fill outlives the turn that measured it — the
     /// moment a compaction policy can act is *after* a turn, when the run is gone.
     window: Arc<std::sync::Mutex<Option<WindowFill>>>,
+    /// Shared with the session, like `window`.
+    images: Arc<AtomicU64>,
     /// Held for the life of the run, so the session's single turn slot is released when the
     /// turn is actually over rather than when `prompt` returns — which is immediately, since
     /// `turn/start` only means *accepted*. See [`AgentSession::turn`].
@@ -511,6 +568,14 @@ impl SessionRun {
             _ => {}
         }
 
+        // Every item that finishes is folded into the image count, including a compaction
+        // codex ran on its own mid-turn.
+        if method == "item/completed"
+            && let Some(item) = params.and_then(|p| p.get("item"))
+        {
+            absorb_image_item(&self.images, item);
+        }
+
         self.queue.extend(SessionUpdate::from_notification(note));
 
         // A message that never streamed still has to be *said*. Deltas are the usual
@@ -601,6 +666,7 @@ impl AgentSession {
             resumed,
             turn: Arc::new(tokio::sync::Semaphore::new(1)),
             window: Arc::new(std::sync::Mutex::new(None)),
+            images: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -608,6 +674,17 @@ impl AgentSession {
     /// before it has made one. The reading a compaction policy acts on.
     pub fn window_fill(&self) -> Option<WindowFill> {
         *self.window.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Roughly how many bytes of image this thread carries into every request — see
+    /// [`image_bytes_in_item`].
+    ///
+    /// **Counted from this process's own frames, so it starts at zero on a resumed
+    /// thread** even when the history codex reloaded is full of images. It catches up only
+    /// as new ones arrive, and a resumed thread therefore compacts later than one that never
+    /// left. Seeding it from the resumed history is possible and not done.
+    pub fn image_bytes(&self) -> u64 {
+        self.images.load(Ordering::Relaxed)
     }
 
     pub fn id(&self) -> &str {
@@ -690,6 +767,7 @@ impl AgentSession {
             data_dir: self.data_dir.clone(),
             text_buf: String::new(),
             window: self.window.clone(),
+            images: self.images.clone(),
             _permit: permit,
         })
     }
@@ -759,6 +837,13 @@ impl AgentSession {
                 break done;
             }
         };
+        // A compaction that completed took the tool-output images with it — the same
+        // reset [`absorb_image_item`] makes when codex compacts on its own. Keyed on the
+        // turn completing rather than on an item frame, because failing is the case where
+        // the count must stay.
+        if completed {
+            self.images.store(0, Ordering::Relaxed);
+        }
 
         *self.rx.lock().await = Some(rx);
         Ok(completed)
@@ -911,10 +996,50 @@ mod tests {
             data_dir: PathBuf::from("/nonexistent"),
             text_buf: String::new(),
             window: Arc::new(std::sync::Mutex::new(None)),
+            images: Arc::new(AtomicU64::new(0)),
             _permit: Arc::new(tokio::sync::Semaphore::new(1))
                 .try_acquire_owned()
                 .expect("a fresh semaphore has its permit"),
         }
+    }
+
+    fn completed(item: Value) -> Value {
+        json!({"method": "item/completed", "params": {"item": item}})
+    }
+
+    /// Both ways an image enters a thread, in the shapes the 2026-08-28 wire log recorded,
+    /// and the compaction that takes them back out.
+    #[test]
+    fn a_thread_counts_the_image_bytes_it_carries_until_a_compaction() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let photo = dir.path().join("07-23.png");
+        std::fs::write(&photo, vec![0u8; 3_000]).expect("write");
+
+        let mut r = run("t1");
+        r.absorb(&completed(json!({"type": "imageView", "id": "call_1", "path": photo})));
+        assert_eq!(r.images.load(Ordering::Relaxed), 4_000, "a viewed file counts as its base64");
+
+        // `hi_review_view` returns the page twice, light and dark, as base64 already.
+        r.absorb(&completed(json!({
+            "type": "mcpToolCall", "id": "call_2", "server": "hi-agent", "tool": "hi_review_view",
+            "status": "completed",
+            "result": {"content": [
+                {"type": "text", "text": "— light —"},
+                {"type": "image", "data": "A".repeat(450), "mimeType": "image/png"},
+                {"type": "text", "text": "— dark —"},
+                {"type": "image", "data": "B".repeat(520), "mimeType": "image/png"},
+            ]},
+        })));
+        assert_eq!(r.images.load(Ordering::Relaxed), 4_970);
+
+        // Frames that carry no image leave it alone, including one naming a file that is gone.
+        r.absorb(&completed(json!({"type": "agentMessage", "id": "m", "text": "looked"})));
+        r.absorb(&completed(json!({"type": "imageView", "id": "call_3", "path": "/nonexistent.png"})));
+        r.absorb(&json!({"method": "item/started", "params": {"item": {"type": "imageView", "path": photo}}}));
+        assert_eq!(r.images.load(Ordering::Relaxed), 4_970, "counted once, on completion");
+
+        r.absorb(&completed(json!({"type": "contextCompaction", "id": "c1"})));
+        assert_eq!(r.images.load(Ordering::Relaxed), 0, "a compaction rebuilds history without them");
     }
 
     #[test]

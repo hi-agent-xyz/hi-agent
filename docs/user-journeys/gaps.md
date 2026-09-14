@@ -902,7 +902,7 @@ Cognition 和 Reflection 各自那套只认 402 的 `energy_state` 订阅 + `ene
 - **consolidation 失败不报 gate**,**upkeep 压缩不问 gate**——都是整窗请求。
 - **gate 到点把所有 held rung 同时放出去**,于是一次故障被每个 rung 在同一瞬间各重新发现一次。
 
-另外测到但**不属于本条**的:07:27 那次真正压垮 broker 的是图片——songguo 自己抓到的请求体里,最大一个 24.1 MB,其中 23.5 MB 是 18 张 base64 PNG,都是 `view_image` 看过、之后每一步都要重发的。那是另一个轴(看过的图留在线程里),单独处理。
+另外测到但**不属于本条**的:07:27 那次真正压垮 broker 的是图片——songguo 自己抓到的请求体里,最大一个 24.1 MB,其中 23.5 MB 是 18 张 base64 PNG,都是 `view_image` 看过、之后每一步都要重发的。那是另一个轴(看过的图留在线程里),见 [#34](gaps.md)。
 
 **改动 2026-09-14 · `vendor-gate-everywhere` —— 其余几条路接上 gate,重试只放一个出去,未复测。**
 
@@ -1223,6 +1223,27 @@ floor 里已经有 barge-in 的概念(`take_pending` → `render_interruption`),
 **未复测。** 单测覆盖"同一分钟第二次 flush 不顶掉第一次"、"流片段与同秒 clip 不共用路径"、"扫描下降进 `stream/`"、"带后缀的名字仍可解析",`make test` 全绿。**真机上一次 mic 重连还没观测过**——那正是这条缺口的成因,而 curl 造不出来。
 
 **涉及 journey:** 全部语音入口的**事后可核查性**;与 [#32](gaps.md) 同源(那条是断句本身,这条是断句的证据)。
+
+---
+
+## 34 · 看过的图每一步都重发:线程按 token 算一点不满,请求按字节算已经 24 MB · ✅ **已修 `image-byte-budget`,未复测**
+
+**症状。** 2026-09-14 07:27 UTC,songguo 所在 VM(xyz-bj-1,7.8 GB、无 swap)内存耗尽,整机卡死到只剩 ping,人工重启才恢复。
+
+**证据(从对话之外)。**
+- songguo 自己的 `calls` + `raw` 表:崩溃前几分钟,本机 4 个 session 每隔几秒各发一个请求,请求体 6.5 / 10 / 12 / **24 MB**;07:27:21 那个 24 MB 的挂了 412 s 后 502。
+- 拆开那个 24,091,936 字节的请求体:`input` 459 项,其中 **18 张 `function_call_output/input_image` 共 23.49 MB(97.5%)**,base64 PNG,中位 1.37 MB;文字、工具、instructions 合计约 0.6 MB。模型 `deepseek-flash`,`store: false`,无 `previous_response_id`——每一步都把整条线程重发。
+- 帧日志回放(2026-09-11..14,按磁盘文件大小估,约偏高 3 倍):84 个看过图的 turn,线程携带的图片字节累计重发 **101 GB**;最重的一个 turn 在一个 turn 内看了 36 张。
+
+**机制。** codex 按 token 预算线程,一张图估 ~1,800 token(`RESIZED_IMAGE_BYTES_ESTIMATE = 7373` 字节 ÷ 4),这和厂商按像素计费大致一致——**所以不是 codex 的 bug**,图在 token 上确实不占地方,线程离窗口还远,自动压缩永远不会因为图而触发。图只在压缩时才离开历史。而**整条链上没有任何一层按字节算**:codex 不算,songguo 不设上限、整包读进内存、排队时也拿着、还逐条写进 SQLite(库已 153 GB)。直连厂商不会让 VM 崩,但字节问题还在:DeepSeek 单请求 48 MiB、Anthropic 32 MB 的硬上限,以及每一步的上传。
+
+**改动 2026-09-14 · `image-byte-budget`。**
+- codex 适配层按 session 计"线程携带的图片字节":`imageView` 按文件大小折 base64,`mcpToolCall` 结果里的 `image` 按 `data` 长度;压缩(codex 自己的或 host 要的)清零。
+- Cognition、Reflection(信件 turn 与 consolidation)、worker 的 turn 结束时,超过 **8 MB** 且 vendor gate 开着,就请求一次原地压缩。设计侧改动与三条已知限制(一个长 turn 内不设限、重启后从 0 数、大图按磁盘大小偏高计)写在 [`host.md` § Session layer](../arch/host.md#session-layer)。
+
+🔴 **未复测。** 要看的是:(1) 一个会看很多图的 worker(比如调研类)跑完一个 turn 后 `server.log` 出现 `images over budget; compacting` 和 `images shed`;(2) 该线程下一个 turn 的请求体(songguo `raw.req_body` 长度,或 `calls` 的请求大小)明显缩小——**压缩确实把 tool-output 的图带走了,这一点是读 codex 源码得来的,没在线上看过**;(3) 同一线程不会在没有新图的情况下被连续压缩。
+
+**涉及 journey:** 所有会派调研 / 做 view 的 journey(看图最多的是 view builder、view reviewer、调研 worker)。
 
 ---
 

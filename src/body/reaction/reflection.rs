@@ -287,6 +287,11 @@ async fn run(reaction: Reaction, registration: Registration) {
                 // session became the loop's, whether the failure was the session's. Stall
                 // accounting reads a failed pass as one that swept nothing, which it is.
                 stalled = note_pass(stalled, fresh_input, pass);
+                // A settling pass looks at the stills on its frontier, so it ends like any
+                // other turn that may have picked images up.
+                if let Some(live) = session.as_deref() {
+                    super::upkeep::shed_images(&reaction, &id, live).await;
+                }
                 registry::global().finish_turn(&id, TurnOutcome::Completed);
             }
             Wake::Turn => {}
@@ -363,6 +368,9 @@ async fn run(reaction: Reaction, registration: Registration) {
             }
         }
         super::note_window(&id, session.as_deref());
+        if let Some(live) = session.as_deref() {
+            super::upkeep::shed_images(&reaction, &id, live).await;
+        }
         registry::global().finish_turn(&id, outcome);
     }
 }

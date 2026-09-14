@@ -826,7 +826,10 @@ async fn drive(
             tracing::warn!(worker = %id, "worker report dropped; reaction loop gone");
             return;
         }
-
+        // After the report, so the owner hears the result without waiting on housekeeping.
+        // Workers are where images pile up: all ten of the heaviest turns on record were a
+        // worker's.
+        super::upkeep::shed_images(reaction, id, &session).await;
 
         // Stay warm for a follow-up; pick up everything that accumulated in the inbox as
         // one prompt. Waiting here costs a held subprocess and ends only when the owner

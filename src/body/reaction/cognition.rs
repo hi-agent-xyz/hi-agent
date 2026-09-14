@@ -430,6 +430,9 @@ async fn run(reaction: Reaction, registration: Registration) {
         // After the turn, not before it: the glance is for quiet moments, and a turn
         // that just ran means this was not one.
         super::note_window(&id, session.as_deref());
+        if let Some(live) = session.as_deref() {
+            super::upkeep::shed_images(&reaction, &id, live).await;
+        }
         last_turn = Instant::now();
         registry::global().finish_turn(&id, outcome);
     }

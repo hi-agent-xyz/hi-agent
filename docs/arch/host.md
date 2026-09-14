@@ -257,7 +257,7 @@ ours.** The agent behind a session compacts its own context in place, automatica
 real window; that automatic trigger stays, and stays as the last resort. What was added is a
 request for the same operation at a moment somebody picked — `thread/compact/start`, at the
 far side of the [upkeep sweep](#the-upkeep-sweep), once a session has been quiet about an
-hour and codex's own token accounting says its window is at least half full. There is still no ceiling of our own, no character counter, and no swap.
+hour and codex's own token accounting says its window is at least half full. There is still no ceiling of our own on the window, no character counter, and no swap — the one number the host counts itself is image bytes, below, which the agent does not count at all.
 
 **Why that is not the mechanism this section retired**, and the difference is two facts about
 the wire rather than a change of mind. Both halves of "we cannot" below were true when they
@@ -286,15 +286,44 @@ rung exists to keep.
 
 If a wire ever genuinely lacks auto-compaction, bound it **in that adapter**, where the real
 numbers are visible. Do not re-introduce a character counter at this layer, and do not let
-the timing request above grow into one: it thresholds on a number the agent reports about
-itself, and the moment it starts thresholding on anything we counted, it is the retired
-mechanism wearing a new name.
+the timing request above grow into one: **for how full the window is**, it thresholds on a
+number the agent reports about itself, and the moment it starts thresholding on anything we
+counted, it is the retired mechanism wearing a new name.
+
+**Bytes are not that number, and nothing reports them.** The agent budgets its thread in
+tokens, and in tokens an image is small — codex estimates about 1,800 for one whatever the
+file, which is roughly what providers bill — so a thread can sit comfortably inside its
+window while every request carries tens of megabytes of base64 it re-sends on each step. On
+2026-09-14 a single request was 24.1 MB, 23.5 MB of it eighteen PNGs a worker had looked at,
+and the gateway it went to held whole bodies in memory and fell over. Counting those bytes
+is not second-guessing the agent's context number; it is measuring a quantity the agent does
+not measure at all. So the codex adapter counts **image bytes a thread carries** — from the
+image items that already cross it, reset when a compaction takes them out — and when a turn
+ends over an **8 MB budget**, the host asks for the same in-place compaction the sweep does.
+The window rule above is untouched: context size is still only ever the agent's own number.
 
 What still replaces a session from out here is **failure, not size**: a turn that errors discards
 the possibly-wedged session and the next one cold-opens. That is always survivable, because
 **the state a rung needs is re-projected into every turn** — what is owed, what it carries
 forward, who it can reach — and the [log](#the-log) is the durable backstop. A cold open loses
 the thread, never the truth. The session carries the thread; `data/` carries the truth.
+
+### § Decisions
+
+- **The image budget is checked when a turn ends, not during one.** A compaction needs the
+  session's turn, so asking mid-turn would mean interrupting the work to tidy it. What the
+  end of a turn buys is that images stop riding along from one turn to the next — replayed
+  over 2026-09-11..14 that roughly halves the image bytes re-sent, at 22 compactions in four
+  days. **What it does not bound is one long turn**: the heaviest on record viewed 36 images
+  inside a single turn, and every request in it carried all of them. The budget sits well
+  under the smallest request cap we route to (32 MB) to leave that room, and a turn that
+  outgrows it still fails at the vendor.
+- **The count starts at zero on a resumed thread.** It is built from this process's own
+  frames, so a thread reloaded after a restart with images already in it compacts later than
+  one that never left. Seeding it from the resumed history is possible and not done.
+- **A file codex viewed is counted at its size on disk.** Codex shrinks anything past 2048 px
+  before sending, so a large photo counts high. The budget is a trigger, not a meter, and
+  high errs toward compacting.
 
 ### Vendor gate
 
