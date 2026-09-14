@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
+const { buildHome, arrange, fit, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, fit, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -159,7 +159,7 @@ test("a result is a count on the task, never a card of its own", () => {
   assert.equal(arrange(model).placed.length, 2);
 });
 
-test("a task shows one picture and counts the rest; a task with no picture stays one line high", () => {
+test("a task shows one picture and counts the rest; the picture costs width, never height", () => {
   const shots = project({
     tasks: [{ ...task("deck"), refs: ["views/notes", "views/slide", "views/other-slide"] }],
     views: [{ view_ref: "views/notes", label: "Notes" },
@@ -169,11 +169,11 @@ test("a task shows one picture and counts the rest; a task with no picture stays
   assert.equal(deck.data.results.length, 3, "all three are still counted");
   // The FIRST shot-bearing ref in the task's own order, with no recency claimed.
   const drawn = arrange(shots).placed.find((p) => p.node.id === "task:deck");
-  assert.equal(drawn.h, 274, "the box grows for the card that carries a picture");
+  assert.deepEqual([drawn.w, drawn.h], [352, 108], "the picture widens the box and leaves it one card high");
   // The picture on the card is not a node; the ones past it are, one rank below the task.
   assert.deepEqual(list(ofKind(shots, "result").map((n) => n.title)), ["Other"]);
   assert.deepEqual(list(childIndex(shots).get("task:deck").map((n) => n.id)), ["result:views/other-slide"]);
-  assert.equal(arrange(shots).placed.find((p) => p.node.id === "result:views/other-slide").h, 100);
+  assert.equal(arrange(shots).placed.find((p) => p.node.id === "result:views/other-slide").h, 76);
 
   // A mention of one of the app's own surfaces is not an output, so it is neither counted
   // nor eligible to be the picture.
@@ -197,7 +197,8 @@ test("a task shows one picture and counts the rest; a task with no picture stays
 
   const logs = project({ tasks: [{ ...task("duty", "serving"), files: [{ path: "a.json" }, { path: "b.json" }] }] });
   assert.equal(ofKind(logs, "task")[0].data.results.length, 2);
-  assert.equal(arrange(logs).placed.find((p) => p.node.id === "task:duty").h, 134, "no picture, no extra height");
+  const drawnDuty = arrange(logs).placed.find((p) => p.node.id === "task:duty");
+  assert.deepEqual([drawnDuty.w, drawnDuty.h], [240, 108], "no picture, no extra width");
 });
 
 test("every drawn node has a finite, colored wire and no two boxes overlap", () => {
@@ -212,6 +213,27 @@ test("every drawn node has a finite, colored wire and no two boxes overlap", () 
     if (a.node.id >= b.node.id) continue;
     assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "boxes do not overlap");
   }
+});
+
+test("the chart is scaled to the window, never enlarged, and never shrunk past legible", () => {
+  // Shaped like the instance this was measured on: eleven tasks in hand, six with a picture,
+  // four live sessions working on them and four process pictures below their tasks.
+  const views = Array.from({ length: 10 }, (_, i) => ({ view_ref: `views/v${i}`, label: `V${i}`, shot_url: `/v${i}.png` }));
+  const shot = (i, n = 1) => Array.from({ length: n }, (_, k) => `views/v${i + k}`);
+  const tasks = [
+    { ...task("t0"), refs: shot(0) }, { ...task("t1"), refs: shot(1, 2) }, { ...task("t2"), refs: shot(3, 3) },
+    { ...task("t3"), refs: shot(6, 2) }, { ...task("t4"), refs: shot(8) }, { ...task("t5"), refs: shot(9) },
+    task("t6"), task("t7"), task("t8"), task("t9"), task("t10"),
+  ];
+  const workers = ["t4", "t6", "t8", "t9"].map((subject) => worker(`w-${subject}`, "worker", { subject }));
+  const chart = arrange(project({ tasks, workers, views }));
+  assert.equal(chart.placed.length, 20);
+  // A 14-inch laptop window less the app's own chrome: the whole chart, readable.
+  const laptop = fit(chart, { w: 1511, h: 727 });
+  assert.ok(chart.width * laptop <= 1511 && chart.height * laptop <= 727, `fits (${chart.width}x${chart.height} at ${laptop})`);
+  assert.ok(laptop >= 0.85, `and not by shrinking it to a thumbnail (${laptop})`);
+  assert.equal(fit(chart, { w: 4000, h: 3000 }), 1, "a big window does not enlarge it");
+  assert.equal(fit(chart, { w: 800, h: 400 }), 0.7, "a small one scrolls rather than go illegible");
 });
 
 test("layout supports deeper nodes, rather than flattening every row into a hub child", () => {

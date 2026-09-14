@@ -21,8 +21,19 @@ parent. The primary tree is acyclic.
 
 Nodes may have children at any depth. Selection and coordinates belong to the window,
 never to a task or a session. Overview nodes are embedded in the core rather than drawn
-as peripheral cards. **The whole tree is drawn**: there is no collapse, no zoom and no
-fit, because a surface carrying only the work in hand has nothing to hide from.
+as peripheral cards. **The whole tree is drawn**: there is no collapse, because a surface
+carrying only the work in hand has nothing to hide from.
+
+**And it is drawn to fit the window.** The chart is scaled to the largest size, never above
+1x, at which all of it is inside the window, and the scale follows the window rather than
+a control: there is no zoom and no Fit button, and nothing to operate. Scaling stops at a
+legibility floor of 0.7, past which the chart scrolls on the axis that overflows instead —
+a chart that fits and cannot be read has not fitted. No arrangement fits at 1x: on the
+instance this was measured on, the 20 cards in hand were about 88% of a 1511x727 window's
+area before a single gap or wire. So the geometry is shaped to need as little scale as it
+can, and a card's picture sits **beside** its text rather than above it. Above, it doubled
+the card's height, and height is what a landscape window runs out of first; beside, it
+costs width. That took the chart from 1936x1422 to 1652x766px, which is 0.91 in that window.
 
 ## Internal mapping
 
@@ -128,7 +139,8 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   so no surface can order a task's results or show its newest. `bookmarked` and `shared`
   exist on the record and are set on none of 195, so neither can pick a representative one
   either.
-- **The chart is wider than a laptop.** Core plus two ranks measures about 1936px
-  across, so on a 1512px viewport the outer rank is reached by dragging. Scaling it to
-  fit would put it under the legibility floor, and the controls that used to offer that
-  choice were removed along with the need for them.
+- **A busy day still outgrows the floor.** Fitting holds while the work in hand is about
+  this size, but every open task is present however old, so a ledger of forty open tasks
+  scrolls at 0.7 like any chart that cannot be both whole and legible. What should give way
+  first when it does — the tiles, the rank below, or the thinnest tasks — is undecided, and a
+  zoom control is not the answer to it.

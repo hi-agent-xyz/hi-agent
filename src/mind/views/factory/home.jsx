@@ -337,29 +337,54 @@ function emphasis(node, now) {
   return 1 - 0.22 * Math.min(1, Math.max(0, now - instant(end)) / WINDOW_MS);
 }
 
-const CORE_W = 360, CORE_H = 350, NODE_W = 280, NODE_H = 134, PREVIEW_H = 140;
+/**
+ * **A card's picture sits beside its text, not above it.** Above, it doubled the card's
+ * height, and height is what a landscape window runs out of first: the instance this was
+ * measured on drew 20 cards over 1936x1422px, and the side carrying four pictures was the
+ * taller one. Beside, every card in a rank is one height and a picture costs width instead.
+ */
+const CORE_W = 340, CORE_H = 320, NODE_W = 240, NODE_H = 108, THUMB_W = 112;
+const GAP_X = 48, GAP_Y = 14, MARGIN = 24;
+/**
+ * The smallest scale the chart is drawn at. Past it the chart stops shrinking and scrolls,
+ * because a chart that fits and cannot be read has not fitted: at 0.7 a 17px title is 12px
+ * and an 11px caption is under 8px, which is the edge of legible.
+ */
+const FIT_FLOOR = 0.7;
 function dimensions(node) {
   if (node.kind === "topic") return { w: 220, h: 78 };
-  if (node.kind === "result") return { w: 150, h: 100 };
-  return { w: NODE_W, h: previewOf(node) ? NODE_H + PREVIEW_H : NODE_H };
+  if (node.kind === "result") return { w: 120, h: 76 };
+  return { w: previewOf(node) ? NODE_W + THUMB_W : NODE_W, h: NODE_H };
+}
+
+/**
+ * The scale that puts the whole chart in the window, never above 1 and never below the floor.
+ * It is a function of the window, not a control: resizing the window re-fits it and there is
+ * nothing to press. The 1px keeps rounding from producing an overflow whose scrollbar would
+ * narrow the window and re-fit it again.
+ */
+function fit(chart, frame) {
+  const scale = Math.min(1, (frame.w - 1) / chart.width, (frame.h - 1) / chart.height);
+  return Math.max(FIT_FLOOR, scale);
 }
 
 /**
  * Semantic edges determine the hierarchy; flextree only computes its geometry.
  * Overview children are embedded INSIDE the core, not duplicated as peripheral cards.
  *
- * **The whole tree is drawn, always.** There is no collapse and no zoom, because with the
- * work in hand and nothing else there is nothing to hide from: the same instance that laid
- * out 225 cards over 2556x16529px lays out 13 over 1196x1020px. Collapse, the zoom floor
- * and a Fit control were all machinery for not fitting, and a surface that fits needs none
- * of them — the one that could never fit was the node set, not the viewport.
+ * **The whole tree is drawn, always, and drawn to fit the window.** There is no collapse,
+ * because with the work in hand and nothing else there is nothing to hide from: the instance
+ * that laid out 225 cards over 2556x16529px lays out 20. But 20 cards at full size were still
+ * about 88% of a laptop window's area before a single gap or wire, so no arrangement of them
+ * fits at 1x and `fit` scales the drawing instead. What was removed — Fit and zoom as
+ * controls — stays removed; the scale follows the window, and nobody operates it.
  */
 function arrange(model) {
   const children = childIndex(model);
   const branches = children.get(model.rootId).filter((n) => n.kind !== "overview");
   const tree = (node) => ({ node, ...dimensions(node),
     children: (children.get(node.id) || []).map(tree) });
-  const weight = (t) => Math.max(t.h, t.children.reduce((n, c) => n + weight(c) + 24, 0));
+  const weight = (t) => Math.max(t.h, t.children.reduce((n, c) => n + weight(c) + GAP_Y, 0));
   const sides = [[], []], load = [0, 0];
   // IDs, not activity states, keep branch placement stable between updates.
   for (const branch of [...branches].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -369,7 +394,7 @@ function arrange(model) {
   const placed = [{ node: model.nodes[0], x: -CORE_W / 2, y: -CORE_H / 2, w: CORE_W, h: CORE_H, dir: 0 }];
   for (let side = 0; side < 2; side++) {
     if (!sides[side].length) continue;
-    const layout = flextree({ nodeSize: (n) => [n.data.h + 24, n.data.w + 90], spacing: 0 });
+    const layout = flextree({ nodeSize: (n) => [n.data.h + GAP_Y, n.data.w + GAP_X], spacing: 0 });
     const root = layout.hierarchy({ w: CORE_W / 2, h: CORE_H, children: sides[side] });
     layout(root);
     const dir = side === 0 ? 1 : -1;
@@ -378,10 +403,10 @@ function arrange(model) {
         x: dir > 0 ? n.y : -n.y - n.data.w, y: n.x - n.data.h / 2 });
     }
   }
-  const x0 = Math.min(...placed.map((n) => n.x)) - 48;
-  const y0 = Math.min(...placed.map((n) => n.y)) - 48;
-  const width = Math.max(...placed.map((n) => n.x + n.w)) - x0 + 48;
-  const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + 48;
+  const x0 = Math.min(...placed.map((n) => n.x)) - MARGIN;
+  const y0 = Math.min(...placed.map((n) => n.y)) - MARGIN;
+  const width = Math.max(...placed.map((n) => n.x + n.w)) - x0 + MARGIN;
+  const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + MARGIN;
   for (const row of placed) { row.x -= x0; row.y -= y0; }
   const byId = new Map(placed.map((p) => [p.node.id, p]));
   const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) => {
@@ -466,16 +491,23 @@ export default function Home() {
     const observer = new ResizeObserver(([entry]) => setFrame({ w: entry.contentRect.width, h: entry.contentRect.height }));
     observer.observe(el); return () => observer.disconnect();
   }, []);
-  // Centre the core once there is something to centre on. Not a control, and not restored
-  // afterwards: past that first paint the scroll position is the person's.
+  // The drawing is scaled into the window and centred in it; only past the floor does the
+  // canvas outgrow the window, and then only on the axis that overflows.
+  const scale = fit(chart, frame);
+  const drawn = { w: chart.width * scale, h: chart.height * scale };
+  const canvas = { w: Math.max(Math.floor(frame.w), Math.ceil(drawn.w)), h: Math.max(Math.floor(frame.h), Math.ceil(drawn.h)) };
+  const offset = { x: (canvas.w - drawn.w) / 2, y: (canvas.h - drawn.h) / 2 };
+  // Centre the core once there is something to centre on — which does nothing while the chart
+  // fits. Not a control, and not restored afterwards: past that first paint the scroll
+  // position is the person's.
   const centred = useRef(false);
   useEffect(() => {
     if (!loaded || centred.current || mobile || !viewport.current) return;
     centred.current = true;
     const core = chart.placed[0];
-    viewport.current.scrollTo({ left: core.x + core.w / 2 - frame.w / 2,
-      top: core.y + core.h / 2 - frame.h / 2, behavior: "instant" });
-  }, [loaded, mobile, chart, frame]);
+    viewport.current.scrollTo({ left: offset.x + (core.x + core.w / 2) * scale - frame.w / 2,
+      top: offset.y + (core.y + core.h / 2) * scale - frame.h / 2, behavior: "instant" });
+  }, [loaded, mobile, chart, frame, scale, offset.x, offset.y]);
   const branches = children.get("core")?.filter((n) => n.kind !== "overview") || [];
   const common = { now, children, openRef };
   return (
@@ -497,15 +529,18 @@ export default function Home() {
         {mobile ? <div className="hi-work__flow">
           <Core node={model.nodes[0]} model={model} now={now} />
           <Branch nodes={branches} {...common} />
-        </div> : <div className="hi-work__canvas" style={{ width: chart.width, height: chart.height }}>
-          <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
-            {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} stroke={TONE[wire.tone] || TONE.todo} />)}
-          </svg>
-          {chart.placed.map((row) => <div key={row.node.id} className="hi-work__position"
-            style={{ left: row.x, top: row.y, width: row.w, height: row.h }}>
-            {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now} />
-              : <Node node={row.node} {...common} />}
-          </div>)}
+        </div> : <div className="hi-work__canvas" style={{ width: canvas.w, height: canvas.h }}>
+          <div className="hi-work__stage" style={{ left: offset.x, top: offset.y, width: chart.width, height: chart.height,
+            transform: `scale(${scale})` }}>
+            <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
+              {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} stroke={TONE[wire.tone] || TONE.todo} />)}
+            </svg>
+            {chart.placed.map((row) => <div key={row.node.id} className="hi-work__position"
+              style={{ left: row.x, top: row.y, width: row.w, height: row.h }}>
+              {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now} />
+                : <Node node={row.node} {...common} />}
+            </div>)}
+          </div>
         </div>}
       </div>
     </div>
@@ -571,7 +606,7 @@ function Node({ node, now, children, openRef }) {
     <div className="hi-work__node-foot"><span>{L.status[state] || ""}</span>
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
   </>;
-  return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}
+  return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind} data-picture={preview ? "" : undefined}
     style={{ "--node-tone": TONE[state] || TONE.todo, opacity: emphasis(node, now) }}>
     {preview && <button className="hi-work__preview" onClick={() => openRef(preview.id)} title={preview.title}>
       <img src={preview.shot} alt={preview.title} loading="lazy" />
@@ -595,7 +630,8 @@ const CSS = `
 .hi-work__error { padding:8px 24px; color:var(--danger); font-size:13px; display:flex; align-items:center; gap:12px; }
 .hi-work__error button { text-decoration:underline; min-height:36px; }
 .hi-work__viewport { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; position:relative; touch-action:pan-x pan-y; padding-bottom:100px; }
-.hi-work__canvas { position:relative; min-width:100%; min-height:100%; }
+.hi-work__canvas { position:relative; }
+.hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
 .hi-work__wires path { fill:none; stroke-width:1.6; opacity:.7; }
 .hi-work__position { position:absolute; }
@@ -617,15 +653,16 @@ const CSS = `
 .hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-left:3px solid var(--node-tone); border-radius:6px; display:flex; flex-direction:column; }
 .hi-work__node[data-kind=topic] { border:0; border-bottom:1px solid var(--work-line); border-radius:0; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
-.hi-work__preview { display:block; width:calc(100% + 28px); height:140px; flex:0 0 140px; padding:0; margin:-10px -14px 6px; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); border-radius:5px 5px 0 0; overflow:hidden; }
+.hi-work__node[data-picture] { flex-direction:row; }
+.hi-work__preview { display:block; flex:0 0 112px; padding:0; margin:-10px 14px -10px -14px; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); border-radius:3px 0 0 3px; overflow:hidden; }
 .hi-work__preview img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:5px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
-.hi-work__open { display:flex; flex-direction:column; width:100%; height:100%; padding:0; }
-.hi-work__node-head { display:flex; align-items:center; justify-content:space-between; min-height:25px; font-size:11px; color:var(--fg-mute); }
-.hi-work__node-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:18px; line-height:1.35; overflow-wrap:anywhere; font-weight:500; }
-.hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:11px; color:var(--fg-mute); }
+.hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
+.hi-work__node-head { display:flex; align-items:center; justify-content:space-between; min-height:20px; font-size:11px; color:var(--fg-mute); }
+.hi-work__node-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.3; overflow-wrap:anywhere; font-weight:500; }
+.hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:6px; font-size:11px; color:var(--fg-mute); }
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }
 .hi-work__flow .hi-work__core { height:auto; min-height:320px; }
