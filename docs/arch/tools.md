@@ -270,22 +270,19 @@ profile holding those sessions cannot be reconstructed from prose. It needs the 
 their machine, again — the one class that [stalls jobs](foundation.md#user-added) in a way no
 amount of agent capability fixes.
 
-So a tool's **binaries** go in `bin/`; its **profile, session and cache state does not**. That
-state is ordinary durable data and lives in `drive/` with everything else the person would be
-upset to lose. The line is not *what the tool needs in order to run* — it is *what a note can
-put back*.
+So a tool's **binaries** go in `bin/`; its **profile, session and cache state does not** — the
+line is not *what the tool needs in order to run*, it is *what a note can put back*. **Nor does
+that state go in `drive/`**, which syncs: it is machine-local by nature. A browser login only
+helps the machine holding it (Chrome encrypts its cookies with a key from that machine's
+keychain, so a synced copy signs nobody in anywhere else), and a live profile is hundreds of
+megabytes of cache and lock files that a sync can copy half-written. So it stays durable, on
+this machine, in its own directory beside the others: `browser-profile/`.
 
-**One thing a note cannot put back still does not belong in `drive/`, and it is worth naming
-because the rule above reads like it would.** The `phone` tool's access is an adb key the
-person authorized by tapping *Allow* on the handset — irreproducible by prose, exactly the
-class this section is about. It stays where adb puts it (`$HOME/.android/`) all the same,
-because the two cases differ in what carrying the state elsewhere *does*. A browser profile is
-a login, and a login only ever helps the machine holding it; `drive/` syncs, and syncing a
-login moves a convenience. This key is a **grant the device made to one computer**, so syncing
-it would quietly extend that grant to every machine the drive reaches — the person authorized
-one thing and would have authorized several. The test is therefore not *can a note rebuild it*
-alone;
-it is that, **and** whether a copy of it somewhere else is the same permission or a larger one.
+The `phone` tool's adb key is the same class for a sharper reason. The person authorized it by
+tapping *Allow* on the handset, so it cannot be rebuilt from prose, and it stays where adb puts
+it (`$HOME/.android/`). A copy of it elsewhere would not be the same thing either: it is a
+**grant the device made to one computer**, and syncing it would quietly extend that grant to
+every machine the drive reaches.
 
 ### It nests, because `skills/` nests
 

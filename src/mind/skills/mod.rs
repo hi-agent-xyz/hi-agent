@@ -66,6 +66,7 @@ fn interpolate(note: &str, data_dir: &Path) -> String {
     note.replace("{skills_dir}", &dir(skills_dir(data_dir)))
         .replace("{bin_dir}", &dir(bin_dir(data_dir)))
         .replace("{drive_dir}", &dir(data_dir.join("drive")))
+        .replace("{browser_profile_dir}", &dir(data_dir.join("browser-profile")))
 }
 
 /// The seeded browser tool note, for the cross-tree test in [`crate::identity`]:
@@ -488,7 +489,7 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("adding-a-device.md"), ADDING_A_DEVICE)?;
-    std::fs::write(dir.join("browser.md"), BROWSER)?;
+    std::fs::write(dir.join("browser.md"), interpolate(BROWSER, data_dir))?;
     std::fs::write(dir.join("driving-a-desktop.md"), DRIVING_A_DESKTOP)?;
     std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;
     std::fs::write(dir.join("phone.md"), PHONE)?;
@@ -1080,7 +1081,9 @@ mod tests {
         for entry in std::fs::read_dir(&factory).unwrap() {
             let path = entry.unwrap().path();
             let text = std::fs::read_to_string(&path).unwrap();
-            for placeholder in ["{skills_dir}", "{bin_dir}", "{drive_dir}", "{data_dir}"] {
+            for placeholder in
+                ["{skills_dir}", "{bin_dir}", "{drive_dir}", "{data_dir}", "{browser_profile_dir}"]
+            {
                 assert!(
                     !text.contains(placeholder),
                     "{path:?} still carries {placeholder}"
@@ -1091,6 +1094,9 @@ mod tests {
         let equipping = std::fs::read_to_string(factory.join("equipping-a-tool.md")).unwrap();
         assert!(equipping.contains(&skills_dir(dir.path()).display().to_string()));
         assert!(equipping.contains(&bin_dir(dir.path()).display().to_string()));
+        let browser = std::fs::read_to_string(factory.join("browser.md")).unwrap();
+        let profile = dir.path().join("browser-profile").display().to_string();
+        assert!(browser.contains(&format!("--user-data-dir={profile}")), "{browser}");
     }
 
     /// **The equipping seed is about finishing a job, not about building a tool.**

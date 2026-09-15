@@ -56,6 +56,7 @@ data/
       cognition.md   #     the brain's
       proactivity.md #     the learned read on speaking up unprompted (written by Reflection)
 
+  browser-profile/   # the agent's own Chrome profile — its logins; durable but machine-local, so never in drive/ (see arch/tools.md)
   codex-home/        # the agent RUNTIME — the codex subprocess's CODEX_HOME (managed); its rollouts are durable records
   sessions.jsonl     # the session ledger/index (a durable record)
 ```

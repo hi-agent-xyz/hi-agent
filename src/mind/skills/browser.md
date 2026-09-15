@@ -20,10 +20,15 @@ you get from a plain fetch is an empty shell — that is this.
 
 ## Whose browser this is
 
-**Yours, not theirs.** A separate browser from the one the person has open, with its own
-profile under `drive/`. Their logins are not yours: you have the sites they signed *you* into,
+**Yours, not theirs.** Their logins are not yours: you have the sites they signed *you* into,
 and that is the point — a page can carry an instruction aimed at you, and driving their browser
 would put every account they hold behind any page you opened.
+
+`browser` passes no profile, so you do: **`--user-data-dir={browser_profile_dir}` on every
+call.** Left out, Chrome picks one itself, and for a headed window that is theirs. The directory
+is created on first use. One process can hold it at a time — a second launch exits at once on
+`SingletonLock` — so wait for the first, or give a job that needs no login a throwaway
+directory of its own.
 
 So when a site wants a login you have not got, say which site and ask them to sign this browser
 in, once. Not "I can't open it" — that is false, and it is the same shape as the "I have no
@@ -77,10 +82,9 @@ second time.
 - **Some sites refuse an obviously automated browser**, and the tell is usually the user
   agent or a missing window size. This is a thing to notice rather than fight: if a site
   clearly does not want to be driven, say so instead of escalating.
-- **Being signed in is worth protecting.** A profile carrying live logins is not something a
-  note can rebuild — only the person can sign in again, and they should have to do it once
-  rather than every time something here gets tidied. That is why it lives under `drive/` and
-  never under `bin/`, which is disposable and one day will be deleted.
+- **Being signed in is worth protecting.** Only the person can sign in again, so the profile
+  never goes under `bin/`, which is disposable. Nor under `drive/`, which syncs: a login only
+  works on the machine that holds it.
 - **A screenshot is evidence and prose is not.** If you are reporting what a page said, look
   at the page.
 

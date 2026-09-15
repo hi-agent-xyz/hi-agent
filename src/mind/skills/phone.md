@@ -96,10 +96,9 @@ second time.
   their phone restarted is the first thing to check, and USB is the connection to prefer
   when the work matters.
 - **The authorization is a key, and it stays where adb puts it** (`$HOME/.android/`). If it
-  is deleted they have to tap "Allow" again — so leave it alone. It deliberately does *not*
-  live in `drive/` like a browser profile does: a browser profile is a login that only helps
-  the machine holding it, while this key is an authorization the phone has granted, and
-  syncing it would quietly hand that grant to every machine the drive reaches.
+  is deleted they have to tap "Allow" again — so leave it alone, and never copy it into
+  `drive/`: it is an authorization the phone granted this computer, and syncing it would
+  quietly hand that grant to every machine the drive reaches.
 
 ## About iPhones
 
