@@ -78,7 +78,8 @@ fn say_tool() -> Value {
          plain text you write is NOT spoken. One call is one message carrying one matter \
          whole: a sentence, a paragraph, or a few short paragraphs separated by line \
          breaks with the conclusion first. Keep it under about 400 characters; an \
-         overlong call returns too_long and is not sent. Several accepted calls in a \
+         overlong call returns too_long and is not sent, and a line a second reading sends \
+         back returns not sent with a note on where it fails. Several accepted calls in a \
          turn are spoken in order. To stay \
          silent, don't call it at all. An accepted call is delivered and final — the \
          message is appended to the conversation and keeps, whether or not anyone is at \
@@ -1813,7 +1814,7 @@ async fn dispatch_tool(
             // Reaction has to assume it made.
             sink.say(text)
                 .await
-                .map(crate::body::reaction::Said::ack)
+                .map(|said| said.ack())
         }
         "hi_show" => {
             let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();

@@ -42,6 +42,7 @@ pub mod reflex;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
+pub mod speech;
 pub mod stage;
 pub mod stats;
 pub mod stores;
@@ -755,6 +756,9 @@ pub fn build(
                 .route("/api/workers/{id}/frames", get(workers::get_frames))
                 .route("/api/workers/{id}/messages", get(workers::get_messages))
                 .route("/api/stats", get(stats::get_stats))
+                // What the judges found in what was sent, and the person's corrections
+                // first among it (`docs/arch/legibility.md` § I).
+                .route("/api/speech", get(speech::get_speech))
                 .route("/api/tools", get(tools::get_tools))
                 .route("/api/drive", get(drive::get_drive))
                 .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6))),

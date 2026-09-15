@@ -16,6 +16,7 @@ pub mod layout;
 pub mod media;
 pub mod people_vectors;
 pub mod proactivity;
+pub mod quality;
 pub mod snapshot;
 pub mod task_history;
 pub mod tasks;

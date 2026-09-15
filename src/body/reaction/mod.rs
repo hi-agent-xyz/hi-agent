@@ -80,6 +80,7 @@ pub(crate) use heartbeat::{CONSOLIDATION_TOOLS, PROACTIVITY_HEADING};
 mod reflection;
 mod interleave;
 mod floor;
+pub mod legibility;
 pub mod outbound;
 mod sequencer;
 mod tools;
@@ -1093,6 +1094,10 @@ struct ReactionInner {
     /// "what went unheard" note into the next prompt, and gates `say` on whether the
     /// floor is theirs at all. See [`floor`].
     floor: Floor,
+    /// The second reading of what Reaction writes: the pre-send check the mouth asks, and
+    /// the turn it belongs to, opened and closed by [`run_reaction_turn`]. See
+    /// [`legibility`].
+    speech: Arc<legibility::Speech>,
     /// Shared, process-wide LLM-vendor reachability + recovery policy. Read by every
     /// reaction loop (via [`Vendor::turn_gate`]) to decide whether and when to drive a
     /// turn; managed energy is written by the global vendor gate, while turn failures
@@ -1190,8 +1195,13 @@ pub async fn start(
         view_ref: None,
     };
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
+    let speech = Arc::new(legibility::Speech::new(
+        memory.data_dir().to_path_buf(),
+        legibility::Mode::from_tunables(),
+    ));
     let reaction = Reaction {
         inner: Arc::new(ReactionInner {
+            speech,
             memory,
             agent,
             out,
@@ -1690,6 +1700,7 @@ impl Reaction {
                         beats: beats_tx.clone(),
                         said: said.clone(),
                         floor: self.inner.floor.clone(),
+                        speech: self.inner.speech.clone(),
                     }),
                 },
             )
@@ -2341,6 +2352,10 @@ async fn run_reaction_turn(
     )
     .await;
 
+    // The turn a second reading of it belongs to (`docs/arch/legibility.md` § D–G), opened
+    // before any of its words can reach the mouth and closed after the last one has.
+    open_speech(reaction, batch, &on_screen).await;
+
     // Captured before the prompt is handed over — it is moved into `drive_reaction`.
     let context_chars = context.chars().count();
     tracing::info!(ctx_chars = context_chars, "reaction: prompting session");
@@ -2392,6 +2407,11 @@ async fn run_reaction_turn(
         .await;
     let reply = done_rx.await.unwrap_or_default();
     reaction.inner.floor.end_turn(turn_id, &reply).await;
+    // Every word of this turn has met its fate, so what it said can be read.
+    if let Some(ended) = reaction.inner.speech.end() {
+        reaction.inner.speech.hold_for_reply(&ended);
+        legibility::audit::after_turn(reaction.inner.memory.data_dir().to_path_buf(), ended);
+    }
 
     // `completed` is about the generation, not about speech: a turn that finished
     // without erroring counts, whether or not it chose to call `hi_say`.
@@ -2426,6 +2446,51 @@ async fn run_reaction_turn(
     // own context — but the turn still reports it, because it is the one honest measure
     // of what a turn costs and the observatory renders it.
     Ok(context_chars + reply.chars().count())
+}
+
+/// How much of the recent conversation the judges read before a turn.
+const JUDGED_RECENT_CHARS: usize = 6_000;
+
+/// Open this turn for the pre-send check and the audit, and read the person's message, if
+/// the batch has one, against what was said since their last.
+///
+/// Nothing is read when both are off, and a turn that is never opened is one the mouth
+/// lets through unread — the check fails open by construction.
+async fn open_speech(reaction: &Reaction, batch: &[LoopInput], on_screen: &str) {
+    let speech = &reaction.inner.speech;
+    let audited = legibility::audit::enabled();
+    if speech.mode() == legibility::Mode::Off && !audited {
+        return;
+    }
+    let data_dir = reaction.inner.memory.data_dir().to_path_buf();
+    let theirs = batch
+        .iter()
+        .filter_map(|input| match input {
+            LoopInput::Message(m) => match &m.content {
+                crate::types::Content::Text(t) => Some(t.as_str()),
+                crate::types::Content::Speech { text, .. } => Some(text.as_str()),
+                crate::types::Content::File(_) => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !theirs.trim().is_empty() {
+        legibility::audit::on_reply(data_dir, speech.take_awaiting(), theirs);
+    }
+    let (reader, recent) =
+        snapshot::for_judges(&reaction.inner.memory, JUDGED_RECENT_CHARS).await;
+    speech
+        .begin(legibility::Brief {
+            reader,
+            recent,
+            signals: render_batch(batch),
+            screen: on_screen.to_string(),
+            carries_report: batch
+                .iter()
+                .any(|input| matches!(input, LoopInput::Worker(_) | LoopInput::Mail { .. })),
+        })
+        .await;
 }
 
 /// One turn's whole prompt: whatever the thread does not already know, then this turn's

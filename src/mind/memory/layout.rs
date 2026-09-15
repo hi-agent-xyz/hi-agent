@@ -143,6 +143,12 @@ pub fn episodes_dir(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("episodes")
 }
 
+/// `<memory>/quality` — what the judges read in what was sent: one JSON line per check,
+/// audit and reception, a file per day ([`crate::mind::memory::quality`]).
+pub fn quality_dir(data_dir: &Path) -> PathBuf {
+    memory_dir(data_dir).join("quality")
+}
+
 /// `<memory>/facets` — derived current-understanding of subjects.
 pub fn facets_dir(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("facets")

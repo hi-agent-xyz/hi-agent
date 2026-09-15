@@ -122,6 +122,35 @@ const CRAFT_PAGES: &[(&str, &str)] = &[
 const READING: &str = include_str!("craft/reading.md");
 const READING_PAGE: &str = "reading.md";
 
+/// The rubrics the host's own judges run with (`docs/arch/legibility.md` § E, § G): each is
+/// one question asked of one model request, placed in front of the reading standard.
+///
+/// **Here and not in the code that sends them**, because what counts as a failing line is
+/// judgment, and judgment lives in prose where it can be read whole. They are not roles —
+/// nothing opens a session on them — and not craft pages: no rung goes and reads them.
+pub mod judges {
+    /// Whether one message goes out as written.
+    pub const CHECK: &str = include_str!("judges/check.md");
+    /// The independent read of a whole spoken turn.
+    pub const AUDIT: &str = include_str!("judges/audit.md");
+    /// Whether the person's reply corrects how things were being put.
+    pub const RECEPTION: &str = include_str!("judges/reception.md");
+}
+
+/// A judge's whole instructions: its rubric, then the reading standard it judges against.
+pub async fn judge_instructions(data_dir: &Path, rubric: &str) -> String {
+    format!("{}\n\n{}", rubric.trim(), reading_standard(data_dir).await)
+}
+
+/// The axis table alone, out of the standard — for a judge that names an axis but reads
+/// no messages against the rest of the page.
+pub fn reading_axes(standard: &str) -> &str {
+    standard
+        .find("## When a line fails")
+        .map(|at| standard[at..].trim())
+        .unwrap_or(standard)
+}
+
 /// The reading standard as installed, falling back to the embedded page — the text the
 /// host's pre-send check and audit judge against. Read the way [`reaction_system_prompt`]
 /// reads it, so the judge and the writer hold the same bytes.
@@ -678,6 +707,13 @@ pub async fn reaction_system_prompt(data_dir: &Path) -> String {
         _ => REACTION_BASE.to_string(),
     };
     format!("{}\n\n{}", reaction.trim(), reading_standard(data_dir).await)
+}
+
+/// Reaction's whole system prompt as this build carries it, whatever an older build left
+/// installed on disk — what replay runs a candidate change under
+/// (`docs/arch/legibility.md` § K).
+pub fn reaction_prompt_as_built() -> String {
+    format!("{}\n\n{}", REACTION_BASE.trim(), READING.trim())
 }
 
 /// The first-meeting cue as a window block, or `""` once this pair has any history.

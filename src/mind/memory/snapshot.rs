@@ -233,6 +233,29 @@ pub async fn agent_window(
     join(&[carried.as_str(), owed.as_str(), shown.as_str(), reach.as_str()])
 }
 
+/// What the host's judges read about a turn before any of it is said
+/// (`docs/arch/legibility.md` § E, § G): who is reading and how they want to be told — the
+/// same two blocks Reaction's window carries — and the recent conversation, its newest
+/// `recent_chars` characters.
+pub async fn for_judges(memory: &Memory, recent_chars: usize) -> (String, String) {
+    let data_dir = memory.data_dir();
+    let recent = build(memory).await;
+    let present =
+        present_people(crate::foundation::config::owner(data_dir), recent.as_ref().ok());
+    let conduct = crate::mind::memory::conduct::projection(data_dir, &present).await;
+    let words = words_earned(data_dir).await;
+    let reader = join(&[conduct.as_str(), words.as_str()]);
+    let transcript = match &recent {
+        Ok(snap) => {
+            let text = snap.render_for_prompt();
+            let skip = text.chars().count().saturating_sub(recent_chars);
+            text.chars().skip(skip).collect()
+        }
+        Err(_) => String::new(),
+    };
+    (reader, transcript)
+}
+
 /// How far back [`shown_recently`] looks. Long enough to cover a piece of work finishing
 /// and being handed over across a few turns; short enough that it is a list of what just
 /// happened rather than a history to read.

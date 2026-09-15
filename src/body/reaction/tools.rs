@@ -179,6 +179,9 @@ pub(super) struct Mouth {
     /// answer — a turn takes seconds, and the room moves inside them. See
     /// [`super::floor`] for why the input-side settle could never answer it.
     pub(super) floor: super::Floor,
+    /// The second reading a message may get before the floor is asked
+    /// ([`super::legibility::check`]).
+    pub(super) speech: Arc<super::legibility::Speech>,
 }
 
 
@@ -215,12 +218,15 @@ impl ToolOwner {
 /// reason about.
 ///
 /// What remains are the facts the caller can act on, because only the caller can act
-/// on them: the message was too long to be a message, or the floor was not
-/// Reaction's to take ([`super::floor`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// on them: the message was too long to be a message, a second reading sent it back, or
+/// the floor was not Reaction's to take ([`super::floor`]).
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Spoken {
     /// Rejected: longer than a message. Nothing was sent.
     TooLong,
+    /// Sent back by the pre-send check, with its note on where the line fails
+    /// ([`super::legibility::check`]). Nothing was sent, and nothing about the room moved.
+    NotSent(String),
     /// The floor was theirs. Nothing was sent, and nothing is queued to be sent
     /// later — see [`super::floor`] for why this is a refusal rather than a hold.
     NotSaid(super::Busy),
@@ -235,26 +241,29 @@ impl Spoken {
     /// The three refusals say *what happened* and stop there. What to do about it —
     /// let the line go, keep listening, fold it into the next one — is `reaction.md`'s
     /// to say, and putting an instruction here would be the host writing character.
-    pub fn ack(self) -> &'static str {
+    pub fn ack(&self) -> String {
         match self {
-            Spoken::TooLong => "too long for one message — nothing was sent",
+            Spoken::TooLong => "too long for one message — nothing was sent".into(),
+            Spoken::NotSent(note) => format!("not sent — {note}"),
             Spoken::NotSaid(super::Busy::Speaking) => {
-                "not said — they were still talking, so the floor was theirs"
+                "not said — they were still talking, so the floor was theirs".into()
             }
             Spoken::NotSaid(super::Busy::Unheard) => {
                 "not said — they said something after this turn started that you haven't \
                  seen yet, so this reply is out of date"
+                    .into()
             }
             Spoken::NotSaid(super::Busy::Typing) => {
                 "not said — they are still typing a line they haven't sent, so the thought \
                  isn't finished"
+                    .into()
             }
             // The one outcome that was a status code rather than a statement, and the
             // only one whose consequence the caller can still get wrong: a refusal is
             // plainly a refusal, where "sent" left *how final* to be inferred. Read
             // beside the two "not said" arms, which are sentences, it read as the
             // weaker answer of the three.
-            Spoken::Sent => "sent — the message is in the conversation now, and stays there",
+            Spoken::Sent => "sent — the message is in the conversation now, and stays there".into(),
         }
     }
 }
@@ -265,7 +274,7 @@ impl Spoken {
 /// Two facts rather than one enum arm each, because they are independent — an
 /// utterance held for an empty room can still carry a promise, and most utterances
 /// carry none.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Said {
     pub spoken: Spoken,
 }
@@ -273,8 +282,8 @@ pub struct Said {
 impl Said {
     /// The literal `say` returns — a plain statement of what happened, read by a model
     /// deciding what to do next.
-    pub fn ack(self) -> String {
-        self.spoken.ack().to_string()
+    pub fn ack(&self) -> String {
+        self.spoken.ack()
     }
 }
 
@@ -305,6 +314,17 @@ impl ToolSink {
         if text.chars().count() > SAY_MAX_CHARS {
             return Ok(Said { spoken: Spoken::TooLong });
         }
+        // Read in the order they were written: the lock is held from here to the message's
+        // fate, so a later call waits for an earlier one's check and floor.
+        let arrived = Instant::now();
+        let _in_order = mouth.speech.serial.lock().await;
+        // **Before the floor, not after.** The check can take seconds, and whether the room
+        // is free is a property of the moment the words are actually ready to go.
+        if let super::legibility::check::Review::SendBack(note) =
+            mouth.speech.review(&text, arrived).await
+        {
+            return Ok(Said { spoken: Spoken::NotSent(note) });
+        }
         // A draft that is mid-pause gets a moment to settle before the gate is asked,
         // because typing is the one floor condition whose ending is not itself a
         // signal — see [`super::floor`]. Returns immediately unless they are actually
@@ -316,6 +336,7 @@ impl ToolSink {
         if let Err(busy) = mouth.floor.may_speak(Instant::now()).await {
             return Ok(Said { spoken: Spoken::NotSaid(busy) });
         }
+        mouth.speech.note_sent(&text);
         mouth
             .beats
             .send(Beat::Say(text))
@@ -343,9 +364,15 @@ impl ToolSink {
         source: String,
         view_ref: Option<String>,
     ) -> anyhow::Result<()> {
-        self.mouth
+        let mouth = self
+            .mouth
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?
+            .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?;
+        // Part of what the turn did, for whatever reads its words: "it's on screen" is true
+        // only beside a show.
+        let named = view_ref.as_deref().or(id.as_deref()).unwrap_or("an inline view");
+        mouth.speech.note_shown(&format!("{op} {named}"));
+        mouth
             .beats
             .send(Beat::Show { id, op, source, view_ref })
             .await
@@ -412,6 +439,7 @@ mod tests {
                 beats,
                 said: Arc::new(AtomicU64::new(0)),
                 floor: crate::body::reaction::Floor::new(),
+                speech: Arc::new(crate::body::reaction::legibility::Speech::off()),
             }),
         };
         (sink, rx)
@@ -559,11 +587,16 @@ mod tests {
     fn every_outcome_says_what_happened() {
         // The ack is read by a model, so it must be a sentence about the world —
         // and the outcomes must not read alike, or the answer carries no information.
-        let acks = [Spoken::TooLong.ack(), Spoken::Sent.ack()];
-        for a in acks {
+        let acks = [
+            Spoken::TooLong.ack(),
+            Spoken::Sent.ack(),
+            Spoken::NotSent("「公网 200」是常规检查".into()).ack(),
+        ];
+        for a in &acks {
             assert!(!a.is_empty(), "an ack must state what happened: {a:?}");
         }
-        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 2);
+        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        assert!(acks[2].starts_with("not sent — ") && acks[2].contains("公网 200"));
     }
 
     /// The rejection says the words were not sent, and stops there. It used to ask for

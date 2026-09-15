@@ -108,24 +108,32 @@ go out untouched and immediately.
 
 ### E. Pre-send check — one model request
 
-**What it is.** A single Responses API request from the host — no session, no memory — using
-a mid-size model: the standard as a fixed, cacheable prefix; this turn's incoming signals and
-recent conversation; the messages already sent this turn; the candidate. It returns
-`{verdict, axis, note}`.
+**What it is.** A single Responses API request from the host — no session, no memory — to the
+agent's own endpoint ([`judge.rs`](../../src/body/reaction/legibility/judge.rs)): the rubric
+([`judges/check.md`](../../src/identity/judges/check.md)) and the standard as a fixed,
+cacheable prefix; then who is reading (the conduct and words-earned blocks Reaction's window
+carries), the recent conversation, this turn's incoming signals, the messages already sent
+this turn, and the candidate. It returns `{verdict, axis, note}`. The model is the
+`speech_check_model` setting, and unset it is the model the agent runs on.
 
 **What it does with a revise.** `hi_say` answers `not sent — <note>`, the same kind of answer
 as *too long* or *they were still talking*. Reaction reads it inside the same turn and
 rewrites or drops the message; no new turn is woken.
 
 **Limits that keep it from doing harm:**
-- **one revise per message** — the second attempt goes out, as the floor lets a reply
-  through after repeated refusals;
+- **one send-back per turn** — whatever Reaction sends after reading one goes out as written,
+  as the floor lets a reply through after repeated refusals. Per turn rather than per message
+  because the host cannot tell a rewrite from a new message, and a turn is what bounds the
+  latency;
 - **timeout 2.5 s, and any error, sends the message** — silence is the worst failure, and a
-  checker must not be able to produce it;
-- **serial within a turn**, so order holds; when one message is sent back, the later ones in
-  that turn are too, since they may depend on it;
-- **shadow first** — it runs judging without sending anything back until its latency and its
-  agreement with the audit are known.
+  checker must not be able to produce it. Time spent queued behind an earlier message counts;
+- **serial within a turn**, so order holds; a message that had already reached the mouth when
+  an earlier one was sent back goes back with it, since it may depend on it — and one that
+  arrives after the answer is the rewrite;
+- **shadow first** — the `speech_check` setting is `shadow` unless set to `on` or `off`:
+  every in-scope message is judged on its own task and recorded, with what the check would
+  have cost, and nothing is sent back until that latency and the check's agreement with the
+  audit are known.
 
 **Catches:** relay, process narration, replaying the person, repeating an earlier message,
 claiming more than the report supports (09-15: "it's on screen" a minute before it was), a
@@ -155,9 +163,18 @@ periodic.
 **Reads:** the turn's full input (from the frame log), what was sent, the pre-send verdicts,
 the person's next message, and the reader's conduct and grain as they stood.
 
-**Writes:** one record per turn under `data/memory/quality/` — each message's axis or none;
-anything owed and left unsaid; anything wrong; whether the person's next message corrects
-*how* something was said; whether the pre-send check agreed.
+**Writes:** one JSON line per judgment to `data/memory/quality/<day>.jsonl`
+([`quality.rs`](../../src/mind/memory/quality.rs)), three kinds:
+- a **check** — each pre-send verdict, its scope, mode and latency;
+- an **audit** — each message's axis or none, anything owed and left unsaid, anything wrong
+  ([`judges/audit.md`](../../src/identity/judges/audit.md));
+- a **reception** — whether the person's next message corrects *how* something was said, the
+  axis, and their words ([`judges/reception.md`](../../src/identity/judges/reception.md)). It
+  reads the spoken turns since their previous message, the latest four at most.
+
+Whether the check agreed is computed from the records, not asked: the audit never sees the
+check's verdict, so it stays independent. The `speech_audit` setting turns both reads off;
+`speech_audit_model` picks their model.
 
 Also covers views put on screen (through the reviewer's verdict) and task-record lines written
 in the window.
@@ -169,8 +186,9 @@ change.
 
 ### H. Reflection learns
 
-Reflection already reads the stream and keeps the per-subject read and the people facets. It
-folds the audit and the person's reactions in:
+Reflection already reads the stream and keeps the per-subject read and the people facets. Each
+settling pass is shown the corrections and audit findings recorded over the stretch it is
+settling, beside the signals, and folds them in:
 
 - **grain per subject**, into the words-earned read — a question raises the grain for that
   question only; a correction ("以后简要汇报") changes the subject's standing;
@@ -181,7 +199,8 @@ Both reach Reaction through A. Nothing new is stored beside them.
 
 ### I. The number
 
-Server-side, beside the logs; no card in the face.
+Server-side, beside the logs; no card in the face. `GET /api/speech?days=7` computes them
+from the records on read.
 
 | Measure | Why |
 |---|---|
@@ -195,9 +214,17 @@ Server-side, beside the logs; no card in the face.
 
 Every Reaction turn's complete input is in the frame log's `turn/start` frames, so a past
 turn can be run again under a changed prompt or model with tools stubbed, and scored by the
-audit. `make eval-speech` does this against a set drawn from three sources: turns the person
-corrected, turns the audit flagged, and turns judged good (so a fix cannot overshoot into
-leaving things out). The set is private conversation and stays in the data directory.
+audit. `make eval-speech` ([`replay.rs`](../../src/body/reaction/legibility/replay.rs)) does
+this against a set drawn from three sources: turns the person corrected, turns the audit
+flagged, and turns judged good (so a fix cannot overshoot into leaving things out); with no
+records yet, the most recent turns that spoke.
+
+Each turn is replayed with its thread's opening turn (which carries the whole window) and the
+six turns before it as history, under this build's prompt — or `PROMPT=`, on the agent's model
+or `MODEL=` — and `hi_say` answers the way the host would, floor aside. That is not the live
+thread; codex's compactions are not reproduced. Both sides of the comparison are scored by the
+same audit, which is what the question needs. The set is private conversation, and the report
+stays in the data directory, under `memory/quality/replay/`.
 
 ### K. Changes go through replay first
 
@@ -226,6 +253,8 @@ per turn. Model and context length are levers of this design, not background.
 | Decision | Reasoning |
 |---|---|
 | **A pre-send check, scoped to report turns and long or later messages** | Code triage cannot find paraphrase, so scope follows where failures concentrate. A small-model checker found ≤11% of problems and is not used; mid-size reached 57% / 44%. On report turns a few seconds are affordable, and those turns carried the worst messages on 09-15 |
+| **One send-back per turn, not per message** | The host cannot tell a rewrite from a new message; a turn bounds the latency, and what follows a send-back was written with its note in hand |
+| **The judges' rubrics are prose in `src/identity/judges/`** | What counts as a failing line is judgment, and judgment lives where it can be read whole; the code only sends it |
 | **The check can send back, never rewrite** | A checker that edits words is a second mouth ([invariant 1](arch.md#invariants)); `hi_say` already answers calls with refusals Reaction acts on |
 | **Fail open** | A timeout or error sends the message. The one failure nobody reports is silence |
 | **Conduct: people present first, never cut** | Name order plus a shared 3,000-character cap delivered 3,023 of 16,425 characters and cut the owner's own section |
