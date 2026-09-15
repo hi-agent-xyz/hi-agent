@@ -102,10 +102,36 @@ pub(crate) fn all_bases() -> [(&'static str, &'static str); 11] {
 /// opens a view already in the workshop. Keeping them out of `Role::ALL` is what lets
 /// the set grow without every session paying for the ones it never reads —
 /// `view-builder.md` names the page and the session decides.
-const CRAFT_PAGES: &[(&str, &str)] = &[(
-    "data-visualization.md",
-    include_str!("craft/data-visualization.md"),
-)];
+const CRAFT_PAGES: &[(&str, &str)] = &[
+    (
+        "data-visualization.md",
+        include_str!("craft/data-visualization.md"),
+    ),
+    (READING_PAGE, READING),
+];
+
+/// **Reading** — what a person can take in (`docs/arch/legibility.md` § A), the one standard
+/// every message, view and task-record line is written against and every check on them is
+/// judged against.
+///
+/// **It is the one craft page a rung carries whole**, because Reaction writes against it on
+/// every line and cannot open a file: [`reaction_system_prompt`] closes with it. The view
+/// builder and reviewer open it from disk like any other craft page, and the host's own
+/// judges ([`reading_standard`]) put it in front of their model as the fixed prefix. One
+/// text, so what writes and what checks can never be holding two.
+const READING: &str = include_str!("craft/reading.md");
+const READING_PAGE: &str = "reading.md";
+
+/// The reading standard as installed, falling back to the embedded page — the text the
+/// host's pre-send check and audit judge against. Read the way [`reaction_system_prompt`]
+/// reads it, so the judge and the writer hold the same bytes.
+pub async fn reading_standard(data_dir: &Path) -> String {
+    let at = data_dir.join("prompts").join("craft").join(READING_PAGE);
+    match tokio::fs::read_to_string(&at).await {
+        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => READING.trim().to_string(),
+    }
+}
 
 /// What kind of working session this is — the `type` in `CreateWorker(type)`
 /// (`docs/arch/foundation.md#the-agent-session-registry`), and the payload of
@@ -632,7 +658,9 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// onward" without naming the verb that does it.
 ///
 /// Read from `<data_dir>/prompts/reaction.md`, falling back to the embedded
-/// [`REACTION_BASE`], and **nothing is appended to it**.
+/// [`REACTION_BASE`], and closed by the reading standard ([`READING`]) — **the one craft
+/// page carried whole**, since every line Reaction writes is written against it and it
+/// cannot go and open it. Nothing else is appended.
 ///
 /// **It used to carry two facts, and a system prompt is the one place a fact cannot
 /// live.** The first-meeting cue and the language preference are *state*, not character,
@@ -649,7 +677,7 @@ pub async fn reaction_system_prompt(data_dir: &Path) -> String {
         Ok(s) if !s.trim().is_empty() => s,
         _ => REACTION_BASE.to_string(),
     };
-    reaction.trim().to_string()
+    format!("{}\n\n{}", reaction.trim(), reading_standard(data_dir).await)
 }
 
 /// The first-meeting cue as a window block, or `""` once this pair has any history.
@@ -768,7 +796,11 @@ mod soul_tests {
         // must be absent is the *cue*, which is this heading and the line under it.
         assert!(!prompt.contains("## First meeting"), "the cue is the window's now");
         assert!(!prompt.contains("Speak with the person in"), "the language line is too");
-        assert_eq!(prompt, REACTION_BASE.trim(), "nothing at all is appended");
+        assert_eq!(
+            prompt,
+            format!("{}\n\n{}", REACTION_BASE.trim(), READING.trim()),
+            "nothing is appended but the reading standard, which is character too"
+        );
     }
 
 
@@ -844,6 +876,56 @@ mod soul_tests {
             WORKER_VIEW_BUILDER_BASE.contains("prompts/craft/data-visualization.md"),
             "the view builder stopped naming the page install puts on disk"
         );
+    }
+
+    /// **One standard for what a person can take in, held by everything that writes for one
+    /// and everything that checks** (`docs/arch/legibility.md` § A). Reaction cannot open a
+    /// file, so it carries the page whole; the rest open it from where install puts it. A
+    /// prompt that names the page at a path install does not write is a dead end, and a
+    /// second copy of its rules in a prompt is the drift the page exists to end.
+    #[tokio::test]
+    async fn every_writer_for_a_person_holds_the_one_reading_standard() {
+        let dir = tempfile::tempdir().unwrap();
+        install_prompts(dir.path()).unwrap();
+        assert!(dir.path().join("prompts/craft/reading.md").exists());
+
+        let reaction = reaction_system_prompt(dir.path()).await;
+        assert!(reaction.ends_with(READING.trim()), "Reaction's prompt closes with the page");
+        assert_eq!(reading_standard(dir.path()).await, READING.trim(), "the judges read the same");
+
+        for (name, base) in [
+            ("cognition", COGNITION_BASE),
+            ("worker/general", WORKER_GENERAL_BASE),
+            ("worker/view-builder", WORKER_VIEW_BUILDER_BASE),
+            ("worker/view-reviewer", WORKER_VIEW_REVIEWER_BASE),
+        ] {
+            assert!(
+                base.contains("{data_dir}/prompts/craft/reading.md"),
+                "{name} must be pointed at the installed standard"
+            );
+        }
+        // The rules that moved into the page are gone from the prompt that used to hold them.
+        for moved in ["# What earns a line", "# Before it goes out", "**No status narration.**"] {
+            assert!(!REACTION_BASE.contains(moved), "reaction.md still carries `{moved}`");
+        }
+        // The axes the check and audit answer with are the page's, not a second list.
+        for axis in [
+            "`known`", "`machinery`", "`repeat`", "`hard`", "`defensive`", "`shape`",
+            "`unsupported`", "`buried`", "`unsaid`",
+        ] {
+            assert!(READING.contains(axis), "reading.md lost the axis {axis}");
+        }
+    }
+
+    /// What Cognition sends Reaction is material: 32 of 96 such messages between 09-11 and
+    /// 09-14 carried wording, and on 09-15 the wording came out of the mouth verbatim. Timing
+    /// intent is the half that must survive the rule, because only Cognition knows it.
+    #[test]
+    fn cognition_sends_material_not_a_script() {
+        assert!(COGNITION_BASE.contains("**Material, not a script.**"));
+        assert!(COGNITION_BASE.contains("No wording for it"));
+        assert!(COGNITION_BASE.contains("**Timing stays.**"));
+        assert!(COGNITION_BASE.contains("gets its view made alongside it"));
     }
 
     /// The prompt names the tools; the runtime spells them `mcp__<server>__<tool>`, and the
@@ -1700,7 +1782,7 @@ mod soul_tests {
         // section leaves the two passages arguing, and brevity wins an argument like
         // that every time.
         assert!(
-            REACTION_BASE.contains("never the number of them"),
+            READING.contains("Trim depth, never count"),
             "brevity must be scoped to the depth of an answer, not the count of them"
         );
     }

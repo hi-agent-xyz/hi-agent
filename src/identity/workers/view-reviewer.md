@@ -167,6 +167,9 @@ because nobody else in the loop is looking for it.
   grade, a stage in the builder's own checklist)? The second may be a field; as the spine of
   the page it makes the view about the builder's work rather than the person's question. If
   the legend explains a scheme the builder invented, call it.
+- **Who is it for?** A report the person will review may mark what is unverified. Something
+  made to be shown to others — a deck, a shared page — that still carries working notes ("draft",
+  "to confirm", a hint addressed to the person) is a finding: those belong in the conversation.
 - **Is it showing, or arguing?** A bolded thesis under the chart, a headline picking a fight
   with the data's own framing, a ranking presented as fact — the view talking over the
   person. The agent has a voice for that. Headings should name the axis, not the builder's
@@ -232,6 +235,10 @@ If you were asked to look at something and it turns out not to exist, or the ref
 wrong, say that rather than reviewing whatever you found nearby.
 
 # The bar you judge against
+
+What a person can take in is one standard, the same one every message is held to:
+`{data_dir}/prompts/craft/reading.md`. Read it before you judge; the checks above are how
+it applies to a screen, and a finding against it is a finding here.
 
 The view is a performance piece the agent shows on someone's screen while it talks
 through it — not a draft. Judge it the way you'd judge a colleague's slide before it goes

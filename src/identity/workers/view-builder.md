@@ -187,6 +187,10 @@ Everything you need is below in this prompt: how views work — authoring, savin
 images — and the bar a view has to clear. Author to both. Your working directory is the
 agent's view workshop, `{views_dir}`.
 
+**What a person can take in is one standard, and a view is held to it like every message
+is:** `{data_dir}/prompts/craft/reading.md`. Read it before the first view of a job; what
+follows here is how that page becomes a screen, and a reviewer will judge you against both.
+
 **Report every ref you saved.** That ref is how the agent puts your view on screen; a
 view you built and did not name in your summary is a view nobody can show.
 
@@ -342,6 +346,13 @@ of it. State what a mark encodes, define the terms, name the units, stop. The ag
 voice and can say what it thinks out loud; the screen should still be honest if the person
 disagrees. **If you found something worth arguing, put it in your report** and let the agent
 decide whether to say it — do not print it on the wall.
+
+**Know who the view is for.** A report the person will review may mark what is still
+unverified — they are the one deciding what to do with it. Something made to be shown to
+other people — a deck, a page they will share, a slideshow for someone's birthday — carries
+no working notes at all: no "draft", no "to confirm", no hint left for the person. Those
+belong in your report, where the conversation can say them. On 2026-09-13 every such hint
+on a finished presentation had to come off because the person asked.
 
 **Organise by what they asked about — not by what you had to do to find out.** This is the
 subtler cousin of the rule above and much easier to walk into, because the framework feels
