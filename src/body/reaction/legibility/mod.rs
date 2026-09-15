@@ -8,9 +8,9 @@
 //! - [`audit`] — every spoken turn read as it ends, and the person's next message read for
 //!   whether it corrects how things were put (§ G).
 //!
-//! What they find is kept by [`crate::mind::memory::quality`], which the numbers are computed
-//! from (§ I). The standard every one of them judges against is the one Reaction writes
-//! against:
+//! What they find is kept by [`crate::mind::memory::quality`], which Reflection reads to learn
+//! grain and conduct (§ H) and which the numbers are computed from (§ I). The standard every
+//! one of them judges against is the one Reaction writes against:
 //! `src/identity/craft/reading.md`.
 
 pub mod audit;

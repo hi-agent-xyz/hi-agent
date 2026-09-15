@@ -53,7 +53,7 @@ use crate::foundation::codex::AgentSession;
 use crate::foundation::registry;
 use crate::mind::memory::journal::after_cursor;
 use crate::foundation::pcm;
-use crate::mind::memory::{decay, episodes, facets, layout, people_vectors};
+use crate::mind::memory::{decay, episodes, facets, layout, people_vectors, quality};
 use crate::types::{Channel, JournalEntry, Origin};
 use crate::foundation::vendors::ffmpeg_frame;
 
@@ -88,7 +88,7 @@ fn reflectable(tail: &[JournalEntry]) -> usize {
 /// text is assembled here, not written in a prompt file. Naming them lets
 /// `no_agent_facing_text_names_a_verb_without_its_prefix` read them without building a
 /// `Frontier`.
-pub(crate) const PROACTIVITY_HEADING: &str = "## Current proactivity.md (your read on what your words have earned — regenerate via `hi_update_proactivity` if any word of yours, asked for or not, landed or fell flat this stretch)\n";
+pub(crate) const PROACTIVITY_HEADING: &str = "## Current proactivity.md (your read on what your words have earned and how much detail each subject wants — regenerate via `hi_update_proactivity` if any word of yours, asked for or not, landed or fell flat this stretch, or how your words read changes a line)\n";
 
 /// See [`PROACTIVITY_HEADING`].
 pub(crate) const CONSOLIDATION_TOOLS: &str =
@@ -248,8 +248,22 @@ async fn run_consolidation(
     // ([`snapshot::agent_window`]), for the rung that dispatches as much and remembered
     // none of it.
     let reach = registry::render_reachable(&registry::global().reachable(id));
-    let prompt =
-        build_consolidation_prompt(&frontier, &subjects, current_proactivity.as_deref(), &reach);
+    // How the agent's words read over the stretch being settled — the person's corrections
+    // and the audit's findings (`docs/arch/legibility.md` § H). Projected like the read it
+    // feeds, not pointed at: the pass that learns grain should not have to remember to look.
+    let since = frontier
+        .tail
+        .first()
+        .map(crate::mind::memory::journal::entry_ts)
+        .unwrap_or_else(Utc::now);
+    let reading = render_reading(&quality::read_since(data_dir, since).await);
+    let prompt = build_consolidation_prompt(
+        &frontier,
+        &subjects,
+        current_proactivity.as_deref(),
+        &reading,
+        &reach,
+    );
 
     // **The pass runs under Reflection's standing id and on Reflection's standing
     // session**, both owned by the loop ([`super::reflection`]). The registration moved out
@@ -285,6 +299,7 @@ fn build_consolidation_prompt(
     frontier: &Frontier,
     subjects: &[String],
     current_proactivity: Option<&str>,
+    reading: &str,
     reach: &str,
 ) -> String {
     use std::fmt::Write as _;
@@ -295,6 +310,11 @@ fn build_consolidation_prompt(
     }
     render_frontier(&mut s, frontier);
     s.push('\n');
+    // What the readers found goes in front of the read it feeds.
+    if !reading.trim().is_empty() {
+        s.push_str(reading.trim());
+        s.push_str("\n\n");
+    }
     // The current proactivity read goes in so the pass regenerates it from old-plus-new
     // as one whole text. What to do with it lives in reflection.md; this just carries
     // the data.
@@ -313,6 +333,73 @@ fn build_consolidation_prompt(
         s.push('\n');
         s.push_str(reach.trim());
         s.push('\n');
+    }
+    s
+}
+
+/// The heading the stretch's reading goes under. What to do with it is `reflection.md`'s.
+pub(crate) const READING_HEADING: &str = "## How your words read this stretch";
+
+/// How much of the reading one pass is shown. Corrections first, so a long stretch of
+/// findings never crowds out what the person actually said.
+const READING_CHARS: usize = 3_000;
+
+/// The person's corrections, then the audit's findings by axis with a couple of its notes
+/// each — or `""` when the stretch has neither, which is most stretches.
+fn render_reading(records: &[quality::Record]) -> String {
+    use std::fmt::Write as _;
+    let corrections: Vec<&quality::Reception> = records
+        .iter()
+        .filter_map(|r| match r {
+            quality::Record::Reception(rec) if rec.corrects => Some(rec),
+            _ => None,
+        })
+        .collect();
+    let mut read = 0usize;
+    let mut unsaid: Vec<&str> = Vec::new();
+    let mut by_axis: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for r in records {
+        let quality::Record::Audit(a) = r else { continue };
+        read += a.messages.len();
+        for m in &a.messages {
+            if let Some(axis) = &m.axis {
+                by_axis.entry(axis).or_default().push(m.note.as_deref().unwrap_or(""));
+            }
+        }
+        unsaid.extend(a.unsaid.iter().map(String::as_str));
+    }
+    if corrections.is_empty() && by_axis.is_empty() && unsaid.is_empty() {
+        return String::new();
+    }
+    let mut s = format!("{READING_HEADING}\n");
+    if !corrections.is_empty() {
+        s.push_str("What they said about how things were put:\n");
+        for c in &corrections {
+            let _ = writeln!(
+                s,
+                "- {} · {} · \"{}\"",
+                c.ts.format("%m-%d %H:%M"),
+                c.axis.as_deref().unwrap_or("—"),
+                c.quote.as_deref().unwrap_or("")
+            );
+        }
+    }
+    if !by_axis.is_empty() || !unsaid.is_empty() {
+        let _ = writeln!(s, "What an independent read of {read} spoken messages found:");
+        let mut axes: Vec<(&str, Vec<&str>)> = by_axis.into_iter().collect();
+        axes.sort_by_key(|(_, notes)| std::cmp::Reverse(notes.len()));
+        for (axis, notes) in axes {
+            let examples: Vec<&str> =
+                notes.iter().copied().filter(|n| !n.is_empty()).take(2).collect();
+            let _ = writeln!(s, "- {axis} ×{} — {}", notes.len(), examples.join(" / "));
+        }
+        if !unsaid.is_empty() {
+            let _ = writeln!(s, "- unsaid ×{} — {}", unsaid.len(), unsaid.iter().take(2).copied().collect::<Vec<_>>().join(" / "));
+        }
+    }
+    if s.chars().count() > READING_CHARS {
+        s = s.chars().take(READING_CHARS).collect();
+        s.push_str("\n[Cut here by the host; the rest is in memory/quality/.]\n");
     }
     s
 }
@@ -728,6 +815,50 @@ mod frontier_tests {
         crate::mind::memory::journal::legacy_signal_in("x".into(), Utc::now(), channel, String::new(), None, None, None, None)
     }
 
+    /// A stretch with nothing to learn shows nothing; one with a correction shows it first,
+    /// in the person's own words, and the audit's findings after it by how often they came.
+    #[test]
+    fn the_stretchs_reading_leads_with_what_the_person_said() {
+        assert_eq!(render_reading(&[]), "");
+        let at = Utc::now();
+        let records = vec![
+            quality::Record::Audit(quality::Audit {
+                ts: at,
+                turn: "t".into(),
+                model: "m".into(),
+                messages: vec![
+                    quality::Audited { text: "a".into(), axis: Some("machinery".into()), note: Some("「公网 200」".into()) },
+                    quality::Audited { text: "b".into(), axis: Some("machinery".into()), note: None },
+                    quality::Audited { text: "c".into(), axis: Some("known".into()), note: Some("「还没读完」".into()) },
+                ],
+                unsaid: vec![],
+                wrong: vec![],
+            }),
+            quality::Record::Reception(quality::Reception {
+                ts: at,
+                turns: vec!["t".into()],
+                model: "m".into(),
+                corrects: true,
+                axis: Some("machinery".into()),
+                quote: Some("不用说这么细".into()),
+            }),
+        ];
+        let text = render_reading(&records);
+        assert!(text.starts_with(READING_HEADING));
+        let pos = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing: {text}"));
+        assert!(pos("不用说这么细") < pos("independent read of 3"));
+        assert!(pos("machinery ×2") < pos("known ×1"), "the most frequent axis leads");
+
+        let prompt = build_consolidation_prompt(
+            &Frontier { tail: vec![], prior: vec![], face_ids: HashMap::new(), voice_ids: HashMap::new(), pressure: vec![] },
+            &[],
+            None,
+            &text,
+            "",
+        );
+        assert!(prompt.find(READING_HEADING).unwrap() < prompt.find(PROACTIVITY_HEADING).unwrap());
+    }
+
     #[test]
     fn clock_wakes_alone_never_reach_the_threshold() {
         let tail: Vec<JournalEntry> =
@@ -919,7 +1050,7 @@ mod cooccur_tests {
     fn prompt_annotates_a_sole_co_occurring_face() {
         let tail = vec![vision(at(0), None), audio(at(1), None)];
         let g = frontier(tail, faces(&[(0, "ff32ce3w")]));
-        let p = build_consolidation_prompt(&g, &[], None, "");
+        let p = build_consolidation_prompt(&g, &[], None, "", "");
         assert!(p.contains("⟨one face present: ff32ce3w⟩"), "prompt was:\n{p}");
     }
 
@@ -927,7 +1058,7 @@ mod cooccur_tests {
     fn global_subjects_appear_once_above_the_groups() {
         let a = frontier(vec![audio(at(0), None), audio(at(1), None), audio(at(2), None), audio(at(3), None)], HashMap::new());
         let p =
-            build_consolidation_prompt(&a, &["people/alice".into(), "places/office".into()], None, "");
+            build_consolidation_prompt(&a, &["people/alice".into(), "places/office".into()], None, "", "");
         assert_eq!(p.matches("Subjects you already model").count(), 1, "prompt was:\n{p}");
         assert!(p.contains("people/alice, places/office"), "prompt was:\n{p}");
     }

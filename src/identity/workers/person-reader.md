@@ -163,9 +163,12 @@ is arranged: read when it comes up. Everything under it is what changes what you
 next: how they want things delivered, what is theirs to decide rather than yours, what
 they have told you twice, what reliably goes fine and should not be second-guessed.
 
-Keep it short — it is paid for on every turn, and there is a hard cap after which the
-host cuts it off mid-sentence. A few lines per person. If it is long, it is because it
-is carrying things that do not change what anyone does.
+Keep it short — it is paid for on every turn. While they are in the conversation it
+reaches the agent whole; while they are not, it shares a hard cap with everyone else's and
+the host cuts it off mid-sentence past it. A few lines per person. If it is long, it is
+because it is carrying things that do not change what anyone does. **How they want to be
+told things** — how much, how finely, what they do not care about hearing — is one of the
+things that does: every message the agent sends is written against it.
 
 **And write the steady things there too, not only the sharp ones.** A thing that has
 gone fine forty times and badly once is a thing that works; if you write only the once,
