@@ -35,12 +35,27 @@ in, once. Not "I can't open it" — that is false, and it is the same shape as t
 browser" that has gone back to someone before. Never reach for their profile or their cookies
 instead.
 
-**`--headed` is how you hand them a window** — the one argument this wrapper reads rather than
-passes on. Everything else you do runs without one, which is faster and stays out of their way;
-a sign-in is the case where somebody has to see the page.
-
 Web search and plain fetches are still the right tool for a page that is just text. Reach for
 this when the page has to actually *run*.
+
+## Headless unless they are going to look
+
+`browser` runs headless: the wrapper adds `--headless` to every call except one carrying
+`--headed`, the one argument it reads rather than passes on. Treat that as the rule, not a
+convenience. A window opens on the screen the person is working at and takes the front from
+whatever they had there, so every window you open interrupts them.
+
+**Open one only when they are about to use it** — a sign-in only they can do, or a page they
+asked to see for themselves. Say what it is for when you open it, open it once, and leave
+closing it to them. Everything else runs headless: reading, clicking through, screenshots,
+checking your own work — and checking that a window *would* open, too. You look at a page
+through a screenshot, never through their screen.
+
+**Every launch goes through `browser`.** Starting Chrome any other way — its binary without
+`--headless`, or as a desktop app (on a Mac, `open -a` / `open -na`, which bring the app to
+the front, or AppleScript's `activate`) — puts it in front of them whatever you meant. If you
+reached for one of those because a browser started with `&` died when your command returned,
+the answer is in the next section, not a different launcher.
 
 ## Getting started
 
@@ -58,13 +73,21 @@ surprising amount of work, and they are where to start.
 ## When you need to interact
 
 Clicking, typing, waiting for something to appear, or doing several steps in one page needs
-the DevTools protocol, because a one-shot invocation cannot hold state between steps:
+the DevTools protocol, because a one-shot invocation cannot hold state between steps. Keep the
+browser's whole life inside one command — start it, drive it, stop it:
 
     browser --remote-debugging-port=9222 "about:blank" &
+    pid=$!
+    # ... drive it over the port ...
+    kill $pid
 
-Then drive it over that port — CDP is a WebSocket speaking JSON, and every language you have
-can talk to it. `Page.navigate`, `Runtime.evaluate`, `Input.dispatchMouseEvent` and
-`Page.captureScreenshot` cover most of what an errand needs.
+A browser left in the background of a command may not outlive it, and one that does outlive
+it still holds its profile and its port, so the next launch fails.
+
+Drive it over that port — CDP is a WebSocket speaking JSON, and every language you have can
+talk to it.
+`Page.navigate`, `Runtime.evaluate`, `Input.dispatchMouseEvent` and `Page.captureScreenshot`
+cover most of what an errand needs.
 
 **If you find yourself doing this more than once, write yourself a driver** — a small script
 that wraps the steps you keep repeating — put it on your PATH, and leave a note beside this
