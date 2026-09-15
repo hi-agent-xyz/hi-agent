@@ -342,8 +342,10 @@ impl CutPolicy for Speech {
 /// Cut policy for an append-only token stream (the agent's reply → TTS),
 /// mirroring the frontend `sentences.ts`: CJK terminators (。！？) cut
 /// immediately; Latin terminators (.!?…) cut only when followed by whitespace,
-/// so decimals and abbreviations aren't broken. A terminator at the very end of
-/// the tail waits for more text (or [`Segmenter::flush`]). Time is ignored.
+/// so decimals and abbreviations aren't broken; a run of line breaks cuts too,
+/// because a message may be a few paragraphs and a paragraph need not end in a
+/// terminator. A terminator at the very end of the tail waits for more text (or
+/// [`Segmenter::flush`]). Time is ignored.
 ///
 /// This MUST stay in agreement with the frontend splitter: the spec requires the
 /// text-fade and the TTS to cut at the same places.
@@ -363,6 +365,10 @@ impl CutPolicy for Terminator {
                         return Some(i + 1);
                     }
                 }
+            }
+            if c == '\n' {
+                let run = chars[i..].iter().take_while(|&&c| c == '\n').count();
+                return Some(i + run);
             }
         }
         None
@@ -760,5 +766,15 @@ mod terminator_tests {
             s.commit("你好。最近怎么样？", t0),
             vec!["你好。".to_string(), "最近怎么样？".to_string()]
         );
+    }
+
+    #[test]
+    fn a_paragraph_break_cuts_even_without_a_terminator() {
+        let (mut s, t0) = seg();
+        assert_eq!(
+            s.commit("鞋那页好了，三块\n\n配乐换成你那首", t0),
+            vec!["鞋那页好了，三块".to_string()]
+        );
+        assert_eq!(s.flush(), Some("配乐换成你那首".to_string()));
     }
 }

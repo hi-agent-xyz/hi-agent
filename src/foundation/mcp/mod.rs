@@ -75,9 +75,11 @@ fn say_tool() -> Value {
     tool(
         "hi_say",
         "Speak to the person. Everything you want said aloud goes through this tool — \
-         plain text you write is NOT spoken. Call it with one natural chunk at a time, \
-         keeping each call under about 240 characters; an overlong call returns too_long \
-         and is not sent. Several accepted calls in a turn are spoken in order. To stay \
+         plain text you write is NOT spoken. One call is one message carrying one matter \
+         whole: a sentence, a paragraph, or a few short paragraphs separated by line \
+         breaks with the conclusion first. Keep it under about 400 characters; an \
+         overlong call returns too_long and is not sent. Several accepted calls in a \
+         turn are spoken in order. To stay \
          silent, don't call it at all. An accepted call is delivered and final — the \
          message is appended to the conversation and keeps, whether or not anyone is at \
          the window right now, so a call that came back sent is never worth making \
@@ -85,7 +87,7 @@ fn say_tool() -> Value {
         json!({
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "What to say, as natural spoken language (no markdown)." },
+                "text": { "type": "string", "description": "What to say, as natural spoken language — plain text, no markdown; line breaks between paragraphs are kept." },
             },
             "required": ["text"],
         }),

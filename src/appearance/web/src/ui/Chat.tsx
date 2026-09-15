@@ -155,9 +155,10 @@ export function groupMessages(messages: ChatMessage[]): Group[] {
   return groups;
 }
 
+/** A message may be a few paragraphs, so its line breaks are kept. */
 function Body({ text }: { text: string }) {
   return (
-    <>
+    <span className="whitespace-pre-line">
       {splitSpeechLinks(text).map((part, index) =>
         part.kind === "link" ? (
           <a
@@ -175,7 +176,7 @@ function Body({ text }: { text: string }) {
           part.text
         ),
       )}
-    </>
+    </span>
   );
 }
 

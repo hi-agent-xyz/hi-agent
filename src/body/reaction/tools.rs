@@ -21,10 +21,12 @@ use crate::foundation::registry::SessionSlug;
 
 use super::sequencer::Beat;
 
-/// Loose guard against turning one `say` call into a paragraph-sized delivery.
-/// Reaction normally speaks in much smaller natural chunks; this only catches
-/// accidental dumps and leaves room for a few ordinary sentences.
-pub(super) const SAY_MAX_CHARS: usize = 240;
+/// The size of one message: room for one matter said whole — a sentence, a paragraph, or
+/// a conclusion and a few short paragraphs under it (`docs/arch/legibility.md`). Past that
+/// it is a document, which belongs on screen or in a file. It was 240, sized for "three
+/// short messages rather than one long one", and that shape split one matter across
+/// several bubbles. 400 is a starting value, not a measurement.
+pub(super) const SAY_MAX_CHARS: usize = 400;
 
 /// One command the MCP tool server routes to the reaction loop.
 ///
@@ -235,9 +237,7 @@ impl Spoken {
     /// to say, and putting an instruction here would be the host writing character.
     pub fn ack(self) -> &'static str {
         match self {
-            Spoken::TooLong => {
-                "too long for one message — send it as a few shorter say calls instead"
-            }
+            Spoken::TooLong => "too long for one message — nothing was sent",
             Spoken::NotSaid(super::Busy::Speaking) => {
                 "not said — they were still talking, so the floor was theirs"
             }
@@ -566,10 +566,13 @@ mod tests {
         assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 2);
     }
 
-    /// The rejection has to tell the caller what to do, because the caller is the
-    /// only one who can: a message that is too long is split, not truncated.
+    /// The rejection says the words were not sent, and stops there. It used to ask for
+    /// "a few shorter say calls", and that instruction split one matter across several
+    /// messages — the answer to too long is to say less, which is `reaction.md`'s to say.
     #[test]
-    fn the_rejection_asks_for_shorter_messages() {
-        assert!(Spoken::TooLong.ack().contains("shorter"));
+    fn the_rejection_says_nothing_was_sent_and_does_not_ask_for_pieces() {
+        let ack = Spoken::TooLong.ack();
+        assert!(ack.contains("nothing was sent"));
+        assert!(!ack.contains("shorter") && !ack.contains("a few"));
     }
 }
