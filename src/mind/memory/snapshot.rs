@@ -129,9 +129,13 @@ pub async fn window(
     id: &crate::foundation::registry::SessionSlug,
 ) -> Vec<Block> {
     let data_dir = memory.data_dir();
+    // Read once: the tail retells it, and conduct asks it who is in the conversation.
+    let recent = build(memory).await;
+    let present =
+        present_people(crate::foundation::config::owner(data_dir), recent.as_ref().ok());
     // First, because it is the standing one: everything after it is the situation, and
     // this is the manner the situation is met in.
-    let conduct = crate::mind::memory::conduct::projection(data_dir).await;
+    let conduct = crate::mind::memory::conduct::projection(data_dir, &present).await;
     let carried = carried_forward(&layout::reaction_seed_path(data_dir)).await;
     let (owed, owed_compared) =
         match tasks::projection_and_comparable(data_dir, &working_on_tasks()).await {
@@ -155,7 +159,7 @@ pub async fn window(
     );
     // A retelling of signals that are already in the thread above it, which is why it is
     // the one block that only earns its place on a context that cannot look up.
-    let tail = recent_tail(memory).await;
+    let tail = recent_tail(&recent);
     vec![
         Block::new("conduct", Cadence::OnChange, conduct),
         Block::new("carried", Cadence::OnChange, carried),
@@ -676,14 +680,48 @@ go without.]"
 /// The floor: the recent signals, straight off the log. Never empty — an
 /// unwritten window is uncurated, not blank — and never fatal: a log that cannot be
 /// read says exactly that, rather than rendering `(none)` and claiming a quiet room.
-async fn recent_tail(memory: &Memory) -> String {
-    match build(memory).await {
+fn recent_tail(snap: &anyhow::Result<Snapshot>) -> String {
+    match snap {
         Ok(snap) => snap.render_for_prompt(),
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), "recent tail unreadable");
             format!("## Recent (last {RECENT_WINDOW_MIN} minutes)\n(unavailable — I couldn't read the log just now)\n")
         }
     }
+}
+
+/// Who is in the conversation: the owner, then everyone heard or seen in the recent
+/// window, by name.
+///
+/// This is what [`conduct::projection`](crate::mind::memory::conduct::projection) leads
+/// with and never cuts. The owner is always in it — an install's owner is the one person
+/// every addressed line defaults to ([`crate::foundation::config::KEY_OWNER`]), so a
+/// quiet half hour does not make their manner framing. Everyone else is in it for as long
+/// as the recent window holds something they said or were seen doing. Only an attributed
+/// sender counts; an unplaced voice has no section to project.
+///
+/// Name order after the owner, not order of appearance, so the block holds still while
+/// the same people keep talking.
+pub fn present_people(owner: Option<String>, snap: Option<&Snapshot>) -> Vec<String> {
+    let mut heard: Vec<String> = Vec::new();
+    for entry in snap.map(|s| s.recent_entries.as_slice()).unwrap_or_default() {
+        let sender = match entry {
+            JournalEntry::Message { message, .. } => message.from.sender(),
+            JournalEntry::Observation { sender, .. } => sender.as_ref(),
+            _ => None,
+        };
+        if let Some(subject) = sender.and_then(|s| s.subject.as_deref()) {
+            let subject = subject.trim();
+            if !subject.is_empty() && !heard.iter().any(|h| h == subject) {
+                heard.push(subject.to_owned());
+            }
+        }
+    }
+    heard.sort();
+    let owner = owner.map(|o| o.trim().to_owned()).filter(|o| !o.is_empty());
+    let mut present: Vec<String> = owner.iter().cloned().collect();
+    present.extend(heard.into_iter().filter(|h| Some(h) != owner.as_ref()));
+    present
 }
 
 /// Join the non-empty sections with a blank line between them. Local to this module
@@ -874,6 +912,41 @@ mod window_tests {
     async fn whole(memory: &Memory) -> String {
         let blocks = window(memory, &0.into()).await;
         join(&blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>())
+    }
+
+    /// The owner leads whether or not they spoke lately; anyone else is in the
+    /// conversation for as long as the recent window holds something from them.
+    #[tokio::test]
+    async fn the_owner_and_whoever_was_heard_are_present() {
+        use crate::types::{Sender, SenderBasis};
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::open(dir.path()).await.unwrap();
+        for who in [Some("赵君宁"), None, Some("aaron"), Some("赵君宁")] {
+            let sender = Sender {
+                subject: who.map(str::to_owned),
+                basis: if who.is_some() { SenderBasis::Cluster } else { SenderBasis::Unknown },
+            };
+            memory
+                .journal
+                .append(crate::mind::memory::journal::legacy_signal_in(
+                    uuid::Uuid::now_v7().to_string(),
+                    Utc::now(),
+                    Channel::Audio,
+                    "说了一句".to_string(),
+                    None,
+                    None,
+                    None,
+                    Some(sender),
+                ))
+                .await
+                .unwrap();
+        }
+        let snap = build(&memory).await.unwrap();
+        assert_eq!(
+            present_people(Some("赵力".into()), Some(&snap)),
+            vec!["赵力".to_string(), "aaron".to_string(), "赵君宁".to_string()]
+        );
+        assert_eq!(present_people(None, None), Vec::<String>::new());
     }
 
     /// The absence that is normal today — nothing writes the generated prompts yet —

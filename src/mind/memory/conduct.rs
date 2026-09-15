@@ -41,17 +41,24 @@ use super::{facets, layout};
 /// written in, for the same reason a JSON key is not translated.
 pub const HEADING: &str = "## Working with them";
 
-/// Hard cap, in characters, on everything this contributes to one window.
+/// Hard cap, in characters, on what the people **not** in the conversation contribute to
+/// one window.
+///
+/// **The people in the conversation are outside it, and never cut.** This used to bound
+/// everyone together, in name order, and on 2026-09-15 the sections came to 16,425
+/// characters of which Reaction received 3,023: the owner's own section sat behind eight
+/// others and was cut mid-sentence. A "report briefly" that never reaches the window is
+/// a preference the system does not have (`docs/arch/legibility.md` § A). What the
+/// people in front of it want is what Reaction is writing against this turn; everyone
+/// else is framing for the moment they walk in, and framing can be cut.
 ///
 /// **Three thousand, and it is code's**, like every other bound in the projection: the
-/// agent decides what it has understood, not how much of Reaction's window that
-/// costs. Read against the ~6k the conversation's brief may take and the ~2.5k the
-/// ledger takes, it is the smallest of the three — correct, because this is the
-/// slowest-moving of them. Over it, the text says so, because a ceiling that shows up
-/// as text is real and one that shows up as latency is not.
+/// agent decides what it has understood, not how much of Reaction's window that costs.
+/// Over it, the text says so, because a ceiling that shows up as text is real and one
+/// that shows up as latency is not.
 pub const CONDUCT_CHARS: usize = 3_000;
 
-/// The conduct sections of everyone the agent models, oldest-quietest first — as
+/// The conduct sections of everyone the agent models, in name order — as
 /// `(subject, body)` pairs with the heading already stripped.
 ///
 /// Only the `people` dimension is read: a project or a topic has no manner to work
@@ -118,12 +125,6 @@ pub fn section(markdown: &str) -> Option<&str> {
     (!body.is_empty()).then_some(body)
 }
 
-/// Everything Reaction must know about how to be with the people in front of it,
-/// as one block — or `""` when nobody has been understood that far yet, which is
-/// the ordinary state of a fresh install.
-///
-/// Bounded by [`CONDUCT_CHARS`] across all subjects together, and the cut is
-/// announced in the injected text, addressed to the one who can act on it.
 /// Drop the `[[memory-link]]` citations a facet carries.
 ///
 /// **Reaction cannot follow one.** It is tools-off by design — no file access, nothing to
@@ -154,33 +155,63 @@ fn without_citations(section: &str) -> String {
     out
 }
 
-pub async fn projection(data_dir: &Path) -> String {
+/// Everything Reaction must know about how to be with people, as one block — or `""`
+/// when nobody has been understood that far yet, which is the ordinary state of a fresh
+/// install.
+///
+/// `present` is who is in the conversation, most important first — the owner, then
+/// whoever has been heard lately ([`crate::mind::memory::snapshot::present_people`]).
+/// Their sections lead, in that order, and are never cut; everyone else follows in name
+/// order under [`CONDUCT_CHARS`]. Name order, and a `present` that is stable while the
+/// same people are talking, keep the block identical between two turns where nothing
+/// changed — a window that reorders itself reads as new information.
+pub async fn projection(data_dir: &Path, present: &[String]) -> String {
     use std::fmt::Write as _;
 
-    let people = read(data_dir).await;
+    let mut people = read(data_dir).await;
     if people.is_empty() {
         return String::new();
     }
+    let rank = |subject: &str| present.iter().position(|p| p == subject);
+    // Stable sort over name order: the present keep `present`'s order, the rest keep names.
+    people.sort_by_key(|(subject, _)| rank(subject).unwrap_or(usize::MAX));
+    let (front, rest): (Vec<_>, Vec<_>) =
+        people.into_iter().partition(|(subject, _)| rank(subject).is_some());
 
-    let mut body = String::new();
-    for (subject, section) in &people {
-        let _ = writeln!(body, "**{subject}** — {}\n", without_citations(section));
-    }
-    let body = body.trim();
+    let render = |people: &[(String, String)]| {
+        let mut body = String::new();
+        for (subject, section) in people {
+            let _ = writeln!(body, "**{subject}** — {}\n", without_citations(section));
+        }
+        body.trim().to_owned()
+    };
 
     let mut s = String::from("## Working with them\n");
-    if body.chars().count() <= CONDUCT_CHARS {
-        s.push_str(body);
+    let front = render(&front);
+    if !front.is_empty() {
+        s.push_str(&front);
+        s.push('\n');
+    }
+    let rest = render(&rest);
+    if rest.is_empty() {
+        return s;
+    }
+    if !front.is_empty() {
+        s.push('\n');
+    }
+    if rest.chars().count() <= CONDUCT_CHARS {
+        s.push_str(&rest);
         s.push('\n');
         return s;
     }
-    s.extend(body.chars().take(CONDUCT_CHARS));
+    s.extend(rest.chars().take(CONDUCT_CHARS));
     let _ = write!(
         s,
-        "\n\n[Cut here by the host: what you have understood about working with people \
-runs past the {CONDUCT_CHARS}-character cap, so the rest is missing from this window. \
-Keep each person's section to what actually changes what you do — whatever doesn't \
-fit, you go without.]\n"
+        "\n\n[Cut here by the host: what you have understood about working with people who \
+are not in this conversation runs past the {CONDUCT_CHARS}-character cap, so the rest is \
+missing from this window. The people you are talking with are above, whole. Keep each \
+person's section to what actually changes what you do — whatever doesn't fit, you go \
+without.]\n"
     );
     s
 }
@@ -237,7 +268,7 @@ mod tests {
             tokio::fs::write(d.join(facets::FACET_FILE), body).await.unwrap();
         }
 
-        let out = projection(dir.path()).await;
+        let out = projection(dir.path(), &[]).await;
         assert!(out.starts_with("## Working with them\n"));
         assert!(out.contains("**zhaoli** — Chinese by default."));
         // A person with no section, and a non-person dimension, are both silent.
@@ -281,7 +312,7 @@ Wants a kid-playable, do-anything assistant. Not relevant mid-turn.
         .await
         .unwrap();
 
-        let out = projection(dir.path()).await;
+        let out = projection(dir.path(), &[]).await;
         assert_eq!(
             out,
             "\
@@ -301,7 +332,7 @@ not a reason to start asking.
     #[tokio::test]
     async fn nothing_understood_yet_is_an_empty_block() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(projection(dir.path()).await, "");
+        assert_eq!(projection(dir.path(), &[]).await, "");
     }
 
     #[tokio::test]
@@ -314,9 +345,56 @@ not a reason to start asking.
             .await
             .unwrap();
 
-        let out = projection(dir.path()).await;
+        let out = projection(dir.path(), &[]).await;
         assert!(out.contains("Cut here by the host"));
         assert!(out.chars().count() < CONDUCT_CHARS + 500);
+    }
+
+    /// **The owner's section was the one cut.** Name order put it behind eight others and
+    /// one cap across all of them delivered 3,023 of 16,425 characters on 2026-09-15. The
+    /// people in the conversation lead and are whole however much everyone else has.
+    #[tokio::test]
+    async fn the_people_in_the_conversation_lead_and_are_never_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = layout::facets_dir(dir.path()).join("people");
+        let long = "x".repeat(CONDUCT_CHARS + 500);
+        let owner_section = format!("Report briefly. {}", "y".repeat(CONDUCT_CHARS));
+        for (subject, body) in [
+            ("aaron", long.as_str()),
+            ("bella", long.as_str()),
+            ("赵力", owner_section.as_str()),
+        ] {
+            let d = root.join(subject);
+            tokio::fs::create_dir_all(&d).await.unwrap();
+            tokio::fs::write(d.join(facets::FACET_FILE), format!("{HEADING}\n\n{body}\n"))
+                .await
+                .unwrap();
+        }
+
+        let out = projection(dir.path(), &["赵力".to_string()]).await;
+        let owner_at = out.find("**赵力** — Report briefly.").expect("the owner is projected");
+        let other_at = out.find("**aaron**").expect("someone absent is projected too");
+        assert!(owner_at < other_at, "the person present comes first");
+        assert!(out.contains(&owner_section), "the person present is whole");
+        assert!(out.contains("Cut here by the host"), "the rest is still bounded");
+        assert!(!out.contains("**bella**"), "and the cut falls on the absent");
+    }
+
+    /// Nobody present is the old shape exactly: name order, one bound.
+    #[tokio::test]
+    async fn with_nobody_present_the_order_is_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = layout::facets_dir(dir.path()).join("people");
+        for subject in ["bella", "aaron"] {
+            let d = root.join(subject);
+            tokio::fs::create_dir_all(&d).await.unwrap();
+            tokio::fs::write(d.join(facets::FACET_FILE), format!("{HEADING}\n\nshort\n"))
+                .await
+                .unwrap();
+        }
+        let out = projection(dir.path(), &["nobody-with-a-section".to_string()]).await;
+        assert!(out.find("**aaron**").unwrap() < out.find("**bella**").unwrap());
+        assert!(out.ends_with("short\n"), "{out:?}");
     }
 }
 
