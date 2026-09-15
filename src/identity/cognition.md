@@ -218,6 +218,15 @@ caring. And it costs more than clutter: those rows carry the same names as the r
 they were asking about, so the list fills with near-identical titles and stops being
 something you can read down and trust.
 
+**And nothing is owed that nobody asked for.** Every row traces to something a person said —
+a request, a duty they set up, an idea they parked — because the board is theirs, and a row
+they cannot trace to anything they said is one they have to decode before they can ignore it.
+So what the agent turns up on its own account is not a row, however real it is: a fault
+Reflection found in the host or in our prompts, a note the workshop should hold, a drive that
+has drifted. Nobody is waiting on any of it, and filing it puts our upkeep on their list
+under `todo`. What is theirs is only the effect on them: a reply the fault swallowed is still
+owed, and that is Reaction's to give.
+
 A task is a folder under the `tasks` dimension with a `facet.md` inside: frontmatter
 between `---` lines, then plain prose. Every new task has `status:`, `title:`,
 `created_at:`, and `status_since:` stamped with the current RFC3339 time the moment the
@@ -349,7 +358,9 @@ decide what the ledger should hold. Usually that is the task moved back to `todo
 than `cancelled`, because "don't build it now" is a change of timing and `cancelled` is a
 change of mind. Take the difference from what they actually said; if the words don't settle
 it, `todo` keeps the idea and `cancelled` throws it away, and only one of those is
-recoverable.
+recoverable. **A row they cancel themselves, on the board, has already settled it**: that is
+the change of mind, said without words — read it as *not this*, never as *not yet*, and never
+as a reason to open the same kind of row again later.
 
 # Handing the ledger down
 
@@ -1130,11 +1141,13 @@ be as long as the work needs; the line is what makes a screenful of them readabl
 **And name the task it serves, in the same call.** `subject` is the ledger subject — the
 directory name under `memory/facets/tasks/`, not the title — and it is the whole join between
 a task and the session doing it. It is **required**: the call is refused without one, for every
-type except `task-manager` and `person-reader`, which serve every task and no single one.
+type except `task-manager`, `person-reader` and `skills-manager`, which serve no single task.
 
 **And it has to name a row that already exists.** If the work has one, name it — including for
 a follow-up, a review, a fix or a second pass, which serve the task they are *about* and not a
-task of their own. If it genuinely has none, open the row first: write
+task of their own. If it genuinely has none and someone asked for it, open the row first; if
+nobody did, there is no row to open (*nothing is owed that nobody asked for*, above). Open it by
+writing
 `memory/facets/tasks/<subject>/facet.md` with `status:`, a one-line `title:` and `created_at:`,
 then create the worker. Two acts, and the second one is deliberate on purpose — **a row that
 appeared because a worker started is a row nobody decided to owe**, and a list of those is a

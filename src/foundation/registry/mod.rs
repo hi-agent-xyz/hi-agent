@@ -571,7 +571,12 @@ pub fn render(batch: &[Message]) -> String {
 /// reader stops seeing. `person-reader` says nothing at all: an organizer keyed to a person is
 /// not the ledger's business either way, so a line about the ledger would be noise on every
 /// settling pass's fan-out.
-fn link_note(e: &Entry) -> String {
+///
+/// **Nor does anything in Reflection's roster**, whatever its kind: `hi_create_worker` refuses
+/// Reflection a subject, because its errands are housekeeping and the ledger holds only what a
+/// person asked for. Flagged, every worker it runs would read *staff this* in the one window
+/// that is not allowed to.
+fn link_note(e: &Entry, owner_role: Role) -> String {
     let Some(kind) = e.role.worker_type() else {
         return String::new();
     };
@@ -580,7 +585,9 @@ fn link_note(e: &Entry) -> String {
         None if kind == crate::identity::WorkerType::TaskManager => {
             " — serves the whole ledger, so it names no one task".to_string()
         }
-        None if kind.expects_a_subject() => " — not linked to any task".to_string(),
+        None if kind.expects_a_subject() && owner_role != Role::Reflection => {
+            " — not linked to any task".to_string()
+        }
         None => String::new(),
     }
 }
@@ -1413,7 +1420,7 @@ impl Registry {
                 for (id, e) in map.iter() {
                     if e.owner.as_ref() == Some(asker) {
                         out.push((
-                            format!("your worker: {}{}", e.title.trim(), link_note(e)),
+                            format!("your worker: {}{}", e.title.trim(), link_note(e, me.role)),
                             id.clone(),
                         ));
                     }
@@ -2520,6 +2527,37 @@ mod tests {
             .map(|(l, _)| l.clone())
             .expect("offered");
         assert!(!line.contains("not linked"), "{line:?}");
+    }
+
+    /// **Nothing Reflection runs is marked as linked to nothing, whatever its kind.** A
+    /// subject is refused to every worker Reflection starts — its errands are housekeeping, and
+    /// the ledger holds only what a person asked for — so a `general` sweep of its is exactly
+    /// as subjectless as a `person-reader`, and the same `general` under Cognition still is not.
+    #[test]
+    fn nothing_reflection_runs_is_marked_as_linked_to_nothing() {
+        let r = reg();
+        let (refl, cog, sweep, errand) = (mint(), mint(), mint(), mint());
+        r.register(refl.clone(), Role::Reflection, None, "housekeeping".into(), None);
+        r.register(cog.clone(), Role::Cognition, None, "thinking".into(), None);
+        for (id, owner) in [(&sweep, &refl), (&errand, &cog)] {
+            r.register(
+                id.clone(),
+                Role::Worker(WorkerType::General),
+                Some(owner.clone()),
+                "sweep the drive".into(),
+                None,
+            );
+        }
+
+        let line = |asker: &SessionSlug, id: &SessionSlug| {
+            r.reachable(asker)
+                .into_iter()
+                .find(|(_, i)| i == id)
+                .map(|(l, _)| l)
+                .expect("offered")
+        };
+        assert!(!line(&refl, &sweep).contains("not linked"), "{:?}", line(&refl, &sweep));
+        assert!(line(&cog, &errand).contains("not linked to any task"), "{:?}", line(&cog, &errand));
     }
 
     /// **A task manager says what it serves, and must never be flagged for what it cannot

@@ -203,13 +203,18 @@ impl WorkerType {
     /// *nobody on it* while the work is running, and the reading that line invites is to
     /// start a second worker on a folder one is already writing into.
     ///
-    /// **Two kinds serve no single task, and both are exceptions by design.**
+    /// **Three kinds serve no single task, and all three are exceptions by design.** (This is
+    /// about the kind. Who dispatches matters too: every worker Reflection starts is refused a
+    /// subject whatever its kind, which `hi_create_worker` decides from the caller's role, since
+    /// a kind cannot know its owner.)
+    ///
+    /// `skills-manager` keeps the workshop shelf, and a shelf is not something anyone is owed.
     ///
     /// `person-reader` is one of Reflection's **organizers** (`docs/arch/agents.md`) —
     /// housekeeping keyed to a `people/<name>` facet, dispatched one per person present in a
     /// stretch, and never work the ledger owes anyone. There is no task for it to name.
     ///
-    /// `task-manager` is the other, and it is the one that was on the wrong side of this
+    /// `task-manager` is the third, and it is the one that was on the wrong side of this
     /// predicate. It serves *every* task, so naming one would tie the whole ledger to a
     /// single row (`docs/arch/agents.md`: *the one type that names no subject*) — yet it
     /// counted as expecting a subject here, so every one of them was listed as **not linked
@@ -2092,30 +2097,47 @@ mod soul_tests {
     /// ledger-serving worker without one ([`WorkerType::expects_a_subject`]); a rung still
     /// reading "set it if the work belongs to a task" spends a turn finding out.
     ///
-    /// All three halves are pinned, because the fence without the way past it is worse than
-    /// neither: a rung told the field is required and that it must name an existing row, but
-    /// not that opening one is a file it writes itself, has no move at all the first time it
-    /// staffs work the ledger has never heard of.
+    /// All three halves are pinned for Cognition, because the fence without the way past it is
+    /// worse than neither: a rung told the field is required and that it must name an existing
+    /// row, but not that opening one is a file it writes itself, has no move at all the first
+    /// time it staffs work a person asked for that the ledger has never heard of.
+    ///
+    /// **Reflection is pinned the other way round.** Every worker it starts is refused a
+    /// subject, because its errands are housekeeping and the ledger holds only what a person
+    /// asked for — and the way past the old fence, *open a row first*, is exactly the sentence
+    /// that put nine workshop errands on one person's board. So it must be told the refusal,
+    /// and it must not be told how to open a row.
     #[test]
-    fn both_dispatching_rungs_know_the_subject_is_required() {
-        for (name, text) in [("cognition", COGNITION_BASE), ("reflection", REFLECTION_BASE)] {
-            assert!(
-                text.contains("refused without one"),
-                "{name}.md must say the call is refused without a `subject`"
-            );
-            assert!(
-                text.contains("name a row that already exists"),
-                "{name}.md must say the subject names an existing row — the fence refuses \
-                 anything else"
-            );
-            assert!(
-                text.contains("memory/facets/tasks/<subject>/facet.md"),
-                "{name}.md must say how to open a row, or the fence has no way past it"
-            );
-        }
+    fn each_dispatching_rung_knows_where_it_stands_on_subject() {
+        assert!(
+            COGNITION_BASE.contains("refused without one"),
+            "cognition.md must say the call is refused without a `subject`"
+        );
+        assert!(
+            COGNITION_BASE.contains("name a row that already exists"),
+            "cognition.md must say the subject names an existing row — the fence refuses \
+             anything else"
+        );
+        assert!(
+            COGNITION_BASE.contains("memory/facets/tasks/<subject>/facet.md"),
+            "cognition.md must say how to open a row, or the fence has no way past it"
+        );
+        assert!(
+            COGNITION_BASE.contains("nothing is owed that nobody asked for"),
+            "cognition.md must say a row traces to something a person asked for"
+        );
         assert!(
             !COGNITION_BASE.contains("if the work belongs to a task"),
             "cognition.md still offers `subject` as a choice"
+        );
+
+        assert!(
+            REFLECTION_BASE.contains("Your workers take no `subject`"),
+            "reflection.md must say every worker it starts is refused a subject"
+        );
+        assert!(
+            !REFLECTION_BASE.contains("memory/facets/tasks/<subject>/facet.md"),
+            "reflection.md must not teach it to open a row — the ledger is not its to write"
         );
         assert!(
             REFLECTION_BASE.contains("takes **no `subject`**"),

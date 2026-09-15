@@ -264,9 +264,13 @@ The cost is a round trip the first time work is genuinely new — write the face
 worker. It is paid once per task and it buys the property that makes the list worth reading:
 every line on it is something somebody decided was owed.
 
-**Two kinds serve no single task and take none.** The [Task Manager](#task-manager) serves every
-row, and a `person-reader` organizer's subject is a person. Passing one is refused rather than
-quietly dropped: a `people/` name accepted there would open a task named after a human being.
+**Some workers serve no task and take none.** The [Task Manager](#task-manager) serves every
+row; a `person-reader` organizer's subject is a person; a `skills-manager` keeps the shelf, which
+nobody is owed. And **nothing Reflection dispatches takes one, whatever its kind.** Reflection
+does not write the ledger, and every errand it hands out is housekeeping on the agent's own
+stores, while the ledger holds only what a person asked for ([data.md](data.md#tasks)). Passing
+one is refused rather than quietly dropped: a `people/` name accepted there would open a task
+named after a human being, and a subject accepted from Reflection is a row nobody asked for.
 
 That makes **`doing` with nobody on it** a fact the ledger reports rather than an inference
 someone has to draw. It is the shape every unfinished task takes after a restart, a crash, an
@@ -502,7 +506,9 @@ Its workers come in two kinds:
 
 - **Per-store organizers** — people, episodes, facets, views, skills, tools, the drive.
 - **Cross-store graduations**, named by the edge they perform: `episode → skill`,
-  `raw → drive bytes + facets meaning`, and `"promised, never delivered" → open task`.
+  `raw → drive bytes + facets meaning`, and `"promised, never delivered" → Cognition`, which
+  opens the task — the one graduation Reflection hands up rather than performs, because the
+  ledger is not its to write.
 
 Views are not on that list. Reuse needs no promotion step — a view that mattered is already in
 the conversation's own memory, and the rest of the toolbox is [read on demand](data.md#views).
@@ -921,15 +927,15 @@ difference is the whole of it — pruning ends a promise, a fold moves one, and 
 merely stale is neither. The test is delivery, not resemblance: two rows are one job when
 delivering either delivers the other.
 
-**It names no subject, and is one of only two kinds that may not.** `CreateWorker(subject)`
+**It names no subject, and is one of the kinds that may not.** `CreateWorker(subject)`
 binds a worker to a single ledger task and is required of every kind that serves the ledger;
 a worker without one reads as *not linked to any task* — the line that means **nobody is on
 this, staff it**. A manager serves every task, so it can never name one, and left inside that
 rule it would trip the alarm on itself at every glance-up. So it is subjectless by construction,
 a subject passed to one is refused, and the reachable list says *serves the whole ledger* in
-words rather than by an absence that means something else everywhere else it appears. (The other
-is the `person-reader` organizer, for the opposite reason: its subject is a person, and a person
-is not something the ledger owes.)
+words rather than by an absence that means something else everywhere else it appears. (The others
+are the `person-reader` organizer, for the opposite reason — its subject is a person, and a person
+is not something the ledger owes — and the `skills-manager`, whose shelf is not either.)
 
 ## Delegation
 

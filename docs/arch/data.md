@@ -160,6 +160,7 @@ directions — one asserts something false, the other withholds something true.
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
+| **A task row traces to something a person asked for** | The board is theirs. A mind can decide it owes itself something, and the rows that produced — workshop errands, defects in the host's own source — were ones the person could neither act on nor trace. A fault the agent finds in its own product stays in the episode that recorded it; there is no second store for it |
 | An agent-written value that steers code is **parsed**, and unparseable means **absent** | The writer has a shell and the field is prose; absent has to fail toward redoing work, because redundant work is visible and skipped work is silent |
 | Where code cannot resolve a name, it **narrows the question and hands it back** | Spelling is code's to fold; meaning is not. A confidently wrong record is worse than a missing one, and only the reader has the conversation |
 | **Nobody writes their own seed** | The moment a seed exists to survive is the moment that takes the judgment needed to write one. Cognition writes Reaction's; Reflection writes Cognition's |
@@ -526,10 +527,30 @@ task a worker serves and refuses a subject nothing is filed under
 and that restraint is the load-bearing part. A dispatch that opened rows would make the field
 always satisfiable and the list unreadable: a review filed as its own task, a second row for
 work already tracked, an errand nobody would have written down. Every line here is something
-somebody decided was owed, or the list stops being the answer to *what do I owe*. Whoever hands
-the work out does the opening, which is Reflection as well as Cognition — a promise it made is
-no less a promise — and the other half does not widen at all: every transition of a row that
-exists is still a Task Manager's.
+somebody decided was owed, or the list stops being the answer to *what do I owe*. The opening
+is Cognition's, the rung that was in the conversation, and the other half does not widen at
+all: every transition of a row that exists is still a Task Manager's.
+
+**And every row traces to something a person asked for** — a request, a duty they set up, an
+idea they parked on purpose, or the unfinished half of one of those that a restart cut off.
+*Somebody decided it was owed* is not enough by itself, because a mind can decide it owes
+itself something, and the board is the person's: a row they cannot trace to anything they said
+is one they have to decode before they can ignore it. What that leaves out is everything the
+agent finds on its own account — a fault a pass turned up in its own machinery, a note the
+workshop should hold, a drive that has drifted. Those are real, and none of them is owed to
+anyone. Housekeeping is dispatched without a row: nothing Reflection hands out takes a
+`subject` ([agents.md](agents.md#cognition--minutes-and-beyond)). A fault in the product stays
+where it was found, in the episode that recorded it with its evidence, and gets no store of its
+own — on an ordinary install nobody who could fix it would ever read one.
+
+This is written from the ledger it cost. Reflection held a pen for its own errands from
+2026-08-25, and by 2026-09-15 the board carried rows no request had produced: nine
+`skills-workshop-*` rows, seven of them opened on that one day, one per note placed — the last
+kept even after `hi_create_worker` refused it as a subject — and three rows filing defects in
+the host's own source, each
+from a finding Reflection mailed up, each marked *not his request* and *don't raise it with
+him*. The person cancelled the first of those from the board. The next two were opened citing
+that cancel as the reason to wait for a better window.
 
 **One promise, one row.** Two rows for one job double-count what is owed and split its record
 across two folders. Folding them is the [Task Manager](agents.md#task-manager)'s, and it is the

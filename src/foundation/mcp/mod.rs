@@ -203,13 +203,15 @@ fn create_worker_tool() -> Value {
                     "type": "string",
                     "description": "The ledger task this errand serves — the directory name \
                                     under `memory/facets/tasks/`, not the title. **Required for \
-                                    every type except `task-manager` and `person-reader`**, \
-                                    which serve every task and no single one, and it must name \
-                                    a row that already exists: the call is refused otherwise, \
-                                    and the refusal lists what is open so you can pick. A \
+                                    every type except `task-manager`, `person-reader` and \
+                                    `skills-manager`**, which serve no single task, and \
+                                    **refused on every worker Reflection starts**, whose errands \
+                                    are housekeeping nobody asked for. It must name a row that \
+                                    already exists: the call is refused otherwise, and the \
+                                    refusal lists what is open so you can pick. A \
                                     follow-up, a review or a second pass serves the task it is \
                                     *about* — name that row, not a new one. If the work is \
-                                    genuinely new, open its row first (write \
+                                    genuinely new and a person asked for it, open its row first (write \
                                     `memory/facets/tasks/<subject>/facet.md`) and then create \
                                     the worker; a row nobody decided to owe is how the list \
                                     stops being worth reading. It is the whole join between a \
@@ -1597,28 +1599,44 @@ async fn dispatch_tool(
             // *nobody on it*, which is the line that gets a second worker started on a folder
             // the first is already writing into.
             //
-            // `task-manager` and `person-reader` serve no one task, and are exempt by the
-            // same predicate that marks them exempt on every roster
+            // `task-manager`, `person-reader` and `skills-manager` serve no one task, and are
+            // exempt by the same predicate that marks them exempt on every roster
             // ([`WorkerType::expects_a_subject`]).
+            //
+            // **And nothing Reflection starts takes one, whatever its kind.** The ledger holds
+            // only what a person asked for (`docs/arch/data.md#tasks`), and every errand
+            // Reflection hands out is housekeeping on the agent's own stores. While this fence
+            // required a subject of it, the way through was to open a row first, and that is
+            // what it did: nine `skills-workshop-*` rows on one install, one per note placed,
+            // each on the person's board beside the work they had actually asked for.
+            let from_reflection = role == Some("reflection");
             let asked =
                 args.get("subject").and_then(|v| v.as_str()).map(str::trim).unwrap_or_default();
-            if asked.is_empty() && kind.expects_a_subject() {
+            if !asked.is_empty() && from_reflection {
+                return tool_error(
+                    "a worker Reflection starts takes no `subject`: the ledger holds only what a \
+                     person asked for, and this errand is the agent's own housekeeping. Say what \
+                     it is about in `task` instead. If your pass showed a person is owed \
+                     something, that goes to `cognition`, which opens the row.",
+                );
+            }
+            if asked.is_empty() && kind.expects_a_subject() && !from_reflection {
                 return tool_error(&format!(
                     "hi_create_worker requires a `subject` for a `{}` worker — the ledger task \
                      this errand serves, spelled as the directory name under \
                      `memory/facets/tasks/`. It has to name a row that exists; call it again \
                      with your best guess and the refusal will list what is open. \
-                     (`task-manager` and `person-reader` serve every task and no single one, so \
-                     they take none.)",
+                     (`task-manager`, `person-reader` and `skills-manager` serve no single task, \
+                     so they take none.)",
                     kind.as_str()
                 ));
             }
-            // **And refused on the two kinds that serve no one task**, which is the same
-            // fence from the other side. A `task-manager` handed a subject would tie the
-            // whole ledger to a single row; a `person-reader`'s person is not a task at all,
-            // and the four that passed one on the install this was measured against would now
-            // each open a task named after a human being. Silence about that is how a
-            // `people/` name ends up as a row in `tasks/`.
+            // **And refused on the kinds that serve no one task**, which is the same fence
+            // from the other side. A `task-manager` handed a subject would tie the whole
+            // ledger to a single row; a `person-reader`'s person is not a task at all, and the
+            // four that passed one on the install this was measured against would now each
+            // open a task named after a human being. Silence about that is how a `people/`
+            // name ends up as a row in `tasks/`.
             if !asked.is_empty() && !kind.expects_a_subject() {
                 return tool_error(&format!(
                     "a `{}` worker takes no `subject`: it serves no single ledger task, and \
@@ -2992,9 +3010,18 @@ mod surface_tests {
         }
     }
 
-    /// Everything `hi_create_worker` needs that is not the errand itself.
+    /// Everything `hi_create_worker` needs that is not the errand itself, called as Cognition.
     async fn create_worker(
         dir: &std::path::Path,
+        args: Value,
+    ) -> Value {
+        create_worker_as(dir, "cognition", args).await
+    }
+
+    /// The same call from a named standing rung, for the fences that turn on who is asking.
+    async fn create_worker_as(
+        dir: &std::path::Path,
+        role: &str,
         args: Value,
     ) -> Value {
         let tools = crate::body::reaction::ToolRegistry::new();
@@ -3008,7 +3035,7 @@ mod surface_tests {
             &partial,
             &obs,
             Some(7.into()),
-            Some("cognition"),
+            Some(role),
             "hi_create_worker",
             &args,
         )
@@ -3098,14 +3125,15 @@ mod surface_tests {
         assert!(refusal(&got).contains("the owning loop is not up"), "{got}");
     }
 
-    /// **The two kinds that serve no single task are refused one, which is the same fence
-    /// from the other side.** A `task-manager` handed a subject would tie the whole ledger to
-    /// one row; a `person-reader`'s subject is a person, and accepting it would open a task
-    /// named after a human being — four calls on the measured install passed one.
+    /// **The kinds that serve no single task are refused one, which is the same fence from
+    /// the other side.** A `task-manager` handed a subject would tie the whole ledger to one
+    /// row; a `person-reader`'s subject is a person, and accepting it would open a task named
+    /// after a human being — four calls on the measured install passed one; a
+    /// `skills-manager` keeps a shelf nobody is owed.
     #[tokio::test]
     async fn the_kinds_that_serve_no_one_task_are_refused_a_subject() {
         let dir = tempfile::tempdir().unwrap();
-        for kind in ["task-manager", "person-reader"] {
+        for kind in ["task-manager", "person-reader", "skills-manager"] {
             let got = create_worker(
                 dir.path(),
                 json!({
@@ -3136,6 +3164,51 @@ mod surface_tests {
         let said = refusal(&got);
         assert!(said.contains("the owning loop is not up"), "{got}");
         assert!(!said.contains("subject"), "it must not be asked for one: {got}");
+    }
+
+    /// **Nothing Reflection starts takes a subject, whatever its kind — even one naming a row
+    /// that exists.** The ledger holds only what a person asked for, and Reflection's errands
+    /// are housekeeping. While this fence asked it for a subject, it opened a row to have one:
+    /// nine `skills-workshop-*` rows on the measured install, all on the person's board.
+    #[tokio::test]
+    async fn reflection_is_refused_a_subject_even_for_a_row_that_exists() {
+        use crate::mind::memory::tasks::{Task, TaskStatus, write_task};
+
+        let dir = tempfile::tempdir().unwrap();
+        write_task(dir.path(), &Task::new("Ship the flash cards", TaskStatus::Doing)).await.unwrap();
+
+        for kind in ["general", "skills-manager"] {
+            let got = create_worker_as(
+                dir.path(),
+                "reflection",
+                json!({
+                    "title": "place a note",
+                    "task": "put it on the shelf",
+                    "type": kind,
+                    "subject": "ship-the-flash-cards",
+                }),
+            )
+            .await;
+            assert!(refusal(&got).contains("takes no `subject`"), "{kind}: {got}");
+        }
+    }
+
+    /// And the other side: a `general` that Cognition must staff onto a row gets past the
+    /// fence with no subject when Reflection starts it, pinned the same way as above.
+    #[tokio::test]
+    async fn reflection_needs_no_subject_for_a_kind_that_otherwise_requires_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = create_worker_as(
+            dir.path(),
+            "reflection",
+            json!({ "title": "sweep the drive", "task": "go and look", "type": "general" }),
+        )
+        .await;
+
+        let said = refusal(&got);
+        assert!(said.contains("the owning loop is not up"), "{got}");
+        assert!(!said.contains("subject"), "it must not be asked for one: {got}");
+        assert!(!dir.path().join("memory/facets/tasks").exists(), "and no row opened for it");
     }
 
     #[test]
