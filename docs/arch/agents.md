@@ -640,6 +640,16 @@ until something resumes from it, and a rule is smaller than a table.
 | **Reflection** | never — a dead pass is re-driven by the frontier cursor, which already points where it stopped |
 | Workers | every one **the host ended** — reopened on its own thread, under its own slug, with its inbox — because the host ending a session is not the owner finishing with it |
 
+**A rung's turn the stop cut off is handed back.** A rung's batch lives only in its loop, so a
+stop mid-turn used to end what that turn was answering: on 2026-09-15 a person's question
+reached Reaction's turn 20ms before the process stopped, and after the next boot nothing
+answered it until they asked again. The resume itself says so — codex returns the thread's last
+turn `interrupted`, carrying the prompt it was handed — so when Reaction's or Cognition's resumed
+thread ends that way, the host posts what that turn was handed (its signals, or its messages;
+not the window, which the next turn re-projects) back into the rung's own inbox, with how long
+ago the turn started, and the loop takes it up as its next turn. It is only as good as the
+resume: a thread that cold-opens instead loses the turn with it.
+
 **A session the host ended comes back; a session its owner ended does not.** That is the whole
 rule, and it falls out of the lifetime a worker already has: a working session lives until its
 owner calls `CloseWorker` — no timer, no idle-out, nothing else ends one. So a worker still on

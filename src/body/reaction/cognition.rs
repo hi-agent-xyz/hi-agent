@@ -72,6 +72,10 @@ use super::{LoopInput, Reaction, LOOP_QUEUE_CAPACITY, workers};
 /// Cognition carries forward between wakes, at `memory/prompts/cognition.md`.
 const COGNITION_AGENT: &str = "cognition";
 
+/// The heading a turn's messages ride under, last in its prompt — one spelling, because
+/// [`super::cut_off_turn_note`] finds them again by it after a stop.
+const NEW_MESSAGES: &str = "## New messages\n";
+
 /// How long a `turn/steer` may go unanswered before the message it carried is put back on
 /// the next-turn path instead. See the call site for why this is bounded at all.
 const STEER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -611,6 +615,16 @@ async fn open_session(
         )
         .await;
 
+    // What a stop cut off comes back as mail, as it does for Reaction ([`super::cut_off_turn_note`]):
+    // the messages that turn was handling lived in this loop's `pending` and died with it.
+    if let Some(note) = opened
+        .take_interrupted()
+        .and_then(|turn| super::cut_off_turn_note(&turn, NEW_MESSAGES, chrono::Utc::now()))
+    {
+        registry::global().post(&slug, note);
+        tracing::info!(cognition = %slug, "resumed a thread the stop cut off mid-turn; re-handed its messages");
+    }
+
     // The directory the upkeep sweep reads. Registering is the whole of what an owner
     // owes it; a slug whose session has gone simply stops resolving.
     super::upkeep::attend(&slug, &opened);
@@ -668,9 +682,9 @@ async fn turn(
     let window = snapshot::agent_window(&reaction.inner.memory, Some(COGNITION_AGENT), id).await;
     let messages = pending.join("\n\n");
     let prompt = if window.trim().is_empty() {
-        format!("## New messages\n{messages}")
+        format!("{NEW_MESSAGES}{messages}")
     } else {
-        format!("{}\n\n## New messages\n{messages}", window.trim())
+        format!("{}\n\n{NEW_MESSAGES}{messages}", window.trim())
     };
 
     // Paired with "cognition turn done". Cognition has no conversation of its own, so it never reaches

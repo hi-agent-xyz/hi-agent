@@ -9,7 +9,7 @@ use anyhow::anyhow;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc};
 
-use crate::foundation::codex::process::CodexProcess;
+use crate::foundation::codex::process::{CodexProcess, InterruptedTurn};
 
 /// A single codex thread, owning the [`CodexProcess`] that hosts it.
 ///
@@ -58,6 +58,9 @@ pub struct AgentSession {
     /// which was said to a thread carrying 144 turns of conversation on every boot for as long
     /// as rungs have resumed.
     resumed: bool,
+    /// The turn the previous process left unfinished on this thread, until someone takes it —
+    /// see [`take_interrupted`](Self::take_interrupted).
+    interrupted: std::sync::Mutex<Option<InterruptedTurn>>,
     /// How full the window was on the last request any turn of this session made — see
     /// [`WindowFill`]. Lives on the session rather than the run because the moment to act
     /// on it is *after* a turn, when the [`SessionRun`] that measured it is gone.
@@ -655,6 +658,7 @@ impl AgentSession {
         data_dir: PathBuf,
         secrets: crate::foundation::privacy::SecretStore,
         resumed: bool,
+        interrupted: Option<InterruptedTurn>,
     ) -> Self {
         Self {
             id,
@@ -664,6 +668,7 @@ impl AgentSession {
             data_dir,
             secrets,
             resumed,
+            interrupted: std::sync::Mutex::new(interrupted),
             turn: Arc::new(tokio::sync::Semaphore::new(1)),
             window: Arc::new(std::sync::Mutex::new(None)),
             images: Arc::new(AtomicU64::new(0)),
@@ -694,6 +699,13 @@ impl AgentSession {
     /// Whether this session came back on a thread that already existed — see the field.
     pub fn resumed(&self) -> bool {
         self.resumed
+    }
+
+    /// The turn a stop cut off on the thread this session resumed, handed out once.
+    ///
+    /// Taken rather than read, so whoever re-hands its input cannot hand it twice.
+    pub fn take_interrupted(&self) -> Option<InterruptedTurn> {
+        self.interrupted.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
     }
 
     /// Start a turn with `text` and return a streaming handle.

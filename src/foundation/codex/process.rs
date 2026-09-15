@@ -423,6 +423,46 @@ fn thread_id_of(result: &Value, method: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow!("{method} returned no thread id: {result}"))
 }
 
+/// A turn the previous process started on a thread and never finished.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterruptedTurn {
+    /// When it started, if codex said.
+    pub started: Option<chrono::DateTime<chrono::Utc>>,
+    /// Everything the turn was handed, as the text of its user message.
+    pub input: String,
+}
+
+/// The thread's last turn out of a `thread/resume` response, if a stop cut it off.
+///
+/// **Codex's own verdict, and the only record that has it.** The host keeps no per-turn row for
+/// a rung: a stop that lands mid-turn kills the child, the loop's batch dies with the task, and
+/// the session index closes the rung as idle. What survives is the rollout, and the resume
+/// response replays it — the cut-off turn comes back `status: "interrupted"` with its
+/// `userMessage` intact, after a crash as much as after a clean stop. Measured on 2026-09-15:
+/// a person's question reached Reaction's turn, the process stopped 20ms later, and the next
+/// boot's resume said exactly this while nothing replied until they asked again.
+fn interrupted_turn_of(result: &Value) -> Option<InterruptedTurn> {
+    let last = result.get("thread")?.get("turns")?.as_array()?.last()?;
+    if last.get("status").and_then(Value::as_str) != Some("interrupted") {
+        return None;
+    }
+    let started = last
+        .get("startedAt")
+        .and_then(Value::as_i64)
+        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
+    let input = last
+        .get("items")?
+        .as_array()?
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("userMessage"))
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!input.is_empty()).then_some(InterruptedTurn { started, input })
+}
+
 impl CodexProcess {
     /// Spawn `codex app-server --stdio` and complete the `initialize` handshake.
     ///
@@ -690,7 +730,14 @@ impl CodexProcess {
     /// Errors are the caller's to absorb, and one is entirely ordinary: a thread that never
     /// took a turn has no rollout, and codex answers `no rollout found for thread id`. That
     /// is a boot where nothing had happened yet, not a fault.
-    pub async fn resume_thread(&self, thread_id: &str, opts: SessionOpts) -> anyhow::Result<String> {
+    ///
+    /// Answers the thread id and, when the stop cut the thread's last turn off, that turn
+    /// ([`interrupted_turn_of`]).
+    pub async fn resume_thread(
+        &self,
+        thread_id: &str,
+        opts: SessionOpts,
+    ) -> anyhow::Result<(String, Option<InterruptedTurn>)> {
         let mut params = json!({
             "threadId": thread_id,
             "approvalPolicy": "never",
@@ -714,8 +761,9 @@ impl CodexProcess {
         // id that went in — read it from the response anyway rather than echoing the
         // argument, so the session records what codex says it is on.
         let id = thread_id_of(&result, "thread/resume")?;
-        tracing::info!(thread_id = %id, "codex thread resumed");
-        Ok(id)
+        let interrupted = interrupted_turn_of(&result);
+        tracing::info!(thread_id = %id, interrupted = interrupted.is_some(), "codex thread resumed");
+        Ok((id, interrupted))
     }
 
     /// Issue a JSON-RPC request and await its response.
@@ -960,6 +1008,36 @@ mod tests {
         close_codex(child, close_stdin).await;
         let took = started.elapsed();
         assert!(took >= CLOSE_GRACE && took < CLOSE_GRACE + Duration::from_secs(3), "took {took:?}");
+    }
+
+    /// The shape of the resume that produced [`interrupted_turn_of`], trimmed from the frame
+    /// log of 2026-09-15: an earlier turn that completed, and the last one cut off holding a
+    /// person's question.
+    fn resume_response(last_status: &str) -> Value {
+        json!({ "thread": { "id": "t1", "status": { "type": "idle" }, "turns": [
+            { "id": "a", "status": "completed", "startedAt": 1789440000, "completedAt": 1789440009,
+              "items": [ { "type": "userMessage", "content": [ { "type": "text", "text": "earlier" } ] } ] },
+            { "id": "b", "status": last_status, "startedAt": 1789440550, "completedAt": null,
+              "items": [ { "type": "userMessage", "id": "u", "clientId": null, "content": [
+                  { "type": "text", "text": "## Working with them\n…\n\n## New signals\n>⟨voice: 赵力⟩ 球鞋研究怎么样了" }
+              ] } ] }
+        ] } })
+    }
+
+    #[test]
+    fn a_cut_off_last_turn_comes_back_with_what_it_was_handed() {
+        let turn = interrupted_turn_of(&resume_response("interrupted")).expect("interrupted");
+        assert!(turn.input.ends_with("## New signals\n>⟨voice: 赵力⟩ 球鞋研究怎么样了"), "{turn:?}");
+        assert_eq!(turn.started, chrono::DateTime::from_timestamp(1789440550, 0));
+    }
+
+    /// Only the **last** turn counts: an interruption earlier in the thread was followed by a
+    /// turn that ran, and a thread that never took a turn has nothing to hand back.
+    #[test]
+    fn a_finished_or_empty_thread_has_no_interrupted_turn() {
+        assert_eq!(interrupted_turn_of(&resume_response("completed")), None);
+        assert_eq!(interrupted_turn_of(&json!({ "thread": { "id": "t1", "turns": [] } })), None);
+        assert_eq!(interrupted_turn_of(&json!({ "thread": { "id": "t1" } })), None);
     }
 
     /// The record that produced this test, verbatim off the wire on 2026-08-10.

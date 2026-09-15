@@ -272,16 +272,19 @@ impl AgentLayer {
         // one *does* fall back, because a rung's worth does not depend on its memory, and
         // taking rather than reading is what makes a bad thread survivable: the slot is empty
         // for every later open in this run, so the session replacing a wedged one is cold.
-        let (id, resumed) = match resume {
-            Some(thread) => (
-                process.resume_thread(&thread, opts).await.with_context(|| {
+        //
+        // An errand's own cut-off turn is not carried: the host reopens an errand with a note of
+        // its own (`reopen_interrupted`), and that path already knows it was caught mid-turn.
+        let (id, resumed, interrupted) = match resume {
+            Some(thread) => {
+                let (id, _) = process.resume_thread(&thread, opts).await.with_context(|| {
                     format!("the errand's thread ({thread}) would not reopen")
-                })?,
-                true,
-            ),
+                })?;
+                (id, true, None)
+            }
             None => match crate::foundation::registry::global().take_resumable(role) {
                 Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
-                None => (process.open_thread(opts).await?, false),
+                None => (process.open_thread(opts).await?, false, None),
             },
         };
         if let Some(slug) = slug.as_ref() {
@@ -295,6 +298,7 @@ impl AgentLayer {
             self.inner.data_dir.clone(),
             self.inner.privacy.store().clone(),
             resumed,
+            interrupted,
         ))
     }
 
@@ -318,11 +322,11 @@ impl AgentLayer {
         thread: &str,
         role: Role,
         opts: SessionOpts,
-    ) -> anyhow::Result<(String, bool)> {
+    ) -> anyhow::Result<(String, bool, Option<crate::foundation::codex::process::InterruptedTurn>)> {
         match process.resume_thread(thread, opts.clone()).await {
-            Ok(id) => {
+            Ok((id, interrupted)) => {
                 tracing::info!(role = role.as_str(), thread_id = %id, "resumed the previous run's thread");
-                Ok((id, true))
+                Ok((id, true, interrupted))
             }
             Err(err) => {
                 tracing::info!(
@@ -335,7 +339,9 @@ impl AgentLayer {
                 // its first message depends on whether the thread remembers, and a fallback
                 // that reported itself as a resume would be the same lie an errand's resume
                 // is forbidden from telling.
-                process.open_thread(opts).await.map(|id| (id, false))
+                //
+                // A turn the stop cut off is lost with the thread here: nothing else records it.
+                process.open_thread(opts).await.map(|id| (id, false, None))
             }
         }
     }

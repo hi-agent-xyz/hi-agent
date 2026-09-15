@@ -2296,7 +2296,7 @@ async fn run_reaction_turn(
         .await
         .map(|i| floor::render_interruption(&i))
         .unwrap_or_default();
-    let new_signals = format!("## New signals\n{}", render_batch(batch));
+    let new_signals = format!("{NEW_SIGNALS}{}", render_batch(batch));
     // What the agent has on screen right now — its own presentation surface. Read
     // fresh every turn (it's a current fact, not durable memory), so a view dismissed
     // last turn is gone from this list now: the agent can see what's up and dismiss by
@@ -2753,6 +2753,34 @@ mod turn_context_tests {
         assert!(second.len() < first.len() / 2, "{} vs {}", second.len(), first.len());
     }
 
+    /// **A turn the stop cut off hands back its signals and nothing else of its prompt.** The
+    /// window it carried was the window as it stood then; the question is what is still owed.
+    #[test]
+    fn a_cut_off_turn_hands_back_only_its_signals_and_when() {
+        use crate::foundation::codex::process::InterruptedTurn;
+        let now = Utc::now();
+        let turn = InterruptedTurn {
+            started: Some(now - chrono::Duration::minutes(62)),
+            input: format!("## Working with them\n…\n\n{NEW_SIGNALS}>⟨voice: 赵力⟩ 球鞋研究怎么样了"),
+        };
+        let note = cut_off_turn_note(&turn, NEW_SIGNALS, now).expect("a note");
+        assert!(note.ends_with(">⟨voice: 赵力⟩ 球鞋研究怎么样了"), "{note}");
+        assert!(note.contains("1h ago"), "{note}");
+        assert!(!note.contains("Working with them"), "the stale window is not re-handed: {note}");
+
+        let no_signals = InterruptedTurn { started: None, input: "a seed, not a turn".into() };
+        assert_eq!(cut_off_turn_note(&no_signals, NEW_SIGNALS, now), None);
+
+        // Cut off again while answering the re-handed note: one note, not two.
+        let again = InterruptedTurn {
+            started: Some(now),
+            input: format!("window\n\n{NEW_SIGNALS}{note}"),
+        };
+        let second = cut_off_turn_note(&again, NEW_SIGNALS, now).expect("a note");
+        assert_eq!(second.matches(CUT_OFF_OPENING).count(), 1, "{second}");
+        assert!(second.ends_with(">⟨voice: 赵力⟩ 球鞋研究怎么样了"), "{second}");
+    }
+
     /// The tail is a retelling of signals already in the thread, so it rides a cold
     /// context and nothing else.
     #[tokio::test]
@@ -3061,6 +3089,51 @@ async fn record_reaction_session_closed(
         .await;
 }
 
+/// The heading a turn's signals ride under, last in its prompt ([`join_sections`]) — one
+/// spelling, because [`cut_off_turn_note`] finds the signals again by it.
+const NEW_SIGNALS: &str = "## New signals\n";
+
+/// What a resumed rung is handed when a stop cut off the turn it was in: what that turn was
+/// handed — everything after its last `heading` — and how long ago it started. `None` when the
+/// turn carried nothing under that heading.
+///
+/// Only that part, not the whole prompt: the rest was the window as it stood then, and the next
+/// turn re-projects it as it stands now. Posted into the rung's own inbox, so the loop takes it
+/// up as its next turn; Reaction and Cognition both call it where their session opens.
+fn cut_off_turn_note(
+    turn: &crate::foundation::codex::process::InterruptedTurn,
+    heading: &str,
+    now: chrono::DateTime<Utc>,
+) -> Option<String> {
+    // A turn that was itself re-handed and cut off again carries the earlier note; drop it, so
+    // restarts on a busy stretch — Cognition's turn is cut off on most boots — do not stack.
+    let handed = turn
+        .input
+        .rsplit_once(heading)?
+        .1
+        .trim()
+        .split("\n\n")
+        .filter(|paragraph| !paragraph.starts_with(CUT_OFF_OPENING))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if handed.trim().is_empty() {
+        return None;
+    }
+    let when = turn
+        .started
+        .map(|at| crate::mind::memory::tasks::ago(now, at))
+        .unwrap_or_else(|| "some time ago".to_string());
+    Some(format!(
+        "{CUT_OFF_OPENING}, started {when}, and has just come back up. That turn never \
+         finished. Anything it did before the stop may or may not have landed, so check before \
+         repeating it. This is what it had been handed; take it up against what is true now.\
+         \n\n{handed}"
+    ))
+}
+
+/// How [`cut_off_turn_note`] begins, so a note it wrote can be recognised inside a later one.
+const CUT_OFF_OPENING: &str = "(restart) The host process stopped in the middle of your turn";
+
 /// Open a fresh **reaction** session for `conversation`, carrying `reaction.md` as its system
 /// prompt (prepended to the first prompt). It speaks via plain message text and gets a
 /// minimal `show`-only `/mcp` surface, so a turn is a single quick generation that
@@ -3108,6 +3181,17 @@ async fn open_reaction_session(
             },
         )
         .await;
+    // **What the stop cut off comes back as mail**, so the loop takes it as its next turn. The
+    // batch that turn was answering lived in a local of the task the stop ended, and a resumed
+    // thread picks up idle: without this a person's question that reached the turn is simply
+    // never answered, until they ask again. One place, because both the warm-up and a cold
+    // first turn open the session here.
+    if let Some(note) =
+        session.take_interrupted().and_then(|turn| cut_off_turn_note(&turn, NEW_SIGNALS, Utc::now()))
+    {
+        registry::global().post(reaction_id, note);
+        tracing::info!("reaction resumed a thread the stop cut off mid-turn; re-handed its signals");
+    }
     Ok(session)
 }
 
