@@ -167,13 +167,13 @@ test("every picture is an image node below its task, and no card wears one", () 
     assert.deepEqual([tile.w, tile.h], [240, 135], "and every tile is the size of a card");
   }
 
-  // A mention of one of the app's own surfaces is not an output, so it is never the picture.
-  const mentions = project({
-    tasks: [{ ...task("looked"), refs: ["factory/home", "views/real"] }],
-    views: [{ view_ref: "factory/home", label: "Home", system: true, shot_url: "/home.png" },
-      { view_ref: "views/real", label: "Real", shot_url: "/real.png" }] });
-  const looked = ofKind(mentions, "task")[0];
-  assert.deepEqual(list(looked.data.results.map((r) => r.title)), ["Real"]);
+  // Tiles follow the task's `refs` — newest made first — not the order the view list
+  // happens to come back in.
+  const reversed = project({
+    tasks: [{ ...task("deck"), refs: ["views/other-slide", "views/slide"] }],
+    views: [{ view_ref: "views/slide", label: "Slide", shot_url: "/a.png" },
+      { view_ref: "views/other-slide", label: "Other", shot_url: "/b.png" }] });
+  assert.deepEqual(list(ofKind(reversed, "result").map((n) => n.title)), ["Other", "Slide"]);
 
   // A picture-less result is never a node, however many there are.
   const duty = project({ tasks: [{ ...task("logs", "serving"), files: Array.from({ length: 40 }, (_, i) => ({ path: `r${i}.json` })) }] });

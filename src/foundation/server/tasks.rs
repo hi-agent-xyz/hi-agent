@@ -110,8 +110,8 @@ struct RowDto {
     /// The newest moment a *mind* wrote — see [`latest_moment`]. This is the one line a card
     /// prints and the only thing that answers whether a person is being waited on.
     latest: Option<MomentDto>,
-    /// The views this record produced — every name it spells that is really a view, newest
-    /// first. See [`view_refs`].
+    /// The views this task made, newest first — its `made` lines, never names its prose
+    /// spells. See [`view_refs`].
     refs: Vec<String>,
     /// The artifacts the record names that are really on disk — see [`referenced_files`].
     ///
@@ -156,105 +156,43 @@ fn moment(entry: &TimelineEntry) -> MomentDto {
 
 /// The newest thing a *mind* wrote — the one line a card prints under the title.
 ///
-/// `moved` is excluded because the store writes it on a transition it merely witnessed: a
-/// status change is the consequence of a decision, not a statement about one, so it can
-/// neither raise a wait nor answer it. A row whose only entries are `moved` has said nothing
-/// and gets no line.
+/// `moved` and `made` are excluded because the store writes them about things it merely
+/// witnessed: a status change is the consequence of a decision, not a statement about one,
+/// and a builder rendering its page is not anybody saying anything. Neither can raise a wait
+/// nor answer it. A row whose only entries are the store's has said nothing and gets no line.
 fn latest_moment(task: &Task) -> Option<MomentDto> {
-    task.timeline.iter().rev().find(|entry| entry.kind != TimelineKind::Moved).map(moment)
+    task.timeline
+        .iter()
+        .rev()
+        .find(|entry| !matches!(entry.kind, TimelineKind::Moved | TimelineKind::Made))
+        .map(moment)
 }
 
-/// The views a record produced: every name it spells that is **really a view**.
+/// The views this task made: its `made` lines, newest first, that still name a view on disk.
 ///
-/// Two halves, and keeping them apart is what makes this safe. Matching is deliberately loose
-/// — four spellings, all of them in live records:
+/// **Not the names its prose spells, which is what this used to be.** Four spellings were
+/// matched anywhere in the record and filtered against the views tree, and the filter was
+/// the only check — so a note that another task's page was on screen made that page this
+/// task's result, and a shoe report hung under a KTV task. A mention has no verb, and no
+/// grammar gives it one. A `made` line is written by the store at the moment it saw a session
+/// serving this task render the view ([`tasks::record_made`]), so it is a fact, not a reading.
 ///
-/// - ``​`deck/leader`​`` — inline code, what both prompts tell a writer to use
-/// - `"deck/leader"` — quoted, how a record quotes a name mid-sentence
-/// - `data/views/deck/leader.jsx` — the source path, which is what a builder just wrote
-/// - `view_ref: "deck/leader"` — the field, copied out of a frontmatter or a tool call
+/// `known` still filters, because a view can be deleted after it was made, and a ref the
+/// person cannot open is not a result they can be shown. And [`can_be_a_result`] is applied
+/// again on read, so a `made` line typed by hand cannot put a system view or a probe back.
 ///
-/// …and then every candidate has to be in `known`, which is the views actually on disk. That
-/// is the half that makes looseness free: a body is full of backticked words that are not
-/// views (`status_since`, a SHA, a shell line), and none of them can reach the row because
-/// none of them names a view. It is also why there is no cap here — the answer cannot be
-/// longer than the view index.
-///
-/// **This grammar was the home chart's**, which read it off the prose the row no longer
-/// ships, down to the same rule that only a known view can be opened.
+/// [`can_be_a_result`]: crate::mind::views::can_be_a_result
 fn view_refs(task: &Task, known: &std::collections::HashSet<String>) -> Vec<String> {
-    if known.is_empty() {
-        return Vec::new();
-    }
     let mut out: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    let mut take = |token: &str| {
-        let token = token.trim_end_matches(".jsx");
-        if let Some(view) = known.get(token)
-            && seen.insert(view.as_str())
+    for view in task.timeline.iter().rev().filter_map(|entry| entry.made_ref()) {
+        if crate::mind::views::can_be_a_result(view)
+            && known.contains(view)
+            && !out.iter().any(|seen| seen == view)
         {
-            out.push(view.clone());
+            out.push(view.to_owned());
         }
-    };
-    let mut found: Vec<String> = Vec::new();
-    // Newest first: a row that has been through three deliverables is about the last one.
-    for entry in task.timeline.iter().rev() {
-        mentions(&entry.text, &mut found);
-        for token in found.drain(..) {
-            take(&token);
-        }
-    }
-    mentions(&task.body, &mut found);
-    for token in found.drain(..) {
-        take(&token);
     }
     out
-}
-
-/// Every ref-shaped token in `text`, appended to `out`, in the order they are written.
-fn mentions(text: &str, out: &mut Vec<String>) {
-    code_spans(text, out);
-    delimited(text, '"', out);
-    after(text, "views/", out);
-    // `view_ref: "x"`, `view_ref = x` — the separator and the quote are both optional, so
-    // skip past whatever of them is there and read the name.
-    for (at, _) in text.match_indices("view_ref") {
-        let rest = text[at + "view_ref".len()..]
-            .trim_start()
-            .trim_start_matches([':', '='])
-            .trim_start()
-            .trim_start_matches(['"', '\'', '`']);
-        out.push(rest.chars().take_while(|c| ref_char(*c)).collect());
-    }
-}
-
-/// Every run between a pair of `delimiter`s.
-fn delimited(text: &str, delimiter: char, out: &mut Vec<String>) {
-    let mut rest = text;
-    while let Some(open) = rest.find(delimiter) {
-        let after = &rest[open + delimiter.len_utf8()..];
-        let Some(close) = after.find(delimiter) else {
-            return;
-        };
-        out.push(after[..close].to_owned());
-        rest = &after[close + delimiter.len_utf8()..];
-    }
-}
-
-/// Whatever follows each occurrence of `marker`, up to the first character a ref cannot hold.
-///
-/// `data/views/ktv/method.jsx` is why this is a marker and not a prefix: the path a record
-/// writes is rooted wherever the writer happened to be standing, and the ref is what follows
-/// `views/` in it.
-fn after(text: &str, marker: &str, out: &mut Vec<String>) {
-    for (at, _) in text.match_indices(marker) {
-        let rest = &text[at + marker.len()..];
-        out.push(rest.chars().take_while(|c| ref_char(*c)).collect());
-    }
-}
-
-fn ref_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | '.')
 }
 
 /// Most foreign frontmatter fields one task ships, and the most characters of any one value.
@@ -866,8 +804,8 @@ mod tests {
         assert!(bytes < 4_000, "a row of a 400 KB record came to {bytes} bytes");
     }
 
-    /// `moved` is the store's own line, so it can neither raise a wait nor answer one. A row
-    /// whose only entries are `moved` has said nothing, and gets no line rather than the
+    /// `moved` and `made` are the store's own lines, so neither can raise a wait nor answer one.
+    /// A row whose only entries are the store's has said nothing, and gets no line rather than the
     /// transition spelled for a machine.
     #[test]
     fn latest_is_the_newest_line_a_mind_wrote() {
@@ -891,113 +829,71 @@ mod tests {
         let full = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
         assert_eq!(full["latest"], value["latest"]);
 
-        task.timeline = vec![entry(TimelineKind::Moved, "todo \u{2192} doing")];
+        task.timeline = vec![
+            entry(TimelineKind::Moved, "todo \u{2192} doing"),
+            entry(TimelineKind::Made, "`deck/leader`"),
+        ];
         let value = serde_json::to_value(row(&task, false, Vec::new(), &views(&[]))).unwrap();
-        assert!(value["latest"].is_null(), "a row that only moved has said nothing: {value}");
+        assert!(value["latest"].is_null(), "a row with only the store's lines has said nothing: {value}");
     }
 
     fn views(refs: &[&str]) -> std::collections::HashSet<String> {
         refs.iter().map(|r| (*r).to_owned()).collect()
     }
 
-    /// The four spellings a live record uses for a view. This grammar was the home chart's,
-    /// read off the prose the row no longer ships; it is pinned here because losing one form
-    /// silently drops that task's artifact node off the chart rather than failing anything.
+    /// **A mention is not a result, in any spelling.** These are the four the old matcher read
+    /// and the two sentences that put pictures under the wrong task on a live instance — a
+    /// note about what the screen was showing, in both directions. None of them reaches the
+    /// row, because nothing in prose says the task made anything.
     #[test]
-    fn every_spelling_a_record_uses_for_a_view_is_read() {
-        let mut task = Task::new("Ship the deck", TaskStatus::Doing);
+    fn a_view_the_record_only_mentions_is_not_a_result() {
+        let mut task = Task::new("Put the KTV method page up", TaskStatus::Doing);
         task.body = [
             "inline code says `deck/leader`",
             "quoted says \"health/checkin\"",
             "a builder just wrote data/views/knq/commentary.jsx",
             "and the field reads view_ref: \"xiaoyuanzhu/vocab\"",
-            "a top-level one lives at views/vocab-book.jsx",
         ]
         .join("\n");
+        task.timeline = vec![TimelineEntry::new(
+            TimelineKind::Update,
+            at(1, 9),
+            "\u{5c4f}\u{4e0a}\u{73b0}\u{5728}\u{6302}\u{7684}\u{662f} `research-two-pairs`",
+        )];
         let known = views(&[
             "deck/leader",
             "health/checkin",
             "knq/commentary",
             "xiaoyuanzhu/vocab",
-            "vocab-book",
+            "research-two-pairs",
         ]);
-        let mut refs = view_refs(&task, &known);
-        refs.sort();
-        assert_eq!(
-            refs,
-            vec![
-                "deck/leader",
-                "health/checkin",
-                "knq/commentary",
-                "vocab-book",
-                "xiaoyuanzhu/vocab"
-            ]
-        );
+        assert!(view_refs(&task, &known).is_empty());
     }
 
-    /// **Looseness is free because the index is the filter.** These bodies are full of
-    /// backticked things that are spelled like refs and are not views — capture stems, dated
-    /// counters, shell words, the path the ref was written inside — and none of them can
-    /// reach a row, because a row only carries names the views tree actually has.
+    /// What a row carries is its `made` lines: newest first, once each, and only while the
+    /// view is still on disk to open. A hand-typed `made` line cannot bring back the two
+    /// classes that are never a task's product.
     #[test]
-    fn a_name_that_is_not_a_view_never_reaches_the_row() {
-        let mut task = Task::new("Watch it", TaskStatus::Serving);
-        task.body = [
-            "stems and counters: `03/35-41`, `evidence/01`, `96/96`, `2026/09`",
-            "shell and schema words: `status_since`, `hi_say`, `report`",
-            "the path around the ref: `data/views/ktv-deploy-method.jsx`",
-            "and a real one: `factory/tasks`",
-        ]
-        .join("\n");
-        let known = views(&["factory/tasks", "ktv-deploy-method"]);
-        let mut refs = view_refs(&task, &known);
-        refs.sort();
-        // `ktv-deploy-method` is there because `views/` is a marker inside that path, not a
-        // prefix of it — the path a record writes is rooted wherever the writer stood.
-        assert_eq!(refs, vec!["factory/tasks", "ktv-deploy-method"]);
-    }
-
-    /// Nothing is a view when nothing has been built, and the row says so rather than
-    /// carrying every backticked word in the ledger.
-    #[test]
-    fn an_empty_views_tree_resolves_nothing() {
-        let mut task = Task::new("Ship the deck", TaskStatus::Doing);
-        task.body = "`deck/leader` and views/other.jsx".into();
-        assert!(view_refs(&task, &views(&[])).is_empty());
-    }
-
-    /// The tokens a chart follows come off the row, because the prose they are found in is
-    /// exactly what the row stops shipping. Newest entry first — a row that has been through
-    /// three deliverables is about the last one — then the account behind it.
-    #[test]
-    fn refs_carry_the_tokens_out_of_a_body_the_row_drops() {
-        let mut task = Task::new("Health check-ins", TaskStatus::Serving);
-        task.body = "the first cut was `deck/old`, and `notes.md` is beside it".into();
+    fn refs_are_what_the_task_made_newest_first() {
+        let mut task = Task::new("Research two pairs", TaskStatus::Doing);
+        let made = |day, text: &str| TimelineEntry::new(TimelineKind::Made, at(day, 9), text);
         task.timeline = vec![
-            TimelineEntry {
-                at: Some(at(1, 9)),
-                kind: TimelineKind::Delivered,
-                text: "shipped `deck/first`".into(),
-            },
-            TimelineEntry {
-                at: Some(at(2, 9)),
-                kind: TimelineKind::Delivered,
-                text: "replaced by `health/checkin`, checked against `factory/tasks`".into(),
-            },
+            made(1, "`shoes/log`"),
+            made(2, "`shoes/report`"),
+            TimelineEntry::new(TimelineKind::Update, at(3, 9), "the screen shows `polaroid/poster`"),
+            made(4, "`shoes/deleted`"),
+            made(5, "factory/home"),
+            made(6, "`_qa-shoes-wide`"),
+            made(7, "`shoes/log`"),
         ];
-
-        task.timeline.push(TimelineEntry {
-            at: Some(at(3, 9)),
-            kind: TimelineKind::Update,
-            text: "from `file/2026-09-09/06/39-31.png`, ratio `96/96`, `evidence/01`".into(),
-        });
-
-        let known = views(&["deck/old", "deck/first", "health/checkin", "factory/tasks"]);
-        assert_eq!(
-            view_refs(&task, &known),
-            vec!["health/checkin", "factory/tasks", "deck/first", "deck/old"],
-            "newest entry first, then the prose behind it"
-        );
+        let known = views(&[
+            "shoes/log",
+            "shoes/report",
+            "polaroid/poster",
+            "factory/home",
+            "_qa-shoes-wide",
+        ]);
+        assert_eq!(view_refs(&task, &known), vec!["shoes/log", "shoes/report"]);
     }
 
     #[tokio::test]

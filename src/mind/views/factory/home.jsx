@@ -141,26 +141,21 @@ function normalizeSession(raw) {
 }
 
 function taskResults(task, views) {
-  // The row names what it mentions and this decides what that means. Matching moved to the
-  // server (`view_refs` in `foundation/server/tasks.rs`) when the row stopped carrying the
-  // prose to match against — same four spellings, and the same rule that only a known view
-  // can be opened. What changed here is what a match becomes: a picture, or nothing.
+  // `refs` is what this task MADE, newest first: the store's `made` lines, which it writes
+  // when a session serving the task renders a view (`view_refs` in
+  // `foundation/server/tasks.rs`). The server has already dropped views no longer on disk,
+  // the app's own surfaces and builders' `_` probes, so this only looks each one up.
   //
-  // **A system view is never a task's product.** A ref is a MENTION, and a task whose prose
-  // says "looked at factory/home" gets `factory/home` in its refs; three such mentions were
-  // being taken as results across the work in hand, and two of them were being drawn as
-  // the task's picture — a task about a birthday deck showed this very surface. The app's
-  // own surfaces are the one class of mention that is categorically not an output.
-  //
-  // It does not fix a mention of ANOTHER task's result, which is the same confusion without
-  // a flag to catch it: `research-two-pairs` is currently a result of the unrelated KTV
-  // task. That belongs to the server-side matching, not here.
+  // It used to be every known view the task's prose MENTIONED, and a mention has no verb:
+  // "the screen is showing `research-two-pairs`" hung a shoe report under a KTV task. The
+  // system-view filter that lived here was the first patch on that, for the one class a flag
+  // could catch; the fix is at the source, and the patch went with the cause.
   //
   // **Only a picture is kept.** A result without one — a view never shot, a file the task
   // wrote — used to feed a count printed on the card, and the count is gone: a number with
   // nothing to open behind it is a claim the card cannot back, and `factory/tasks` lists them.
-  const mentioned = new Set(task.refs || []);
-  return views.filter((v) => v.view_ref && !v.system && v.shot_url && mentioned.has(v.view_ref))
+  const byRef = new Map(views.filter((v) => v.view_ref && v.shot_url).map((v) => [v.view_ref, v]));
+  return (task.refs || []).filter((r) => byRef.has(r)).map((r) => byRef.get(r))
     .map((v) => ({ id: v.view_ref, title: v.label || v.view_ref, shot: v.shot_url }));
 }
 
@@ -177,10 +172,10 @@ function taskResults(task, views) {
  * twenty-one cards for them were 45% of the old canvas. The pictures below say what the work
  * actually made; what it wrote besides is `factory/tasks`' to list.
  *
- * **Order still decides which six, and it is not "the latest".** View records have no
- * timestamp; the only time-like thing on them is the `?v=` cache-buster on the shot URL, which
- * is not declared to mean recency and would break silently the day it became a hash. The tiles
- * are the first shot-bearing views in the task's own `refs` order, and claim nothing more.
+ * **Order decides which six: the newest this task made.** That is the time on the task's own
+ * `made` line. View records still have no timestamp, and the `?v=` cache-buster on the shot URL
+ * is not declared to mean recency, so the tiles are the first shot-bearing views in `refs`
+ * order and claim nothing about when a view last changed.
  */
 
 function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now = Date.now()) {

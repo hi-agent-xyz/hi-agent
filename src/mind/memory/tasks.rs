@@ -184,6 +184,15 @@ pub enum TimelineKind {
     /// that stamps `status_since`: a mind that has to remember to record its own
     /// transition is a mind that will sometimes not.
     Moved,
+    /// A view this task made, as the ref in backticks. **Written by the store, never by a
+    /// mind**, the first time a session serving the task renders the view with
+    /// `hi_review_view` — the one moment the host sees a view being made *for* a task,
+    /// because a view is saved by writing a file and a write does not say who made it.
+    ///
+    /// It replaced reading refs out of prose. A mention has no verb: "the screen is showing
+    /// `research-two-pairs`" made a shoe report the result of a KTV task. See
+    /// [`Task::record_made`] and `docs/arch/home.md`.
+    Made,
     /// A line this schema does not recognise, kept exactly as it was written and
     /// re-emitted without a kind word. The frontmatter rule one level down: a writer that
     /// does not understand a line is not thereby entitled to drop it. To a reader it is an
@@ -199,6 +208,7 @@ impl TimelineKind {
             Self::Delivered => "delivered",
             Self::Waiting => "waiting",
             Self::Moved => "moved",
+            Self::Made => "made",
             Self::Note => "note",
         }
     }
@@ -221,6 +231,7 @@ impl TimelineKind {
             "delivered" | "landed" => Some(Self::Delivered),
             "waiting" | "blocked" => Some(Self::Waiting),
             "moved" => Some(Self::Moved),
+            "made" => Some(Self::Made),
             "note" => Some(Self::Note),
             _ => None,
         }
@@ -280,6 +291,12 @@ impl TimelineEntry {
             text.push_str(" (on the board)");
         }
         Self::new(TimelineKind::Moved, at, text)
+    }
+
+    /// The ref a [`TimelineKind::Made`] line names, or `None` for any other line. Exact: the
+    /// text is the ref, backticked or bare, and a sentence that merely contains one is not.
+    pub fn made_ref(&self) -> Option<&str> {
+        (self.kind == TimelineKind::Made).then(|| self.text.trim().trim_matches('`').trim())
     }
 }
 
@@ -546,6 +563,24 @@ impl Task {
             .find(|entry| entry.kind == TimelineKind::Created)
     }
 
+    /// Write down that this task made `view_ref`, once. `false` when the record already says
+    /// so, or when the ref is not something a task can make
+    /// ([`crate::mind::views::can_be_a_result`]).
+    ///
+    /// Once, because the moment that stamps it is a render and a builder renders the same
+    /// view many times on the way to handing it over — one session measured 75 — and the
+    /// line answers *did this task make it, and since when*, which the first one settles.
+    pub fn record_made(&mut self, view_ref: &str, at: DateTime<Utc>) -> bool {
+        if !crate::mind::views::can_be_a_result(view_ref)
+            || self.timeline.iter().any(|entry| entry.made_ref() == Some(view_ref))
+        {
+            return false;
+        }
+        self.timeline
+            .push(TimelineEntry::new(TimelineKind::Made, at, format!("`{view_ref}`")));
+        true
+    }
+
     fn is_overdue(&self, now: DateTime<Utc>) -> bool {
         self.due_at.is_some_and(|due| due <= now)
     }
@@ -599,6 +634,19 @@ pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> 
         seen.entry(key).or_default().status = Some(task.status);
     }
     Ok(written)
+}
+
+/// [`Task::record_made`] on the record at `subject`, written back only when it added a line.
+/// `false` for a subject with no record — a session can name a task nobody filed.
+pub async fn record_made(data_dir: &Path, subject: &str, view_ref: &str) -> anyhow::Result<bool> {
+    let Some(mut task) = read_task(data_dir, subject).await? else {
+        return Ok(false);
+    };
+    if !task.record_made(view_ref, Utc::now()) {
+        return Ok(false);
+    }
+    write_task(data_dir, &task).await?;
+    Ok(true)
 }
 
 pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<String> {
@@ -2128,6 +2176,29 @@ mod tests {
         // boundary unless a test puts it there.
         task.status_since = Some(now() - Duration::hours(1));
         task
+    }
+
+    /// A builder renders one view many times; the task made it once. The two classes that are
+    /// never a product are refused at the write, and the line survives the file.
+    #[tokio::test]
+    async fn a_made_view_is_recorded_once_and_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut record = task("research two pairs", TaskStatus::Doing);
+        assert!(record.record_made("shoes/report", at(2, 9)));
+        assert!(!record.record_made("shoes/report", at(3, 9)), "a re-render adds nothing");
+        assert!(!record.record_made("factory/home", at(3, 9)));
+        assert!(!record.record_made("_qa-shoes-wide", at(3, 9)));
+        assert!(!record.record_made("shoes/_probe", at(3, 9)));
+        write_task(dir.path(), &record).await.unwrap();
+
+        assert!(record_made(dir.path(), &record.subject, "shoes/log").await.unwrap());
+        assert!(!record_made(dir.path(), &record.subject, "shoes/report").await.unwrap());
+        assert!(!record_made(dir.path(), "nobody-filed-this", "shoes/log").await.unwrap());
+
+        let back = read_task(dir.path(), &record.subject).await.unwrap().unwrap();
+        let made: Vec<&str> = back.timeline.iter().filter_map(TimelineEntry::made_ref).collect();
+        assert_eq!(made, vec!["shoes/report", "shoes/log"]);
+        assert!(render(&back).contains("made \u{2014} `shoes/report`"), "{}", render(&back));
     }
 
     #[test]

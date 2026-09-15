@@ -133,6 +133,7 @@ const T = {
       delivered: "delivered",
       waiting: "waiting",
       moved: "moved",
+      made: "made",
       note: "update",
       // Not kinds the store writes — the switchboard's line, built by `liveMoment`. The
       // word is deliberately not a past-tense one: everything else on this list happened,
@@ -225,6 +226,7 @@ const T = {
       delivered: "交付",
       waiting: "等人",
       moved: "状态",
+      made: "做出",
       note: "进展",
       live: "此刻",
       failed: "上一轮失败",
@@ -296,6 +298,7 @@ const MOMENT_TONE = {
   waiting: "var(--danger)",
   update: "var(--fg-dim)",
   moved: "var(--fg-mute)",
+  made: "var(--fg-mute)",
   note: "var(--fg-mute)",
   // The switchboard's two, which are the status colours and not record colours: `live` is
   // the same `--accent` the word `Doing` is drawn in, because that is what it qualifies.

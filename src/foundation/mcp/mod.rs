@@ -1262,7 +1262,15 @@ async fn dispatch_tool(
         "hi_image_to_image" => return do_image_to_image(data_dir, args).await,
         "hi_text_to_video" => return do_text_to_video(data_dir, slug, args).await,
         "hi_image_to_video" => return do_image_to_video(data_dir, slug, args).await,
-        "hi_review_view" => return do_review_view(data_dir, args).await,
+        "hi_review_view" => {
+            // The task this render is for, if the caller serves one: the registry's `subject`,
+            // which is the ledger key, never a reading of the session's title.
+            let subject = slug
+                .as_ref()
+                .and_then(|id| registry::global().status(id))
+                .and_then(|status| status.subject);
+            return do_review_view(data_dir, subject.as_deref(), args).await;
+        }
         "hi_share_view" => return do_share_view(data_dir, args).await,
         "hi_http_request" => {
             return match crate::foundation::privacy::broker::http_request(privacy, args).await {
@@ -1850,11 +1858,14 @@ async fn dispatch_tool(
 /// [`view_render::render`], which owns the browser, the viewport policy and the blank
 /// detection.
 ///
+/// `subject` is the task the calling session serves, if any; the first render for it is
+/// recorded on that task as a view it made.
+///
 /// **The review frame IS the stage frame** — full-bleed, the only frame there is — so
 /// a review renders the thing exactly the way `hi_show` will put it up. This used to be a
 /// negotiation between the caller's override and a region declared in a sidecar, and
 /// getting it wrong failed a view for a defect the review itself introduced.
-async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
+async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args: &Value) -> Value {
     let view_ref = args.get("ref").and_then(Value::as_str).unwrap_or_default().trim().to_string();
     if view_ref.is_empty() {
         return tool_error("hi_review_view requires a `ref`");
@@ -1872,6 +1883,20 @@ async fn do_review_view(data_dir: &std::path::Path, args: &Value) -> Value {
         Ok(u) => u,
         Err(e) => return tool_error(&format!("the view did not compile: {e}")),
     };
+
+    // **This render is how a task comes to have made this view.** A view is saved by writing
+    // a file, which says nothing about who wrote it; a builder renders what it is about to
+    // hand over, and this call arrives knowing the task its session serves. So the first
+    // render for a task is written onto that task's timeline, and that line — not any name
+    // the task's prose happens to spell — is what makes it the task's result on Home. Past
+    // the compile, so a ref that is not a working view is never recorded. See
+    // `docs/arch/home.md`.
+    if let Some(subject) = subject
+        && let Err(error) =
+            crate::mind::memory::tasks::record_made(data_dir, subject, &view_ref).await
+    {
+        tracing::warn!(subject, view_ref, %error, "could not record the view on its task");
+    }
 
     // Every view renders full-bleed, so there is no placement to resolve or override:
     // the review page shows the view at exactly the frame it will occupy on the stage.

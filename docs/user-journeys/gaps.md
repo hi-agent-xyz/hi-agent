@@ -1247,6 +1247,25 @@ floor 里已经有 barge-in 的概念(`take_pending` → `render_interruption`),
 
 ---
 
+## 35 · Home 把任务"提到过"的 view 当成它"做出"的成果 · ✅ **已修 `task-results-are-made`,未复测**
+
+**症状。** 2026-09-15 Home 画布上,「把 KTV 本机部署方法页改净并上屏」下面挂着两双鞋的调研页,「调研两双鞋购买方案」下面挂着妹妹那份演示的拍立得九宫格。
+
+**证据(从对话之外)。**
+- `GET /api/tasks`:`ktv-deploy-method-view-20260911` 的 `refs` 含 `research-two-pairs`;`research-two-pairs-of-shoes-20260909` 的 `refs` 含 `take-second-polaroid-nine-grid/poster`、`factory/home`、`factory/tasks`。
+- 对应原文都是"屏上现在是什么"的备注:KTV 那条 09-11 的时间线写"屏上现在挂的是 `research-two-pairs`";鞋那条正文写"内容位是 `take-second-polaroid-nine-grid/poster` … 不是鞋报告页"。
+- 帧日志回放(`memory/raw/sessions/*/*.jsonl`,session→任务按 `hi_create_worker` 的 `subject` 参数与返回的 session id 对上):全台账 99 个非系统 view 的 ref 里,**46 个确由该任务的 session 用 `hi_review_view` 渲染过,23 个是别的任务的 session 渲染的,30 个日志里找不到渲染者**;另有 11 个是 `factory/*` 系统 view。反过来,鞋任务自己的 builder 渲染过的正是 `research-two-pairs`、`research-two-pairs-log`、`thin-running-shoes-2026/thin-soled-running-shoes`,外加一串 `_qa-*` / `_probe-*` / `_tmp-*` 试渲染。
+
+**机制。** `view_refs`(`foundation/server/tasks.rs`)把任务正文和时间线里四种写法的 view 名全部抓出来,只用"磁盘上确实有这个 view"过滤。提到没有动词,过滤器是唯一的检查。
+
+**改动 2026-09-15 · `task-results-are-made`。** 服务某任务的 session 第一次对某个 view 调 `hi_review_view`(编译通过之后),host 在该任务时间线上追加一行 ``made — `ref` ``,与 `moved` 同类,每任务每 view 一次。`view_refs` 只读这些行,正文不再读;`factory/*` 与带 `_` 段的名字在写入和读取两端都拒绝。设计见 [`home.md`](../arch/home.md) 的 *A result is what the task made*。
+
+🔴 **未复测。** 要看的是:(1) 派一个做 view 的 worker,它第一次 `hi_review_view` 后,任务的 `facet.md` 时间线多出一行 `made`,再次渲染不再增加;(2) Home 上该任务下挂的正是这张图;(3) 该任务的 card 文案(`latest`)没有被这行顶掉。**已知不会有图的:** 本次改动之前的记录(没有 `made` 行),以及只负责把别人的页面上屏、自己没渲染过的任务。
+
+**涉及 journey:** 所有产出 view 的 journey。
+
+---
+
 ## 附:测试方法(复现用)
 
 `docs/user-journeys/` 是**意图**的规格,只能对着真跑的实例验,不能靠读代码验。本轮的做法:

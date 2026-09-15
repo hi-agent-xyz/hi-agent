@@ -303,8 +303,9 @@ a status it is a word the reader does not know, and the row comes back as `todo`
 "not started" about work that is underway and stuck.
 
 **Everything after that line is somebody else's.** The worker adds `update`, `delivered`
-and `waiting` as it goes; the host writes a `moved` line itself on every status change, so
-never type one. You write `created`, once.
+and `waiting` as it goes; the host writes a `moved` line itself on every status change, and a
+`made` line the first time a session on the task renders a view with `hi_review_view`, so
+never type either. You write `created`, once.
 
 **And `once` means at open or never.** There is no later: the worker is told not to edit
 your line, the manager writes closings, and you do not go back into a row once it exists.

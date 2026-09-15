@@ -78,6 +78,18 @@ pub fn valid_ref(view_ref: &str) -> bool {
         })
 }
 
+/// Whether a ref names something a task can have made.
+///
+/// Two classes never are. `factory/*` ships with the app, so a task that renders
+/// `factory/home` looked at it. And a `_`-led segment is the tree's tooling or a builder's
+/// probe — `_compiled/`, `_qa-shoes-wide`, `_tmp-r2b/…` — the rule `view_watch` already
+/// applies to what it follows, here applied to what counts as work. See `docs/arch/home.md`.
+pub fn can_be_a_result(view_ref: &str) -> bool {
+    valid_ref(view_ref)
+        && !view_ref.starts_with(factory::PREFIX)
+        && !view_ref.split('/').any(|seg| seg.starts_with('_'))
+}
+
 /// Read a view ref's source.
 ///
 /// This is the one place a ref becomes source, because two callers now need it and

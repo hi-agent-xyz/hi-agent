@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::foundation::server::AppState;
 use crate::foundation::server::headers::AuthBearer;
 use crate::foundation::server::view_bus;
+use crate::mind::views::factory::PREFIX as SYSTEM_PREFIX;
 use crate::types::{Channel, JournalEntry, Sender};
 
 #[derive(serde::Deserialize)]
@@ -111,10 +112,6 @@ static WARMING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<S
 /// server-side rather than per-window for the reason the design gives for not having
 /// built it sooner: it is state that must be the same on the desktop and the phone.
 const BOOKMARKS_KEY: &str = "view_bookmarks";
-
-/// The prefix a system view's ref carries. Same constant the factory seeder writes
-/// under; see [`crate::mind::views::factory`].
-const SYSTEM_PREFIX: &str = "factory/";
 
 /// The person's bookmarked refs. A store that cannot be read reads as none — the row
 /// is then the system views alone, which is the state it ships in.
@@ -381,8 +378,8 @@ pub async fn share_view(
 /// that a worklist is the plainer of the two.
 /// Every view ref that exists on disk under `<data_dir>/views`.
 ///
-/// The ledger read uses this to say which views a task produced: a record *mentions* names in
-/// prose, and only a name that is really a view is one — see `tasks::view_refs`.
+/// The ledger read uses this to drop a view a task made that has since been deleted: a ref
+/// the person cannot open is not a result they can be shown — see `tasks::view_refs`.
 pub async fn existing_refs(data_dir: &std::path::Path) -> std::collections::HashSet<String> {
     let root = data_dir.join("views");
     let mut found = Vec::new();

@@ -99,6 +99,8 @@ const PEOPLE_REVIEW: &str = include_str!("factory/people-review.jsx");
 /// same idea in its own voice, and owns the canvas like every other bundled system
 /// surface.
 const WELCOME: &str = include_str!("factory/welcome.jsx");
+/// The prefix every shipped view's ref carries: `views/factory/` is this module's to write.
+pub const PREFIX: &str = "factory/";
 /// The ref the agent shows it under, and the ref the inventory leaves out of the
 /// bookmarks row (`GET /api/views`). Named here because both readers must agree.
 pub const WELCOME_REF: &str = "factory/welcome";

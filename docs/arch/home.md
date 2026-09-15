@@ -103,15 +103,32 @@ the same plain 1px border as a card.
     results", which was a number with nothing to open behind it and the only thing a
     picture-less result ever became here. `factory/tasks` lists them.
   - **The tiles are capped.** A task that makes forty screenshots hangs six.
-  - Which six is the task's `refs` order, and that order carries intent: `view_refs` walks the
-    task's timeline newest entry first so that "a row that has been through three deliverables
-    is about the last one". They are the most recently *mentioned* views, never the most
-    recently made — a view record has no time on it, and the `?v=` cache-buster on its shot URL
-    is not declared to mean one.
-- **A ref is a mention, and a system view is never a product.** A task whose prose named
-  `factory/home` had it counted as a result and drawn as its picture. The app's own
-  surfaces are excluded. A mention of *another task's* result is the same confusion with
-  no flag to catch it and is left to the server-side matching that produced it.
+  - Which six is the task's `refs` order: newest first by when *this task* made each one, so
+    a row that has been through three deliverables is about the last one. That is the time on
+    the task's own `made` line, not a time on the view — a view record still has none.
+- **A result is what the task made, never what its record mentions.** `refs` used to be every
+  known view name spelled anywhere in a task's prose, and a mention has no verb: "the screen
+  is currently showing `research-two-pairs`" put a shoe report under a KTV task, and the
+  shoe report's own note that a polaroid grid had taken the screen hung that grid under the
+  shoe research. On the instance that exposed it, of 99 non-system refs across the ledger,
+  46 had been rendered by a session serving that task, 23 by a session serving a *different*
+  one, and 30 by no session the wire log could place — plus 11 system views. Tightening the
+  grammar would only move the line to the next phrasing, so prose is not read for this at all.
+  - **The host writes it, at the one moment it sees a view being made for a task.** A view is
+    saved by writing a file, and a write says nothing about who made it; but a builder
+    renders what it is about to hand over with `hi_review_view`, and that call arrives from a
+    session whose registry entry names the task it serves. The first such render appends
+    ``made — `ref` `` to that task's timeline, the way a transition appends `moved`: a fact
+    the store witnessed, which no mind has to remember. One line per view per task, however many times it is re-rendered.
+    The bet is the tool's own description — render what you are about to hand over — so a
+    session that renders another task's view only to inspect it records it too.
+  - **A system view or a name with a `_` segment is never a result.** `factory/*` ships with
+    the app, and `_`-led names are the tree's tooling and a builder's probes (`_qa-…`,
+    `_tmp-…/…`) — the same rule `view_watch` already applies. `view_refs` refuses both on
+    read as well, so a hand-written `made` line cannot put one back.
+  - **What is not rendered for a task does not hang under it.** A task that only arranged for
+    someone else's page to go up, or a record older than the stamp, shows no pictures. An
+    absent tile is a gap; a tile under the wrong task is a confident wrong answer.
 
 `running`, `waiting` and `idle` are registry states of a live session. In particular,
 `waiting` means queued work, not a request for the person to answer. Last-turn outcome
@@ -164,24 +181,19 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   `update`. The strings are deleted. What a published, source-backed direction or
   decision request would be grounded in is undesigned, and inferring either from a
   worker's narrative is explicitly not it.
-- **`view_refs` matches mentions, not outputs.** Excluding system views removes the
-  clearly-wrong class, but a task that merely discussed another task's result still counts
-  it as its own — on the instance this was written against, `research-two-pairs` is a
-  counted result of an unrelated KTV task. The fix belongs where the match is made
-  (`view_refs` in `foundation/server/tasks.rs`), not in a reader of it.
 - **Nothing marks which result the task is *for*.** A task has a report and it has the
   material it gathered on the way, and that difference is real to the person and absent
   from every record. Ordering is not the distinction and cannot stand in for it: `refs` is
-  ordered newest-mention-first on purpose, but a log is mentioned every time it is
-  appended, so the most recently mentioned result is the one least likely to be the point.
-  `latest` is the task's most recent note rather than a pointer, and no field says "this
+  newest-made first, and the log a research task keeps beside its report is made alongside
+  it. `latest` is the task's most recent note rather than a pointer, and no field says "this
   view is what the task is for". So a research task in flight cannot show an empty report
   slot above a rank of process pictures. Naming the face is a judgment and belongs to
-  whatever writes the task, not to a reader ranking mentions.
-- **A view record carries no time.** Nothing on it says when it was made or last changed,
-  so no surface can order a task's results or show its newest. `bookmarked` and `shared`
-  exist on the record and are set on none of 195, so neither can pick a representative one
-  either.
+  whatever writes the task, not to a reader ranking what it made.
+- **A view record carries no time.** A task's `made` line says when *that task* first
+  rendered a view, which orders its results, but nothing says when a view last changed, so
+  no surface can show a view's newest state as newer than another's. `bookmarked` and
+  `shared` exist on the record and are set on none of 195, so neither can pick a
+  representative one either.
 - **An ordinary day does not fit a laptop window, and scrolls on both axes.** Every open task
   is present however old, and a two-sided chart is about 1604px wide before its height is
   counted — an eleven-task day with ten pictures measures 1604x1281, a fourteen-task one with
