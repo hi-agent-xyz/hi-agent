@@ -552,9 +552,9 @@ async fn a_task_serves_the_files_its_own_record_names() {
     // shows the account's own references, not a listing of the working folder.
     std::fs::write(folder.join("scratch.log"), "noise").expect("write scratch");
 
-    // The list names what the task produced — the chart hangs a node off each — and carries
-    // neither the prose nor the timeline, which is the property that keeps it proportional to
-    // how many tasks there are rather than to how much has been written on them.
+    // The list carries neither the prose, the timeline nor the files it names, which is the
+    // property that keeps it proportional to how many tasks there are rather than to how much
+    // has been written on them. The files are the record's.
     let listed: serde_json::Value = client
         .get(format!("{base}/api/tasks"))
         .send()
@@ -569,7 +569,7 @@ async fn a_task_serves_the_files_its_own_record_names() {
         .iter()
         .find(|row| row["subject"] == serde_json::Value::String(task.subject.clone()))
         .expect("the task is in the list");
-    assert_eq!(row["files"][0]["path"], "inspection-report.md", "the row names it: {row}");
+    assert!(row.get("files").is_none(), "a row carries no files: {row}");
     assert!(row.get("body").is_none(), "a row carries no prose: {row}");
     assert!(row.get("timeline").is_none(), "a row carries no timeline: {row}");
 

@@ -113,14 +113,6 @@ struct RowDto {
     /// The views this task made, newest first — its `made` lines, never names its prose
     /// spells. See [`view_refs`].
     refs: Vec<String>,
-    /// The artifacts the record names that are really on disk — see [`referenced_files`].
-    ///
-    /// **Back on the row after being taken off it**, because the home chart hangs a node off
-    /// each one for every task, not only for a task somebody opened. It was removed when this
-    /// list was on a clock, where its cost is a `stat` per named file per task per tick — up
-    /// to 5,000 of them every few seconds on one live store. A read that only happens when
-    /// the ledger moves can afford what a treadmill could not.
-    files: Vec<FileDto>,
     malformed: bool,
     extra: Vec<FieldDto>,
     extra_dropped: usize,
@@ -338,8 +330,12 @@ fn dto(task: &Task, malformed: bool, files: Vec<FileDto>) -> TaskDto {
 ///
 /// Ships neither prose nor timeline, which is the property that has to hold: the list stays
 /// proportional to how many tasks there are rather than to how much has been written on them.
-/// What it does carry out of them is what a chart draws — one line, the refs, the files.
-fn row(task: &Task, malformed: bool, files: Vec<FileDto>, views: &std::collections::HashSet<String>) -> RowDto {
+/// What it does carry out of them is what a chart draws — one line and the views it made.
+///
+/// **No files.** They came back onto the row once so Home could count them under each task,
+/// at a `stat` per named file per task per ledger read; Home no longer counts anything it does
+/// not draw, and the one other reader, the board's file links, reads them off the record.
+fn row(task: &Task, malformed: bool, views: &std::collections::HashSet<String>) -> RowDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     RowDto {
         subject: task.subject.clone(),
@@ -354,7 +350,6 @@ fn row(task: &Task, malformed: bool, files: Vec<FileDto>, views: &std::collectio
         liveness: liveness_dto(task),
         latest: latest_moment(task),
         refs: view_refs(task, views),
-        files,
         malformed,
         extra,
         extra_dropped,
@@ -618,8 +613,7 @@ pub async fn get_tasks(
             continue;
         };
         let (task, malformed) = read_row(dir, subject).await;
-        let files = referenced_files(dir, &task).await;
-        rows.push((sort_key(&task), row(&task, malformed, files, &views)));
+        rows.push((sort_key(&task), row(&task, malformed, &views)));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -793,12 +787,10 @@ mod tests {
             })
             .collect();
 
-        let value = serde_json::to_value(row(&task, false, Vec::new(), &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
         assert!(value.get("body").is_none(), "a row carries no prose: {value}");
         assert!(value.get("timeline").is_none(), "a row carries no timeline: {value}");
-        // `files` *is* on the row — names and sizes, which the chart hangs a node off. What it
-        // is not is the files, so it does not grow with them either.
-        assert!(value["files"].is_array(), "a row names the artifacts: {value}");
+        assert!(value.get("files").is_none(), "files are the record's, not the row's: {value}");
 
         let bytes = serde_json::to_string(&value).unwrap().len();
         assert!(bytes < 4_000, "a row of a 400 KB record came to {bytes} bytes");
@@ -820,7 +812,7 @@ mod tests {
             entry(TimelineKind::Waiting, "which quarter?"),
             entry(TimelineKind::Moved, "todo \u{2192} doing"),
         ];
-        let value = serde_json::to_value(row(&task, false, Vec::new(), &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
         assert_eq!(value["latest"]["kind"], "waiting");
         assert_eq!(value["latest"]["text"], "which quarter?");
 
@@ -833,7 +825,7 @@ mod tests {
             entry(TimelineKind::Moved, "todo \u{2192} doing"),
             entry(TimelineKind::Made, "`deck/leader`"),
         ];
-        let value = serde_json::to_value(row(&task, false, Vec::new(), &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
         assert!(value["latest"].is_null(), "a row with only the store's lines has said nothing: {value}");
     }
 
