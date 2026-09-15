@@ -55,7 +55,7 @@ const WINDOW_MS = 24 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition", "reflection"]);
 const OPEN = new Set(["todo", "doing", "serving"]);
 /**
- * How many process pictures a task hangs below itself before the count alone carries them.
+ * How many pictures a task hangs below itself before the count alone carries them.
  *
  * **This is not the old artifact rank coming back.** That drew every result as a 280x134
  * peer card — 125 of them, 106 nothing but a filename, 60.2% of the canvas. What returns is
@@ -170,20 +170,23 @@ function taskResults(task, views) {
 }
 
 /**
- * The one result a task shows rather than counts.
+ * Every picture a task has is an image node below it, and a card never wears one.
  *
- * A count is right for what a duty writes — twenty-one liveness JSONs are a log, and
- * twenty-one cards for them were 45% of the old canvas. It is wrong for a deck: six of the
- * ten tasks in hand have produced something with a picture, and a picture is the only thing
- * on this surface that says what the work actually made. So the task keeps its count and
- * carries one image.
+ * A card used to carry the first picture inside itself, beside its text, and hang the rest as
+ * tiles. That made two appearances for one thing: the same kind of record was a strip inside
+ * a bordered card here and a bare image tile there, and which one it got depended on nothing
+ * the person can see — only on whether it happened to be first in `refs`. On the canvas it
+ * read as clutter rather than as rank. One appearance for pictures, one for cards.
  *
- * **Not "the latest".** View records have no timestamp; the only time-like thing on them is
- * the `?v=` cache-buster on the shot URL, which is not declared to mean recency and would
- * break silently the day it became a hash. This takes the first shot-bearing view in the
- * task's own `refs` order and claims nothing more than that.
+ * What the card keeps is the count, which is the part a poster never carried: a count is right
+ * for what a duty writes — twenty-one liveness JSONs are a log, and twenty-one cards for them
+ * were 45% of the old canvas — and the pictures below say what the work actually made.
+ *
+ * **Order still decides which six, and it is not "the latest".** View records have no
+ * timestamp; the only time-like thing on them is the `?v=` cache-buster on the shot URL, which
+ * is not declared to mean recency and would break silently the day it became a hash. The tiles
+ * are the first shot-bearing views in the task's own `refs` order, and claim nothing more.
  */
-const previewOf = (node) => (node.kind === "task" ? node.data.results.find((r) => r.shot) : null) || null;
 
 function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now = Date.now()) {
   const nodes = [];
@@ -221,9 +224,10 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
     // whose photos arrived over Feishu sat under a "feishu" topic beside a client brief. A
     // grouping is a claim someone has to make; until something writes one, there is none.
     link("core", node.id);
-    // The first picture is on the card; the rest are second-level, the way a sub-step or a
-    // sub-result is. A task mid-flight often has process pictures and no deliverable yet.
-    for (const result of node.data.results.filter((r) => r.shot).slice(1, 1 + RESULT_TILES)) {
+    // Pictures are second-level, the way a sub-step or a sub-result is — all of them, so that
+    // one kind of record has one appearance. A task mid-flight often has process pictures and
+    // no deliverable yet, and nothing here claims to know which of them is which.
+    for (const result of node.data.results.filter((r) => r.shot).slice(0, RESULT_TILES)) {
       const id = `result:${result.id}`;
       const exists = byId.has(id);
       add({ id, kind: "result", title: result.title, sourceRefs: [ref("view", result.id)],
@@ -301,14 +305,31 @@ function emphasis(node, now) {
   return 1 - 0.22 * Math.min(1, Math.max(0, now - instant(end)) / WINDOW_MS);
 }
 
+/** Every card is one size, because a picture is never inside one. */
+const CORE_W = 340, CORE_H = 320, NODE_W = 240, NODE_H = 108, TILE_W = 120, TILE_H = 76;
+const GAP_X = 48, MARGIN = 24;
 /**
- * **A card's picture sits beside its text, not above it.** Above, it doubled the card's
- * height, and height is what a landscape window runs out of first: the instance this was
- * measured on drew 20 cards over 1936x1422px, and the side carrying four pictures was the
- * taller one. Beside, every card in a rank is one height and a picture costs width instead.
+ * The air between two adjacent nodes, by **the rank their branches part at** — not by how deep
+ * either of them happens to sit.
+ *
+ * One gap for every pair drew the ranks as one flat column: a task's own results sat 14px from
+ * each other and 14px from the next task's results, so nothing in the spacing said which
+ * branch anything belonged to, and the reading had to be done off the wires alone. Divergence
+ * is what a rank actually is. Two nodes that part at the core are a core's gap apart wherever
+ * they are in the tree; only nodes that share a parent get the tight one, and the tightness
+ * then reads as belonging together rather than as crowding.
+ *
+ * Indexed by rank, so `[0]` is the core's own and is never asked for — the core has no sibling.
  */
-const CORE_W = 340, CORE_H = 320, NODE_W = 240, NODE_H = 108, THUMB_W = 112;
-const GAP_X = 48, GAP_Y = 14, MARGIN = 24;
+const RANK_GAP = [0, 40, 20, 12];
+const gapAt = (rank) => RANK_GAP[Math.min(rank, RANK_GAP.length - 1)];
+/** The rank two nodes' branches part at: one below their nearest common ancestor's. */
+function divergence(a, b) {
+  while (a.depth > b.depth) a = a.parent;
+  while (b.depth > a.depth) b = b.parent;
+  while (a !== b && a.parent && b.parent) { a = a.parent; b = b.parent; }
+  return a.depth + 1;
+}
 /**
  * The smallest scale the chart is drawn at. Past it the chart stops shrinking and scrolls,
  * because a chart that fits and cannot be read has not fitted: at 0.7 a 17px title is 12px
@@ -316,8 +337,7 @@ const GAP_X = 48, GAP_Y = 14, MARGIN = 24;
  */
 const FIT_FLOOR = 0.7;
 function dimensions(node) {
-  if (node.kind === "result") return { w: 120, h: 76 };
-  return { w: previewOf(node) ? NODE_W + THUMB_W : NODE_W, h: NODE_H };
+  return node.kind === "result" ? { w: TILE_W, h: TILE_H } : { w: NODE_W, h: NODE_H };
 }
 
 /**
@@ -371,7 +391,8 @@ function arrange(model) {
   const branches = children.get(model.rootId).filter((n) => n.kind !== "overview");
   const tree = (node) => ({ node, ...dimensions(node),
     children: (children.get(node.id) || []).map(tree) });
-  const weight = (t) => Math.max(t.h, t.children.reduce((n, c) => n + weight(c) + GAP_Y, 0));
+  const weight = (t, rank = 1) => Math.max(t.h,
+    t.children.reduce((n, c) => n + weight(c, rank + 1) + gapAt(rank + 1), 0));
   const sides = [[], []], load = [0, 0];
   // IDs, not activity states, keep branch placement stable between updates.
   for (const branch of [...branches].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -381,7 +402,10 @@ function arrange(model) {
   const placed = [{ node: model.nodes[0], x: -CORE_W / 2, y: -CORE_H / 2, w: CORE_W, h: CORE_H, dir: 0 }];
   for (let side = 0; side < 2; side++) {
     if (!sides[side].length) continue;
-    const layout = flextree({ nodeSize: (n) => [n.data.h + GAP_Y, n.data.w + GAP_X], spacing: 0 });
+    // The node's own extent only; the air between two of them is `spacing`, which sees both
+    // and so can ask where they parted. A padded `nodeSize` cannot — it is one number per node.
+    const layout = flextree({ nodeSize: (n) => [n.data.h, n.data.w + GAP_X],
+      spacing: (a, b) => gapAt(divergence(a, b)) });
     const root = layout.hierarchy({ w: CORE_W / 2, h: CORE_H, children: sides[side] });
     layout(root);
     const dir = side === 0 ? 1 : -1;
@@ -671,9 +695,8 @@ function Node({ node, now, children, openRef }) {
   const state = stateOf(node), time = nodeTime(node);
   const results = node.kind === "task" ? node.data.results.length : 0;
   const board = node.kind === "task" ? TASK_BOARD : node.kind === "activity" ? SESSION_BOARD : null;
-  // The picture is the one handoff that lands exactly where it points: `openRef` takes a
-  // view ref natively, so this needs none of the targeting the board handoff is waiting on.
-  const preview = previewOf(node);
+  // A tile is the one handoff that lands exactly where it points: `openRef` takes a view ref
+  // natively, so this needs none of the targeting the board handoff is waiting on.
   if (node.kind === "result") return <article className="hi-work__tile" data-node-id={node.id} data-kind="result">
     <button onClick={() => openRef(node.data.viewRef)} title={node.title}>
       <img src={node.data.shot} alt={node.title} loading="lazy" />
@@ -687,11 +710,8 @@ function Node({ node, now, children, openRef }) {
     <div className="hi-work__node-foot"><span>{L.status[state] || ""}</span>
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
   </>;
-  return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind} data-picture={preview ? "" : undefined}
+  return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}
     style={{ "--node-tone": TONE[state] || TONE.todo, opacity: emphasis(node, now) }}>
-    {preview && <button className="hi-work__preview" onClick={() => openRef(preview.id)} title={preview.title}>
-      <img src={preview.shot} alt={preview.title} loading="lazy" />
-    </button>}
     {board ? <button className="hi-work__open" onClick={() => openRef(board)}>{body}</button> : body}
   </article>;
 }
@@ -742,9 +762,6 @@ const CSS = `
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
 .hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-left:3px solid var(--node-tone); border-radius:6px; display:flex; flex-direction:column; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
-.hi-work__node[data-picture] { flex-direction:row; }
-.hi-work__preview { display:block; flex:0 0 112px; padding:0; margin:-10px 14px -10px -14px; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); border-radius:3px 0 0 3px; overflow:hidden; }
-.hi-work__preview img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:5px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
@@ -755,11 +772,16 @@ const CSS = `
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }
 .hi-work__flow .hi-work__core { height:auto; min-height:320px; }
-.hi-work__branch { list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:1px solid var(--work-line); }
-.hi-work__branch li { position:relative; padding-top:18px; min-width:0; }
-.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:50px; border-top:1px solid var(--work-line); }
+/* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
+   put a task's own results as far from it as the next task's were. Inheriting --rank-gap
+   carries the tightest value on down, so a fourth rank is no looser than the third. */
+.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:1px solid var(--work-line); }
+.hi-work__branch .hi-work__branch { --rank-gap:18px; margin-left:0; padding-left:12px; }
+.hi-work__branch .hi-work__branch .hi-work__branch { --rank-gap:10px; }
+.hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
+.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:1px solid var(--work-line); }
 .hi-work__branch .hi-work__node { min-height:116px; }
-.hi-work__branch .hi-work__branch { margin-left:0; padding-left:12px; }
+.hi-work__branch .hi-work__tile { height:120px; max-width:220px; }
 .hi-work__branch .hi-work__branch li::before { left:-12px; width:12px; }
 .hi-work__loading { position:absolute; left:24px; top:8px; color:var(--fg-mute); font-size:13px; z-index:2; }
 @media (max-width:759px) { .hi-work__node-title { min-height:36px; } }

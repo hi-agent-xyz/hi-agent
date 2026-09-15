@@ -33,10 +33,22 @@ limits what is chosen *for* them, not what they may choose. Pressing the percent
 scale back to the window. This is not the zoom that was removed: that was the only way to see
 a canvas that could never fit, and this one starts from a chart that already does. No arrangement fits at 1x: on the
 instance this was measured on, the 20 cards in hand were about 88% of a 1511x727 window's
-area before a single gap or wire. So the geometry is shaped to need as little scale as it
-can, and a card's picture sits **beside** its text rather than above it. Above, it doubled
-the card's height, and height is what a landscape window runs out of first; beside, it
-costs width. That took the chart from 1936x1422 to 1652x766px, which is 0.91 in that window.
+area before a single gap or wire. So the geometry is shaped to need as little scale as it can
+— but **two things outrank scale, and both are paid for in height.** One appearance per kind
+of record, so a picture is never a strip inside a card; and air graded by rank, so a branch
+can be seen to be one. Together they took a measured instance from 1652x766 to 1540x982, or
+0.91 to 0.74 in that window. Height is what a landscape window runs out of first and this
+spends it deliberately: a chart that fits and cannot be read has not fitted, and neither has
+one that fits and cannot be parsed.
+
+**Air is graded by where two nodes' branches part, not by how deep either one sits.** One gap
+for every pair drew every rank as a flat column: a task's own pictures were exactly as far
+from each other as from the next task's pictures, so nothing in the spacing said what belonged
+to what and the structure had to be read off the wires alone. Two nodes that part at the core
+now get the core's gap wherever in the tree they are, and only nodes sharing a parent get the
+tight one — at which point tightness reads as belonging together rather than as crowding.
+Divergence, not depth, is the quantity: depth would still put two deep nodes from different
+branches as close as two siblings.
 
 ## Internal mapping
 
@@ -58,20 +70,26 @@ costs width. That took the chart from 1936x1422 to 1652x766px, which is 0.91 in 
   ownership, and neither is a shared system. A grouping is a claim somebody makes; if tasks
   are ever to be grouped, the grouping has to be written by whoever files the task, and Home
   reads it — it is not inferred here.
-- **A task's results are a count, one picture on the card, and the rest one rank below.**
-  Drawn as sibling cards they were 60.2% of the canvas on a real instance — 125 of them,
-  106 nothing but a filename. A count is right for what a duty writes and wrong for what a
-  deck is, so a task carries its count, wears its first picture, and hangs the remaining
-  pictures below itself as `result` tiles: image only, no title, no status, alongside the
-  live sessions working on it. Those are its sub-steps and sub-results in one rank.
+- **A task's results are a count, and every picture among them is an image node one rank
+  below.** Drawn as sibling cards they were 60.2% of the canvas on a real instance — 125 of
+  them, 106 nothing but a filename. A count is right for what a duty writes and wrong for what
+  a deck is, so a task carries its count and hangs its pictures below itself as `result` tiles:
+  image only, no title, no status, alongside the live sessions working on it. Those are its
+  sub-steps and sub-results in one rank.
+  - **One kind of record has one appearance.** The card used to wear the first picture inside
+    itself, beside its text, and hang only the rest as tiles — so the same kind of thing was a
+    strip in a bordered card here and a bare tile there, and which one it got turned on nothing
+    the person can see, only on whether it happened to be first in `refs`. Mixed on a canvas
+    that reads as clutter rather than as rank. The card is now one size whether or not the task
+    made anything, and every picture is a tile.
   - **A result with no picture is never a node**, however many there are. Twenty-one
     liveness JSONs are a log, and a filename is what a count is for.
   - **The tiles are capped.** A task that makes forty screenshots hangs six and says forty.
-  - The picture on the card is the first shot-bearing view in the task's `refs` order, and
-    that order carries intent: `view_refs` walks the task's timeline newest entry first so
-    that "a row that has been through three deliverables is about the last one". It is the
-    most recently *mentioned* view, never the most recently made — a view record has no
-    time on it, and the `?v=` cache-buster on its shot URL is not declared to mean one.
+  - Which six is the task's `refs` order, and that order carries intent: `view_refs` walks the
+    task's timeline newest entry first so that "a row that has been through three deliverables
+    is about the last one". They are the most recently *mentioned* views, never the most
+    recently made — a view record has no time on it, and the `?v=` cache-buster on its shot URL
+    is not declared to mean one.
 - **A ref is a mention, and a system view is never a product.** A task whose prose named
   `factory/home` had it counted as a result and drawn as its picture. The app's own
   surfaces are excluded. A mention of *another task's* result is the same confusion with
@@ -146,8 +164,13 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   so no surface can order a task's results or show its newest. `bookmarked` and `shared`
   exist on the record and are set on none of 195, so neither can pick a representative one
   either.
-- **A busy day still outgrows the floor.** Fitting holds while the work in hand is about
-  this size, but every open task is present however old, so a ledger of forty open tasks
-  opens at 0.7 and scrolls, and the person zooms out to see its shape. What should give way
-  first by default when it does — the tiles, the rank below, or the thinnest tasks — is
-  undecided, and handing the person a zoom does not decide it.
+- **An ordinary day now reaches the floor, not just a busy one.** Every open task is present
+  however old, so a ledger of forty was always going to open at 0.7 and scroll — but a
+  fourteen-task instance with nine live sessions and twelve pictures measures 1540x1438 and
+  opens there too, and that is a normal Tuesday. What should give way first by default is
+  still undecided, and handing the person a zoom does not decide it. What is now clear is
+  where the height goes: **a task's tiles stack one per row**, so four pictures cost four tile
+  heights of a window that has width to spare and is short of height. Packing a task's tiles
+  into a block rather than a column is the largest single lever and the one that costs no
+  legibility — it is unbuilt because flextree gives each child its own row, and a block is a
+  placement rule layered on top of the tree rather than something the tree can express.

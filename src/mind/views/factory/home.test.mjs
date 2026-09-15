@@ -138,17 +138,17 @@ test("every task is its own branch off the core, whatever systems it touches", (
   assertConnected(model);
 });
 
-test("a result is a count on the task, never a card of its own", () => {
+test("a result with no picture is a count on the task, never a card of its own", () => {
   const model = project({
     tasks: [{ ...task("a"), refs: ["views/deck"], files: [{ path: "notes.md" }] }],
-    views: [{ view_ref: "views/deck", label: "Deck", shot_url: "/shot.png" }, { view_ref: "views/other" }] });
+    views: [{ view_ref: "views/deck", label: "Deck" }, { view_ref: "views/other" }] });
   assert.equal(model.nodes.length, 2, "core and the task, and nothing else");
   const node = ofKind(model, "task")[0];
   assert.deepEqual(list(node.data.results.map((r) => r.title)), ["Deck", "notes.md"]);
   assert.equal(arrange(model).placed.length, 2);
 });
 
-test("a task shows one picture and counts the rest; the picture costs width, never height", () => {
+test("every picture is an image node below its task, and no card wears one", () => {
   const shots = project({
     tasks: [{ ...task("deck"), refs: ["views/notes", "views/slide", "views/other-slide"] }],
     views: [{ view_ref: "views/notes", label: "Notes" },
@@ -156,13 +156,18 @@ test("a task shows one picture and counts the rest; the picture costs width, nev
       { view_ref: "views/other-slide", label: "Other", shot_url: "/b.png" }] });
   const deck = ofKind(shots, "task")[0];
   assert.equal(deck.data.results.length, 3, "all three are still counted");
-  // The FIRST shot-bearing ref in the task's own order, with no recency claimed.
+  // One appearance per kind: a card is a card whether or not the task made a picture, and
+  // every picture is a tile. Which one a result got used to depend on its place in `refs`.
   const drawn = arrange(shots).placed.find((p) => p.node.id === "task:deck");
-  assert.deepEqual([drawn.w, drawn.h], [352, 108], "the picture widens the box and leaves it one card high");
-  // The picture on the card is not a node; the ones past it are, one rank below the task.
-  assert.deepEqual(list(ofKind(shots, "result").map((n) => n.title)), ["Other"]);
-  assert.deepEqual(list(childIndex(shots).get("task:deck").map((n) => n.id)), ["result:views/other-slide"]);
-  assert.equal(arrange(shots).placed.find((p) => p.node.id === "result:views/other-slide").h, 76);
+  assert.deepEqual([drawn.w, drawn.h], [240, 108], "a picture never widens or heightens the card");
+  // Both shot-bearing refs are nodes, in the task's own order; the picture-less one is not.
+  assert.deepEqual(list(ofKind(shots, "result").map((n) => n.title)), ["Slide", "Other"]);
+  assert.deepEqual(list(childIndex(shots).get("task:deck").map((n) => n.id)),
+    ["result:views/slide", "result:views/other-slide"]);
+  for (const id of ["result:views/slide", "result:views/other-slide"]) {
+    const tile = arrange(shots).placed.find((p) => p.node.id === id);
+    assert.deepEqual([tile.w, tile.h], [120, 76], "and every tile is the same size");
+  }
 
   // A mention of one of the app's own surfaces is not an output, so it is neither counted
   // nor eligible to be the picture.
@@ -188,6 +193,26 @@ test("a task shows one picture and counts the rest; the picture costs width, nev
   assert.equal(ofKind(logs, "task")[0].data.results.length, 2);
   const drawnDuty = arrange(logs).placed.find((p) => p.node.id === "task:duty");
   assert.deepEqual([drawnDuty.w, drawnDuty.h], [240, 108], "no picture, no extra width");
+});
+
+test("the air between two nodes is set by where their branches part, not by how deep they sit", () => {
+  // The failure this fixes: one gap for every pair meant a task's own results sat exactly as
+  // far from it as the next task's results did, so the second rank read as one flat column
+  // and only the wires said which branch anything belonged to.
+  const views = Array.from({ length: 8 }, (_, i) => ({ view_ref: `views/v${i}`, label: `V${i}`, shot_url: `/v${i}.png` }));
+  const tasks = ["a", "b", "c", "d"].map((s, i) => ({ ...task(s), refs: [`views/v${i * 2}`, `views/v${i * 2 + 1}`] }));
+  const placed = arrange(project({ tasks, views })).placed;
+  const at = (id) => placed.find((p) => p.node.id === id);
+  // Two tasks share a side, so their tile columns are adjacent and directly comparable.
+  const column = placed.filter((p) => p.node.kind === "result" && p.dir === at("task:a").dir)
+    .sort((x, y) => x.y - y.y);
+  assert.equal(column.length, 4, "two tasks' pictures stack in one rank on this side");
+  const parent = (p) => p.node.id.startsWith("result:views/v0") || p.node.id.startsWith("result:views/v1") ? "first" : "second";
+  const gaps = column.slice(1).map((p, i) => ({ gap: p.y - (column[i].y + column[i].h), same: parent(p) === parent(column[i]) }));
+  const within = list(gaps.filter((g) => g.same).map((g) => g.gap));
+  const across = list(gaps.filter((g) => !g.same).map((g) => g.gap));
+  assert.deepEqual(within, [20, 20], "two pictures of one task are a task's gap apart, evenly");
+  assert.deepEqual(across, [40], "two pictures whose tasks differ are the core's gap apart, wherever they sit");
 });
 
 test("every drawn node has a finite, colored wire and no two boxes overlap", () => {
@@ -216,11 +241,18 @@ test("the chart is scaled to the window, never enlarged, and never shrunk past l
   ];
   const workers = ["t4", "t6", "t8", "t9"].map((subject) => worker(`w-${subject}`, "worker", { subject }));
   const chart = arrange(project({ tasks, workers, views }));
-  assert.equal(chart.placed.length, 20);
+  assert.equal(chart.placed.length, 26);
   // A 14-inch laptop window less the app's own chrome: the whole chart, readable.
   const laptop = fit(chart, { w: 1511, h: 727 });
   assert.ok(chart.width * laptop <= 1511 && chart.height * laptop <= 727, `fits (${chart.width}x${chart.height} at ${laptop})`);
-  assert.ok(laptop >= 0.85, `and not by shrinking it to a thumbnail (${laptop})`);
+  // **This bound used to be 0.85 and the chart used to be 1652x766.** Two changes bought
+  // legibility with scale: every picture became a node of its own rather than a strip inside
+  // its task's card, which is six more boxes here, and the air between branches is now graded
+  // by rank, which is the whole point of grading it. Both spend height, and height is what a
+  // landscape window runs out of first. The floor is still the thing that must not be reached
+  // by a day this size — on a real instance the chart already opens at 0.70 and scrolls, so
+  // what this guards is that a *small* day does not join it.
+  assert.ok(laptop >= 0.73, `and not by shrinking it to a thumbnail (${laptop})`);
   assert.equal(fit(chart, { w: 4000, h: 3000 }), 1, "a big window does not enlarge it");
   assert.equal(fit(chart, { w: 800, h: 400 }), 0.7, "a small one scrolls rather than go illegible");
 });
