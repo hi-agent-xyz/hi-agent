@@ -82,6 +82,31 @@ struct Cli {
     /// server). No effect on other platforms.
     #[arg(long)]
     no_tray: bool,
+
+    /// Replay past Reaction turns out of the data dir's frame logs under this build's
+    /// prompt, score them with the speech audit, print the comparison, and exit.
+    ///
+    /// Hidden: driven by `make eval-speech`, which is how a change to what Reaction is told
+    /// — its prompt, the reading standard, the model it runs on — is replayed before it
+    /// lands (`docs/arch/legibility.md` § J, § K).
+    #[arg(long, hide = true)]
+    eval_speech: bool,
+
+    /// With `--eval-speech`: a whole system prompt to replay under instead of this build's.
+    #[arg(long, hide = true, value_name = "FILE")]
+    eval_prompt: Option<PathBuf>,
+
+    /// With `--eval-speech`: the model to replay on instead of the one the agent runs.
+    #[arg(long, hide = true, value_name = "MODEL")]
+    eval_model: Option<String>,
+
+    /// With `--eval-speech`: how many turns to replay.
+    #[arg(long, hide = true, default_value_t = 40)]
+    eval_limit: usize,
+
+    /// With `--eval-speech`: how many earlier turns of the thread ride along as history.
+    #[arg(long, hide = true, default_value_t = 6)]
+    eval_context: usize,
 }
 
 /// Version line including the pinned runtime component versions.
@@ -367,6 +392,20 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         });
+    }
+
+    if cli.eval_speech {
+        let options = hi_agent::body::reaction::legibility::replay::Options {
+            data_dir: data_dir.clone(),
+            prompt: cli.eval_prompt,
+            model: cli.eval_model,
+            limit: cli.eval_limit,
+            context: cli.eval_context,
+        };
+        // The judges read their models off the config store, the way the running host does.
+        hi_agent::foundation::config::tunables::init(&data_dir);
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        return rt.block_on(hi_agent::body::reaction::legibility::replay::run(options));
     }
 
     if cli.purge_voice_galleries {

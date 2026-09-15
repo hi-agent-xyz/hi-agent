@@ -6,7 +6,9 @@
 //! - [`check`] — triage in code, then one model request, between `hi_say` and the floor
 //!   (§ D, § E);
 //! - [`audit`] — every spoken turn read as it ends, and the person's next message read for
-//!   whether it corrects how things were put (§ G).
+//!   whether it corrects how things were put (§ G);
+//! - [`replay`] — past turns run again under a changed prompt or model and scored by the
+//!   same audit (§ J, § K).
 //!
 //! What they find is kept by [`crate::mind::memory::quality`], which Reflection reads to learn
 //! grain and conduct (§ H) and which the numbers are computed from (§ I). The standard every
@@ -16,5 +18,6 @@
 pub mod audit;
 pub mod check;
 pub mod judge;
+pub mod replay;
 
 pub use check::{Brief, Mode, Speech};
