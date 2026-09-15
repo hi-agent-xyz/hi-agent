@@ -180,6 +180,7 @@ Each is a statement we can test, and each has a real failure behind it.
 Adjacent, unchanged: [`../memory.md`](../memory.md) (memory subsystem design),
 [`../data-dir-layout.md`](../data-dir-layout.md) (the concrete tree),
 [`../human.md`](../human.md) (behaviours we model),
+[`../human-friendly-communication.md`](../human-friendly-communication.md) (what reads well to a person, and why),
 [`../user-journeys/`](../user-journeys/) (what any of this is *for*),
 [`../risks.md`](../risks.md).
 

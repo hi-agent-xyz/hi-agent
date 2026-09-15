@@ -2,109 +2,245 @@
 
 ## Goal
 
-What a person reads is the product. Every message the agent sends, every view it puts on
-screen and every line on a task's record is spent out of one budget — the reader's
-attention — and that budget is small: a person reads a few words a second, while they take
-in a composed screen in parallel. Everything here serves one test: **did reading it cost
-them less than it gave them?**
+What a person reads is the product: every message the agent sends, every view it puts on
+screen, every line on a task's record. The reader's attention is small and the writer cannot
+notice its own defaults, so good output is not something a prompt can simply request. It has to
+be held by a mechanism that fixes the inputs, checks the output, and learns from the reader.
 
-It is a first-class concern, not a style note, because the failure is invisible from the
-writing side. Between 2026-09-11 and 09-14 the person corrected the agent four times for the
-same thing — too much detail, too much process — while every rule against it was already
-written in `reaction.md` (see *Decisions*).
+**What counts as good** — the information model, the two variables, how to say it and in
+what form, and the reasons — is [`../human-friendly-communication.md`](../human-friendly-communication.md).
+This document is how the system keeps it true.
 
-## What is worth saying
+## The mechanism, end to end
 
-A piece is worth saying when **its value to the reader clears the bar at that moment.**
+```
+                    ┌──────────────── in Reaction's window every turn ────────────────┐
+  what the person   │  A. who they are and how they want it                            │
+  wants             │     conduct (Working with them) · per-subject grain · the standard│
+                    └───────────────────────────────┬─────────────────────────────────┘
+                                                    │
+  Cognition/worker ── B. material, not a script ──► C. Reaction writes the turn
+  (view built here when                                        │ hi_say
+   the result will cross the line)                             ▼
+                                             D. triage (host code, facts only)
+                                                 │ in scope          │ out of scope
+                                                 ▼                   │
+                                             E. pre-send check ──────┤
+                                                 │ revise            │ pass / timeout / error
+                                                 ▼                   ▼
+                                     "not sent — <note>"       F. delivered
+                                     rewrite or drop,               │
+                                     same turn                      │ turn ends
+                                                                    ▼
+                                             G. audit (independent, per turn)
+                                                 │
+                        ┌────────────────────────┼──────────────────────────┐
+                        ▼                        ▼                          ▼
+             H. Reflection learns      I. the number               J. replay set
+             grain · conduct           corrections, findings        ── K. a prompt or
+             (feeds A)                                                   model change runs
+                                                                         here first (feeds A–C)
+```
 
-**Value is departure from what they would already assume, at the grain they want for this
-subject.** A reader carries default expectations, and restating one carries nothing:
+Each stage exists because the one before it misses something measurable.
 
-| They already assume | So this carries nothing |
+## Online: one spoken turn
+
+### A. What reaches Reaction's window
+
+Reaction cannot open a file, so what it knows about the reader is what is projected into its
+window every turn.
+
+- **Conduct** — each person's `## Working with them` section
+  ([`conduct.rs`](../../src/mind/memory/conduct.rs)). **The people in the conversation come
+  first and are never the ones cut.** Ordering by name put the owner's section last behind
+  eight others, and a 3,000-character cap across all of them cut it mid-sentence: on
+  2026-09-15 the sections totalled 16,425 characters and Reaction received 3,023. A durable
+  "report briefly" that never reaches the window is a preference the system does not have.
+- **Per-subject grain** — the read Reflection already keeps on what the agent's words have
+  earned, subject by subject (`proactivity.md`, projected by
+  [`snapshot.rs`](../../src/mind/memory/snapshot.rs)), widened from *when to speak* to *how
+  much detail lands on this subject*.
+- **The standard** — one written standard, `src/identity/craft/reading.md`, distilled from
+  the principles document. It is part of Reaction's prompt and the one text that the view
+  builder, the view reviewer, the check (E) and the audit (G) are all written against. The
+  rules now repeated across those prompts fold into it.
+
+**Catches:** a reader's preferences and grain being unknown at the moment of writing.
+**Misses:** a writer that has them and still does not apply them.
+
+### B. What Cognition and workers send Reaction
+
+A report to Reaction is read by a model, so it may be complete — but its wording tends to come
+out of Reaction's mouth. The contract, in `cognition.md` and the worker prompts:
+
+- what changed for the person first; backing detail marked as backing;
+- no drafted wording ("say this", "照这个说") and no list of what was not done;
+- **timing intent stays** — "hold this until the other half is verified" is information, not
+  wording;
+- **a result that will cross the view line gets its view built alongside it**, and the report
+  names the ref. A view takes minutes; decided at speaking time, the only options left are a
+  wall of text or a wait. When pieces of one subject accumulate past the line over several
+  reports, the rung holding them has them gathered into one view.
+
+**Catches:** relay of report detail and scripted phrasing at its source — 32 of 96 reports
+Cognition sent Reaction between 09-11 and 09-14 carried wording for it.
+**Misses:** Reaction's own habits: replaying the person, repeating itself, narrating process.
+
+### C. Reaction writes the turn
+
+It applies the standard with the two variables: how much clears the bar given what else is
+landing, and the grain for this person on this subject. It decides how much to say (a
+sentence, a paragraph, a few paragraphs — one matter per message, conclusion first) and whether
+a view goes up with it.
+
+### D. Triage — host code, facts only
+
+Inside `ToolSink::say` ([`tools.rs`](../../src/body/reaction/tools.rs)), after the floor
+check. It judges nothing; it decides whether the check runs. A message is in scope when **the
+turn carries a report**, or **the message is longer than a short reply** (starting line: 120
+characters), or **it is not the first message of the turn**.
+
+The scope is set by where the failures concentrate, not by how well code can find them: code
+cannot tell a paraphrased repetition from new content (measured: routing 24% of messages to a
+check caught half of the problem messages, 89% caught 95%). Short first replies to the person
+go out untouched and immediately.
+
+### E. Pre-send check — one model request
+
+**What it is.** A single Responses API request from the host — no session, no memory — using
+a mid-size model: the standard as a fixed, cacheable prefix; this turn's incoming signals and
+recent conversation; the messages already sent this turn; the candidate. It returns
+`{verdict, axis, note}`.
+
+**What it does with a revise.** `hi_say` answers `not sent — <note>`, the same kind of answer
+as *too long* or *they were still talking*. Reaction reads it inside the same turn and
+rewrites or drops the message; no new turn is woken.
+
+**Limits that keep it from doing harm:**
+- **one revise per message** — the second attempt goes out, as the floor lets a reply
+  through after repeated refusals;
+- **timeout 2.5 s, and any error, sends the message** — silence is the worst failure, and a
+  checker must not be able to produce it;
+- **serial within a turn**, so order holds; when one message is sent back, the later ones in
+  that turn are too, since they may depend on it;
+- **shadow first** — it runs judging without sending anything back until its latency and its
+  agreement with the audit are known.
+
+**Catches:** relay, process narration, replaying the person, repeating an earlier message,
+claiming more than the report supports (09-15: "it's on screen" a minute before it was), a
+third same-shaped message that should be a table.
+**Misses:** measured on 91 labelled messages, a mid-size checker reached 57% precision and
+44% recall. It is a net, not a guarantee; and it cannot read messages later in the turn or
+problems that only exist across turns.
+
+**Does not:** write words for Reaction (that would be a second mouth), or block on anything
+the person must do.
+
+### F. Delivery
+
+One message is one matter. Paragraph breaks are part of the text: the face keeps them
+([`Chat.tsx`](../../src/appearance/web/src/ui/Chat.tsx)) and the speech splitter cuts on them
+([`segment.rs`](../../src/foundation/segment.rs), in agreement with `sentences.ts`).
+`SAY_MAX_CHARS` is the size of one matter; too long means say less, never send it in pieces.
+
+## Offline: learning from what was sent
+
+### G. Audit
+
+**When:** a Reaction turn that spoke ends; and again when the person's next message arrives,
+because that message is the ground truth for whether the turn landed. Event-driven, never
+periodic.
+
+**Reads:** the turn's full input (from the frame log), what was sent, the pre-send verdicts,
+the person's next message, and the reader's conduct and grain as they stood.
+
+**Writes:** one record per turn under `data/memory/quality/` — each message's axis or none;
+anything owed and left unsaid; anything wrong; whether the person's next message corrects
+*how* something was said; whether the pre-send check agreed.
+
+Also covers views put on screen (through the reviewer's verdict) and task-record lines written
+in the window.
+
+**Catches:** what the check cannot — dropped answers, repetition across turns, a subject that
+should have become a view, the check being wrong.
+**Misses:** nothing already sent can be recalled; its value is the next turn and the next
+change.
+
+### H. Reflection learns
+
+Reflection already reads the stream and keeps the per-subject read and the people facets. It
+folds the audit and the person's reactions in:
+
+- **grain per subject**, into the words-earned read — a question raises the grain for that
+  question only; a correction ("以后简要汇报") changes the subject's standing;
+- **durable conduct**, into the person's `## Working with them` when they state a lasting
+  preference about how they want to be told things.
+
+Both reach Reaction through A. Nothing new is stored beside them.
+
+### I. The number
+
+Server-side, beside the logs; no card in the face.
+
+| Measure | Why |
 |---|---|
-| work in progress is unfinished | "not read through yet", "not made into a list yet" |
-| the obvious next step will be taken | "I'll show it to you once it's sorted" — especially their own instruction echoed back |
-| a check that is not mentioned passed | the digest, the `200`, "restarts 0", which checks ran |
-| what they already know is still so | a waiting item repeated with nothing changed |
+| **Corrections of how something was said, per day** — the primary | the reader is the only authority on the reader's bar; target 0 |
+| audit findings per 100 messages, by axis | where the failures are |
+| owed and left unsaid, per 100 turns | so shorter never passes for better |
+| pre-send revise rate; latency p50/p95; timeouts | whether the source is getting fixed, and what the check costs |
+| check–audit agreement | whether the check deserves its place |
 
-What departs from those — a failure, a different route, a cost that grew, something only
-they can do — is the news. An outcome stated once ("deployed, checked, fine") is the whole
-of a good result.
+### J. Replay
 
-**The grain is per person and per subject, and it moves.** The same person wanted "it's
-live" for a deploy whose method they own, photo-by-photo detail on a birthday deck they were
-editing, the source text when they doubted a platform limit, and background on a project
-they had never worked on. What moves it is observable: the questions they ask (a *why* or a
-*show me the source* raises it for that question), the corrections they make (*less detail
-next time* lowers it for the subject), how they engage (editing item by item is fine grain).
-A single question raises the grain for that question; only a correction changes the
-subject's standing.
+Every Reaction turn's complete input is in the frame log's `turn/start` frames, so a past
+turn can be run again under a changed prompt or model with tools stubbed, and scored by the
+audit. `make eval-speech` does this against a set drawn from three sources: turns the person
+corrected, turns the audit flagged, and turns judged good (so a fix cannot overshoot into
+leaving things out). The set is private conversation and stays in the data directory.
 
-**The bar floats with how much is already competing for their attention — within a narrow
-range.** When several things are landing, or they have said they are focused on one, less
-clears it; when little is going on, a reason or a line of context can ride along. The range
-is narrow for a structural reason: lowering the bar admits what is worth little, never what
-is worth nothing.
+### K. Changes go through replay first
 
-**Compress by deleting, never by packing.** A short message that welds four clauses together
-reads worse than the long one it replaced.
+A change to `src/identity/`, to the standard, to the check's prompt, or to the model Reaction
+runs on is replayed against the set before it lands, and lands only without a regression on
+the primary measures.
 
-## How much, and in what form
+**The runtime is one of the things replay compares.** In the 2026-09-14 rehearsal, the same
+`reaction.md` run by a different model with a short window cut judged-problem messages from
+108 to 15; over those days the live Reaction ran `deepseek-flash` with 75K–236K input tokens
+per turn. Model and context length are levers of this design, not background.
 
-Two separate calls.
+## Views and task records
 
-**How much to say** is continuous: a sentence, a paragraph, or a conclusion with a few short
-paragraphs under it — one matter per message, the parts of it in order, a line break between
-them. That is the whole of text structure; no markdown, no numbering required. A message too
-long to be one matter is refused (`SAY_MAX_CHARS` in
-[`tools.rs`](../../src/body/reaction/tools.rs)); the answer is to say less, never to split it
-across messages, which hides how much is coming and lets other messages land inside it.
-
-**Whether to add a view** is a switch. Past a few paragraphs, or when the matter compares
-several things on several properties, or when most of it is detail the reader will skip, it
-is a document and belongs on screen or in a file. **The speech does not stop**: it says a
-sentence, a paragraph or a few about what the view means, and never reads the screen out.
-
-**A view is prepared where the content is produced, not where it is spoken.** A view takes
-minutes; by the time Reaction holds the finished material, the choice left is a wall of text
-or a wait. So the rung that produces a result that will cross the line has the view built
-alongside it, and the delivery is the view plus a few words. **The same holds across turns**:
-when one subject accumulates past the line in pieces — answers arriving one at a time over a
-quarter of an hour — the pieces are gathered into one view rather than extended by another
-message.
-
-## Where each part lives
-
-| Part | Home |
-|---|---|
-| Message shape | `hi_say`'s ceiling and description ([`mcp/mod.rs`](../../src/foundation/mcp/mod.rs)); line breaks kept by the face ([`Chat.tsx`](../../src/appearance/web/src/ui/Chat.tsx)) and cut on by the speech splitter ([`segment.rs`](../../src/foundation/segment.rs)), which must agree with `sentences.ts` |
-| The standard | one written standard, `src/identity/craft/reading.md`, read by every rung that writes for a person — Reaction, the view builder, the view reviewer, a worker writing a task record. The copies of it now spread through those prompts fold into references |
-| What Cognition sends Reaction | material, not a script: what changed for the person first, backing detail marked as backing, no drafted wording, no list of what was not done. **Timing intent is not wording and stays** — "hold this until the other half is verified" is information Reaction needs |
-| The grain per subject | the per-subject read Reflection already keeps on what the agent's words have earned (`proactivity.md`, projected into Reaction's window — [`snapshot.rs`](../../src/mind/memory/snapshot.rs)), widened from *when to speak* to *how much detail lands* |
-| The bar's float | Reaction's judgment from facts already in its window — the focus they stated, how much it has just said, how many things are landing. **No derived load score**: the host once carried a decaying estimate of presence and deleted it because nothing real could produce it ([`host.md`](host.md)) |
-| Audit | after each Reaction turn that spoke, an independent read of what came in, what went out and the person's next reply, recorded per turn. Event-driven — a turn ending, a reply arriving — never periodic |
-| The number | the count of times the person corrects *how* something was said. Beside it: audit findings per hundred messages by kind, and how often an answer owed to them was left unsaid, so that shorter never passes for better |
-| Replay | a changed prompt or model is run against past turns before it lands: every turn's full input is in the frame log's `turn/start` frames, so a turn can be replayed with tools stubbed and scored by the audit. Replay sets hold private conversation and stay in the data directory |
+- **Views**: the builder writes against the standard and against **who the view is for** — a
+  report for the person to review may mark what is unverified; something made to be shown to
+  others (a deck, a shared page) carries no working notes, which go in the conversation. The
+  reviewer judges against the same standard. The spoken line that goes with a view passes D
+  and E like any other message.
+- **Task records**: workers write timeline lines to the standard (one fact per line, the
+  person's language, what happened rather than the machinery). The audit reads lines written
+  in its window.
 
 ## Decisions
 
 | Decision | Reasoning |
 |---|---|
-| **No pre-send model check in the core** | Measured on 223 labelled messages (2026-09-14). A small-model checker found at most 11% of problem messages. A mid-size one reached 57% precision and 44% recall. Code triage cannot separate paraphrased repetition from new content: routing 24% of messages to the check caught half the problems, routing 89% caught 95%. So a check would sit on nearly every message at mid-size latency, for a minority of problems |
-| **The model and context Reaction runs with are part of legibility** | In an offline replay of 117 turns, the same `reaction.md` run by a different model with a short window cut judged-problem messages from 108 to 15 and turns the person would push back on from 31 to 0. Over that stretch the live Reaction ran `deepseek-flash` with 75K–236K input tokens per turn. Prompt rules on top of the other model added a smaller gain (preferred 47–31, 39 ties) and dropped more owed items |
-| **One matter per message, not three short messages** | Supersedes the earlier shape in [`text-transcript.md`](text-transcript.md) |
-| **Structure is paragraphs** | A chat already renders paragraphs, and speech already reads them; markdown is a second syntax for the reader and the voice to undo |
-| **The primary number is the person's corrections** | A judge's labels drift toward completeness: the replay's blind judge marked as *dropped* an item the person later said was right to leave out. The reader is the only authority on the reader's bar |
+| **A pre-send check, scoped to report turns and long or later messages** | Code triage cannot find paraphrase, so scope follows where failures concentrate. A small-model checker found ≤11% of problems and is not used; mid-size reached 57% / 44%. On report turns a few seconds are affordable, and those turns carried the worst messages on 09-15 |
+| **The check can send back, never rewrite** | A checker that edits words is a second mouth ([invariant 1](arch.md#invariants)); `hi_say` already answers calls with refusals Reaction acts on |
+| **Fail open** | A timeout or error sends the message. The one failure nobody reports is silence |
+| **Conduct: people present first, never cut** | Name order plus a shared 3,000-character cap delivered 3,023 of 16,425 characters and cut the owner's own section |
+| **Grain lives in the existing per-subject read** | Reflection already learns what the agent's words earn per subject; a second store would be structure with the same job |
+| **No derived load score** | The bar's float is judged from facts in the window; the host's presence estimate was deleted because nothing real could produce it ([`host.md`](host.md)) |
+| **One matter per message; structure is paragraphs** | Supersedes "three short messages" in [`text-transcript.md`](text-transcript.md) |
+| **The primary number is the person's corrections** | The rehearsal's blind judge marked as *dropped* an item the person said was right to leave out; labels drift toward completeness |
+| **Changes are replayed before they land** | Two prompt changes without a measurement between them cannot be told apart |
 
 ## Open
 
-- **Where the lines sit**: the message ceiling (400 characters is a starting value), and when
-  a matter becomes a view. Both want the replay set, not a guess.
-- **Which model and how much context Reaction runs with.** The switch to `deepseek-flash` at
-  2026-09-10 15:06 and the window growing past 200K tokens are the two largest measured
-  levers, and neither has been compared on the real runtime yet.
-- **The grain for a subject with no signal.** Coarse keeps attention; but a reader who is not
-  at the window cannot follow up cheaply, so asynchronous delivery may want to start finer.
-- **Judge calibration.** The audit's notion of *dropped* has to exclude what the reader
-  already knows or what resolves on its own, or it will pull the agent back toward saying
-  everything.
+- **Lines**: the triage length (120 characters), the message ceiling (400), when a matter
+  becomes a view — all starting values for the replay set to settle.
+- **Which model and how much context Reaction runs with**, and which model the check uses.
+- **The grain for a subject with no signal** — coarse keeps attention, but a reader away from
+  the window pays more to follow up.
+- **Calibrating the audit's *owed and left unsaid*** so it excludes what the reader already
+  knows and what resolves on its own.
