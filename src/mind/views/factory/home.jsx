@@ -19,13 +19,10 @@ import { flextree } from "d3-flextree";
 
 const COPY = {
   en: {
-    task: "Task", activity: "Activity", overview: "Overview",
     core: "Hi Agent", context: "Our conversation", update: "Latest update",
     nothing: "Nothing in hand", reading: "Loading work...",
     failed: "Some sources could not be refreshed", retry: "Retry", stale: "Earlier context",
     unknown: "Time unknown", untitled: "Untitled activity", noMessages: "No conversation yet",
-    results: (n) => `${n} result${n === 1 ? "" : "s"}`,
-    zoom: "Zoom", zoomIn: "Zoom in", zoomOut: "Zoom out", fit: "Fit to window",
     status: { todo: "To do", doing: "In progress", serving: "On duty", done: "Completed", cancelled: "Cancelled",
       running: "Working", waiting: "Work queued", idle: "Idle",
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
@@ -34,13 +31,10 @@ const COPY = {
     ago: (n, unit) => `${n}${unit} ago`,
   },
   zh: {
-    task: "任务", activity: "活动", overview: "概览",
     core: "Hi Agent", context: "我们的交流", update: "最新更新",
     nothing: "手头没有在办的事", reading: "正在读取工作...",
     failed: "部分数据未能刷新", retry: "重试", stale: "较早的上下文",
     unknown: "时间未知", untitled: "未命名活动", noMessages: "还没有对话",
-    results: (n) => `${n} 项成果`,
-    zoom: "缩放", zoomIn: "放大", zoomOut: "缩小", fit: "适应窗口",
     status: { todo: "待开始", doing: "进行中", serving: "值守", done: "已完成", cancelled: "已取消",
       running: "正在处理", waiting: "有工作待处理", idle: "空闲",
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
@@ -55,13 +49,13 @@ const WINDOW_MS = 24 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition", "reflection"]);
 const OPEN = new Set(["todo", "doing", "serving"]);
 /**
- * How many pictures a task hangs below itself before the count alone carries them.
+ * How many pictures a task hangs below itself.
  *
  * **This is not the old artifact rank coming back.** That drew every result as a 280x134
  * peer card — 125 of them, 106 nothing but a filename, 60.2% of the canvas. What returns is
  * strictly the pictures, strictly below their task, as image tiles with no text, and capped:
- * a task that produces forty screenshots hangs six and says forty in its count. A result
- * with no picture never becomes a node at all, because a filename is what a count is for.
+ * a task that produces forty screenshots hangs six. The rest, and every result with no
+ * picture, are `factory/tasks`' to show — Home carries no count of them.
  */
 const RESULT_TILES = 6;
 /** Where a card hands off. Home owns no detail of its own. */
@@ -98,7 +92,7 @@ const TONE = { core: "var(--accent)", todo: "var(--fg-mute)",
  * 5. Overview uses useMessages()'s USER-VISIBLE transcript and factual task transitions.
  *    No registry tail, raw reasoning, or tool log is used to manufacture a public plan.
  * 6. Every task is its own branch off the core. There is no grouping rank — see below.
- * 7. A task's results are a COUNT on the task, not nodes. They were 60.2% of the canvas.
+ * 7. Only a task's PICTURES are nodes, capped. Results as cards were 60.2% of the canvas.
  *
  * A view is a single-file transform. Pure model/layout functions stay here rather than
  * importing an unserved local module. The tests evaluate only this section.
@@ -150,23 +144,24 @@ function taskResults(task, views) {
   // The row names what it mentions and this decides what that means. Matching moved to the
   // server (`view_refs` in `foundation/server/tasks.rs`) when the row stopped carrying the
   // prose to match against — same four spellings, and the same rule that only a known view
-  // can be opened. What changed here is what a match becomes: a count, not a card.
+  // can be opened. What changed here is what a match becomes: a picture, or nothing.
   //
   // **A system view is never a task's product.** A ref is a MENTION, and a task whose prose
   // says "looked at factory/home" gets `factory/home` in its refs; three such mentions were
-  // being counted as results across the work in hand, and two of them were being drawn as
+  // being taken as results across the work in hand, and two of them were being drawn as
   // the task's picture — a task about a birthday deck showed this very surface. The app's
   // own surfaces are the one class of mention that is categorically not an output.
   //
   // It does not fix a mention of ANOTHER task's result, which is the same confusion without
-  // a flag to catch it: `research-two-pairs` is currently a counted result of the unrelated
-  // KTV task. That belongs to the server-side matching, not here.
+  // a flag to catch it: `research-two-pairs` is currently a result of the unrelated KTV
+  // task. That belongs to the server-side matching, not here.
+  //
+  // **Only a picture is kept.** A result without one — a view never shot, a file the task
+  // wrote — used to feed a count printed on the card, and the count is gone: a number with
+  // nothing to open behind it is a claim the card cannot back, and `factory/tasks` lists them.
   const mentioned = new Set(task.refs || []);
-  return [
-    ...views.filter((v) => v.view_ref && !v.system && mentioned.has(v.view_ref))
-      .map((v) => ({ kind: "view", id: v.view_ref, title: v.label || v.view_ref, shot: v.shot_url || null })),
-    ...(task.files || []).map((f) => ({ kind: "file", id: `${task.subject}/${f.path}`, title: f.path, shot: null })),
-  ];
+  return views.filter((v) => v.view_ref && !v.system && v.shot_url && mentioned.has(v.view_ref))
+    .map((v) => ({ id: v.view_ref, title: v.label || v.view_ref, shot: v.shot_url }));
 }
 
 /**
@@ -178,9 +173,9 @@ function taskResults(task, views) {
  * the person can see — only on whether it happened to be first in `refs`. On the canvas it
  * read as clutter rather than as rank. One appearance for pictures, one for cards.
  *
- * What the card keeps is the count, which is the part a poster never carried: a count is right
- * for what a duty writes — twenty-one liveness JSONs are a log, and twenty-one cards for them
- * were 45% of the old canvas — and the pictures below say what the work actually made.
+ * A result with no picture is never a node: twenty-one liveness JSONs are a log, and
+ * twenty-one cards for them were 45% of the old canvas. The pictures below say what the work
+ * actually made; what it wrote besides is `factory/tasks`' to list.
  *
  * **Order still decides which six, and it is not "the latest".** View records have no
  * timestamp; the only time-like thing on them is the `?v=` cache-buster on the shot URL, which
@@ -227,7 +222,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
     // Pictures are second-level, the way a sub-step or a sub-result is — all of them, so that
     // one kind of record has one appearance. A task mid-flight often has process pictures and
     // no deliverable yet, and nothing here claims to know which of them is which.
-    for (const result of node.data.results.filter((r) => r.shot).slice(0, RESULT_TILES)) {
+    for (const result of node.data.results.slice(0, RESULT_TILES)) {
       const id = `result:${result.id}`;
       const exists = byId.has(id);
       add({ id, kind: "result", title: result.title, sourceRefs: [ref("view", result.id)],
@@ -305,8 +300,13 @@ function emphasis(node, now) {
   return 1 - 0.22 * Math.min(1, Math.max(0, now - instant(end)) / WINDOW_MS);
 }
 
-/** Every card is one size, because a picture is never inside one. */
-const CORE_W = 340, CORE_H = 320, NODE_W = 240, NODE_H = 108, TILE_W = 120, TILE_H = 76;
+/**
+ * **A card is the size of a picture, and a picture is the size of its shot.** Shots are
+ * rendered at a 16:9 frame and stored 480x270 (`view_shots.rs`), so 240x135 draws one at
+ * exactly 2x with nothing cropped. A card is the same box because the two sit in one rank as
+ * peers of one another: two sizes there made the rank read as two ranks.
+ */
+const CORE_W = 340, CORE_H = 320, CARD_W = 240, CARD_H = 135;
 /**
  * The gutter between one rank and the next. Wider than it needs to be to keep boxes apart,
  * because it is also the room the wires bend in: a wire leaves its parent's edge, runs to the
@@ -344,8 +344,8 @@ function divergence(a, b) {
  * and an 11px caption is under 8px, which is the edge of legible.
  */
 const FIT_FLOOR = 0.7;
-function dimensions(node) {
-  return node.kind === "result" ? { w: TILE_W, h: TILE_H } : { w: NODE_W, h: NODE_H };
+function dimensions() {
+  return { w: CARD_W, h: CARD_H };
 }
 
 /**
@@ -364,7 +364,7 @@ function fit(chart, frame) {
  * to see the shape of a day that has outgrown the floor, in far enough to read a picture tile.
  * The floor is a limit on what is chosen for them, not on what they may choose.
  */
-const ZOOM_MIN = 0.25, ZOOM_MAX = 2, ZOOM_STEP = 1.25;
+const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
 const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
 
 /** Where the drawing sits at a scale: centred on an axis it is smaller than the window on. */
@@ -511,7 +511,8 @@ export default function Home() {
     observer.observe(el); return () => observer.disconnect();
   }, []);
   // Fit is the default and zoom is the person's. `zoom` is null while the scale follows the
-  // window; the first zoom takes it over, and Fit hands it back.
+  // window; the first pinch or ⌘/Ctrl-wheel takes it over for as long as the view is open.
+  // There is no on-screen control, so nothing hands it back short of opening Home again.
   const [zoom, setZoom] = useState(null);
   const scale = zoom ?? fit(chart, frame);
   const { canvas, offset } = stage(chart, frame, scale);
@@ -536,18 +537,16 @@ export default function Home() {
     viewport.current.scrollTo({ left: pending.current.left, top: pending.current.top, behavior: "instant" });
     pending.current = null;
   }, [scale]);
-  // Centre the core on first paint and on Fit — which does nothing while the chart fits.
-  // Past that the scroll position is the person's.
-  const [fitted, setFitted] = useState(0);
-  const centredFor = useRef(-1);
+  // Centre the core on first paint — which does nothing while the chart fits. Past that the
+  // scroll position is the person's.
+  const centred = useRef(false);
   useLayoutEffect(() => {
-    if (!loaded || mobile || !viewport.current || centredFor.current === fitted) return;
-    centredFor.current = fitted;
+    if (!loaded || mobile || !viewport.current || centred.current) return;
+    centred.current = true;
     const core = chart.placed[0];
     viewport.current.scrollTo({ left: offset.x + (core.x + core.w / 2) * scale - frame.w / 2,
       top: offset.y + (core.y + core.h / 2) * scale - frame.h / 2, behavior: "instant" });
-  }, [loaded, mobile, chart, frame, scale, offset.x, offset.y, fitted]);
-  const fitWindow = () => { pending.current = null; setZoom(null); setFitted((n) => n + 1); };
+  }, [loaded, mobile, chart, frame, scale, offset.x, offset.y]);
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
   // Pinch and ⌘/Ctrl-wheel zoom at the pointer. A plain wheel still scrolls. These are
   // registered by hand because React's wheel listener is passive and cannot stop the page
@@ -651,11 +650,6 @@ export default function Home() {
           </div>
         </div>}
       </div>
-      {!mobile && loaded && <div className="hi-work__zoom" role="group" aria-label={L.zoom}>
-        <button onClick={() => zoomTo(scale / ZOOM_STEP)} disabled={scale <= ZOOM_MIN} aria-label={L.zoomOut} title={L.zoomOut}>−</button>
-        <button onClick={fitWindow} aria-pressed={zoom === null} title={L.fit}>{Math.round(scale * 100)}%</button>
-        <button onClick={() => zoomTo(scale * ZOOM_STEP)} disabled={scale >= ZOOM_MAX} aria-label={L.zoomIn} title={L.zoomIn}>+</button>
-      </div>}
     </div>
   );
 }
@@ -671,7 +665,7 @@ function Core({ node, model, now }) {
       {[...CORE_ROLES].map((role) => {
         const s = node.data.sessions.find((s) => s.role === role);
         return <span key={role} title={`${L.roles[role]} · ${L.status[s?.state || "missing"]}`}>
-          <i data-live={s?.state === "running"} />{L.roles[role]}<small>{L.status[s?.state || "missing"]}</small>
+          <i className="hi-work__live" data-live={s?.state === "running"} />{L.roles[role]}<small>{L.status[s?.state || "missing"]}</small>
         </span>;
       })}
     </div>
@@ -692,6 +686,12 @@ function Core({ node, model, now }) {
 /**
  * A card is a glance, and its whole surface is one handoff.
  *
+ * **What a card is, it says without a label.** There are two kinds of card — a task and a live
+ * session working on one — and a word naming the kind was the first line of every card. A
+ * session instead wears the dot the core's roles wear, because it is the same fact: the dot
+ * means a live session, filled while it is running. A task has none. The status word carries
+ * the tone a coloured left edge used to, so no side of the border means anything.
+ *
  * **Named loan:** the handoff opens the board, not this row on it. `openRef(viewRef)` carries
  * a view ref and nothing else, and `factory/tasks` reads no incoming target, so there is no
  * way to say "open the board focused here" — giving the view-open a target means changing the
@@ -701,7 +701,6 @@ function Core({ node, model, now }) {
  */
 function Node({ node, now, children, openRef }) {
   const state = stateOf(node), time = nodeTime(node);
-  const results = node.kind === "task" ? node.data.results.length : 0;
   const board = node.kind === "task" ? TASK_BOARD : node.kind === "activity" ? SESSION_BOARD : null;
   // A tile is the one handoff that lands exactly where it points: `openRef` takes a view ref
   // natively, so this needs none of the targeting the board handoff is waiting on.
@@ -711,11 +710,10 @@ function Node({ node, now, children, openRef }) {
     </button>
   </article>;
   const body = <>
-    <div className="hi-work__node-head"><span>{L[node.kind]}</span>
-      {results > 0 && <small>{L.results(results)}</small>}
-    </div>
     <span className="hi-work__node-title">{node.title}</span>
-    <div className="hi-work__node-foot"><span>{L.status[state] || ""}</span>
+    <div className="hi-work__node-foot"><span className="hi-work__node-state">
+      {node.kind === "activity" && <i className="hi-work__live" data-live={node.data.session.state === "running"} />}
+      {L.status[state] || ""}</span>
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
   </>;
   return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}
@@ -743,23 +741,17 @@ const CSS = `
 .hi-work__viewport[data-chart]:active { cursor:grabbing; }
 .hi-work__canvas { position:relative; user-select:none; -webkit-user-select:none; }
 .hi-work__canvas img { -webkit-user-drag:none; }
-.hi-work__zoom { position:absolute; z-index:3; right:max(16px, calc(var(--hi-safe-right, 0px) + 16px)); bottom:64px; display:flex; align-items:stretch; background:var(--bg); border:1px solid var(--work-line); border-radius:8px; overflow:hidden; box-shadow:0 2px 10px color-mix(in srgb, var(--fg) 8%, transparent); }
-.hi-work .hi-work__zoom button { min-width:34px; height:34px; text-align:center; font-size:16px; color:var(--fg-dim, var(--fg)); }
-.hi-work .hi-work__zoom button:nth-child(2) { min-width:56px; font-size:12px; font-variant-numeric:tabular-nums; border-inline:1px solid var(--work-line); }
-.hi-work .hi-work__zoom button[aria-pressed=true] { color:var(--fg-mute); }
-.hi-work .hi-work__zoom button:disabled { opacity:.35; cursor:default; }
-.hi-work .hi-work__zoom button:hover:not(:disabled) { background:color-mix(in srgb, var(--fg-mute) 12%, transparent); }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
 .hi-work__wires path { fill:none; stroke-width:1.6; opacity:.7; }
 .hi-work__position { position:absolute; }
-.hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:var(--bg); border-top:3px solid var(--accent); border-bottom:1px solid var(--work-line); }
+.hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; }
 .hi-work__core-title { display:flex; gap:10px; align-items:center; margin:0; min-height:36px; font-size:24px; font-weight:600; }
 .hi-work__pip { width:11px; height:11px; flex:0 0 11px; border-radius:50%; background:var(--accent); }
 .hi-work__roles { display:flex; gap:14px; padding:10px 0 12px; border-bottom:1px solid var(--work-line); }
 .hi-work__roles span { display:grid; grid-template-columns:7px 1fr; align-items:center; column-gap:5px; font-size:13px; }
-.hi-work__roles i { width:5px; height:5px; border:1px solid var(--fg-mute); border-radius:50%; }
-.hi-work__roles i[data-live=true] { background:var(--accent); border-color:var(--accent); }
+.hi-work__live { width:5px; height:5px; flex:0 0 5px; border:1px solid var(--fg-mute); border-radius:50%; }
+.hi-work__live[data-live=true] { background:var(--accent); border-color:var(--accent); }
 .hi-work__roles small { grid-column:2; font-size:10px; color:var(--fg-mute); }
 .hi-work__overview { flex:1; min-height:0; overflow:hidden; padding-top:6px; }
 .hi-work__overview > p { font-size:14px; color:var(--fg-mute); }
@@ -768,16 +760,16 @@ const CSS = `
 .hi-work__overview time { font-size:11px; }
 .hi-work__overview p { margin:5px 0 0; font-size:16px; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
-.hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-left:3px solid var(--node-tone); border-radius:6px; display:flex; flex-direction:column; }
+.hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; display:flex; flex-direction:column; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
-.hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:5px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
+.hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:6px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
-.hi-work__node-head { display:flex; align-items:center; justify-content:space-between; min-height:20px; font-size:11px; color:var(--fg-mute); }
 .hi-work__node-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.3; overflow-wrap:anywhere; font-weight:500; }
 .hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:6px; font-size:11px; color:var(--fg-mute); }
 .hi-work__node-foot time { white-space:nowrap; }
+.hi-work__node-state { display:flex; align-items:center; gap:6px; color:var(--node-tone); }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }
 .hi-work__flow .hi-work__core { height:auto; min-height:320px; }
 /* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
@@ -789,7 +781,7 @@ const CSS = `
 .hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
 .hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:1px solid var(--work-line); }
 .hi-work__branch .hi-work__node { min-height:116px; }
-.hi-work__branch .hi-work__tile { height:120px; max-width:220px; }
+.hi-work__branch .hi-work__tile { height:auto; aspect-ratio:16 / 9; max-width:240px; }
 .hi-work__branch .hi-work__branch li::before { left:-12px; width:12px; }
 .hi-work__loading { position:absolute; left:24px; top:8px; color:var(--fg-mute); font-size:13px; z-index:2; }
 @media (max-width:759px) { .hi-work__node-title { min-height:36px; } }

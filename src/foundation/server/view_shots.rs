@@ -65,9 +65,8 @@ use std::path::{Path, PathBuf};
 
 use crate::body::capabilities::view_render;
 
-/// The thumbnail's long edge, in pixels. The tile is 118×76 CSS px, so this covers
-/// a 4× display and any later decision to show the picture bigger, while keeping a
-/// shot around 40–80 KB.
+/// The thumbnail's long edge, in pixels. The largest box a shot is drawn in is Home's
+/// 240×135 CSS px, so this is 2× that, while keeping a shot around 40–80 KB.
 const THUMB_WIDTH: u32 = 480;
 
 /// How many shots to keep. The history is bounded at 24 entries, but the *cache* is
