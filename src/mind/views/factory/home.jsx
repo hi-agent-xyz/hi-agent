@@ -307,7 +307,15 @@ function emphasis(node, now) {
 
 /** Every card is one size, because a picture is never inside one. */
 const CORE_W = 340, CORE_H = 320, NODE_W = 240, NODE_H = 108, TILE_W = 120, TILE_H = 76;
-const GAP_X = 48, MARGIN = 24;
+/**
+ * The gutter between one rank and the next. Wider than it needs to be to keep boxes apart,
+ * because it is also the room the wires bend in: a wire leaves its parent's edge, runs to the
+ * midpoint and arrives flat at its child, so a narrow gutter makes every curve the same
+ * near-vertical kink and the branch that owns a card stops being readable from its wire. The
+ * chart is short of height and not of width — at the floor scale a real instance uses about
+ * 1078 of 1511px — so this is the one axis where air is nearly free.
+ */
+const GAP_X = 64, MARGIN = 24;
 /**
  * The air between two adjacent nodes, by **the rank their branches part at** — not by how deep
  * either of them happens to sit.

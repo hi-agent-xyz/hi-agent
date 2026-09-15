@@ -36,10 +36,17 @@ instance this was measured on, the 20 cards in hand were about 88% of a 1511x727
 area before a single gap or wire. So the geometry is shaped to need as little scale as it can
 — but **two things outrank scale, and both are paid for in height.** One appearance per kind
 of record, so a picture is never a strip inside a card; and air graded by rank, so a branch
-can be seen to be one. Together they took a measured instance from 1652x766 to 1540x982, or
+can be seen to be one. Together they took a measured instance from 1652x766 to 1604x982, or
 0.91 to 0.74 in that window. Height is what a landscape window runs out of first and this
 spends it deliberately: a chart that fits and cannot be read has not fitted, and neither has
 one that fits and cannot be parsed.
+
+**Width, by the same accounting, is nearly free, so the gutter between ranks is generous.**
+Both measured instances are bound on height — at their scale they draw about 1078 of a 1511px
+window's width — so widening the gutter changes no scale at all. What it buys is the wires: one
+runs from its parent's edge to the midpoint and arrives flat at its child, so a narrow gutter
+makes every curve the same near-vertical kink and a card can no longer be traced back to the
+branch that owns it. Air between ranks is legibility bought with the axis that has it to spend.
 
 **Air is graded by where two nodes' branches part, not by how deep either one sits.** One gap
 for every pair drew every rank as a flat column: a task's own pictures were exactly as far
@@ -166,7 +173,7 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   either.
 - **An ordinary day now reaches the floor, not just a busy one.** Every open task is present
   however old, so a ledger of forty was always going to open at 0.7 and scroll — but a
-  fourteen-task instance with nine live sessions and twelve pictures measures 1540x1438 and
+  fourteen-task instance with nine live sessions and twelve pictures measures 1604x1438 and
   opens there too, and that is a normal Tuesday. What should give way first by default is
   still undecided, and handing the person a zoom does not decide it. What is now clear is
   where the height goes: **a task's tiles stack one per row**, so four pictures cost four tile
