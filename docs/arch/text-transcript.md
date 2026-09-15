@@ -72,15 +72,21 @@ belongs in a field, where a window can draw it and a later pass can defeat it. S
 the middle of the sentence somebody said, it was neither — just a name in a chat bubble
 that the person never typed.
 
-## Why whole messages, and why short ones
+## Why whole messages, and one matter in each
 
 The list is a chat between two people, not a transcript of an agent's working. People
-send a message when they have finished writing it, and they send three short ones rather
-than one long one. That is the shape the agent writes in: `SAY_MAX_CHARS` is not a guard
-against an accidental dump, it is the size of a message, and a rejected `hi_say` means
-*send this as a few* rather than *something went wrong*.
+send a message when they have finished writing it, and a message says one matter whole: a
+sentence, a paragraph, or a conclusion with a few short paragraphs under it. That is the
+shape the agent writes in: `SAY_MAX_CHARS` is not a guard against an accidental dump, it
+is the size of one matter, and a rejected `hi_say` means *say less* — never *send it in
+pieces*. Line breaks between paragraphs are part of the text, kept by the face and cut on
+by the speech splitter.
 
-Short messages lose nothing, because depth was never supposed to live here. A person
+This section used to say *three short messages rather than one long one*, and that shape
+split one matter across several bubbles: the reader could not tell how much was coming,
+and other messages landed in the middle of it. See [`legibility.md`](legibility.md).
+
+Messages stay short of documents, because depth was never supposed to live here. A person
 does not paste a report into a chat; they send the file and say what is in it. **The
 list is the conversation; views and files are the attachments.**
 

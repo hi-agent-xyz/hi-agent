@@ -169,6 +169,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`signal-attribution.md`](signal-attribution.md) | who a signal came from — the three source classes, the owner, and keeping "unknown" |
 | [`host.md`](host.md) | the Rust host: the one conversation, sessions, reflex, glancing up |
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
+| [`legibility.md`](legibility.md) | what a person reads is the product — what is worth saying, how much, in what form, and how that is kept true |
 | [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
 | [`privacy.md`](privacy.md) | keys a person typed: where they are filed, the one seam that substitutes their paths, and what is deliberately left alone |

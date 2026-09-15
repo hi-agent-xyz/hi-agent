@@ -130,7 +130,7 @@ in the open without narrating itself at the person.
 
 So the host **observes and does not intervene**: no voicing of what was typed, which would
 make the contract a suggestion, and no second ask either. `hi_say` answers a call that was
-made — too long, and send it as a few shorter ones. There is no ack for a call that wasn't,
+made — too long for one message, and nothing was sent. There is no ack for a call that wasn't,
 and a host-side retry standing in for one buys a whole extra generation for nothing. **Nor
 is a turn that typed without saying logged as a failure**: the turn-done line carries
 `typed_chars` as a size, and that is all it means. Logging it as an error taught readers —
