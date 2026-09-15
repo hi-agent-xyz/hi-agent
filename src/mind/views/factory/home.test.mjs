@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, fit, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, fit, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -222,34 +222,6 @@ test("every drawn node has a finite, colored wire and no two boxes overlap", () 
   }
 });
 
-test("the chart is scaled to the window, never enlarged, and never shrunk past legible", () => {
-  // Shaped like the instance this was measured on: eleven tasks in hand, six with a picture,
-  // four live sessions working on them and four process pictures below their tasks.
-  const views = Array.from({ length: 10 }, (_, i) => ({ view_ref: `views/v${i}`, label: `V${i}`, shot_url: `/v${i}.png` }));
-  const shot = (i, n = 1) => Array.from({ length: n }, (_, k) => `views/v${i + k}`);
-  const tasks = [
-    { ...task("t0"), refs: shot(0) }, { ...task("t1"), refs: shot(1, 2) }, { ...task("t2"), refs: shot(3, 3) },
-    { ...task("t3"), refs: shot(6, 2) }, { ...task("t4"), refs: shot(8) }, { ...task("t5"), refs: shot(9) },
-    task("t6"), task("t7"), task("t8"), task("t9"), task("t10"),
-  ];
-  const workers = ["t4", "t6", "t8", "t9"].map((subject) => worker(`w-${subject}`, "worker", { subject }));
-  const chart = arrange(project({ tasks, workers, views }));
-  assert.equal(chart.placed.length, 26);
-  // A 14-inch laptop window less the app's own chrome.
-  const laptop = fit(chart, { w: 1511, h: 727 });
-  // **A day this size now opens at the floor and scrolls.** It used to fit, at 0.85 as
-  // 1652x766 and then at 0.74 as 1604x982, after every picture became a node of its own and
-  // the air between branches was graded by rank. Cards and tiles then became one 240x135 box,
-  // the size of a shot, which is 27px more per card and 59px more per tile — 1604x1281 here,
-  // needing 0.57. Every one of those changes spent height, which is what a landscape window
-  // runs out of first; the lever that would give it back is packing a task's tiles into a
-  // block (`docs/arch/home.md` § Open). Until then this guards the floor, not a fit.
-  assert.equal(laptop, 0.7, `drawn no smaller than legible (${chart.width}x${chart.height})`);
-  assert.ok(chart.width * laptop <= 1511, "and it overflows on height alone, never width");
-  assert.equal(fit(chart, { w: 4000, h: 3000 }), 1, "a big window does not enlarge it");
-  assert.equal(fit(chart, { w: 800, h: 400 }), 0.7, "a small one scrolls rather than go illegible");
-});
-
 test("a zoom keeps the point under the pointer where it was, fitted or overflowing", () => {
   const chart = { width: 1600, height: 800 }, frame = { w: 1000, h: 700 };
   const under = (scale, scroll, point) => {
@@ -266,10 +238,10 @@ test("a zoom keeps the point under the pointer where it was, fitted or overflowi
   // A drawing smaller than the window is centred in it; one larger starts at the origin.
   assert.deepEqual({ ...stage(chart, frame, 0.5).offset }, { x: 100, y: 150 });
   assert.deepEqual({ ...stage(chart, frame, 2).offset }, { x: 0, y: 0 });
-  // The person's range is wider than the default's floor in both directions.
+  // The person's range, either side of the 1x Home opens at.
   assert.equal(clampZoom(0.01), 0.25);
   assert.equal(clampZoom(9), 2);
-  assert.ok(clampZoom(0.5) < fit(chart, { w: 10, h: 10 }), "they may zoom out past what the default would pick");
+  assert.equal(clampZoom(1), 1);
 });
 
 test("layout supports deeper nodes, rather than flattening every row into a hub child", () => {

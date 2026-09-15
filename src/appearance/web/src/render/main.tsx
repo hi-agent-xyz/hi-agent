@@ -156,6 +156,18 @@ async function settle(): Promise<void> {
         }),
     ),
   );
+  // A view's entrance animation is not a state it rests in. Two frames after the commit a
+  // 0.3s fade-in is a few percent in, so the capture was a pale ghost of the page — and a
+  // thumbnail keeps that ghost for as long as the picture lives. Jump every animation that
+  // has an end to it; the frame a person reads is the one after the fade, not during it.
+  // One that never ends (a spinner, a pulse) cannot be finished and is left where it is.
+  for (const animation of document.getAnimations()) {
+    try {
+      animation.finish();
+    } catch {
+      /* infinite: there is no end state to jump to */
+    }
+  }
   await new Promise<void>((r) => requestAnimationFrame(() => r()));
 }
 

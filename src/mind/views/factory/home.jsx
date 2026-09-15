@@ -311,9 +311,9 @@ const CORE_W = 340, CORE_H = 320, CARD_W = 240, CARD_H = 135;
  * The gutter between one rank and the next. Wider than it needs to be to keep boxes apart,
  * because it is also the room the wires bend in: a wire leaves its parent's edge, runs to the
  * midpoint and arrives flat at its child, so a narrow gutter makes every curve the same
- * near-vertical kink and the branch that owns a card stops being readable from its wire. The
- * chart is short of height and not of width — at the floor scale a real instance uses about
- * 1078 of 1511px — so this is the one axis where air is nearly free.
+ * near-vertical kink and the branch that owns a card stops being readable from its wire.
+ * It was sized when the chart was fitted and width was nearly free; at 1x it is not, and a
+ * two-sided chart is about 1604px wide, so a laptop window pans sideways as well as down.
  */
 const GAP_X = 64, MARGIN = 24;
 /**
@@ -338,31 +338,19 @@ function divergence(a, b) {
   while (a !== b && a.parent && b.parent) { a = a.parent; b = b.parent; }
   return a.depth + 1;
 }
-/**
- * The smallest scale the chart is drawn at. Past it the chart stops shrinking and scrolls,
- * because a chart that fits and cannot be read has not fitted: at 0.7 a 17px title is 12px
- * and an 11px caption is under 8px, which is the edge of legible.
- */
-const FIT_FLOOR = 0.7;
 function dimensions() {
   return { w: CARD_W, h: CARD_H };
 }
 
 /**
- * The scale that puts the whole chart in the window, never above 1 and never below the floor.
- * It is the default, not a mode the person has to find: until they zoom, the scale follows the
- * window, and resizing the window re-fits it. The 1px keeps rounding from producing an
- * overflow whose scrollbar would narrow the window and re-fit it again.
- */
-function fit(chart, frame) {
-  const scale = Math.min(1, (frame.w - 1) / chart.width, (frame.h - 1) / chart.height);
-  return Math.max(FIT_FLOOR, scale);
-}
-
-/**
- * How far the person can zoom, which is wider than `fit` ever goes on its own: out far enough
- * to see the shape of a day that has outgrown the floor, in far enough to read a picture tile.
- * The floor is a limit on what is chosen for them, not on what they may choose.
+ * **Home opens at 1x, and any other scale is the person's.** It used to open fitted to the
+ * window with a floor of 0.7, and the floor was where every real day landed: fitting shrank
+ * every card to 70% — a 17px title drawn at 12px, a 16:9 picture at 168x95 — to buy the one
+ * view of the whole chart that nobody was reading at that size. A day that is wider or taller
+ * than the window scrolls from the core outward instead, and pinch or ⌘/Ctrl-wheel is there
+ * for the moment the shape of the whole is what someone wants.
+ *
+ * The range reaches out far enough to see that shape and in far enough to read a picture.
  */
 const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
 const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
@@ -386,13 +374,9 @@ function zoomAround(chart, frame, from, to, scroll, point) {
  * Semantic edges determine the hierarchy; flextree only computes its geometry.
  * Overview children are embedded INSIDE the core, not duplicated as peripheral cards.
  *
- * **The whole tree is drawn, always, and opens fitted to the window.** There is no collapse,
- * because with the work in hand and nothing else there is nothing to hide from: the instance
- * that laid out 225 cards over 2556x16529px lays out 20. But 20 cards at full size were still
- * about 88% of a laptop window's area before a single gap or wire, so no arrangement of them
- * fits at 1x and `fit` scales the drawing instead. The zoom that came back is not the zoom
- * that was removed: that one was the only way to see a canvas that could never fit, and this
- * one starts from a chart that already does.
+ * **The whole tree is drawn, always.** There is no collapse, because with the work in hand
+ * and nothing else there is nothing to hide from: the instance that laid out 225 cards over
+ * 2556x16529px lays out 20.
  */
 function arrange(model) {
   const children = childIndex(model);
@@ -510,11 +494,7 @@ export default function Home() {
     const observer = new ResizeObserver(([entry]) => setFrame({ w: entry.contentRect.width, h: entry.contentRect.height }));
     observer.observe(el); return () => observer.disconnect();
   }, []);
-  // Fit is the default and zoom is the person's. `zoom` is null while the scale follows the
-  // window; the first pinch or ⌘/Ctrl-wheel takes it over for as long as the view is open.
-  // There is no on-screen control, so nothing hands it back short of opening Home again.
-  const [zoom, setZoom] = useState(null);
-  const scale = zoom ?? fit(chart, frame);
+  const [scale, setScale] = useState(1);
   const { canvas, offset } = stage(chart, frame, scale);
   // Wheel and gesture events arrive faster than renders, so each zoom composes on the scale and
   // scroll the previous one asked for rather than on what is on screen yet.
@@ -530,7 +510,7 @@ export default function Home() {
     const at = point || { x: frame.w / 2, y: frame.h / 2 };
     pending.current = { scale: to, ...zoomAround(chart, frame, from, to, scroll, at) };
     live.current.scale = to;
-    setZoom(to);
+    setScale(to);
   }, []);
   useLayoutEffect(() => {
     if (!pending.current || !viewport.current) return;
@@ -766,8 +746,8 @@ const CSS = `
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
-.hi-work__node-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.3; overflow-wrap:anywhere; font-weight:500; }
-.hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:6px; font-size:11px; color:var(--fg-mute); }
+.hi-work__node-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:19px; line-height:1.3; overflow-wrap:anywhere; font-weight:500; }
+.hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:6px; font-size:13px; color:var(--fg-mute); }
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__node-state { display:flex; align-items:center; gap:6px; color:var(--node-tone); }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }

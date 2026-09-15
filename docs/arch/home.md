@@ -22,35 +22,28 @@ never to a task or a session. Overview nodes are embedded in the core rather tha
 as peripheral cards. **The whole tree is drawn**: there is no collapse, because a surface
 carrying only the work in hand has nothing to hide from.
 
-**It opens fitted to the window, and zoom is the person's.** By default the chart is scaled
-to the largest size, never above 1x, at which all of it is inside the window, and that scale
-follows the window as it resizes. The default stops at a legibility floor of 0.7, past which
-the chart scrolls on the axis that overflows instead — a chart that fits and cannot be read
-has not fitted. The person can take the scale over: pinch or ⌘/Ctrl-wheel zooms at the
-pointer, and dragging pans from anywhere a tap would not open. Their range, 0.25 to 2, is wider
-than the default's, because the floor limits what is chosen *for* them, not what they may
-choose. **There is no on-screen zoom control**: a − / percentage / + stepper sat over the
-canvas and was removed as chrome, and it was also the only thing that handed the scale back to
-the window — so a scale once taken stays the person's until Home is opened again. This is not
-the zoom that was removed: that was the only way to see
-a canvas that could never fit, and this one starts from a chart that already does. No arrangement fits at 1x: on the
-instance this was measured on, the 20 cards in hand were about 88% of a 1511x727 window's
-area before a single gap or wire. So the geometry is shaped to need as little scale as it can
-— but **two things outrank scale, and both are paid for in height.** One appearance per kind
-of record, so a picture is never a strip inside a card; and air graded by rank, so a branch
-can be seen to be one. Together they took a measured instance from 1652x766 to 1604x982, or
-0.91 to 0.74 in that window. A third outranks it too — **a picture drawn large enough to read**,
-below — and it took the same instance to 1604x1281, which is under the floor: that day now
-opens at 0.7 and scrolls on height. Height is what a landscape window runs out of first and this
-spends it deliberately: a chart that fits and cannot be read has not fitted, and neither has
-one that fits and cannot be parsed.
+**It opens at 1x, and any other scale is the person's.** A chart larger than the window
+scrolls, centred on the core; pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and
+dragging pans from anywhere a tap would not open. There is no on-screen zoom control — a − /
+percentage / + stepper sat over the canvas and was removed as chrome — so a scale once taken
+stays the person's until Home is opened again.
 
-**Width, by the same accounting, is nearly free, so the gutter between ranks is generous.**
-Both measured instances are bound on height — at their scale they draw about 1078 of a 1511px
-window's width — so widening the gutter changes no scale at all. What it buys is the wires: one
-runs from its parent's edge to the midpoint and arrives flat at its child, so a narrow gutter
-makes every curve the same near-vertical kink and a card can no longer be traced back to the
-branch that owns it. Air between ranks is legibility bought with the axis that has it to spend.
+**Fitting to the window was tried and lost.** The chart used to open at the largest scale that
+put all of it in the window, never above 1x and never below a legibility floor of 0.7. No real
+day fit at 1x — on the instance it was measured on, the 20 cards in hand were about 88% of a
+1511x727 window's area before a single gap or wire — and the floor was where ordinary days
+landed: an eleven-task day measured 1604x1281, needing 0.57. So the default was a chart drawn
+at 70% every time, a 17px title at 12px and a picture at 168x95, to buy the one view
+of the whole that nobody reads at that size. Reading a card beats seeing all of them, and the
+person can still pull back to the whole when that is what they want.
+
+**Height and width are both spent on legibility, not on fitting.** One appearance per kind of
+record, so a picture is never a strip inside a card; air graded by rank, so a branch can be
+seen to be one; a picture drawn large enough to read, below; and a generous 64px gutter between
+ranks, because a wire runs from its parent's edge to the midpoint and arrives flat at its child,
+so a narrow gutter makes every curve the same near-vertical kink and a card can no longer be
+traced back to the branch that owns it. Each of these was once priced in scale. At 1x they are
+priced in scroll, which is cheaper: the cards in view stay readable however far the day runs.
 
 **Air is graded by where two nodes' branches part, not by how deep either one sits.** One gap
 for every pair drew every rank as a flat column: a task's own pictures were exactly as far
@@ -189,14 +182,11 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   so no surface can order a task's results or show its newest. `bookmarked` and `shared`
   exist on the record and are set on none of 195, so neither can pick a representative one
   either.
-- **An ordinary day now reaches the floor, not just a busy one.** Every open task is present
-  however old, so a ledger of forty was always going to open at 0.7 and scroll — but a
-  fourteen-task instance with nine live sessions and twelve pictures measured 1604x1438 and
-  opened there too, and that is a normal Tuesday. Since cards and pictures became 240x135 an
-  eleven-task day with ten pictures does as well (1604x1281). What should give way first by default is
-  still undecided, and handing the person a zoom does not decide it. What is now clear is
-  where the height goes: **a task's tiles stack one per row**, so four pictures cost four
-  135px tile heights of a window that has width to spare and is short of height. Packing a task's tiles
-  into a block rather than a column is the largest single lever and the one that costs no
-  legibility — it is unbuilt because flextree gives each child its own row, and a block is a
-  placement rule layered on top of the tree rather than something the tree can express.
+- **An ordinary day does not fit a laptop window, and scrolls on both axes.** Every open task
+  is present however old, and a two-sided chart is about 1604px wide before its height is
+  counted — an eleven-task day with ten pictures measures 1604x1281, a fourteen-task one with
+  twelve pictures more. What is clear is where the height goes: **a task's tiles stack one per
+  row**, so four pictures cost four 135px tile heights. Packing a task's tiles into a block
+  rather than a column is the largest single lever on how much a day scrolls — it is unbuilt
+  because flextree gives each child its own row, and a block is a placement rule layered on
+  top of the tree rather than something the tree can express.
