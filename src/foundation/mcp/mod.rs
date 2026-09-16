@@ -702,6 +702,13 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // matter of which rung is *told* to write it, and why that instruction moving out
         // in `cognition.md` is what makes it true.
         //
+        // **`hi_set_home_groups` is the exception, and the line it draws is the reader.**
+        // Prose a mind reads back is a file; a record a *renderer* parses on every poll is a
+        // tool call — validated, and replaced whole rather than left torn for a surface that
+        // polls every few seconds to read. Its prose half (`data/home/grouping.md`, the
+        // standing instructions it groups by) stays an ordinary file, written the ordinary
+        // way. See `docs/arch/home.md#grouping`.
+        //
         // **It reads with the adapter's own Read/Write, and that is why looking needs no
         // tool here.** A photo arrives as a ref, a ref is a path, and the rung that must
         // open it already can (`docs/arch/foundation.md`). The retired Deliberation had
@@ -718,6 +725,38 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             close_worker_tool(),
             session_status_tool(),
             session_messages_tool(),
+            tool(
+                "hi_set_home_groups",
+                "Arrange what is in hand into groups on the home screen — replacing the whole \
+                 arrangement, not patching it. A group is a `label`, the task `members` in it \
+                 (subject directory names under `memory/facets/tasks/`, in the order they should \
+                 read), and an optional one-line `note` saying what the grouping was based on, \
+                 which the person sees on the label. Array order is what is drawn: groups outward \
+                 from the centre, members top to bottom. Group by what the person has told you in \
+                 `home/grouping.md` first; their words beat any evidence. A task you cannot place \
+                 belongs in no group — leave it out rather than inventing a home for it. Pass \
+                 `groups: []` to clear the arrangement. The answer says what landed, what named no \
+                 task, what two groups both claimed, and which open work is in no group.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "groups": {
+                            "type": "array",
+                            "description": "The whole arrangement, outward from the centre. Empty clears it.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": { "type": "string", "description": "What this group is called, in the person's own vocabulary. Unique." },
+                                    "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
+                                    "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
+                                },
+                                "required": ["label", "members"],
+                            },
+                        },
+                    },
+                    "required": ["groups"],
+                }),
+            ),
         ],
         // **Reaction** — the mouth. Its two expression channels plus the one verb that
         // reaches another agent, and nothing else: no reads, no fetches, no built-ins
@@ -1229,6 +1268,12 @@ async fn dispatch_tool(
             role.unwrap_or("<none>")
         ));
     }
+    if name == "hi_set_home_groups" && role != Some("cognition") {
+        return tool_error(&format!(
+            "`{name}` is cognition-only; role `{}` does not arrange the home surface",
+            role.unwrap_or("<none>")
+        ));
+    }
     if name == "hi_http_request" && role != Some("worker") {
         return tool_error(&format!(
             "`{name}` is worker-only; role `{}` may not spend a stored credential",
@@ -1246,6 +1291,8 @@ async fn dispatch_tool(
         "hi_name_person" => return reflection_name_person(data_dir, args).await,
         "hi_merge_people" => return reflection_merge_people(data_dir, args).await,
         "hi_keep_and_fade" => return reflection_keep_and_fade(data_dir, args).await,
+        // Cognition's one structured write: how `factory/home` arranges what is in hand.
+        "hi_set_home_groups" => return set_home_groups(data_dir, args).await,
         // Reachable by name only — `hi_record_reflex` is advertised to no role, because
         // the reflex rung is **deferred** (see `body::reflex`). Kept dispatchable rather
         // than deleted so the authoring half is one arm entry away when it gets a rung,
@@ -2176,6 +2223,59 @@ async fn reflection_update_proactivity(data_dir: &std::path::Path, args: &Value)
         Ok(()) => tool_ok("updated proactivity.md"),
         Err(err) => tool_error(&err.to_string()),
     }
+}
+
+/// `hi_set_home_groups`: replace how the work in hand is arranged on `factory/home`.
+///
+/// **The one structured record a mind writes here, and it is structured because a renderer
+/// reads it** (`docs/arch/home.md#grouping`). The ledger beside it needs no tool precisely
+/// because it is prose a mind reads back; this is JSON a surface polls, so the write has to
+/// be validated and atomic, and that is what a tool is for. The prose half — the standing
+/// instructions this arrangement was made from — is an ordinary file, written the ordinary
+/// way, and no code parses it.
+///
+/// The answer is a receipt, not an ack: what landed, what was dropped for naming no task,
+/// what two groups both claimed, and which open work is in no group at all. A subject
+/// mistyped here is caught in the turn that typed it.
+async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
+    use crate::foundation::server::home;
+
+    // Absent `groups` is a malformed call, not "clear the arrangement" — clearing is real
+    // and has to be asked for, as `groups: []`.
+    let Some(groups) = args.get("groups") else {
+        return tool_error("hi_set_home_groups requires `groups` (pass `[]` to clear the arrangement)");
+    };
+    let proposed = match serde_json::from_value::<home::Grouping>(json!({ "groups": groups })) {
+        Ok(grouping) => grouping,
+        Err(err) => return tool_error(&format!("`groups` is not the shape it should be: {err}")),
+    };
+    let written = match home::write(data_dir, proposed).await {
+        Ok(written) => written,
+        Err(err) => return tool_error(&err.to_string()),
+    };
+
+    let mut out = if written.grouping.groups.is_empty() {
+        "no groups — every task hangs off the core".to_owned()
+    } else {
+        let shape = written
+            .grouping
+            .groups
+            .iter()
+            .map(|g| format!("{} ({})", g.label, g.members.len()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("home groups: {shape}")
+    };
+    let say = |out: &mut String, label: &str, names: &[String]| {
+        if !names.is_empty() {
+            use std::fmt::Write as _;
+            let _ = write!(out, "\n{label}: {}", names.join(", "));
+        }
+    };
+    say(&mut out, "dropped — no such task", &written.unknown);
+    say(&mut out, "kept in the first group only", &written.duplicated);
+    say(&mut out, "open and in no group", &written.ungrouped);
+    tool_ok(&out)
 }
 
 /// `hi_record_reflex`: teach a quick-action reflex (see [`crate::body::reflex`]). Stores the
@@ -3268,8 +3368,15 @@ mod surface_tests {
     /// that can start work and stop a turn but never *finish* with a session does not own
     /// the lifetime — something else does, on a timer, with no idea whether the errand was
     /// done. All three or none.
+    ///
+    /// `hi_set_home_groups` is the one thing here that is not dispatch, and the line it
+    /// draws is worth stating so the next addition has to clear it: **the ledger this rung
+    /// owns needs no tool because it is prose a mind reads back, and this one does because a
+    /// renderer parses it on every poll.** Validated and replaced whole, or the surface reads
+    /// half a file and a mistyped subject goes missing with nothing said. Its prose half —
+    /// the standing instructions it groups by — is an ordinary file, like the ledger.
     #[test]
-    fn cognition_holds_the_switchboard_and_nothing_else() {
+    fn cognition_holds_the_switchboard_and_the_one_record_a_surface_renders() {
         let mut got = names(Some("cognition"));
         got.sort();
         assert_eq!(
@@ -3281,6 +3388,7 @@ mod surface_tests {
                 "hi_send_message".to_string(),
                 "hi_session_messages".to_string(),
                 "hi_session_status".to_string(),
+                "hi_set_home_groups".to_string(),
             ],
             "it delegates rather than does, and it has no mouth"
         );
