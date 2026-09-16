@@ -34,6 +34,7 @@ pub mod files;
 pub mod generated;
 pub mod handle;
 pub mod headers;
+pub mod home;
 pub mod mcp;
 pub mod mechanisms;
 pub mod observe;
@@ -746,6 +747,10 @@ pub fn build(
                     get(facets::get_facet).put(facets::put_facet),
                 )
                 .route("/api/episodes", get(facets::get_episodes))
+                // `factory/home`'s own state, and nothing else's: how the work in hand is
+                // arranged into groups. Read beside the ledger it names rows from, on the
+                // same poll — see `foundation::server::home`.
+                .route("/api/home/groups", get(home::get_home_groups))
                 .route("/api/workers", get(workers::get_workers))
                 // Before `/{id}`: axum matches a literal segment ahead of a capture, but
                 // keeping them adjacent and in this order stops a later reader from reading
