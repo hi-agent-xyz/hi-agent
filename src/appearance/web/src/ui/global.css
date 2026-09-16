@@ -25,25 +25,35 @@
    hardcodes a colour. */
 :root {
   /* white paper */
-  --bg-0: #ffffff;
-  --bg-1: #ffffff;
+  --host-bg-0: #ffffff;
+  --host-bg-1: #ffffff;
 
-  --fg: #3a352c;      /* ink */
-  --fg-dim: #6b6354;
-  --fg-mute: #9a9284;
+  --host-fg: #3a352c;      /* ink */
+  --host-fg-dim: #6b6354;
+  --host-fg-mute: #9a9284;
 
   /* accent = terracotta; secondary = sage (wake dot, user text, history tag) */
-  --accent: #c06a3f;
-  --accent-2: #7a8c6a;
-  --accent-soft: rgba(192, 106, 63, 0.22); /* focus rings / on-state tint */
-  --accent-line: rgba(192, 106, 63, 0.45);
-  --accent-wash: rgba(192, 106, 63, 0.06); /* faint fills (history item) */
-  --danger: #c94f4f;
-  --danger-line: rgba(201, 79, 79, 0.55);
-  --danger-wash: rgba(201, 79, 79, 0.08);
+  --host-accent: #c06a3f;
+  --host-accent-2: #7a8c6a;
+  --host-accent-soft: rgba(192, 106, 63, 0.22); /* focus rings / on-state tint */
+  --host-accent-line: rgba(192, 106, 63, 0.45);
+  --host-accent-wash: rgba(192, 106, 63, 0.06); /* faint fills (history item) */
+  --host-danger: #c94f4f;
+  --host-danger-line: rgba(201, 79, 79, 0.55);
+  --host-danger-wash: rgba(201, 79, 79, 0.08);
 
-  --line: rgba(58, 53, 44, 0.12);
-  --line-strong: rgba(58, 53, 44, 0.22);
+  /* The ink on a *filled* accent or danger ground — the agent's message bubble, a
+     destructive button. It is not `--host-fg`: the fill is mid-luminance in one skin
+     and light in the other, so the ink has to flip the opposite way to stay readable.
+     (This is what `--caption-fg` was for. That token was deleted with the caption pills
+     in 13504ea and the two references in tailwind.css were left dangling, so the rule
+     was invalid-at-computed-value-time and the bubble inherited the page ink instead:
+     1.82:1 on the dark skin's amber.) Terracotta caps out at 3.76:1 against any ink,
+     which is the accent's luminance, not this token's — moving it is a palette decision. */
+  --host-fill-ink: #fffaf4;
+
+  --host-line: rgba(58, 53, 44, 0.12);
+  --host-line-strong: rgba(58, 53, 44, 0.22);
 
   /* The edge of a *themed panel* floating over a view — the views band, which keeps
      the skin's own surface because it is full of the skin's own type. It cannot be
@@ -57,16 +67,16 @@
      Chrome that carries no type of its own — the pills, the channel discs — does
      not use this. It wears `--scrim-*` below and needs no polarity, because its
      ground is dark in both skins. */
-  --chrome-edge: rgba(58, 53, 44, 0.22);
+  --host-chrome-edge: rgba(58, 53, 44, 0.22);
 
   /* floating surfaces (cards, pills, controls) over the paper */
-  --surface: rgba(255, 253, 248, 0.72);
-  --surface-strong: rgba(255, 253, 248, 0.9);
-  --surface-border: rgba(58, 53, 44, 0.12);
-  --shadow: rgba(58, 53, 44, 0.14);
-  --shadow-strong: rgba(58, 53, 44, 0.2);
+  --host-surface: rgba(255, 253, 248, 0.72);
+  --host-surface-strong: rgba(255, 253, 248, 0.9);
+  --host-surface-border: rgba(58, 53, 44, 0.12);
+  --host-shadow: rgba(58, 53, 44, 0.14);
+  --host-shadow-strong: rgba(58, 53, 44, 0.2);
 
-  --sentence-halo: rgba(255, 251, 244, 0.9); /* text legibility on paper */
+  --host-sentence-halo: rgba(255, 251, 244, 0.9); /* text legibility on paper */
 
   /* The scrim: what host chrome floating over a view wears — the caption pills and
      the channel discs. Nothing is reserved for either of them (see the view-stage
@@ -77,33 +87,33 @@
      skin would only be a set that fails on half the views. The accent is the dark
      skin's, for the same reason — terracotta on a scrim lands near 3:1. (There
      were two accents; the second was the listening status's, and went with it.) */
-  --scrim-bg: rgba(24, 20, 15, 0.62);
-  --scrim-ink: rgba(255, 252, 246, 0.96);
-  --scrim-edge: rgba(255, 252, 246, 0.24);
-  --scrim-accent: #e0975a;
+  --host-scrim-bg: rgba(24, 20, 15, 0.62);
+  --host-scrim-ink: rgba(255, 252, 246, 0.96);
+  --host-scrim-edge: rgba(255, 252, 246, 0.24);
+  --host-scrim-accent: #e0975a;
   /* The dark skin's danger, for the same reason the accent is: the disc is dark
      under both skins, and the light skin's deeper red lands too close to it. */
-  --scrim-danger: #ff7b78;
+  --host-scrim-danger: #ff7b78;
 
-  --selection: rgba(192, 106, 63, 0.22);
-  --selfview-veil: rgba(244, 237, 224, 0.34);
+  --host-selection: rgba(192, 106, 63, 0.22);
+  --host-selfview-veil: rgba(244, 237, 224, 0.34);
 
   /* presence state-glow — the whisper of colour the paper breathes by state.
      idle is essentially none; the others warm the room a touch. */
-  --glow-idle: rgba(122, 140, 106, 0);
-  --glow-listening: rgba(122, 140, 106, 0.5); /* sage — human has the floor */
-  --glow-working: rgba(201, 144, 63, 0.5);    /* amber — delegated work */
-  --glow-speaking: rgba(192, 106, 63, 0.55);  /* terracotta — agent voice */
-  --glow-starting: rgba(192, 106, 63, 0.3);
+  --host-glow-idle: rgba(122, 140, 106, 0);
+  --host-glow-listening: rgba(122, 140, 106, 0.5); /* sage — human has the floor */
+  --host-glow-working: rgba(201, 144, 63, 0.5);    /* amber — delegated work */
+  --host-glow-speaking: rgba(192, 106, 63, 0.55);  /* terracotta — agent voice */
+  --host-glow-starting: rgba(192, 106, 63, 0.3);
 
-  --font-display:
+  --host-font-display:
     "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
-  --font-mono:
+  --host-font-mono:
     "Geist Mono", "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular,
     "SF Mono", Menlo, Consolas, monospace;
 
-  --ease: cubic-bezier(0.22, 0.7, 0.2, 1);
+  --host-ease: cubic-bezier(0.22, 0.7, 0.2, 1);
 
   /* ── The paper ─────────────────────────────────────────────────────────
      The ground the whole face stands on, declared once and used by every layer
@@ -124,7 +134,7 @@
      140%) let the top corners fade toward the darker `--bg-0`, leaving a faint
      darker-at-the-ends seam under the bar in dark mode (invisible in light,
      where --bg-0 == --bg-1 == white). */
-  --paper: radial-gradient(600% 120% at 50% 0%, var(--bg-1), var(--bg-0) 62%);
+  --host-paper: radial-gradient(600% 120% at 50% 0%, var(--host-bg-1), var(--host-bg-0) 62%);
 
   /* ── Safe area: what the page may paint, but must not put content in ──
      The face window spans its own titlebar (`FullSizeContentView`, see
@@ -158,6 +168,65 @@
      under a disc is lost information rather than texture passing behind glass. A
      poster ignores it, which is the point of it being a token and not an inset. */
   --hi-chrome-bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
+
+  /* ── The palette views paint in ───────────────────────────────────────────
+     Everything above is `--host-*` and is read ONLY by this face's own chrome.
+     These are the same values under the names an agent-written view is told to
+     use (`src/identity/workers/view-builder.md`), and they are deliberately the
+     undecorated ones: a view says `var(--accent)`, never `var(--host-accent)`.
+
+     The split exists because a view's stylesheet lands in this document, on this
+     element. A view is a component in a slot — one React tree, no shadow root —
+     so a `<style>` it renders applies page-wide, and a view bringing its own fixed
+     palette writes exactly what you would expect:
+
+         :root { --accent: #8a5a2b; --line: #e4ded2; }
+
+     which is legal, documented ("Choosing a *fixed* palette is fine and often right
+     for a poster"), and used to repaint the conversation's message bubbles with it.
+     Now it repaints the view and nothing else, because the chrome is not reading
+     these names. Declared as `var()` references rather than restated values, so the
+     skin blocks above stay the only place a colour is written down.
+
+     The set is what published views actually read, measured — not a guess at what
+     they might want. `--paper` is in it and is not in the prompt's list; ~94 compiled
+     modules use it. `--scrim-bg` likewise, in 2. Adding a name here makes it a
+     promise; a view may override any of them for itself.
+
+     `inspect.css` keeps reading the public names and that is fine: /inspect is its
+     own page and never shares a document with a view.
+
+     NOT split, and the reason is a measurement rather than an argument: the chrome
+     still reads `--hi-safe-top` / `--hi-chrome-bottom` / `--hi-chrome-top`, which are
+     published to views as well. A view declaring one would move this face's padding.
+     Across 400 compiled modules no view has ever declared a `--hi-*` name — they are
+     read, never written — so the split would be structure bought for nothing. If one
+     ever does, the fix is the one above, applied to those three. */
+  --accent: var(--host-accent);
+  --accent-2: var(--host-accent-2);
+  --accent-soft: var(--host-accent-soft);
+  --accent-line: var(--host-accent-line);
+  --accent-wash: var(--host-accent-wash);
+  --bg-0: var(--host-bg-0);
+  --bg-1: var(--host-bg-1);
+  --danger: var(--host-danger);
+  --danger-line: var(--host-danger-line);
+  --danger-wash: var(--host-danger-wash);
+  --ease: var(--host-ease);
+  --fg: var(--host-fg);
+  --fg-dim: var(--host-fg-dim);
+  --fg-mute: var(--host-fg-mute);
+  --font-display: var(--host-font-display);
+  --font-mono: var(--host-font-mono);
+  --line: var(--host-line);
+  --line-strong: var(--host-line-strong);
+  --paper: var(--host-paper);
+  --scrim-bg: var(--host-scrim-bg);
+  --shadow: var(--host-shadow);
+  --shadow-strong: var(--host-shadow-strong);
+  --surface: var(--host-surface);
+  --surface-border: var(--host-surface-border);
+  --surface-strong: var(--host-surface-strong);
 }
 
 /* The face window (macos_window.rs) — its content spans the titlebar, so the page
@@ -170,45 +239,47 @@
    or explicitly via <html data-theme="dark">. Only the colour tokens change. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg-0: #232019;
-    --bg-1: #2b2720;
+    --host-bg-0: #232019;
+    --host-bg-1: #2b2720;
 
-    --fg: #e8dfce;
-    --fg-dim: #b3a894;
-    --fg-mute: #7d7361;
+    --host-fg: #e8dfce;
+    --host-fg-dim: #b3a894;
+    --host-fg-mute: #7d7361;
 
-    --accent: #e0975a;   /* warm amber */
-    --accent-2: #c9a06a;
-    --accent-soft: rgba(224, 151, 90, 0.24);
-    --accent-line: rgba(224, 151, 90, 0.5);
-    --accent-wash: rgba(224, 151, 90, 0.08);
-    --danger: #ff7b78;
-    --danger-line: rgba(255, 123, 120, 0.58);
-    --danger-wash: rgba(255, 123, 120, 0.1);
+    --host-accent: #e0975a;   /* warm amber */
+    --host-accent-2: #c9a06a;
+    --host-accent-soft: rgba(224, 151, 90, 0.24);
+    --host-accent-line: rgba(224, 151, 90, 0.5);
+    --host-accent-wash: rgba(224, 151, 90, 0.08);
+    --host-danger: #ff7b78;
+    --host-danger-line: rgba(255, 123, 120, 0.58);
+    --host-danger-wash: rgba(255, 123, 120, 0.1);
+  --host-fill-ink: #2a2016;
+    --host-fill-ink: #2a2016;
 
-    --line: rgba(232, 223, 206, 0.12);
-    --line-strong: rgba(232, 223, 206, 0.22);
+    --host-line: rgba(232, 223, 206, 0.12);
+    --host-line-strong: rgba(232, 223, 206, 0.22);
     /* light edge, not a hairline: see the note in `:root` */
-    --chrome-edge: rgba(240, 233, 220, 0.42);
+    --host-chrome-edge: rgba(240, 233, 220, 0.42);
 
-    --surface: rgba(58, 52, 42, 0.55);
-    --surface-strong: rgba(52, 47, 38, 0.82);
-    --surface-border: rgba(232, 223, 206, 0.12);
-    --shadow: rgba(0, 0, 0, 0.4);
-    --shadow-strong: rgba(0, 0, 0, 0.5);
+    --host-surface: rgba(58, 52, 42, 0.55);
+    --host-surface-strong: rgba(52, 47, 38, 0.82);
+    --host-surface-border: rgba(232, 223, 206, 0.12);
+    --host-shadow: rgba(0, 0, 0, 0.4);
+    --host-shadow-strong: rgba(0, 0, 0, 0.5);
 
-    --sentence-halo: rgba(10, 8, 5, 0.45);
+    --host-sentence-halo: rgba(10, 8, 5, 0.45);
 
 
-    --selection: rgba(224, 151, 90, 0.28);
-    --selfview-veil: rgba(20, 18, 14, 0.4);
+    --host-selection: rgba(224, 151, 90, 0.28);
+    --host-selfview-veil: rgba(20, 18, 14, 0.4);
 
     /* light-on-dark glows read far stronger — keep them a whisper */
-    --glow-idle: rgba(201, 160, 106, 0);
-    --glow-listening: rgba(160, 178, 150, 0.16);
-    --glow-working: rgba(224, 180, 120, 0.16);
-    --glow-speaking: rgba(224, 151, 90, 0.2);
-    --glow-starting: rgba(224, 151, 90, 0.12);
+    --host-glow-idle: rgba(201, 160, 106, 0);
+    --host-glow-listening: rgba(160, 178, 150, 0.16);
+    --host-glow-working: rgba(224, 180, 120, 0.16);
+    --host-glow-speaking: rgba(224, 151, 90, 0.2);
+    --host-glow-starting: rgba(224, 151, 90, 0.12);
   }
 }
 
@@ -216,35 +287,35 @@
    light values are already the `:root` defaults; this block carries forced dark
    so it applies even when the OS is in light mode. */
 :root[data-theme="dark"] {
-  --bg-0: #232019;
-  --bg-1: #2b2720;
-  --fg: #e8dfce;
-  --fg-dim: #b3a894;
-  --fg-mute: #7d7361;
-  --accent: #e0975a;
-  --accent-2: #c9a06a;
-  --accent-soft: rgba(224, 151, 90, 0.24);
-  --accent-line: rgba(224, 151, 90, 0.5);
-  --accent-wash: rgba(224, 151, 90, 0.08);
-  --danger: #ff7b78;
-  --danger-line: rgba(255, 123, 120, 0.58);
-  --danger-wash: rgba(255, 123, 120, 0.1);
-  --line: rgba(232, 223, 206, 0.12);
-  --line-strong: rgba(232, 223, 206, 0.22);
-  --chrome-edge: rgba(240, 233, 220, 0.42);
-  --surface: rgba(58, 52, 42, 0.55);
-  --surface-strong: rgba(52, 47, 38, 0.82);
-  --surface-border: rgba(232, 223, 206, 0.12);
-  --shadow: rgba(0, 0, 0, 0.4);
-  --shadow-strong: rgba(0, 0, 0, 0.5);
-  --sentence-halo: rgba(10, 8, 5, 0.45);
-  --selection: rgba(224, 151, 90, 0.28);
-  --selfview-veil: rgba(20, 18, 14, 0.4);
-  --glow-idle: rgba(201, 160, 106, 0);
-  --glow-listening: rgba(160, 178, 150, 0.16);
-  --glow-working: rgba(224, 180, 120, 0.16);
-  --glow-speaking: rgba(224, 151, 90, 0.2);
-  --glow-starting: rgba(224, 151, 90, 0.12);
+  --host-bg-0: #232019;
+  --host-bg-1: #2b2720;
+  --host-fg: #e8dfce;
+  --host-fg-dim: #b3a894;
+  --host-fg-mute: #7d7361;
+  --host-accent: #e0975a;
+  --host-accent-2: #c9a06a;
+  --host-accent-soft: rgba(224, 151, 90, 0.24);
+  --host-accent-line: rgba(224, 151, 90, 0.5);
+  --host-accent-wash: rgba(224, 151, 90, 0.08);
+  --host-danger: #ff7b78;
+  --host-danger-line: rgba(255, 123, 120, 0.58);
+  --host-danger-wash: rgba(255, 123, 120, 0.1);
+  --host-line: rgba(232, 223, 206, 0.12);
+  --host-line-strong: rgba(232, 223, 206, 0.22);
+  --host-chrome-edge: rgba(240, 233, 220, 0.42);
+  --host-surface: rgba(58, 52, 42, 0.55);
+  --host-surface-strong: rgba(52, 47, 38, 0.82);
+  --host-surface-border: rgba(232, 223, 206, 0.12);
+  --host-shadow: rgba(0, 0, 0, 0.4);
+  --host-shadow-strong: rgba(0, 0, 0, 0.5);
+  --host-sentence-halo: rgba(10, 8, 5, 0.45);
+  --host-selection: rgba(224, 151, 90, 0.28);
+  --host-selfview-veil: rgba(20, 18, 14, 0.4);
+  --host-glow-idle: rgba(201, 160, 106, 0);
+  --host-glow-listening: rgba(160, 178, 150, 0.16);
+  --host-glow-working: rgba(224, 180, 120, 0.16);
+  --host-glow-speaking: rgba(224, 151, 90, 0.2);
+  --host-glow-starting: rgba(224, 151, 90, 0.12);
 }
 
 /* Cross-fade the state-glow colour on state change (needs @property to animate a
@@ -266,8 +337,8 @@ body,
   width: 100%;
   margin: 0;
   padding: 0;
-  background: var(--bg-0);
-  color: var(--fg);
+  background: var(--host-bg-0);
+  color: var(--host-fg);
 }
 
 html {
@@ -283,7 +354,7 @@ html[data-theme="dark"] {
 }
 
 body {
-  font-family: var(--font-display);
+  font-family: var(--host-font-display);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -332,8 +403,8 @@ body {
 }
 
 ::selection {
-  background: var(--selection);
-  color: var(--fg);
+  background: var(--host-selection);
+  color: var(--host-fg);
 }
 
 /* The bare-button reset, and it has to weigh nothing. This was a plain `button`
@@ -507,7 +578,7 @@ button,
    not a stop. */
 .hi-plane--view {
   z-index: var(--z-view);
-  transition: right 260ms var(--ease);
+  transition: right 260ms var(--host-ease);
 }
 
 .hi-root[data-stop="panel"] .hi-plane--view {
@@ -532,19 +603,19 @@ button,
   place-items: center;
   padding: 24px;
   pointer-events: none;
-  background: color-mix(in srgb, var(--bg-0) 70%, transparent);
+  background: color-mix(in srgb, var(--host-bg-0) 70%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  animation: hi-file-drop-in 160ms var(--ease);
+  animation: hi-file-drop-in 160ms var(--host-ease);
 }
 
 .hi-file-drop::before {
   content: "";
   position: absolute;
   inset: 18px;
-  border: 2px dashed var(--accent-line);
+  border: 2px dashed var(--host-accent-line);
   border-radius: 28px;
-  background: var(--accent-wash);
+  background: var(--host-accent-wash);
 }
 
 .hi-file-drop-box {
@@ -556,10 +627,10 @@ button,
   max-width: min(520px, calc(100vw - 64px));
   padding: 12px 18px;
   border-radius: 999px;
-  border: 1px solid var(--surface-border);
-  background: var(--surface-strong);
-  color: var(--fg);
-  box-shadow: 0 18px 60px var(--shadow-strong);
+  border: 1px solid var(--host-surface-border);
+  background: var(--host-surface-strong);
+  color: var(--host-fg);
+  box-shadow: 0 18px 60px var(--host-shadow-strong);
 }
 
 .hi-file-drop-icon {
@@ -569,8 +640,8 @@ button,
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--accent);
-  color: var(--bg-0);
+  background: var(--host-accent);
+  color: var(--host-bg-0);
   font-size: 18px;
   font-weight: 700;
   line-height: 1;
@@ -584,7 +655,7 @@ button,
   min-width: 0;
   font-size: 15px;
   font-weight: 700;
-  color: var(--fg);
+  color: var(--host-fg);
 }
 
 .hi-file-drop-actions {
@@ -596,9 +667,9 @@ button,
 
 .hi-file-drop-actions button {
   min-height: 40px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--fg);
+  border: 1px solid var(--host-line-strong);
+  background: var(--host-surface);
+  color: var(--host-fg);
 }
 
 .hi-file-drop-retry {
@@ -617,20 +688,20 @@ button,
 
 .hi-file-drop-actions button:hover,
 .hi-file-drop-actions button:focus-visible {
-  border-color: var(--accent-line);
-  outline: 2px solid var(--accent-soft);
+  border-color: var(--host-accent-line);
+  outline: 2px solid var(--host-accent-soft);
   outline-offset: 2px;
 }
 
 .hi-file-drop[data-state="partial"]::before,
 .hi-file-drop[data-state="error"]::before {
-  border-color: var(--danger-line);
-  background: var(--danger-wash);
+  border-color: var(--host-danger-line);
+  background: var(--host-danger-wash);
 }
 
 .hi-file-drop[data-state="partial"] .hi-file-drop-icon,
 .hi-file-drop[data-state="error"] .hi-file-drop-icon {
-  background: var(--danger);
+  background: var(--host-danger);
 }
 
 @keyframes hi-file-drop-in {
@@ -656,7 +727,7 @@ button,
   width: 100%;
   height: 100%;
   display: block;
-  background: var(--paper);
+  background: var(--host-paper);
 }
 
 /* The breathing state-glow ("watercolour") was removed: it was the only always-on
@@ -706,12 +777,12 @@ button,
   right: 0;
   pointer-events: auto;
   overflow: hidden;
-  border-left: 1px solid var(--surface-border);
-  background: var(--surface-strong);
+  border-left: 1px solid var(--host-surface-border);
+  background: var(--host-surface-strong);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  box-shadow: -18px 0 60px var(--shadow-strong);
-  transition: left 260ms var(--ease);
+  box-shadow: -18px 0 60px var(--host-shadow-strong);
+  transition: left 260ms var(--host-ease);
 }
 
 /* Everything in the panel, laid out at the measure of the stop rather than at
@@ -757,7 +828,7 @@ button,
   gap: 12px;
   padding: 10px 14px;
   padding-top: max(10px, var(--hi-safe-top));
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--host-line);
 }
 
 .hi-panel-tabs {
@@ -775,17 +846,17 @@ button,
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  color: var(--fg-mute);
-  transition: color 160ms var(--ease), background 160ms var(--ease);
+  color: var(--host-fg-mute);
+  transition: color 160ms var(--host-ease), background 160ms var(--host-ease);
 }
 
 .hi-panel-tab:hover {
-  color: var(--fg-dim);
+  color: var(--host-fg-dim);
 }
 
 .hi-panel-tab.is-on {
-  color: var(--fg);
-  background: var(--line);
+  color: var(--host-fg);
+  background: var(--host-line);
 }
 
 /* The body: one tab at a time. `min-height: 0` is what lets a pane shrink instead
@@ -873,11 +944,11 @@ button,
   gap: 8px;
   margin: 0 12px;
   padding: 8px 12px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--host-line-strong);
   border-radius: 12px;
-  background: var(--surface);
+  background: var(--host-surface);
   backdrop-filter: blur(12px);
-  color: var(--fg-dim);
+  color: var(--host-fg-dim);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -887,13 +958,13 @@ button,
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: var(--fg-mute);
+  background: var(--host-fg-mute);
 }
 
 /* Still trying. The pulse is the difference between "wait" and "go and fix it", and
    it is the only moving thing on the strip. */
 .hi-condition[data-kind="unreachable"] .hi-condition-dot {
-  background: var(--accent);
+  background: var(--host-accent);
   animation: hi-condition-pulse 1.8s ease-in-out infinite;
 }
 
@@ -916,11 +987,11 @@ button,
    the foot reads as part of the conversation and not as a form dropped into it. */
 .hi-composer {
   border-radius: 14px;
-  border-color: var(--line-strong);
-  background: var(--surface);
+  border-color: var(--host-line-strong);
+  background: var(--host-surface);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  color: var(--fg);
+  color: var(--host-fg);
   box-shadow: none;
 }
 
@@ -930,10 +1001,10 @@ button,
   min-height: 38px;
   max-height: 30vh;
   padding-block: 9px;
-  font-family: var(--font-mono);
+  font-family: var(--host-font-mono);
   font-size: 14px;
   letter-spacing: 0.01em;
-  color: var(--fg);
+  color: var(--host-fg);
 }
 
 /* **16px, because that is the number iOS zooms below.** Focusing a field whose
@@ -958,12 +1029,12 @@ button,
    the surface above overrides the border colour and the shadow the ring is made
    of — so without this, focusing the line would show nothing at all. */
 .hi-composer:has(textarea:focus) {
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 1px var(--accent-soft);
+  border-color: var(--host-accent-line);
+  box-shadow: 0 0 0 1px var(--host-accent-soft);
 }
 
 .hi-composer textarea::placeholder {
-  color: var(--fg-mute);
+  color: var(--host-fg-mute);
 }
 
 /* With the panel across a whole window, the line has to stand under the column it
@@ -987,20 +1058,20 @@ button,
 .hi-sentence {
   margin: 0;
   max-width: 100%;
-  font-family: var(--font-display);
+  font-family: var(--host-font-display);
   font-size: clamp(18px, 2.6vw, 44px);
   line-height: 1.5;
   letter-spacing: 0.01em;
-  color: var(--fg);
+  color: var(--host-fg);
   text-wrap: balance;
   text-shadow:
-    0 0 24px var(--sentence-halo),
-    0 2px 30px var(--sentence-halo);
+    0 0 24px var(--host-sentence-halo),
+    0 2px 30px var(--host-sentence-halo);
   transition:
-    opacity 600ms var(--ease),
-    transform 600ms var(--ease),
-    color 600ms var(--ease);
-  animation: hi-sentence-in 700ms var(--ease);
+    opacity 600ms var(--host-ease),
+    transform 600ms var(--host-ease),
+    color 600ms var(--host-ease);
+  animation: hi-sentence-in 700ms var(--host-ease);
 }
 
 .hi-speech-link {
@@ -1012,11 +1083,11 @@ button,
   max-width: 100%;
   margin-inline: 0.12em;
   padding: 0.08em 0.5em;
-  border: 1px solid var(--accent-line);
+  border: 1px solid var(--host-accent-line);
   border-radius: 6px;
-  color: var(--fg);
-  background: var(--surface-strong);
-  box-shadow: 0 1px 4px var(--shadow);
+  color: var(--host-fg);
+  background: var(--host-surface-strong);
+  box-shadow: 0 1px 4px var(--host-shadow);
   font-size: clamp(16px, 0.72em, 30px);
   font-weight: 600;
   letter-spacing: 0;
@@ -1029,8 +1100,8 @@ button,
   touch-action: manipulation;
   user-select: text;
   transition:
-    border-color 160ms var(--ease),
-    background 160ms var(--ease);
+    border-color 160ms var(--host-ease),
+    background 160ms var(--host-ease);
 }
 
 .hi-speech-link-label {
@@ -1041,19 +1112,19 @@ button,
 }
 
 .hi-speech-link:hover {
-  border-color: var(--accent);
-  background: var(--accent-wash);
+  border-color: var(--host-accent);
+  background: var(--host-accent-wash);
 }
 
 .hi-speech-link:focus-visible {
-  outline: 3px solid var(--accent-soft);
+  outline: 3px solid var(--host-accent-soft);
   outline-offset: 3px;
-  border-color: var(--accent);
+  border-color: var(--host-accent);
 }
 
 .hi-sentence--prev {
   opacity: 0.4;
-  color: var(--fg-dim);
+  color: var(--host-fg-dim);
   transform: translateY(-2px) scale(0.99);
 }
 
@@ -1061,7 +1132,7 @@ button,
    lighter, slightly smaller, accented treatment. */
 .hi-sentence--user {
   font-size: clamp(15px, 2.1vw, 36px);
-  color: var(--accent, #c06a3f);
+  color: var(--host-accent, #c06a3f);
   font-weight: 400;
 }
 
@@ -1100,7 +1171,7 @@ button,
   text-align: center;
   opacity: 1;
   visibility: visible;
-  transition: opacity 460ms var(--ease);
+  transition: opacity 460ms var(--host-ease);
 }
 
 /* Spent. Fades rather than cutting, and only then goes `hidden` — the delay is
@@ -1114,7 +1185,7 @@ button,
   opacity: 0;
   visibility: hidden;
   transition:
-    opacity 460ms var(--ease),
+    opacity 460ms var(--host-ease),
     visibility 0s 460ms;
 }
 
@@ -1134,7 +1205,7 @@ button,
 .hi-captions[data-shown="false"]:has(.hi-speech-link:focus-visible) {
   opacity: 1;
   visibility: visible;
-  transition: opacity 460ms var(--ease);
+  transition: opacity 460ms var(--host-ease);
 }
 
 /* When the camera pip holds the lower-left corner, push the dock's left edge past
@@ -1159,10 +1230,10 @@ button,
 .hi-captions .hi-sentence {
   padding: 8px 18px;
   border-radius: 14px;
-  background: var(--scrim-bg);
+  background: var(--host-scrim-bg);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  color: var(--scrim-ink);
+  color: var(--host-scrim-ink);
   text-shadow: none;
   /* One current line — sized to read comfortably on a desktop and still legible
      across a room on a TV, without dominating the view it sits under. */
@@ -1185,11 +1256,11 @@ button,
 
 .hi-captions .hi-sentence--prev {
   opacity: 0.45;
-  color: var(--scrim-ink);
+  color: var(--host-scrim-ink);
 }
 
 .hi-captions .hi-sentence--user {
-  color: var(--scrim-accent);
+  color: var(--host-scrim-accent);
 }
 
 /* --- View stage -------------------------------------------------------
@@ -1265,7 +1336,7 @@ button,
 .hi-view-fill {
   position: absolute;
   inset: 0;
-  background: var(--paper);
+  background: var(--host-paper);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1352,21 +1423,21 @@ button,
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1px solid var(--scrim-edge);
-  background: var(--scrim-bg);
+  border: 1px solid var(--host-scrim-edge);
+  background: var(--host-scrim-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  color: var(--scrim-ink);
-  box-shadow: 0 1px 3px var(--shadow-strong), 0 8px 24px var(--shadow);
-  transition: color 200ms var(--ease), border-color 200ms var(--ease),
-    box-shadow 200ms var(--ease);
+  color: var(--host-scrim-ink);
+  box-shadow: 0 1px 3px var(--host-shadow-strong), 0 8px 24px var(--host-shadow);
+  transition: color 200ms var(--host-ease), border-color 200ms var(--host-ease),
+    box-shadow 200ms var(--host-ease);
 }
 
 /* The ink is already full, so hover thickens the edge instead of brightening the
    glyph. */
 .hi-channel:hover {
-  box-shadow: 0 0 0 1px var(--scrim-edge), 0 1px 3px var(--shadow-strong),
-    0 8px 24px var(--shadow);
+  box-shadow: 0 0 0 1px var(--host-scrim-edge), 0 1px 3px var(--host-shadow-strong),
+    0 8px 24px var(--host-shadow);
 }
 
 .hi-channel:disabled {
@@ -1375,17 +1446,17 @@ button,
 }
 
 .hi-channel:focus-visible {
-  outline: 2px solid var(--scrim-accent);
+  outline: 2px solid var(--host-scrim-accent);
   outline-offset: 3px;
 }
 
 /* On-state in the scrim's accent, not the theme's: the disc is dark in both skins,
    and the light skin's terracotta lands near 3:1 on it. */
 .hi-channel.is-on {
-  color: var(--scrim-accent);
-  border-color: var(--scrim-accent);
-  box-shadow: 0 0 0 1px var(--accent-soft), 0 1px 3px var(--shadow-strong),
-    0 8px 24px var(--shadow);
+  color: var(--host-scrim-accent);
+  border-color: var(--host-scrim-accent);
+  box-shadow: 0 0 0 1px var(--host-accent-soft), 0 1px 3px var(--host-shadow-strong),
+    0 8px 24px var(--host-shadow);
 }
 
 /* A channel that was asked to open and couldn't. It reads as off — because it is
@@ -1394,8 +1465,8 @@ button,
    words are in the note above the cluster; this is what points at which control
    they are about. */
 .hi-channel.is-error {
-  color: var(--scrim-danger);
-  border-color: var(--scrim-danger);
+  color: var(--host-scrim-danger);
+  border-color: var(--host-scrim-danger);
 }
 
 /* The note itself: one line of plain words under the row of discs, in the same
@@ -1416,12 +1487,12 @@ button,
   margin: 0;
   padding: 6px 11px;
   border-radius: 999px;
-  border: 1px solid var(--scrim-edge);
-  background: var(--scrim-bg);
+  border: 1px solid var(--host-scrim-edge);
+  background: var(--host-scrim-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  color: var(--scrim-ink);
-  box-shadow: 0 1px 3px var(--shadow-strong), 0 8px 24px var(--shadow);
+  color: var(--host-scrim-ink);
+  box-shadow: 0 1px 3px var(--host-shadow-strong), 0 8px 24px var(--host-shadow);
   font-size: 13px;
   line-height: 1.35;
   text-align: right;
@@ -1500,7 +1571,7 @@ button,
   pointer-events: none;
   background: #0b0d10;
   box-shadow: none;
-  transition: border-radius 320ms var(--ease), box-shadow 320ms var(--ease);
+  transition: border-radius 320ms var(--host-ease), box-shadow 320ms var(--host-ease);
 }
 
 .hi-selfview video {
@@ -1518,7 +1589,7 @@ button,
   background: radial-gradient(
     120% 120% at 50% 30%,
     transparent 42%,
-    var(--selfview-veil)
+    var(--host-selfview-veil)
   );
 }
 
@@ -1649,13 +1720,13 @@ button,
   font-size: 10.5px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--fg-mute);
+  color: var(--host-fg-mute);
 }
 
 .hi-views-rule {
   flex: 1;
   height: 1px;
-  background: var(--line);
+  background: var(--host-line);
 }
 
 .hi-views-empty {
@@ -1663,7 +1734,7 @@ button,
   margin: 0;
   padding: 2px 14px 12px;
   font-size: 12.5px;
-  color: var(--fg-mute);
+  color: var(--host-fg-mute);
 }
 
 /* Both rows wrap, at every stop. They were strips that scrolled sideways, and the
@@ -1709,7 +1780,7 @@ button,
   border: 0;
   background: none;
   text-align: left;
-  color: var(--fg);
+  color: var(--host-fg);
   cursor: pointer;
 }
 
@@ -1717,7 +1788,7 @@ button,
 .hi-views-go:focus-visible,
 .hi-views-keep:focus-visible,
 .hi-views-drop:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--host-accent-line);
   outline-offset: 3px;
   border-radius: 10px;
 }
@@ -1766,7 +1837,7 @@ button,
    scanning the row without drawing an edge anywhere. */
 .hi-views-card.is-here .hi-views-title {
   background:
-    linear-gradient(to top, var(--accent-line), rgba(0, 0, 0, 0) 72%),
+    linear-gradient(to top, var(--host-accent-line), rgba(0, 0, 0, 0) 72%),
     linear-gradient(
       to top,
       rgba(0, 0, 0, 0.78),
@@ -1795,12 +1866,12 @@ button,
   padding: 0;
   border: 0;
   border-radius: 6px;
-  background: var(--surface-strong);
-  box-shadow: 0 1px 3px var(--shadow-strong);
-  color: var(--fg-mute);
+  background: var(--host-surface-strong);
+  box-shadow: 0 1px 3px var(--host-shadow-strong);
+  color: var(--host-fg-mute);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 160ms var(--ease), color 160ms var(--ease);
+  transition: opacity 160ms var(--host-ease), color 160ms var(--host-ease);
 }
 
 .hi-views-card:hover .hi-views-keep,
@@ -1810,11 +1881,11 @@ button,
 }
 
 .hi-views-keep:hover {
-  color: var(--fg);
+  color: var(--host-fg);
 }
 
 .hi-views-keep.is-kept {
-  color: var(--accent);
+  color: var(--host-accent);
 }
 
 /* The name, on the picture's bottom edge. A shot can end in anything — white space,
@@ -1856,7 +1927,7 @@ button,
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-2);
+  background: var(--host-accent-2);
 }
 
 .hi-views-bookmarks {
@@ -1883,11 +1954,11 @@ button,
   display: flex;
   align-items: center;
   height: 30px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--host-line);
   border-radius: 8px;
-  color: var(--fg);
+  color: var(--host-fg);
   font-size: 12px;
-  transition: border-color 200ms var(--ease), background 200ms var(--ease);
+  transition: border-color 200ms var(--host-ease), background 200ms var(--host-ease);
 }
 
 .hi-views-go {
@@ -1913,11 +1984,11 @@ button,
   padding: 0;
   border: 0;
   background: none;
-  color: var(--fg-mute);
+  color: var(--host-fg-mute);
   cursor: pointer;
   overflow: hidden;
   opacity: 0;
-  transition: width 160ms var(--ease), opacity 160ms var(--ease), color 160ms var(--ease);
+  transition: width 160ms var(--host-ease), opacity 160ms var(--host-ease), color 160ms var(--host-ease);
 }
 
 .hi-views-chip:hover .hi-views-drop,
@@ -1927,16 +1998,16 @@ button,
 }
 
 .hi-views-drop:hover {
-  color: var(--fg);
+  color: var(--host-fg);
 }
 
 .hi-views-chip:hover {
-  border-color: var(--line-strong);
+  border-color: var(--host-line-strong);
 }
 
 .hi-views-chip.is-here {
-  border-color: var(--accent-line);
-  background: var(--accent-wash);
+  border-color: var(--host-accent-line);
+  background: var(--host-accent-wash);
 }
 
 .hi-views-ico {
@@ -2057,7 +2128,7 @@ button,
   left: clamp(0px, calc(var(--hi-panel-left) - 10px), calc(100vw - 20px));
   touch-action: none;
   pointer-events: auto;
-  transition: left 260ms var(--ease);
+  transition: left 260ms var(--host-ease);
 }
 
 /* The mouse's entrance, and the only thing the strip ever draws.
@@ -2085,9 +2156,9 @@ button,
     height: 46px;
     margin: -23px 0 0 -1.5px;
     border-radius: 3px;
-    background: var(--scrim-ink);
+    background: var(--host-scrim-ink);
     opacity: 0;
-    transition: opacity 160ms var(--ease);
+    transition: opacity 160ms var(--host-ease);
   }
 
   .hi-panel-edge:hover::after {
@@ -2181,6 +2252,6 @@ button,
    Wider and further out than the 2px rings elsewhere in this file for the plain
    reason that this one is read from across a room rather than from arm's length. */
 :root[data-shape="tv"] :focus {
-  outline: 3px solid var(--accent-line);
+  outline: 3px solid var(--host-accent-line);
   outline-offset: 4px;
 }

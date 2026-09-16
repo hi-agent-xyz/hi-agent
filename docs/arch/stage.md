@@ -1817,6 +1817,16 @@ now inside `cover` and only ever present when the `view` plane is empty.
   top of `view` and no further. Already true, by accident of `ViewSlot`'s `position: fixed`
   + `zIndex` wrapper; it becomes a stated rule with a test, because the code running there
   is agent-authored.
+- **An agent view cannot repaint the chrome.** A view is a component in a slot of this
+  page — one React tree, no shadow root — so a `<style>` it renders applies to the whole
+  document, and a view bringing its own fixed palette writes `:root { --accent: … }`,
+  which is the documented way to bring one. So the names are split in two: the chrome
+  reads `--host-*` and nothing else, the undecorated names are the palette published to
+  views, and `global.css` declares the second as `var()` references onto the first. A
+  view's override then reaches the view and stops. The vitest is that no source file the
+  face loads reads a published name — the failure it guards is silent, and arrives
+  months later inside somebody else's view. (`--hi-safe-top` and the two chrome tokens
+  are the measured exception: published, read by both, and never once declared by a view.)
 - **The stack is static; only geometry is computed.** `stage()` returns presentations and
   frames, never a plane, because a surface's plane never depends on what else is on screen.
   That is what ends the two-authorities problem: CSS owns *over whom*, fixed and declared

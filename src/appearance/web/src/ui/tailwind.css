@@ -11,6 +11,11 @@
  * that already exists, which means light/dark, the `data-theme` override and any
  * future re-skin all keep working untouched — they move `global.css`, and this
  * follows.
+ *
+ * Alias onto the `--host-*` names, never the undecorated ones. The undecorated
+ * names are the palette agent-written views paint in, and a view's stylesheet lands
+ * on `:root` of this document — so a view bringing its own palette would otherwise
+ * repaint this face's chrome with it. `ui/tokens.test.ts` holds that line.
  */
 
 @import "tailwindcss";
@@ -30,39 +35,39 @@
 }
 
 @theme inline {
-  --color-background: var(--bg-0);
-  --color-foreground: var(--fg);
+  --color-background: var(--host-bg-0);
+  --color-foreground: var(--host-fg);
 
   /* The agent's own messages. Terracotta is this face's accent, and an agent
      bubble is the one thing on screen that should carry it. */
-  --color-primary: var(--accent);
-  --color-primary-foreground: var(--caption-fg);
+  --color-primary: var(--host-accent);
+  --color-primary-foreground: var(--host-fill-ink);
 
   /* The person's messages: a floating surface over the paper, the same way
      every other card in this app sits on it. */
-  --color-secondary: var(--surface-strong);
-  --color-secondary-foreground: var(--fg);
+  --color-secondary: var(--host-surface-strong);
+  --color-secondary-foreground: var(--host-fg);
 
-  --color-muted: var(--accent-wash);
-  --color-muted-foreground: var(--fg-dim);
+  --color-muted: var(--host-accent-wash);
+  --color-muted-foreground: var(--host-fg-dim);
 
-  --color-accent: var(--accent-wash);
-  --color-accent-foreground: var(--fg);
+  --color-accent: var(--host-accent-wash);
+  --color-accent-foreground: var(--host-fg);
 
-  --color-destructive: var(--danger);
-  --color-destructive-foreground: var(--caption-fg);
+  --color-destructive: var(--host-danger);
+  --color-destructive-foreground: var(--host-fill-ink);
 
-  --color-border: var(--line);
-  --color-input: var(--line-strong);
-  --color-ring: var(--accent-soft);
+  --color-border: var(--host-line);
+  --color-input: var(--host-line-strong);
+  --color-ring: var(--host-accent-soft);
 
-  --color-card: var(--surface);
-  --color-card-foreground: var(--fg);
-  --color-popover: var(--surface-strong);
-  --color-popover-foreground: var(--fg);
+  --color-card: var(--host-surface);
+  --color-card-foreground: var(--host-fg);
+  --color-popover: var(--host-surface-strong);
+  --color-popover-foreground: var(--host-fg);
 
-  --font-sans: var(--font-display);
-  --font-mono: var(--font-mono);
+  --font-sans: var(--host-font-display);
+  --host-font-mono: var(--host-font-mono);
 
   --radius: 8px;
 }
@@ -76,7 +81,7 @@
 
 @utility scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-color: var(--host-line-strong) transparent;
 }
 
 @utility scrollbar-none {

@@ -318,9 +318,9 @@ export default function OutOfEnergy() {
             max(clamp(24px, 4vw, 64px), var(--hi-safe-right))
             max(clamp(28px, 5vh, 56px), var(--hi-safe-bottom))
             max(clamp(24px, 4vw, 64px), var(--hi-safe-left));
-          color: var(--fg);
-          font-family: var(--font-display);
-          background: var(--surface-strong);
+          color: var(--host-fg);
+          font-family: var(--host-font-display);
+          background: var(--host-surface-strong);
         }
         .energy__row {
           display: flex;
@@ -341,7 +341,7 @@ export default function OutOfEnergy() {
           align-items: center;
           gap: 8px;
           min-width: 0;
-          color: var(--fg-dim);
+          color: var(--host-fg-dim);
           font-size: 14px;
           letter-spacing: 0;
         }
@@ -349,9 +349,9 @@ export default function OutOfEnergy() {
         .energy__plan {
           flex: none;
           padding: 2px 8px;
-          border: 1px solid var(--line-strong);
+          border: 1px solid var(--host-line-strong);
           border-radius: 999px;
-          font-family: var(--font-mono);
+          font-family: var(--host-font-mono);
           font-size: 11px;
           letter-spacing: 0;
         }
@@ -367,13 +367,13 @@ export default function OutOfEnergy() {
           display: flex;
           align-items: baseline;
           gap: 8px;
-          color: var(--fg-dim);
+          color: var(--host-fg-dim);
           font-size: 12px;
           letter-spacing: 0;
         }
         .energy__clock {
-          color: var(--fg);
-          font-family: var(--font-mono);
+          color: var(--host-fg);
+          font-family: var(--host-font-mono);
           font-size: 20px;
           font-weight: 700;
           line-height: 1;
@@ -387,17 +387,17 @@ export default function OutOfEnergy() {
           gap: 6px;
           min-height: 32px;
           padding: 0 12px;
-          border: 1px solid var(--line-strong);
+          border: 1px solid var(--host-line-strong);
           border-radius: 8px;
-          color: var(--fg-dim);
+          color: var(--host-fg-dim);
           background: transparent;
-          font-family: var(--font-display);
+          font-family: var(--host-font-display);
           font-size: 13px;
           letter-spacing: 0;
           cursor: pointer;
           transition: color 140ms ease, border-color 140ms ease;
         }
-        .energy__refresh:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-mute); }
+        .energy__refresh:hover:not(:disabled) { color: var(--host-fg); border-color: var(--host-fg-mute); }
         .energy__refresh:disabled { cursor: default; opacity: 0.6; }
         .energy__refresh svg { width: 13px; height: 13px; }
         .energy__spin { transform-origin: 50% 50%; animation: energy-spin 900ms linear infinite; }
@@ -406,7 +406,7 @@ export default function OutOfEnergy() {
           display: flex;
           align-items: baseline;
           gap: 10px;
-          font-family: var(--font-mono);
+          font-family: var(--host-font-mono);
         }
         .energy__remaining {
           font-size: clamp(34px, 6vh, 54px);
@@ -414,16 +414,16 @@ export default function OutOfEnergy() {
           line-height: 1;
           letter-spacing: 0;
         }
-        .energy__total { color: var(--fg-mute); font-size: 17px; letter-spacing: 0; }
-        .energy__unit { color: var(--fg-dim); font-family: var(--font-display); font-size: 14px; }
+        .energy__total { color: var(--host-fg-mute); font-size: 17px; letter-spacing: 0; }
+        .energy__unit { color: var(--host-fg-dim); font-family: var(--host-font-display); font-size: 14px; }
         .energy__gauge {
           height: 8px;
           margin-top: 14px;
           overflow: hidden;
           border-radius: 999px;
-          background: var(--line);
+          background: var(--host-line);
         }
-        .energy__fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 400ms ease; }
+        .energy__fill { height: 100%; border-radius: 999px; background: var(--host-accent); transition: width 400ms ease; }
         .energy__section {
           flex: 1 1 auto;
           min-height: 120px;
@@ -431,22 +431,22 @@ export default function OutOfEnergy() {
           flex-direction: column;
           gap: 8px;
         }
-        .energy__label { color: var(--fg-dim); font-size: 12px; letter-spacing: 0; }
+        .energy__label { color: var(--host-fg-dim); font-size: 12px; letter-spacing: 0; }
         .energy__chart { flex: 1 1 auto; width: 100%; min-height: 0; display: block; }
-        .energy__grid { stroke: var(--line); stroke-width: 1; }
-        .energy__floor { stroke: var(--line-strong); stroke-width: 1; }
-        .energy__area { fill: var(--accent); opacity: 0.16; }
-        .energy__line { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+        .energy__grid { stroke: var(--host-line); stroke-width: 1; }
+        .energy__floor { stroke: var(--host-line-strong); stroke-width: 1; }
+        .energy__area { fill: var(--host-accent); opacity: 0.16; }
+        .energy__line { stroke: var(--host-accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
         /* An unobserved stretch: same curve, drawn as inference rather than record. */
-        .energy__bridge { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 5; stroke-linecap: round; opacity: 0.5; }
+        .energy__bridge { stroke: var(--host-accent); stroke-width: 2; stroke-dasharray: 3 5; stroke-linecap: round; opacity: 0.5; }
         .energy__empty {
           flex: 1 1 auto;
           margin: 0;
           display: grid;
           place-items: center;
-          border: 1px dashed var(--line-strong);
+          border: 1px dashed var(--host-line-strong);
           border-radius: 10px;
-          color: var(--fg-mute);
+          color: var(--host-fg-mute);
           font-size: 13px;
           line-height: 1.5;
           text-align: center;
@@ -454,8 +454,8 @@ export default function OutOfEnergy() {
         .energy__axis {
           display: flex;
           justify-content: space-between;
-          color: var(--fg-mute);
-          font-family: var(--font-mono);
+          color: var(--host-fg-mute);
+          font-family: var(--host-font-mono);
           font-size: 11px;
           letter-spacing: 0;
         }
@@ -481,9 +481,9 @@ export default function OutOfEnergy() {
         .energy__action:hover { border-color: #e74d4b; background: #e74d4b; }
         .energy__action:focus-visible {
           outline: none;
-          box-shadow: 0 0 0 3px var(--surface-strong), 0 0 0 5px #fd605e;
+          box-shadow: 0 0 0 3px var(--host-surface-strong), 0 0 0 5px #fd605e;
         }
-        .energy__byok { margin: 0; color: var(--fg-dim); font-size: 15px; line-height: 1.5; }
+        .energy__byok { margin: 0; color: var(--host-fg-dim); font-size: 15px; line-height: 1.5; }
         @media (max-width: 520px) {
           .energy { gap: 18px; }
           /* Too narrow to keep a column of controls beside the title: the aside
