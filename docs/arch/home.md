@@ -79,14 +79,13 @@ the same plain 1px border as a card.
 - A session's `subject` joins it to a task. Without a resolvable task it connects to the
   core and keeps its own title. Its technical `owner` remains inspectable but does not
   determine semantic placement or create a new task grouping.
-- **Every task is its own branch off the core, and nothing groups tasks.** There was a topic
-  rank, named by a task's `project` or else its `systems`. Nothing has ever written a
-  `project`, so every topic drawn was a `systems` value — and `systems` names the operational
-  records a task touches, not what it belongs to: a birthday deck whose photos arrived over
-  Feishu was drawn under "feishu" beside a client brief. Similar wording is not evidence of
-  ownership, and neither is a shared system. A grouping is a claim somebody makes; if tasks
-  are ever to be grouped, the grouping has to be written by whoever files the task, and Home
-  reads it — it is not inferred here.
+- **A task sits in a group when the grouping record puts it in one, and otherwise hangs off
+  the core.** See § *Grouping* below. Nothing about a task's own record decides this: there
+  was a topic rank named by a task's `project` or else its `systems`, and nothing has ever
+  written a `project`, so every topic drawn was a `systems` value — and `systems` names the
+  operational records a task touches, not what it belongs to: a birthday deck whose photos
+  arrived over Feishu was drawn under "feishu" beside a client brief. Similar wording is not
+  evidence of ownership, and neither is a shared system.
 - **A task's pictures are image nodes one rank below it, and its other results are not on
   Home.** Drawn as sibling cards, results were 60.2% of the canvas on a real instance — 125 of
   them, 106 nothing but a filename. So a task hangs its pictures below itself as `result`
@@ -135,6 +134,97 @@ the same plain 1px border as a card.
 and session termination are separate facts. A retained tool action describes current
 activity only while its session is running.
 
+## Grouping
+
+**A group is a name and an ordered list of task subjects, and it belongs to this surface
+alone.** It is not a field on a task, not a dimension of the memory store, and not a second
+ledger. Nothing else in the system reads it; delete the record and Home is what it was.
+
+**No axis is built in.** A group may be a project, a kind of work, a state, who asked for
+it, or "this week" — the structure is the same name-and-members either way, so the person
+can reorganise along a different axis without anything in the code changing. The alternative
+was a `project:` field on the task record, and it is the wrong shape twice over: it commits
+to one axis, and it puts a claim that only one surface consumes into a record everything
+reads.
+
+**It is written by a mind and never inferred by code.** No matching of titles, systems,
+refs, or episodes happens here or on the server. The path that was deleted — grouping by
+`systems` — failed on real data, not in principle: `systems` says which operational records
+a task touches, and 70% of rows carry one. Evidence like that belongs to whoever *writes*
+the grouping, as one input among the others; the moment code turns it into a rule, a
+birthday deck is filed under "feishu" again.
+
+### Two records, because they have two consumers
+
+| | The basis | The result |
+|---|---|---|
+| Read by | a mind, when it groups | the server, on every poll |
+| Shape | prose | JSON |
+| Written | file write | tool call, validated and atomic |
+| Path | `data/home/grouping.md` | `data/home/groups.json` |
+| Parsed by code | never | strictly |
+
+The basis is what the person asked for, in their own words, dated — "粤语解说表和 KT8 是一摊
+事", "自己身上的毛病单独一组". It is standing, so a task filed next week obeys an instruction
+given today without the person repeating it. Regularising it into fields would compress the
+ask before a model reads it, and a model is its only reader.
+
+The result is a snapshot: which task is in which group, and in what order. Home renders it
+directly, so it is JSON — the one shape a renderer should not be guessing at — and it is
+written only through a tool, which validates and replaces the file atomically. A surface
+polling every few seconds must never read half a file, and a mistyped subject must fail
+where the mind can still fix it rather than go silently missing minutes later.
+
+**The third input is the state of the agent, and it is never stored.** What is open, what is
+running, what each task is called: the mind grouping has the active-task projection and the
+switchboard in front of it already. Those are facts about now, so they are read at the
+moment of grouping rather than kept — a stored copy is a second ledger, going stale.
+
+### The shape of the result
+
+```json
+{ "groups": [ { "label": "KTV",
+                "note": "9/16 说粤语解说表和 KT8 是一摊事",
+                "members": ["cantonese-…-20260916", "kt8-046-content-management"] } ] }
+```
+
+Array order is draw order: groups outward from the core, members top to bottom. `label` is
+the group's identity — there is no separate id, because renaming a group *is* renaming it —
+and labels must be unique. `note` is one line saying why this group exists; it is optional
+and it is read, as the label's hover text, so a person reviewing the arrangement can see
+what it was based on. There is no `version` and no `updated_at`: the writer and the reader
+ship in one binary, and the file's mtime is already the time it was written.
+
+### What the surface does with it
+
+- A task named by a group is drawn under it. A task in no group hangs off the core, beside
+  the groups, and that is an ordinary state rather than a fault.
+- **A member that names no drawn task is ignored.** Tasks close and age out while the record
+  stands; the record is not the ledger and never resurrects one.
+- **Activities are not grouped, they follow.** A live session joined to a task is already
+  inside that task's branch, so it is in the task's group. One with no task stays at the
+  core: its identity is run-scoped, so a durable record naming it would be a dangling
+  reference by the next restart.
+- **A record that cannot be read leaves no groups.** A missing file, malformed JSON, or an
+  unusable shape degrades to every task on the core — the surface as it was — with the fault
+  in the server's log and nothing about it on screen.
+
+### How it forms and changes
+
+Three events, and **no timer** — nothing in this host fires on a period, and grouping has no
+case for being the exception.
+
+1. **A task is filed.** Cognition has just written the record, so it holds the subject; it
+   places the new task under the basis it already keeps. A task it cannot place stays
+   ungrouped.
+2. **The person says something.** Reaction relays it to Cognition, which **appends the words
+   to the basis first and rewrites the result second**. That order is what makes the ask
+   standing rather than a one-off edit.
+3. **The first time either happens with no record at all.** A default arrangement is written
+   then, along with the line in the basis saying what it was based on.
+
+A read never triggers a write: opening Home must not cost a turn.
+
 ## Core overview
 
 The core presents the shared context and significant updates, each with source
@@ -170,6 +260,22 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
 
 ## Open
 
+- **Nothing tidies the grouping record.** A task closes and ages out, and its line stays in
+  `groups.json` until a mind next rewrites the file; a group whose members have all gone
+  closes to nothing and draws nothing, but is still written down. Ignoring what it cannot
+  draw makes this harmless to look at, and the open work in hand is a dozen rows, so the
+  sweep it would take is not worth owning. It becomes worth owning if the record ever
+  outgrows what one rewrite can hold.
+- **A group is a label, not a handoff.** Every other box on this surface opens something;
+  the group opens nothing, because the thing it would open is a `factory/memories` subject
+  that the grouping deliberately does not have to name. It reads as inert next to cards that
+  respond, and the fix is either a target for the view-open above or a group that knows what
+  record it stands for — neither is decided.
+- **The order within a side is the record's, but which side is not.** Groups and ungrouped
+  tasks are fed to the layout in the order the record gives, and the two-sided balance then
+  takes them alternately as weight allows, so "first in the file" means near the core rather
+  than a place a person can predict. Making a branch's side its own property is the work that
+  would make position learnable, and it is not started.
 - **A view-open carries no target.** `openRef(viewRef)` takes a view reference and
   nothing else, and `factory/tasks` reads no incoming selection, so a card opens the
   board rather than its own row on it and the person finds the row themselves. Giving

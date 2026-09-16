@@ -1041,6 +1041,19 @@ while the file sits right there, so the toolbox would get less trustworthy the m
 accumulated. Derived from the tree instead, a missing line degrades to a bare filename,
 which is merely where this started. It never becomes a confident wrong answer.
 
+## `home/`
+
+One surface's own state: `grouping.md`, the standing instructions a person has given about
+how their work should be arranged, and `groups.json`, the arrangement that currently stands.
+Two files because they have two readers — a mind reads the prose when it groups, the server
+parses the JSON on every poll — and the pen differs with them: the prose is written like any
+other file, the JSON only through a validating tool that replaces it whole.
+
+**It is not memory and does not live under it.** Nothing but `factory/home` reads either
+file, a task's own record says nothing about which group it is in, and deleting the
+directory costs the arrangement and nothing else. See
+[`home.md`](home.md#grouping) for what a group is and who writes it.
+
 ## Forgetting
 
 Keep-biased. Text is permanent; only raw replay fades, and never before it has been
