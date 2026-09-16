@@ -209,19 +209,38 @@ ship in one binary, and the file's mtime is already the time it was written.
   unusable shape degrades to every task on the core — the surface as it was — with the fault
   in the server's log and nothing about it on screen.
 
+### Who holds which half
+
+| | Writes | Because |
+|---|---|---|
+| Reaction | nothing | it relays the ask in the person's words, like anything it cannot do itself |
+| Cognition | the basis | it is the rung that *hears* it, and the sentence must survive a worker that fails on the way to the screen |
+| `task-manager` | the result | one judgment over every open row, and *one manager, never one per row* is what keeps one hand on a file that is replaced whole |
+
+**The verb is the task-manager's and nothing else's**, enforced where the type is knowable
+rather than advertised away: the tool surface has no grain finer than `worker`, so every
+worker is offered it and dispatch refuses all but the manager.
+
+This is the split the ledger already has — Cognition opens a row, a manager rules on it —
+and it is here for the second of its two reasons. The first, that the rung handing work out
+is the worst-placed one to rule that its own errand ended, does not apply to grouping. The
+second does: a whole-ledger judgment is an errand, and Cognition hands errands out.
+
 ### How it forms and changes
 
-Three events, and **no timer** — nothing in this host fires on a period, and grouping has no
-case for being the exception.
+Events, and **no timer** — nothing in this host fires on a period, and grouping has no case
+for being the exception.
 
-1. **A task is filed.** Cognition has just written the record, so it holds the subject; it
-   places the new task under the basis it already keeps. A task it cannot place stays
-   ungrouped.
-2. **The person says something.** Reaction relays it to Cognition, which **appends the words
-   to the basis first and rewrites the result second**. That order is what makes the ask
-   standing rather than a one-off edit.
-3. **The first time either happens with no record at all.** A default arrangement is written
-   then, along with the line in the basis saying what it was based on.
+1. **The person says something.** Reaction relays it; Cognition writes the words into the
+   basis **in that turn**, then starts a `task-manager` (or hands the ask to the one already
+   running) to rearrange. Basis first: it is what makes the ask stand for next month's task,
+   and it must not depend on the worker getting that far.
+2. **A manager runs.** It reads the basis whole — standing instruction, not a log — and
+   replaces the arrangement. A first arrangement is written the first time this happens.
+3. **A task is filed.** It is **not** grouped then. Placing a row is not part of opening one,
+   and a spun-up session per filing buys a placement nobody is waiting on. A new task sits by
+   itself until the next pass, which is also the honest picture: it is new, and nobody has
+   sorted it yet.
 
 A read never triggers a write: opening Home must not cost a turn.
 

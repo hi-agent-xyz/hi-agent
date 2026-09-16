@@ -531,6 +531,47 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             // reason the pair that used to live here is gone. The half that stays in code
             // is the half that multiplies by nothing: reading the screenshot back.
             video_text_to_text_tool(),
+            // **Advertised to every worker, refused at dispatch to all but the
+            // `task-manager`.** Arranging the home surface is one judgment over every open
+            // row, which is what that type is; a view-builder holding the pen would be a
+            // second hand on a file that is replaced whole. The surface is per role rather
+            // than per type, so the narrowing has to happen in `dispatch_tool` — where the
+            // refusal also reaches the model that tried, instead of the tool quietly not
+            // being there.
+            tool(
+                "hi_set_home_groups",
+                "Arrange what is in hand into groups on the home screen — replacing the whole \
+                 arrangement, not patching it, so send every group each time. A group is a \
+                 `label`, the task `members` in it (subject directory names under \
+                 `memory/facets/tasks/`, in the order they should read), and an optional one-line \
+                 `note` saying what the grouping was based on, which the person sees on the label. \
+                 Array order is what is drawn: groups outward from the centre, members top to \
+                 bottom. Read `home/grouping.md` first — it is what the person has said about how \
+                 their work should be arranged, and their words beat any evidence you can find in \
+                 the records. A task you cannot place belongs in no group: leave it out rather \
+                 than inventing a home for it. Pass `groups: []` to clear the arrangement. The \
+                 answer says what landed, what named no task, what two groups both claimed, and \
+                 which open work is in no group.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "groups": {
+                            "type": "array",
+                            "description": "The whole arrangement, outward from the centre. Empty clears it.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": { "type": "string", "description": "What this group is called, in the person's own vocabulary. Unique." },
+                                    "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
+                                    "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
+                                },
+                                "required": ["label", "members"],
+                            },
+                        },
+                    },
+                    "required": ["groups"],
+                }),
+            ),
         ]
         .into_iter()
         // Generation belongs to the rung that does the job. Reaction must stay a
@@ -702,12 +743,11 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // matter of which rung is *told* to write it, and why that instruction moving out
         // in `cognition.md` is what makes it true.
         //
-        // **`hi_set_home_groups` is the exception, and the line it draws is the reader.**
-        // Prose a mind reads back is a file; a record a *renderer* parses on every poll is a
-        // tool call — validated, and replaced whole rather than left torn for a surface that
-        // polls every few seconds to read. Its prose half (`data/home/grouping.md`, the
-        // standing instructions it groups by) stays an ordinary file, written the ordinary
-        // way. See `docs/arch/home.md#grouping`.
+        // That reasoning is why `hi_set_home_groups` is **not** here. Arranging the home
+        // surface is a judgment over every open row at once, which is the errand the
+        // `task-manager` already exists to run — and a rearrangement it cannot express as a
+        // file write is still work, so it goes where work goes. What Cognition does with it
+        // is what it does with everything: hand it out. See `docs/arch/home.md#grouping`.
         //
         // **It reads with the adapter's own Read/Write, and that is why looking needs no
         // tool here.** A photo arrives as a ref, a ref is a path, and the rung that must
@@ -725,38 +765,6 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             close_worker_tool(),
             session_status_tool(),
             session_messages_tool(),
-            tool(
-                "hi_set_home_groups",
-                "Arrange what is in hand into groups on the home screen — replacing the whole \
-                 arrangement, not patching it. A group is a `label`, the task `members` in it \
-                 (subject directory names under `memory/facets/tasks/`, in the order they should \
-                 read), and an optional one-line `note` saying what the grouping was based on, \
-                 which the person sees on the label. Array order is what is drawn: groups outward \
-                 from the centre, members top to bottom. Group by what the person has told you in \
-                 `home/grouping.md` first; their words beat any evidence. A task you cannot place \
-                 belongs in no group — leave it out rather than inventing a home for it. Pass \
-                 `groups: []` to clear the arrangement. The answer says what landed, what named no \
-                 task, what two groups both claimed, and which open work is in no group.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "groups": {
-                            "type": "array",
-                            "description": "The whole arrangement, outward from the centre. Empty clears it.",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "label": { "type": "string", "description": "What this group is called, in the person's own vocabulary. Unique." },
-                                    "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
-                                    "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
-                                },
-                                "required": ["label", "members"],
-                            },
-                        },
-                    },
-                    "required": ["groups"],
-                }),
-            ),
         ],
         // **Reaction** — the mouth. Its two expression channels plus the one verb that
         // reaches another agent, and nothing else: no reads, no fetches, no built-ins
@@ -1268,11 +1276,23 @@ async fn dispatch_tool(
             role.unwrap_or("<none>")
         ));
     }
-    if name == "hi_set_home_groups" && role != Some("cognition") {
-        return tool_error(&format!(
-            "`{name}` is cognition-only; role `{}` does not arrange the home surface",
-            role.unwrap_or("<none>")
-        ));
+    // **Arranging the home surface is the `task-manager`'s, and only that type's.** The
+    // whole arrangement is replaced in one write, so a second hand does not merge with the
+    // first — it erases it; and the judgment is over every open row at once, which is the
+    // one errand this type already serves (`cognition.md` § *Handing the ledger down* keeps
+    // it a singleton for exactly this reason). The advertised surface is per role, so this
+    // is where the type is read — from the registry, never from anything the caller says.
+    if name == "hi_set_home_groups" {
+        let kind = slug
+            .as_ref()
+            .and_then(|id| crate::foundation::registry::global().status(id))
+            .and_then(|status| status.role.worker_type());
+        if kind != Some(crate::identity::WorkerType::TaskManager) {
+            return tool_error(&format!(
+                "`{name}` is the task-manager's; role `{}` does not arrange the home surface",
+                role.unwrap_or("<none>")
+            ));
+        }
     }
     if name == "hi_http_request" && role != Some("worker") {
         return tool_error(&format!(
@@ -3136,6 +3156,53 @@ mod surface_tests {
         }
     }
 
+    /// Advertised to workers, and refused to every rung that is not one.
+    #[test]
+    fn arranging_the_home_surface_is_a_worker_s() {
+        assert!(names(Some("worker")).contains(&"hi_set_home_groups".to_string()));
+        for role in [Some("reaction"), Some("cognition"), Some("reflection"), None] {
+            assert!(
+                !names(role).contains(&"hi_set_home_groups".to_string()),
+                "{role:?} must not hold the pen over the home arrangement"
+            );
+        }
+    }
+
+    /// **The type, not the role.** Every worker is advertised the verb because the surface
+    /// has no finer grain than `worker`, so the narrowing that matters happens at dispatch:
+    /// the arrangement is replaced whole, and a second hand does not merge with the first.
+    /// A session the registry does not know — every caller in this test — is not a
+    /// task-manager either, which is the same refusal for the same reason.
+    #[tokio::test]
+    async fn only_a_task_manager_arranges_the_home_surface() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::body::reaction::ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
+        let partial = Mutex::new(None);
+        let obs = Observatory::new(None);
+
+        for role in [Some("worker"), Some("cognition"), Some("reaction"), None] {
+            let got = dispatch_tool(
+                &tools,
+                dir.path(),
+                &privacy,
+                &partial,
+                &obs,
+                Some(7.into()),
+                role,
+                "hi_set_home_groups",
+                &json!({ "groups": [] }),
+            )
+            .await;
+            assert_eq!(got.get("isError").and_then(Value::as_bool), Some(true), "{role:?}");
+            assert!(
+                got["content"][0]["text"].as_str().unwrap_or_default().contains("task-manager's"),
+                "{role:?} must be told whose pen this is, not that the tool is unknown"
+            );
+        }
+        assert!(!super::super::server::home::groups_path(dir.path()).exists(), "and nothing was written");
+    }
+
     /// Everything `hi_create_worker` needs that is not the errand itself, called as Cognition.
     async fn create_worker(
         dir: &std::path::Path,
@@ -3369,14 +3436,13 @@ mod surface_tests {
     /// the lifetime — something else does, on a timer, with no idea whether the errand was
     /// done. All three or none.
     ///
-    /// `hi_set_home_groups` is the one thing here that is not dispatch, and the line it
-    /// draws is worth stating so the next addition has to clear it: **the ledger this rung
-    /// owns needs no tool because it is prose a mind reads back, and this one does because a
-    /// renderer parses it on every poll.** Validated and replaced whole, or the surface reads
-    /// half a file and a mistyped subject goes missing with nothing said. Its prose half —
-    /// the standing instructions it groups by — is an ordinary file, like the ledger.
+    /// **Nothing that writes belongs here, and `hi_set_home_groups` is the case that tested
+    /// it.** Arranging the home surface is a judgment over every open row, so it went where
+    /// the judgment already lives — the `task-manager` — and Cognition does with it what it
+    /// does with everything: hands it out. A verb is not owed to this rung merely because
+    /// this rung is the one holding the context when the person asks.
     #[test]
-    fn cognition_holds_the_switchboard_and_the_one_record_a_surface_renders() {
+    fn cognition_holds_the_switchboard_and_nothing_else() {
         let mut got = names(Some("cognition"));
         got.sort();
         assert_eq!(
@@ -3388,7 +3454,6 @@ mod surface_tests {
                 "hi_send_message".to_string(),
                 "hi_session_messages".to_string(),
                 "hi_session_status".to_string(),
-                "hi_set_home_groups".to_string(),
             ],
             "it delegates rather than does, and it has no mouth"
         );

@@ -937,6 +937,17 @@ difference is the whole of it — pruning ends a promise, a fold moves one, and 
 merely stale is neither. The test is delivery, not resemblance: two rows are one job when
 delivering either delivers the other.
 
+**It also arranges the home surface, because that is the same shape of judgment.** How the
+open work is grouped on [Home](home.md#grouping) is the person's call, written down rather
+than inferred, and deciding it means reading every open row at once against what they have
+said — which is this worker's whole posture. The arrangement is replaced whole by
+`hi_set_home_groups`, so one hand is the requirement, and *one manager, never one per row*
+already supplies it. Cognition still owns the sentence the person said, written into the
+basis file in the turn it is heard; what it hands down is the rearranging. That is the same
+division as the ledger's, minus the conflict of interest — grouping is not a ruling on
+whether anybody's errand ended — and it holds for the other half of the reason: a
+whole-ledger judgment is an errand, and the dispatcher hands errands out.
+
 **It names no subject, and is one of the kinds that may not.** `CreateWorker(subject)`
 binds a worker to a single ledger task and is required of every kind that serves the ledger;
 a worker without one reads as *not linked to any task* — the line that means **nobody is on

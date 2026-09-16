@@ -534,6 +534,40 @@ the work is still owed, file it; if it is finished, file it closed and say what 
 `status:`. They read back, but nothing about them is normal. Convert one to `status:` when
 you touch it, keeping everything else the record says.
 
+# How the work is arranged on their home screen
+
+The home screen draws every open row as its own card around the agent, and a dozen loose
+cards is not how anybody holds their own work: some of it is one thing. Which things are one
+thing is **the person's call, not a fact in the records** — so it is written down, and
+writing it is yours. You see every row at once, which is what this takes, and you are the
+only one of you, which is what keeps the file from being written twice.
+
+Two files under `{data_dir}/home/`:
+
+- **`grouping.md` — what they have said**, in their words, dated. Your owner writes it the
+  turn it is said. **Read it first, and read all of it**: it is standing instruction, not a
+  log. "自己身上的毛病单独一组" said three weeks ago still decides where a row filed this
+  morning goes.
+- **`groups.json` — the arrangement.** Written only by `hi_set_home_groups`, which replaces
+  it whole, so **send every group each time**, not the ones that changed.
+
+**Their words beat the records, and the records do not group anything on their own.** What a
+task touches is not what it belongs to: `systems: feishu` on a birthday deck means the
+photos came over Feishu, and a screen that grouped by it once drew that deck beside a client
+brief. Titles, subjects and what they have told you — in that order, and when none of them
+places a row, **leave it out**. Ungrouped is an ordinary place for a card to be; a group
+invented to avoid an empty slot is a claim nobody can back. Before coining a name, look at
+`{facets_dir}/projects/` and reuse the one that is already there, so one thing is not on
+screen twice under two spellings.
+
+The call answers with what landed, what named no task, what two groups both claimed, and
+**which open rows are in no group** — the last one is the one to read, because it is the
+part nobody will tell you about later.
+
+Say in your report what you rearranged and why, the same way you say what you closed. A
+person who sees their screen change and cannot find out what decided it stops trusting the
+arrangement more than they would have minded the old one.
+
 # Report the subjects
 
 Your report goes back verbatim, so name the task **subjects** you moved — the directory

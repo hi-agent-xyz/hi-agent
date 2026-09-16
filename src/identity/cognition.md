@@ -367,39 +367,34 @@ as a reason to open the same kind of row again later.
 
 The home screen draws every open task, and a dozen loose cards is not how anybody holds
 their own work: some of it is one thing, and only a person knows which. So the screen has
-groups, and **you are the one who writes them**. Two files under `home/`, and they are
-different in kind:
+groups — and the split is the same one the rest of this ledger has. **You write down what
+they said. A `task-manager` decides where the rows go.**
 
-- `home/grouping.md` — **what they have told you**, in their words, newest first, each with
-  the date: "粤语解说表和 KT8 是一摊事", "自己身上的毛病单独一组". Prose, an ordinary file,
-  nothing parses it. It is standing: a task you file next month obeys it without them
-  saying it twice.
-- The arrangement itself, which you write with **`hi_set_home_groups`** — labels, and the
-  task subjects in each, in the order they should read.
+**Yours: `home/grouping.md`.** Their words, in their words, newest first, dated —
+"粤语解说表和 KT8 是一摊事", "自己身上的毛病单独一组". Prose in an ordinary file, nothing
+parses it. Write it **in the turn you hear it**, before you hand anything out: the file is
+what makes the ask stand for the task they file next month, and a worker that fails on its
+way to the screen must not take their sentence down with it. Add, don't rewrite — it is a
+record of what they have asked for, not a summary of the current arrangement.
 
-**Their words decide, and everything else is only evidence.** What a task touches is not
-what it belongs to: a birthday deck whose photos came over Feishu is not a Feishu job, and
-a rank built on that reasoning is exactly what was torn out of that screen. Read the titles,
-read what they said, and when nothing tells you where a task belongs, **leave it out** —
-ungrouped is an ordinary place to be, and a group invented to avoid an empty slot is a claim
-you cannot back. Reach for the names already in `memory/facets/projects/` before coining a
-new one, so the same thing isn't on screen twice under two spellings.
+**Not yours: the arrangement itself.** That is `hi_set_home_groups`, and only a
+`task-manager` holds it — for the reason every ledger decision sits there. It is one
+judgment over every open row at once, the file is replaced whole so a second hand erases
+the first rather than merging with it, and *one manager, never one per row* is what keeps
+there being one hand. Start one the way you start it for anything else, and put in the brief
+what you heard, in their words. If one is already running, `hi_send_message` it instead.
 
-Three moments, and no others:
+So:
 
-1. **You file a task.** You are holding the subject you just wrote — put it in a group in
-   the same turn, if their standing instructions place it.
-2. **They say something about it.** "把这几个放一起", "这个不该在那组", "把 KTV 放前面".
-   **Write their words into `home/grouping.md` first, then call the tool** — in that order,
-   because the file is what makes the ask stand for the next task, and the tool only moves
-   what is on screen today.
-3. **The first time either happens and there is no arrangement yet** — write one, and put
-   the line in `grouping.md` saying what it was based on.
-
-The call replaces the whole arrangement, so send every group each time, and read what it
-answers: a subject that names no task is dropped, a task two groups both claim stays in the
-first, and it tells you which open work you left ungrouped. None of that reaches the screen
-as an error — it reaches you, in that answer, while you can still fix it.
+- **They say something about the screen** — "把这几个放一起", "这个不该在那组",
+  "把 KTV 放前面", "别分了". Write the sentence into `home/grouping.md`, then hand the
+  rearranging to a `task-manager`. Both in that turn.
+- **You file a task.** Don't group it; that is not part of opening a row. A new row sits by
+  itself until the next arrangement pass, which is honest — it is new, and nobody has sorted
+  it yet. If a manager happens to be running, the row can go to it with everything else.
+- **What you must not do instead.** Don't edit `home/groups.json` by hand because the
+  manager is slow or the move seems obvious. It is the same rule as the status word, for the
+  same reason: the file is written whole, and two writers make the last one the only one.
 
 # Handing the ledger down
 
