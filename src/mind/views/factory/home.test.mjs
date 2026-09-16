@@ -129,13 +129,79 @@ test("overview uses public messages and factual transitions, never worker tail o
   assert.equal(ofKind(quiet, "overview").length, 0);
 });
 
-test("every task is its own branch off the core, whatever systems it touches", () => {
+test("what a task touches never groups it; only the arrangement does", () => {
   // `systems` names the records a task touches, not what it belongs to: a birthday deck
-  // whose photos came over Feishu is not part of a Feishu project. Nothing groups tasks.
+  // whose photos came over Feishu is not part of a Feishu project. With no arrangement
+  // written, every task is its own branch however much its wording overlaps its neighbour's.
   const model = project({ tasks: [tagged("deck", "feishu, wecom"), tagged("brief", "feishu"), task("plain")] });
   assert.deepEqual(list(childIndex(model).get("core").map((n) => n.id)).sort(), ["task:brief", "task:deck", "task:plain"]);
   assert.deepEqual(list(new Set(model.nodes.map((n) => n.kind))).sort(), ["core", "task"]);
   assertConnected(model);
+});
+
+test("the arrangement puts a task under its group, and leaves the rest on the core", () => {
+  const model = project({
+    tasks: [task("kt8-046"), task("cantonese-table"), task("vocabulary-book")],
+    groups: [{ label: "KTV", note: "9/16 说是一摊事", members: ["kt8-046", "cantonese-table"] }] });
+  const children = childIndex(model);
+  assert.deepEqual(list(children.get("core").map((n) => n.id)).sort(), ["group:KTV", "task:vocabulary-book"]);
+  assert.deepEqual(list(children.get("group:KTV").map((n) => n.id)), ["task:kt8-046", "task:cantonese-table"]);
+  // The note is the only thing a group says beyond its name, and it is carried, not dropped.
+  assert.equal(model.nodes.find((n) => n.id === "group:KTV").data.note, "9/16 说是一摊事");
+  assertConnected(model);
+});
+
+test("a group whose tasks are all gone is not a heading standing on its own", () => {
+  // The record is not the ledger: tasks close and age off this surface while their line
+  // still stands in the arrangement. An empty group is structure where content used to be.
+  const model = project({
+    tasks: [task("still-open")],
+    groups: [{ label: "KTV", members: ["closed-last-month", "never-existed"] },
+      { label: "在办", members: ["still-open"] }] });
+  assert.deepEqual(list(model.nodes.filter((n) => n.kind === "group").map((n) => n.title)), ["在办"]);
+  assertConnected(model);
+});
+
+test("groups are laid out in the order they were arranged in, ahead of what is ungrouped", () => {
+  const model = project({
+    tasks: [task("a-first-alphabetically"), task("m-in-a-late-group"), task("z-in-an-early-group")],
+    groups: [{ label: "早", members: ["z-in-an-early-group"] }, { label: "晚", members: ["m-in-a-late-group"] }] });
+  // Branches are fed to the layout in that order and then dealt to whichever side is
+  // lighter, so the order survives *within* a side — which is the part this can assert, and
+  // exactly as much as the person gets. Which side a branch lands on is `home.md` § Open.
+  const onCore = new Set(model.edges.filter((e) => e.primary && e.from === "core").map((e) => e.to));
+  const sides = [[], []];
+  for (const row of arrange(model).placed.slice(1)) {
+    if (onCore.has(row.node.id)) sides[row.dir > 0 ? 0 : 1].push(row.node);
+  }
+  for (const side of sides) {
+    const titles = side.map((n) => n.title);
+    assert.deepEqual(titles, list(side).sort((a, b) => (a.kind === "group" ? 0 : 1) - (b.kind === "group" ? 0 : 1)
+      || (a.kind === "group" ? a.data.index - b.data.index : 0)).map((n) => n.title),
+    `groups first, in the record's order, then what nobody placed: ${titles}`);
+  }
+  assert.deepEqual(list(sides.flat().filter((n) => n.kind === "group").map((n) => n.title)).sort(), ["早", "晚"]);
+});
+
+test("a live session follows its task into the group, and a task claimed twice stays in the first", () => {
+  const model = project({
+    tasks: [task("kt8-046")],
+    workers: [worker("w1", "worker", { subject: "kt8-046" })],
+    groups: [{ label: "KTV", members: ["kt8-046"] }, { label: "别的", members: ["kt8-046"] }] });
+  const children = childIndex(model);
+  assert.deepEqual(list(children.get("group:KTV").map((n) => n.id)), ["task:kt8-046"]);
+  assert.equal(children.get("core").some((n) => n.id === "group:别的"), false, "the second claim is not a group");
+  assert.deepEqual(list(children.get("task:kt8-046").map((n) => n.kind)), ["activity"], "the session is inside the group with its task");
+  assertConnected(model);
+});
+
+test("a group is a label, and a card is still a card beneath it", () => {
+  const model = project({ tasks: [task("kt8-046")], groups: [{ label: "KTV", members: ["kt8-046"] }] });
+  const placed = arrange(model).placed;
+  const group = placed.find((p) => p.node.kind === "group");
+  const card = placed.find((p) => p.node.kind === "task");
+  assert.deepEqual([group.w, group.h], [176, 40], "a group promises no status, time or handoff");
+  assert.deepEqual([card.w, card.h], [240, 135]);
 });
 
 test("a result with no picture is not on Home at all", () => {

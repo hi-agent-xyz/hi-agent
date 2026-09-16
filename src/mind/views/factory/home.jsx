@@ -27,7 +27,7 @@ const COPY = {
       running: "Working", waiting: "Work queued", idle: "Idle",
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
     roles: { reaction: "Conversation", cognition: "Coordination", reflection: "Review" },
-    source: { tasks: "tasks", workers: "live sessions", views: "results" },
+    source: { tasks: "tasks", workers: "live sessions", views: "results", groups: "grouping" },
     ago: (n, unit) => `${n}${unit} ago`,
   },
   zh: {
@@ -39,7 +39,7 @@ const COPY = {
       running: "正在处理", waiting: "有工作待处理", idle: "空闲",
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
     roles: { reaction: "交流", cognition: "协调", reflection: "回顾" },
-    source: { tasks: "任务", workers: "在线会话", views: "成果" },
+    source: { tasks: "任务", workers: "在线会话", views: "成果", groups: "分组" },
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
   },
 };
@@ -60,7 +60,7 @@ const OPEN = new Set(["todo", "doing", "serving"]);
 const RESULT_TILES = 6;
 /** Where a card hands off. Home owns no detail of its own. */
 const TASK_BOARD = "factory/tasks", SESSION_BOARD = "factory/workers";
-const TONE = { core: "var(--accent)", todo: "var(--fg-mute)",
+const TONE = { core: "var(--accent)", group: "var(--fg-mute)", todo: "var(--fg-mute)",
   doing: "var(--accent)", serving: "var(--accent-2)", done: "var(--fg-mute)", cancelled: "var(--fg-mute)",
   running: "var(--accent)", waiting: "var(--accent-2)", idle: "var(--fg-mute)",
   failed: "var(--danger)", interrupted: "var(--danger)", overview: "var(--accent)",
@@ -178,7 +178,35 @@ function taskResults(task, views) {
  * order and claim nothing about when a view last changed.
  */
 
-function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now = Date.now()) {
+/**
+ * **A group is a name over some tasks, and this surface is the only thing that knows it.**
+ *
+ * It is not a field on a task: that would make one view's axis — project, or kind, or state —
+ * everybody's, and the axis is the person's to change. `/api/home/groups` serves what they
+ * have arranged (`docs/arch/home.md#grouping`); nothing here matches, guesses or falls back
+ * to a field that looks close. The rank that came before this one was inferred from
+ * `systems`, which says what a task touches, and drew a birthday deck under "feishu".
+ *
+ * A group that ends up with no drawn task is not a node. Tasks close and age off this
+ * surface while the record still names them, and an empty heading is structure standing
+ * where its content used to be.
+ */
+function groupIndex(groups) {
+  const byTask = new Map();
+  groups.forEach((group, index) => {
+    const label = plain(group?.label);
+    if (!label) return;
+    for (const subject of group.members || []) {
+      const key = plain(subject);
+      // First claim wins, the same rule the writer applies, so the two agree about a
+      // record written before that rule existed.
+      if (key && !byTask.has(key)) byTask.set(key, { label, note: plain(group.note), index });
+    }
+  });
+  return byTask;
+}
+
+function buildHome({ tasks = [], workers = [], views = [], messages = [], groups = [] }, now = Date.now()) {
   const nodes = [];
   const edges = [];
   const edgeIds = new Set();
@@ -197,6 +225,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
   const activities = [...sessions.values()].filter((s) => !CORE_ROLES.has(s.role));
   const core = add({ id: "core", kind: "core", title: L.core,
     sourceRefs: coreSessions.map((s) => ref("session", s.id)), data: { sessions: coreSessions, overviewIds: [] } });
+  const grouped = groupIndex(groups);
   for (const task of tasks) {
     // **A live session no longer re-admits its expired task.** That rule kept a closed task
     // present "as context" whenever anything recent still named it, and it was the single
@@ -207,13 +236,19 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [] }, now 
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
         endedAt: taskEnd(task), results: taskResults(task, views) } });
-    // **Every task is its own branch off the core, and nothing groups them.** There used to be
-    // a topic rank, named by the task's `project` or, failing that, its `systems`. No writer
-    // has ever produced a `project`, so every topic drawn was a `systems` value — and `systems`
-    // says which operational records a task touches, not what it belongs to. A birthday deck
-    // whose photos arrived over Feishu sat under a "feishu" topic beside a client brief. A
-    // grouping is a claim someone has to make; until something writes one, there is none.
-    link("core", node.id);
+    // A task hangs off its group when the arrangement puts it in one, and off the core when
+    // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
+    // here invents a group for a task the person has not placed.
+    const group = grouped.get(task.subject);
+    if (group) {
+      const id = `group:${group.label}`;
+      add({ id, kind: "group", title: group.label, sourceRefs: [],
+        data: { label: group.label, note: group.note, index: group.index } });
+      link("core", id);
+      link(id, node.id);
+    } else {
+      link("core", node.id);
+    }
     // Pictures are second-level, the way a sub-step or a sub-result is — all of them, so that
     // one kind of record has one appearance. A task mid-flight often has process pictures and
     // no deliverable yet, and nothing here claims to know which of them is which.
@@ -333,8 +368,14 @@ function divergence(a, b) {
   while (a !== b && a.parent && b.parent) { a = a.parent; b = b.parent; }
   return a.depth + 1;
 }
-function dimensions() {
-  return { w: CARD_W, h: CARD_H };
+/**
+ * **A group is a label, not a card**, and that is the whole of its appearance: it holds no
+ * status, no time and nothing to open, so a card-sized box would promise all three. Narrow
+ * also costs the rank it adds the least width — the chart already runs wider than a laptop.
+ */
+const GROUP_W = 176, GROUP_H = 40;
+function dimensions(node) {
+  return node?.kind === "group" ? { w: GROUP_W, h: GROUP_H } : { w: CARD_W, h: CARD_H };
 }
 
 /**
@@ -381,8 +422,17 @@ function arrange(model) {
   const weight = (t, rank = 1) => Math.max(t.h,
     t.children.reduce((n, c) => n + weight(c, rank + 1) + gapAt(rank + 1), 0));
   const sides = [[], []], load = [0, 0];
-  // IDs, not activity states, keep branch placement stable between updates.
-  for (const branch of [...branches].sort((a, b) => a.id.localeCompare(b.id))) {
+  // **The arrangement's order for the groups, and ids for everything else.** A group is
+  // where the person put it, because the record is an ordered list; an ungrouped task has
+  // nobody's order to follow, so it keeps the id sort — ids, not activity states, are what
+  // hold a branch still between updates. Which *side* either lands on is still the balance's
+  // call, and that is the part a person cannot predict: `home.md` § Open.
+  const rank = (n) => (n.kind === "group" ? [0, n.data.index, ""] : [1, 0, n.id]);
+  const inOrder = [...branches].sort((a, b) => {
+    const [ak, ai, aid] = rank(a), [bk, bi, bid] = rank(b);
+    return ak - bk || ai - bi || aid.localeCompare(bid);
+  });
+  for (const branch of inOrder) {
     const t = tree(branch), side = load[0] <= load[1] ? 0 : 1;
     sides[side].push(t); load[side] += weight(t);
   }
@@ -425,7 +475,7 @@ async function getJson(path) {
 export default function Home() {
   const { openRef } = useViews();
   const { messages } = useMessages();
-  const [source, setSource] = useState({ tasks: [], workers: [], views: [] });
+  const [source, setSource] = useState({ tasks: [], workers: [], views: [], groups: [] });
   const [loaded, setLoaded] = useState(false);
   const [errors, setErrors] = useState([]);
   const [now, setNow] = useState(Date.now);
@@ -440,6 +490,10 @@ export default function Home() {
       const requests = [
         ["workers", "/api/workers", (v) => v.workers],
         ["views", "/api/views", (v) => v],
+        // How the person has arranged the work, which is this surface's own record and
+        // nobody else's. It changes when somebody says so, not on a clock, but it is small
+        // and it rides the poll the ledger's neighbours are on anyway.
+        ["groups", "/api/home/groups", (v) => v.groups],
       ];
       const results = await Promise.allSettled(requests.map(async ([, path, read]) => {
         const value = read(await getJson(path));
@@ -684,6 +738,11 @@ function Node({ node, now, children, openRef }) {
       <img src={node.data.shot} alt={node.title} loading="lazy" />
     </button>
   </article>;
+  // A group carries its own note as hover text — one line saying what the grouping was
+  // based on, so the person reading the chart can see why these three are one thing. It is
+  // the only thing a group says beyond its name, and it opens nothing: `home.md` § Open.
+  if (node.kind === "group") return <article className="hi-work__group" data-node-id={node.id}
+    data-kind="group" title={node.data.note || undefined}>{node.title}</article>;
   const body = <>
     <span className="hi-work__node-title">{node.title}</span>
     <div className="hi-work__node-foot"><span className="hi-work__node-state">
@@ -736,6 +795,9 @@ const CSS = `
 .hi-work__overview p { margin:5px 0 0; font-size:16px; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
 .hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; display:flex; flex-direction:column; }
+/* A heading, not a card: no border and no background, because it is a name over the cards
+   below it rather than a thing beside them. */
+.hi-work__group { height:100%; display:flex; align-items:center; padding:0 4px; font-size:17px; font-weight:600; color:var(--fg-mute); letter-spacing:.02em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:6px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
@@ -756,6 +818,7 @@ const CSS = `
 .hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
 .hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:1px solid var(--work-line); }
 .hi-work__branch .hi-work__node { min-height:116px; }
+.hi-work__branch .hi-work__group { height:auto; min-height:28px; }
 .hi-work__branch .hi-work__tile { height:auto; aspect-ratio:16 / 9; max-width:240px; }
 .hi-work__branch .hi-work__branch li::before { left:-12px; width:12px; }
 .hi-work__loading { position:absolute; left:24px; top:8px; color:var(--fg-mute); font-size:13px; z-index:2; }
