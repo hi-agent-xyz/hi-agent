@@ -186,6 +186,56 @@ pub fn owner(data_dir: &std::path::Path) -> Option<String> {
 pub const HEADER_ROLE: &str = "X-HI-Role";
 pub const HEADER_SESSION_SLUG: &str = "X-HI-Session-Slug";
 
+/// The slug as an HTTP header value, percent-encoded, and back.
+///
+/// **A header is bytes that must be ASCII; a session slug deliberately is not.** Slugs keep
+/// alphanumerics in any script because a Chinese title is most of them here — and a
+/// `task-manager` takes no ledger subject, so its slug is built from its title and is
+/// Chinese whenever the person is. Put on the wire raw, such a header fails `to_str()` at the
+/// reader and the session arrives **with no identity at all**: `hi_send_message` refuses it,
+/// so a worker's whole report reaches nobody, and any verb that checks who is calling refuses
+/// it too. Watched on 2026-09-16, when a real `task-manager` was told the home arrangement was
+/// not its to write ([`docs/user-journeys/41-arrange-my-work.md`]).
+///
+/// Encoding at the transport rather than narrowing the address: the slug is what an agent
+/// types back, what names a frame log, and what a roster line shows, and an ASCII-stripped
+/// Chinese title is illegible in all three. An ASCII slug encodes to itself, so nothing that
+/// was already working changes shape.
+pub fn encode_session_slug(slug: &str) -> String {
+    let mut out = String::with_capacity(slug.len());
+    for byte in slug.as_bytes() {
+        // Unreserved per RFC 3986, plus `%` itself which must not survive verbatim.
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Read back what [`encode_session_slug`] wrote. Invalid escapes leave the value as it
+/// stands rather than failing: the slug is validated where it is parsed, and a decoder that
+/// invented an error here would hide which of the two went wrong.
+pub fn decode_session_slug(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(byte) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Cognition parameters, resolved from the credential store. The upstream credential
 /// never lives in git and never rides the thread config — only the env var that names it.
 #[derive(Clone)]

@@ -35,6 +35,7 @@ pub async fn post_mcp(
     };
     let role = header(HEADER_ROLE);
     let slug = header(HEADER_SESSION_SLUG)
+        .map(|v| crate::foundation::config::decode_session_slug(&v))
         .and_then(|v| v.parse::<crate::foundation::registry::SessionSlug>().ok());
 
     let msg: Value = match serde_json::from_slice(body.as_ref()) {

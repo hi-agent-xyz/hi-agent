@@ -376,7 +376,13 @@ impl AgentLayer {
         let mut headers = serde_json::Map::new();
         headers.insert(HEADER_ROLE.to_string(), json!(role.as_str()));
         if let Some(id) = slug {
-            headers.insert(HEADER_SESSION_SLUG.to_string(), json!(id.to_string()));
+            // Percent-encoded, because a header is ASCII and a slug is whatever script the
+            // errand was named in — see `config::encode_session_slug` for the session that
+            // arrived identity-less and mute before this was here.
+            headers.insert(
+                HEADER_SESSION_SLUG.to_string(),
+                json!(crate::foundation::config::encode_session_slug(id.as_str())),
+            );
         }
 
         let mut config = cfg.thread_config();
@@ -704,6 +710,32 @@ mod tests {
         assert_eq!(server["http_headers"][HEADER_ROLE], "worker");
         // Stringified: HTTP header values are text, and codex forwards them verbatim.
         assert_eq!(server["http_headers"][HEADER_SESSION_SLUG], "42");
+    }
+
+    /// **The header a Chinese-named errand travels under.** A `task-manager` serves the whole
+    /// ledger, so it takes no subject and its slug is built from its title — Chinese, when the
+    /// person is. Raw on the wire, that header failed `to_str()` at the reader and the session
+    /// arrived with no identity: mute (`hi_send_message` refuses it) and refused by every verb
+    /// that asks who is calling. Watched happening on 2026-09-16.
+    #[test]
+    fn a_slug_in_any_script_reaches_the_reader_as_itself() {
+        use crate::foundation::config::{decode_session_slug, encode_session_slug};
+        let slug = crate::foundation::registry::mint(
+            Role::Worker(WorkerType::TaskManager),
+            Some("把粤语解说表和 KT8-046 并成首页的 KTV 组"),
+        );
+        let config =
+            layer().thread_config(&config(), Role::Worker(WorkerType::TaskManager), Some(slug.clone()), &[]);
+        let sent = config["mcp_servers"]["hi-agent"]["http_headers"][HEADER_SESSION_SLUG]
+            .as_str()
+            .expect("a header value");
+        assert!(sent.is_ascii(), "a header is ASCII or it is not a header: {sent}");
+        assert_eq!(
+            decode_session_slug(sent).parse::<crate::foundation::registry::SessionSlug>().ok(),
+            Some(slug),
+        );
+        // An address that was already safe travels unchanged, so nothing that worked moves.
+        assert_eq!(encode_session_slug("task-manager-2"), "task-manager-2");
     }
 
     #[test]
