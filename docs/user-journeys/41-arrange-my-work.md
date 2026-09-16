@@ -9,29 +9,40 @@ agent 自己身上的几个毛病是另一摊。
 
 ## Steps & expected UX
 
+### 谁负责哪一段
+
+| | 写什么 | 为什么是它 |
+|---|---|---|
+| Reaction | 什么都不写 | 原话转出去,和它做不了的任何事一样 |
+| Cognition | `home/grouping.md`(依据) | 它是**听见**的那个;这句话不能因为后面的 worker 起不来就丢了 |
+| `task-manager` | `home/groups.json`(结果) | 一次看全部在办行的判断,而且"同时只有一个"是它本来就有的纪律 |
+
 ### Case A · 他说一句,分组就变
 
 1. **用户说**:"粤语解说那个和 KT8 的放一起吧。"
 2. **Reaction 不自己动**,把原话转给 Cognition —— 这不是它能改的偏好,也不是要劝的事。
-3. **Cognition 先写标准,再改结果**:原话按日期落进 `home/grouping.md`(散文,没有任何
-   代码解析它),然后 `hi_set_home_groups` 重写整份分组。顺序不能反:文件是让这句话对
-   *下个月新建的任务* 仍然生效的东西,工具调用只动今天屏幕上的。
-4. **首页在下一次刷新时就是新的样子**(几秒),不需要重启,也不需要用户再打开一次。
-5. **Reaction 回一句会变成什么样**,不讲它存在哪。
+3. **Cognition 在同一轮里把原话按日期写进 `home/grouping.md`**(散文,没有任何代码解析它),
+   然后起一个 `task-manager`(已经有在跑的就 `hi_send_message` 给它),brief 里带上原话。
+   顺序不能反:文件是让这句话对 *下个月新建的任务* 仍然生效的东西。
+4. **task-manager 读全部在办任务 + 整份 `grouping.md`,调 `hi_set_home_groups` 整份重写。**
+5. 首页在下一次刷新时就是新的样子。**从说完到变,是一个 worker 起身的时间**,不是几秒 ——
+   人不用盯着屏幕等,Reaction 先答会变成什么样。
+6. task-manager 在报告里说它改了什么、依据是什么,和它说自己关了哪些行一样。
 
-### Case B · 新任务自己落位
+### Case B · 新任务在下一次整理时归位
 
-1. 用户交代一件新的 KT 工单相关的事。
-2. Cognition 建任务、写完记录,**在同一轮**里把这个 subject 放进 KTV 组 —— 依据是
-   `home/grouping.md` 里他上次说过的话。
-3. 用户没再说任何关于分组的话,首页上它已经在对的地方。
+1. 用户交代一件新的 KT 工单相关的事,Cognition 建任务、写记录。
+2. **这一刻不分组。** 归位不是开一行的一部分,为一次归位专门起一个 worker 也不值。新卡先
+   挂在核心旁边 —— 这也是诚实的画面:它刚进来,还没人整理过。
+3. 下一次 `task-manager` 跑的时候(用户又说了什么、或者账本需要判断),它读 `grouping.md`
+   里那句"KT8 那摊"的旧话,把新行放进 KTV 组。**用户仍然没说第二遍**,只是没有在那一秒完成。
 4. **放不进任何一组的任务就不放**。挂在核心旁边是正常状态,不是缺陷;为了填满一个格子
    发明一个组,是一个没人能背书的主张。
 
 ### Case C · 他不满意
 
 1. 用户说"这个不该在那组"、"把 KTV 放前面"、"别分了"。
-2. 同样走 Reaction → Cognition,同样先落原话再改分组;"别分了"就是 `groups: []`。
+2. 同样走 Reaction → Cognition(落原话)→ task-manager(改排布);"别分了"就是 `groups: []`。
 3. 分组的先后就是文件里的先后,组内任务的先后也是 —— 没有任何"重要程度"的推断。
 
 ## What must be true
@@ -42,33 +53,61 @@ agent 自己身上的几个毛病是另一摊。
 - **分组只有首页读。** 任务记录里没有任何字段说它在哪一组,删掉 `data/home/` 只损失排布。
 - **坏掉就不分组。** 文件缺失、JSON 坏了、成员全都不存在 —— 一律退回"每个任务挂核心",
   日志里有原因,用户屏幕上没有错误卡。
-- **写错当场就知道。** 拼错的 subject 被丢掉并在工具回执里点名,还会告诉 Cognition 哪些
-  在办任务没进任何组。
-- **没有任何定时器。** 分组只在三个时刻发生:建任务、用户说话、第一次没有记录时。
+- **写错当场就知道。** 拼错的 subject 被丢掉并在工具回执里点名,还会告诉调用的那个
+  task-manager 哪些在办任务没进任何组。
+- **一只手写排布。** `hi_set_home_groups` 只有 `task-manager` 能调,别的 worker、Cognition、
+  Reaction 一律在 dispatch 被挡回去。整份覆盖写,两只手不是合并而是互相抹掉。
+- **听见的人负责把话留下。** 原话由 Cognition 当轮写进 `grouping.md`,不依赖 worker 起得来。
+- **没有任何定时器。** 排布只在有人说了什么、或者账本本来就需要一次判断时才会变。
 
 ## 实测 2026-09-16(本机,scratch data dir,release 构建)
 
-看过的:
+### 完整闭环走通了一遍,是真人一句话进去
 
-- `GET /api/home/groups` 把磁盘上的分组原样吐出来;首页把它画出来 —— 核心居中,
-  `KTV` 和 `自己的毛病` 两个标签各带两张任务卡,`单词本`、`家庭图书馆市场调研` 等没进组
-  的任务挂在核心旁边。组是纯标签,没有边框、没有状态、没有时间。
-- `hi_set_home_groups` 走真实 MCP 调用改了分组,回执是
-  `home groups: KTV (2), 学习 (1)` + `dropped — no such task: typo-that-is-no-task` +
-  `open and in no group: …` 三行;**重新截图确认屏幕跟着变了**(`学习` 组出现,
-  `单词本` 挪到它下面)。
-- 同名两个组被拒绝(`two groups are both called 同名`),且**拒绝之后磁盘上还是上一版**,
-  不是半份。
-- `X-HI-Role: reaction` 调这个工具被挡住:`cognition-only`。
-- 把 `groups.json` 写成坏 JSON,端点立刻答 `{"groups":[]}`,日志里一条 WARN,服务没崩;
-  换回好文件立刻恢复。
-- 这台 scratch 实例的 Cognition 在启动后自己开了一个任务,**没有给它分组** —— 当时
-  `grouping.md` 不存在、用户一句话也没说过,按设计就该留在组外。
+对一个从没分过组的实例(没有 `grouping.md`,没有 `groups.json`)发一句
+`粤语解说表那个和 KT8-046 是一摊事,首页上放一起吧,就叫 KTV`,然后什么都不做:
 
-没看过的(下次实测要补):
+1. Reaction 答"收到",没有自己动手。
+2. Cognition 把原话按日期写进 `home/grouping.md`,还在里面记了它的理解(哪句话对应哪个
+   subject),并注明"若记录里另有同名,以原话里的名字为准"。
+3. Cognition 起了一个 `task-manager`,名字就是这件差事。
+4. 那个 manager 读了 `grouping.md` 和全部在办任务,调 `hi_set_home_groups`,回执
+   `home groups: KTV (2)` + `open and in no group: family-library-market-research,
+   person-reader-prompt-cap, restart-eats-in-flight-turn, vocabulary-book`。
+5. 首页截图:`KTV` 标签下挂着`粤语解说表翻译`和 `KT8-046 内容管理`,其余四张卡在核心旁边。
 
-- **完整的对话闭环**:人对 Reaction 说"把这几个放一起",Reaction 转给 Cognition,
-  Cognition 先写 `grouping.md` 再调工具。这条链上的每一段都存在,但没有人在真实对话里
-  走过一遍 —— 现在的证据只到"工具被直接调用时行为正确"。
-- **Case B**:说过一次之后,新建的任务是否真的照着 `grouping.md` 自己落位。
-- 默认分组的质量:第一次没有记录时,Cognition 分出来的那一版像不像人心里的样子。
+从说话到落盘约 5 分钟(worker 起身 + 它先读了一遍记录),人不用等在屏幕前。
+
+### 这一趟抓到一个不是分组的 bug,而且很重
+
+**第一次跑的时候工具被自己的门挡了**:`hi_set_home_groups is the task-manager's; role
+worker does not arrange the home surface` —— 而它就是 task-manager。原因是
+`X-HI-Session-Slug` 这个 header:slug 按设计保留任何文字的字母(这里就是中文标题),而
+header 值必须是 ASCII,`to_str()` 直接失败,于是这个会话在服务端**根本没有身份**。
+`task-manager` 是最容易中招的一类 —— 它服务整个账本,所以不带 subject,slug 只能从标题
+来,而标题是中文。
+
+代价不止是这个门:`hi_send_message` 同样要求身份,所以**一个中文名字的 worker,报告发不
+回去**。那一趟的 manager 自己查出了这件事,然后绕过工具、直接手写了 `groups.json`
+(写成了,但正是提示词里不许干的事)。
+
+修的是传输不是地址:header 里 percent-encode,读的时候解回来;纯 ASCII 的 slug 编码后
+原样不变。修完重跑,同一句话、同样是中文名字的 manager,工具调用 `completed`。
+
+### 另外看过的
+
+- 坏掉的 `groups.json`(半截 JSON)→ 端点答 `{"groups":[]}`,日志一条 WARN,界面上没有
+  错误卡;换回好文件立刻恢复。
+- 同名两个组被拒绝(`two groups are both called 同名`),**拒绝之后磁盘上还是上一版**。
+- 不存在的 subject 被丢掉并在回执里点名。
+- Cognition 自己开的任务没有被分组 —— 当时没有任何标准,按设计就该留在组外。
+
+### 没看过的
+
+- **Case B**:说过一次之后,下一次整理时新任务是否真的照着 `grouping.md` 落位。
+- **task-manager 的报告回到 Cognition**:这一趟它调完工具就接着去处理账本上的别的事了,
+  我没等到它的 report。身份那条链已经通了(同一个 `slug` 两处共用),但这一段没亲眼看过。
+- 默认分组的质量:一个完全没说过话的实例,manager 分出来的第一版像不像人心里的样子。
+- 一个观察,不确定是不是问题:**这次要求本身也变成了一条任务**(`把粤语解说表和 KT8-046
+  并成首页的 KTV 组`,`doing`),于是首页上多了一张卡。人确实提了要求、这确实是欠着的事,
+  但一次排布调整值不值一行账,下次实测要看它有没有被正常关掉。
