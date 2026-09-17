@@ -60,19 +60,78 @@ const OPEN = new Set(["todo", "doing", "serving"]);
 const RESULT_TILES = 6;
 /** Where a card hands off. Home owns no detail of its own. */
 const TASK_BOARD = "factory/tasks", SESSION_BOARD = "factory/workers";
-const TONE = { core: "var(--accent)", group: "var(--fg-mute)", todo: "var(--fg-mute)",
+/** The status word's tone on a card. Only the word: no wire and no border carries status. */
+const TONE = { todo: "var(--fg-mute)",
   doing: "var(--accent)", serving: "var(--accent-2)", done: "var(--fg-mute)", cancelled: "var(--fg-mute)",
   running: "var(--accent)", waiting: "var(--accent-2)", idle: "var(--fg-mute)",
-  failed: "var(--danger)", interrupted: "var(--danger)", overview: "var(--accent)",
-  result: "var(--accent-2)" };
+  failed: "var(--danger)", interrupted: "var(--danger)" };
 
-const GROUP_COLORS = ["blue", "green", "teal", "violet", "amber", "rose"];
-function groupColor(label) {
-  // Identity, not array position: adding or reordering groups must not recolor their neighbours.
-  let hash = 2166136261;
-  for (const char of label) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
-  hash = (hash ^ (hash >>> 16)) >>> 0;
-  return `var(--work-group-${GROUP_COLORS[hash % GROUP_COLORS.length]})`;
+/**
+ * **A wire's colour says which category it is in, and nothing else.** It used to be the
+ * status of the node it pointed at — accent for in progress, accent-2 for on duty and for a
+ * picture, grey for the rest — which put a second copy of the status word on every wire, gave
+ * accent-2 two unrelated meanings, and at 70% opacity drew "on duty" and "to do" as nearly
+ * the same grey. None of it said what the wires are for: which branch a card belongs to.
+ *
+ * - **A group on the core takes one of eight hues**, evenly spaced around OKLCH at one
+ *   lightness and one chroma, so any set of them sits together. The label picks its slot by
+ *   hash and a taken slot moves on to the next free one: eight groups never share a colour,
+ *   and a group appended later moves none that is already drawn.
+ * - **Below it, every node is a shade of it — an inner group too.** Siblings are spread end
+ *   to end across a band of hue and lightness around their parent, so they are as far apart
+ *   as the family allows, and each rank down gets a narrower band inside its parent's.
+ * - **An only child is its parent's colour exactly.** A shade exists to tell siblings apart,
+ *   and one child has nothing to be told apart from.
+ * - **What is in no group is neutral**, all the way down: it has no category to show.
+ *
+ * Lightness and chroma are theme tokens (`--work-branch-*`); only hue and the offsets are
+ * computed here, which keeps this section testable without a stylesheet.
+ */
+const BRANCH_HUES = [40, 85, 130, 175, 220, 265, 310, 355];
+const BRANCH_BAND = { hue: 12, light: 0.09 };
+function branchHues(labels) {
+  const taken = new Set(), hues = new Map();
+  for (const label of labels) {
+    let hash = 2166136261;
+    for (const char of label) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
+    hash = (hash ^ (hash >>> 16)) >>> 0;
+    // Past eight groups every slot is taken and the probe comes back round to the label's own.
+    let slot = hash % BRANCH_HUES.length;
+    for (let i = 0; i < BRANCH_HUES.length && taken.has(slot); i++) slot = (slot + 1) % BRANCH_HUES.length;
+    taken.add(slot);
+    hues.set(label, BRANCH_HUES[slot]);
+  }
+  return hues;
+}
+function branchTones(model) {
+  const children = childIndex(model);
+  // Only a group on the core is first-level. A group inside a group is a child like any other,
+  // so it is a shade of the group holding it, never a hue of its own.
+  const groups = (children.get("core") || []).filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
+  const hues = branchHues(groups.map((g) => g.title));
+  const tones = new Map();
+  const spread = (node, tone) => {
+    tones.set(node.id, tone);
+    const kids = children.get(node.id) || [];
+    if (kids.length === 1) return spread(kids[0], tone);
+    const last = kids.length - 1;
+    kids.forEach((kid, i) => {
+      const at = (i / last) * 2 - 1, stepHue = (2 * tone.bandHue) / last, stepLight = (2 * tone.bandLight) / last;
+      spread(kid, { hue: tone.hue + at * tone.bandHue, light: tone.light + at * tone.bandLight,
+        bandHue: Math.min(stepHue, tone.bandHue) / 2, bandLight: Math.min(stepLight, tone.bandLight) / 2 });
+    });
+  };
+  for (const group of groups) {
+    spread(group, { hue: hues.get(group.title), light: 0, bandHue: BRANCH_BAND.hue, bandLight: BRANCH_BAND.light });
+  }
+  return tones;
+}
+/** A tone as CSS: the wire's lightness, or the label's darker one for text. Neutral without one. */
+function branchPaint(tone, part = "wire") {
+  if (!tone) return part === "label" ? "var(--fg)" : "var(--work-line)";
+  const light = part === "label" ? "var(--work-label-l)" : "var(--work-branch-l)";
+  const hue = ((tone.hue % 360) + 360) % 360;
+  return `oklch(calc(${light} ${tone.light < 0 ? "-" : "+"} ${Math.abs(tone.light).toFixed(3)}) var(--work-branch-c) ${hue.toFixed(1)})`;
 }
 
 /**
@@ -510,11 +569,12 @@ function arrange(model) {
   const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + MARGIN;
   for (const row of placed) { row.x -= x0; row.y -= y0; }
   const byId = new Map(placed.map((p) => [p.node.id, p]));
+  const tones = branchTones(model);
   const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) => {
     const from = byId.get(edge.from), to = byId.get(edge.to), right = to.dir > 0;
     const sx = from.x + (right ? from.w : 0), sy = from.y + from.h / 2;
     const ex = to.x + (right ? 0 : to.w), ey = to.y + to.h / 2, mid = (sx + ex) / 2;
-    return { ...edge, tone: stateOf(to.node), d: `M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ey}, ${ex} ${ey}` };
+    return { ...edge, paint: branchPaint(tones.get(edge.to)), d: `M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ey}, ${ex} ${ey}` };
   });
   return { placed, wires, width, height };
 }
@@ -600,6 +660,7 @@ export default function Home() {
   const model = useMemo(() => buildHome({ ...source, messages }, now), [source, messages, now]);
   const children = useMemo(() => childIndex(model), [model]);
   const chart = useMemo(() => arrange(model), [model]);
+  const tones = useMemo(() => branchTones(model), [model]);
   const mobile = frame.w < 760;
   useEffect(() => {
     const el = viewport.current;
@@ -693,7 +754,7 @@ export default function Home() {
     return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, at: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } };
   };
   const branches = children.get("core")?.filter((n) => n.kind !== "overview") || [];
-  const common = { now, children, openRef };
+  const common = { now, children, openRef, tones };
   return (
     <div className="hi-work">
       <style>{CSS}</style>
@@ -735,12 +796,12 @@ export default function Home() {
         {loaded && !branches.length && <p className="hi-work__loading" role="status">{L.nothing}</p>}
         {mobile ? <div className="hi-work__flow">
           <Core node={model.nodes[0]} model={model} now={now} />
-          <Branch nodes={branches} {...common} />
+          <Branch nodes={branches} parent="core" {...common} />
         </div> : <div className="hi-work__canvas" style={{ width: canvas.w, height: canvas.h }}>
           <div className="hi-work__stage" style={{ left: offset.x, top: offset.y, width: chart.width, height: chart.height,
             transform: `scale(${scale})` }}>
             <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
-              {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} stroke={TONE[wire.tone] || TONE.todo} />)}
+              {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} style={{ stroke: wire.paint }} />)}
             </svg>
             {chart.placed.map((row) => <div key={row.node.id} className="hi-work__position"
               style={{ left: row.x, top: row.y, width: row.w, height: row.h }}>
@@ -799,7 +860,7 @@ function Core({ node, model, now }) {
  * lands you arrive at the board and find the row yourself. The item that takes this back is
  * a targeted view-open; see `docs/arch/home.md` § Open.
  */
-function Node({ node, now, children, openRef }) {
+function Node({ node, now, children, openRef, tones }) {
   const state = stateOf(node), time = nodeTime(node);
   const board = node.kind === "task" ? TASK_BOARD : node.kind === "activity" ? SESSION_BOARD : null;
   // A tile is the one handoff that lands exactly where it points: `openRef` takes a view ref
@@ -813,7 +874,7 @@ function Node({ node, now, children, openRef }) {
   // based on, so the person reading the chart can see why these three are one thing. It is
   // the only thing a group says beyond its name, and it opens nothing: `home.md` § Open.
   if (node.kind === "group") return <article className="hi-work__group" data-node-id={node.id}
-    data-kind="group" style={{ "--group-tone": groupColor(node.title) }}
+    data-kind="group" style={{ "--group-tone": branchPaint(tones.get(node.id), "label") }}
     title={[node.title, node.data.note].filter(Boolean).join(" · ")}>
     {/* A drawn icon whose file has gone since the last arrangement is the default again. */}
     <img className="hi-work__group-icon" src={groupIcon(node.data.icon)} alt="" aria-hidden="true"
@@ -833,15 +894,17 @@ function Node({ node, now, children, openRef }) {
   </article>;
 }
 
-function Branch({ nodes, ...props }) {
-  return <ul className="hi-work__branch">{nodes.map((node) => <li key={node.id}>
-    <Node node={node} {...props} />
-    {props.children.get(node.id)?.length > 0 && <Branch nodes={props.children.get(node.id)} {...props} />}
-  </li>)}</ul>;
+/** The narrow flow's rail is its parent's colour and each tick its own, as a wire would be. */
+function Branch({ nodes, parent, ...props }) {
+  return <ul className="hi-work__branch" style={{ "--rail": branchPaint(props.tones.get(parent)) }}>
+    {nodes.map((node) => <li key={node.id} style={{ "--tick": branchPaint(props.tones.get(node.id)) }}>
+      <Node node={node} {...props} />
+      {props.children.get(node.id)?.length > 0 && <Branch nodes={props.children.get(node.id)} parent={node.id} {...props} />}
+    </li>)}</ul>;
 }
 
 const CSS = `
-.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 46%, var(--bg)); --work-shadow:0 1px 2px #0000000a, 0 3px 10px #00000008; --work-group-blue:color-mix(in srgb, #3783d8 50%, var(--fg)); --work-group-green:color-mix(in srgb, #35945e 50%, var(--fg)); --work-group-teal:color-mix(in srgb, #249c9a 50%, var(--fg)); --work-group-violet:color-mix(in srgb, #996ad1 50%, var(--fg)); --work-group-amber:color-mix(in srgb, #c58a27 50%, var(--fg)); --work-group-rose:color-mix(in srgb, #cc668b 50%, var(--fg)); height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:color-mix(in srgb, var(--fg) 2%, var(--bg)); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
+.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 46%, var(--bg)); --work-shadow:0 1px 2px #0000000a, 0 3px 10px #00000008; --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:color-mix(in srgb, var(--fg) 2%, var(--bg)); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
 .hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -854,7 +917,9 @@ const CSS = `
 .hi-work__canvas img { -webkit-user-drag:none; }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
-.hi-work__wires path { fill:none; stroke-width:1.6; opacity:.7; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; } }
+:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; }
+.hi-work__wires path { fill:none; stroke-width:1.6; }
 .hi-work__position { position:absolute; }
 .hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; }
 .hi-work__core-title { display:flex; gap:10px; align-items:center; margin:0; min-height:36px; font-size:24px; font-weight:600; }
@@ -895,11 +960,11 @@ const CSS = `
 /* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
    put a task's own results as far from it as the next task's were. Inheriting --rank-gap
    carries the tightest value on down, so a fourth rank is no looser than the third. */
-.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:1px solid var(--work-line); }
+.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:1px solid var(--rail, var(--work-line)); }
 .hi-work__branch .hi-work__branch { --rank-gap:18px; margin-left:0; padding-left:12px; }
 .hi-work__branch .hi-work__branch .hi-work__branch { --rank-gap:10px; }
 .hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
-.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:1px solid var(--work-line); }
+.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:1px solid var(--tick, var(--work-line)); }
 .hi-work__branch .hi-work__node { min-height:116px; }
 .hi-work__branch .hi-work__group { height:auto; min-height:28px; }
 .hi-work__branch .hi-work__tile { height:auto; aspect-ratio:16 / 9; max-width:240px; }

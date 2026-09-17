@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor, groupIcon } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor, groupIcon });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -264,14 +264,70 @@ test("a group wears the icon drawn for it, and the default until one is", () => 
   assert.equal(groupIcon("drive/home/icons/a b.png"), "/api/drive/file/home/icons/a%20b.png");
 });
 
-test("group colors are stable identities, not positions or task statuses", () => {
-  const labels = ["Learning", "Monitoring", "Personal", "生活类", "学习类", "监听项"];
-  const before = new Map(labels.map((label) => [label, groupColor(label)]));
-  for (const label of ["New group", ...labels.toReversed()]) {
-    assert.match(groupColor(label), /^var\(--work-group-(blue|green|teal|violet|amber|rose)\)$/);
-    if (before.has(label)) assert.equal(groupColor(label), before.get(label));
-  }
-  assert.ok(new Set(before.values()).size >= 3, "categories use multiple visual identities");
+test("every group up to eight has a hue of its own, and a group appended later moves none", () => {
+  const labels = ["监听项", "KNQ · 汇总", "KNQ · 赛马专家", "KNQ · 视觉·场地", "KNQ · 北控视频", "生活类", "学习类"];
+  const hues = branchHues(labels);
+  assert.equal(new Set(hues.values()).size, labels.length, "no two groups share a hue");
+  const more = branchHues([...labels, "自己身上的毛病"]);
+  assert.equal(new Set(more.values()).size, 8);
+  for (const label of labels) assert.equal(more.get(label), hues.get(label), `${label} keeps its hue`);
+  // Past eight there is nothing left to be distinct with, and a colour is reused rather than invented.
+  assert.equal(new Set(branchHues([...labels, "8", "9"]).values()).size, 8);
+});
+
+test("a group inside a group is a shade of it, and only the core's groups have hues of their own", () => {
+  const model = project({ tasks: [task("rollup"), task("horse"), task("court"), task("vocab")],
+    groups: [{ label: "KNQ", members: ["rollup"], groups: [
+      { label: "赛马专家", members: ["horse"] }, { label: "视觉·场地", members: ["court"] }] },
+    { label: "学习类", members: ["vocab"] }] });
+  const tones = branchTones(model);
+  const knq = tones.get("group:KNQ"), study = tones.get("group:学习类");
+  assert.notEqual(knq.hue, study.hue, "two first-level groups, two hues");
+  const inner = ["task:rollup", "group:赛马专家", "group:视觉·场地"].map((id) => tones.get(id));
+  for (const t of inner) assert.ok(Math.abs(t.hue - knq.hue) <= 12, "everything under KNQ is KNQ's family");
+  assert.equal(new Set(inner.map((t) => t.hue)).size, 3, "and told apart from each other");
+  // An inner group's only task is that group's colour exactly.
+  assert.equal(branchPaint(tones.get("task:horse")), branchPaint(tones.get("group:赛马专家")));
+});
+
+test("a wire's colour is its category's: shades of the group below it, and never the status", () => {
+  const tasks = [task("a", "doing"), task("b", "serving"), task("c", "todo"), task("solo", "doing"), task("loose", "doing")];
+  const views = [{ view_ref: "views/one", label: "One", shot_url: "/one.png" }];
+  const input = { tasks: [...tasks.slice(0, 3), { ...tasks[3], refs: ["views/one"] }, tasks[4]], views,
+    workers: [worker("w1", "worker", { subject: "a" }), worker("w2", "worker", { subject: "a" })],
+    groups: [{ label: "学习类", members: ["a", "b", "c"] }, { label: "生活类", members: ["solo"] }] };
+  const model = project(input);
+  const tones = branchTones(model);
+  const tone = (id) => tones.get(id);
+  const hueGap = (x, y) => Math.abs(x.hue - y.hue);
+
+  // Three siblings: one family around the group's hue, spread end to end, and all distinct.
+  const [a, b, c] = ["task:a", "task:b", "task:c"].map(tone), group = tone("group:学习类");
+  for (const kid of [a, b, c]) assert.ok(hueGap(kid, group) <= 12, "inside the group's band");
+  assert.equal(new Set([a, b, c].map((t) => `${t.hue}/${t.light}`)).size, 3, "siblings are told apart");
+  assert.equal(hueGap(a, c), 24, "as far apart as the band allows");
+  // A rank further down is a shade of its own parent, inside a narrower band.
+  const sessions = [...tones.entries()].filter(([id]) => id.startsWith("session:")).map(([, t]) => t);
+  assert.equal(sessions.length, 2);
+  for (const s of sessions) assert.ok(hueGap(s, a) <= a.bandHue, "a session is a shade of its task");
+  assert.notEqual(sessions[0].hue, sessions[1].hue);
+
+  // An only child is its parent's colour exactly, and so is its only child.
+  const solo = tone("task:solo"), picture = [...tones.entries()].find(([id]) => id.startsWith("result:"))[1];
+  assert.equal(branchPaint(solo), branchPaint(tone("group:生活类")));
+  assert.equal(branchPaint(picture), branchPaint(solo));
+
+  // Nothing in no group has a category to show.
+  assert.equal(tone("task:loose"), undefined);
+  assert.equal(branchPaint(undefined), "var(--work-line)");
+
+  // Status changes nothing.
+  const flipped = project({ ...input, tasks: input.tasks.map((t) => ({ ...t, status: t.status === "doing" ? "todo" : "doing" })) });
+  const paints = (m) => list(arrange(m).wires.map((w) => `${w.to}=${w.paint}`)).sort();
+  assert.deepEqual(paints(flipped), paints(model));
+  const wire = arrange(model).wires.find((w) => w.to === "task:b");
+  assert.equal(wire.paint, branchPaint(b));
+  assert.match(wire.paint, /^oklch\(calc\(var\(--work-branch-l\) [+-] [0-9.]+\) var\(--work-branch-c\) [0-9.]+\)$/);
 });
 
 test("a result with no picture is not on Home at all", () => {
@@ -350,7 +406,7 @@ test("every drawn node has a finite, colored wire and no two boxes overlap", () 
   const chart = arrange(model);
   assert.equal(chart.wires.length, chart.placed.length - 1);
   for (const wire of chart.wires) {
-    assert.ok(TONE[wire.tone]); assert.doesNotMatch(wire.d, /NaN|Infinity|undefined/);
+    assert.ok(wire.paint); assert.doesNotMatch(`${wire.d} ${wire.paint}`, /NaN|Infinity|undefined/);
   }
   for (const a of chart.placed) for (const b of chart.placed) {
     if (a.node.id >= b.node.id) continue;

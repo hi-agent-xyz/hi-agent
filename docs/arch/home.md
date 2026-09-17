@@ -68,11 +68,31 @@ contrast than metadata; they remain unframed labels, not cards.
 **Cards separate from the canvas.** A clearer neutral border and a shallow shadow separate
 white card surfaces from a barely tinted canvas. This applies equally to the core, tasks,
 sessions and picture tiles; it does not add a status-colored border or change their sizes.
-Group headings pair their label with a 40px icon and one of six subdued colors, chosen
-deterministically from the label rather than its position. Color identifies a group, not its
-status, and is not guaranteed unique. The icon is the group's own when one has been drawn
-for it and a shared default until then — see § *Icons* below. Home never picks one from a
-label or from task text.
+Group headings pair their label with a 40px icon, and the label is drawn in its group's
+colour. The icon is the group's own when one has been drawn for it and a shared default until
+then — see § *Icons* below. Home never picks one from a label or from task text.
+
+**A wire's colour is its category's, and never a status.** Wires used to take the status of
+the node they pointed at: accent for in progress, accent-2 for on duty and for a picture, grey
+for everything else, all at 70% opacity. That put a second copy of the status word on every
+wire, gave accent-2 two unrelated meanings, and drew "on duty" and "to do" as nearly the same
+grey. None of it said what a wire is for, which is the branch a card belongs to. Status is the
+status word's, and only the word's.
+
+- **Each group on the core takes one of eight hues**, evenly spaced around OKLCH at one
+  lightness and one chroma, so any set of them sits together. The label picks its slot by
+  hash, and a taken slot moves to the next free one: up to eight groups never share a colour,
+  and a group appended to the record moves none that are already drawn. Past eight, a colour
+  is reused.
+- **Below a group, every node is a shade of it, a group inside it included.** An inner group
+  is a child like any other, never a hue of its own. Siblings are spread end to end across a
+  band around their parent (±12° of hue, ±0.09 of lightness), so they are as far apart as the
+  family allows, and each rank down gets a narrower band inside its parent's. The band is
+  mostly lightness because neighbouring hues on the wheel blur into each other at their edges:
+  at ±18° of hue, amber's lightest shade and green's darkest drew as the same olive.
+- **An only child is its parent's colour exactly.** A shade exists to tell siblings apart.
+- **What is in no group is neutral** all the way down: it has no category to show.
+- The narrow flow follows the same rule: a rail takes its parent's colour, a tick its node's.
 
 **A card says what it is without a label, and no side of its border means anything.** There
 are two kinds of card, a task and a live session, and each used to open with a line naming
