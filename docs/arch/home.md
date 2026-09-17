@@ -84,15 +84,14 @@ status word's, and only the word's.
   hash, and a taken slot moves to the next free one: up to eight groups never share a colour,
   and a group appended to the record moves none that are already drawn. Past eight, a colour
   is reused.
-- **Below a group, every node is a shade of it, a group inside it included.** An inner group
-  is a child like any other, never a hue of its own. Siblings are spread end to end across a
-  band around their parent (±12° of hue, ±0.09 of lightness), so they are as far apart as the
-  family allows, and each rank down gets a narrower band inside its parent's. The band is
-  mostly lightness because neighbouring hues on the wheel blur into each other at their edges:
-  at ±18° of hue, amber's lightest shade and green's darkest drew as the same olive.
-- **An only child is its parent's colour exactly.** A shade exists to tell siblings apart.
+- **Everything below a first-level group is that one colour, at any depth**: its tasks, the
+  groups inside it, their tasks, sessions and pictures. A group inside a group never has a
+  colour of its own. Shades were tried first — siblings spread across a band of hue and
+  lightness around their parent, an only child taking its parent's colour — and lost on the
+  first real nested arrangement: they read as a scatter of near-colours instead of as one
+  branch, and telling siblings apart is what the cards are for.
 - **What is in no group is neutral** all the way down: it has no category to show.
-- The narrow flow follows the same rule: a rail takes its parent's colour, a tick its node's.
+- Wires are 2.2px, and the narrow flow's rails and ticks 2px, so a colour reads as a line.
 
 **A card says what it is without a label, and no side of its border means anything.** There
 are two kinds of card, a task and a live session, and each used to open with a line naming

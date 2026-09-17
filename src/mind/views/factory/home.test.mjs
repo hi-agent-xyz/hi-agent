@@ -275,59 +275,36 @@ test("every group up to eight has a hue of its own, and a group appended later m
   assert.equal(new Set(branchHues([...labels, "8", "9"]).values()).size, 8);
 });
 
-test("a group inside a group is a shade of it, and only the core's groups have hues of their own", () => {
-  const model = project({ tasks: [task("rollup"), task("horse"), task("court"), task("vocab")],
+test("a wire is its first-level group's one colour at every depth, and never the status", () => {
+  const views = [{ view_ref: "views/one", label: "One", shot_url: "/one.png" }];
+  const input = {
+    tasks: [task("rollup", "serving"), task("horse", "todo"), { ...task("court", "doing"), refs: ["views/one"] },
+      task("vocab"), task("loose")],
+    views, workers: [worker("w1", "worker", { subject: "court" }), worker("w2", "worker", { subject: "court" })],
     groups: [{ label: "KNQ", members: ["rollup"], groups: [
       { label: "赛马专家", members: ["horse"] }, { label: "视觉·场地", members: ["court"] }] },
-    { label: "学习类", members: ["vocab"] }] });
-  const tones = branchTones(model);
-  const knq = tones.get("group:KNQ"), study = tones.get("group:学习类");
-  assert.notEqual(knq.hue, study.hue, "two first-level groups, two hues");
-  const inner = ["task:rollup", "group:赛马专家", "group:视觉·场地"].map((id) => tones.get(id));
-  for (const t of inner) assert.ok(Math.abs(t.hue - knq.hue) <= 12, "everything under KNQ is KNQ's family");
-  assert.equal(new Set(inner.map((t) => t.hue)).size, 3, "and told apart from each other");
-  // An inner group's only task is that group's colour exactly.
-  assert.equal(branchPaint(tones.get("task:horse")), branchPaint(tones.get("group:赛马专家")));
-});
-
-test("a wire's colour is its category's: shades of the group below it, and never the status", () => {
-  const tasks = [task("a", "doing"), task("b", "serving"), task("c", "todo"), task("solo", "doing"), task("loose", "doing")];
-  const views = [{ view_ref: "views/one", label: "One", shot_url: "/one.png" }];
-  const input = { tasks: [...tasks.slice(0, 3), { ...tasks[3], refs: ["views/one"] }, tasks[4]], views,
-    workers: [worker("w1", "worker", { subject: "a" }), worker("w2", "worker", { subject: "a" })],
-    groups: [{ label: "学习类", members: ["a", "b", "c"] }, { label: "生活类", members: ["solo"] }] };
+    { label: "学习类", members: ["vocab"] }] };
   const model = project(input);
   const tones = branchTones(model);
-  const tone = (id) => tones.get(id);
-  const hueGap = (x, y) => Math.abs(x.hue - y.hue);
+  const knq = tones.get("group:KNQ");
+  assert.notEqual(knq, tones.get("group:学习类"), "two first-level groups, two colours");
 
-  // Three siblings: one family around the group's hue, spread end to end, and all distinct.
-  const [a, b, c] = ["task:a", "task:b", "task:c"].map(tone), group = tone("group:学习类");
-  for (const kid of [a, b, c]) assert.ok(hueGap(kid, group) <= 12, "inside the group's band");
-  assert.equal(new Set([a, b, c].map((t) => `${t.hue}/${t.light}`)).size, 3, "siblings are told apart");
-  assert.equal(hueGap(a, c), 24, "as far apart as the band allows");
-  // A rank further down is a shade of its own parent, inside a narrower band.
-  const sessions = [...tones.entries()].filter(([id]) => id.startsWith("session:")).map(([, t]) => t);
-  assert.equal(sessions.length, 2);
-  for (const s of sessions) assert.ok(hueGap(s, a) <= a.bandHue, "a session is a shade of its task");
-  assert.notEqual(sessions[0].hue, sessions[1].hue);
-
-  // An only child is its parent's colour exactly, and so is its only child.
-  const solo = tone("task:solo"), picture = [...tones.entries()].find(([id]) => id.startsWith("result:"))[1];
-  assert.equal(branchPaint(solo), branchPaint(tone("group:生活类")));
-  assert.equal(branchPaint(picture), branchPaint(solo));
+  // Tasks, inner groups, their tasks, sessions and pictures: all of it is KNQ's colour.
+  const under = model.nodes.map((n) => n.id).filter((id) => !["core", "group:KNQ", "group:学习类", "task:vocab", "task:loose"].includes(id));
+  assert.ok(under.some((id) => id.startsWith("session:")) && under.some((id) => id.startsWith("result:")));
+  for (const id of under) assert.equal(tones.get(id), knq, `${id} wears KNQ's colour`);
+  for (const wire of arrange(model).wires.filter((w) => under.includes(w.to))) assert.equal(wire.paint, branchPaint(knq));
 
   // Nothing in no group has a category to show.
-  assert.equal(tone("task:loose"), undefined);
-  assert.equal(branchPaint(undefined), "var(--work-line)");
+  assert.equal(tones.get("task:loose"), undefined);
+  assert.equal(arrange(model).wires.find((w) => w.to === "task:loose").paint, "var(--work-line)");
 
   // Status changes nothing.
   const flipped = project({ ...input, tasks: input.tasks.map((t) => ({ ...t, status: t.status === "doing" ? "todo" : "doing" })) });
   const paints = (m) => list(arrange(m).wires.map((w) => `${w.to}=${w.paint}`)).sort();
   assert.deepEqual(paints(flipped), paints(model));
-  const wire = arrange(model).wires.find((w) => w.to === "task:b");
-  assert.equal(wire.paint, branchPaint(b));
-  assert.match(wire.paint, /^oklch\(calc\(var\(--work-branch-l\) [+-] [0-9.]+\) var\(--work-branch-c\) [0-9.]+\)$/);
+  assert.match(branchPaint(knq), /^oklch\(var\(--work-branch-l\) var\(--work-branch-c\) [0-9]+\)$/);
+  assert.match(branchPaint(knq, "label"), /^oklch\(var\(--work-label-l\) var\(--work-branch-c\) [0-9]+\)$/);
 });
 
 test("a result with no picture is not on Home at all", () => {

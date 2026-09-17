@@ -77,18 +77,16 @@ const TONE = { todo: "var(--fg-mute)",
  *   lightness and one chroma, so any set of them sits together. The label picks its slot by
  *   hash and a taken slot moves on to the next free one: eight groups never share a colour,
  *   and a group appended later moves none that is already drawn.
- * - **Below it, every node is a shade of it — an inner group too.** Siblings are spread end
- *   to end across a band of hue and lightness around their parent, so they are as far apart
- *   as the family allows, and each rank down gets a narrower band inside its parent's.
- * - **An only child is its parent's colour exactly.** A shade exists to tell siblings apart,
- *   and one child has nothing to be told apart from.
+ * - **Everything below it is that one colour, at any depth** — its tasks, the groups inside
+ *   it, their tasks, sessions and pictures. Shades of the group per sibling and per rank were
+ *   tried and lost: on a real nested arrangement they read as a scatter of near-colours rather
+ *   than as one branch, and telling siblings apart is what the cards are already for.
  * - **What is in no group is neutral**, all the way down: it has no category to show.
  *
- * Lightness and chroma are theme tokens (`--work-branch-*`); only hue and the offsets are
- * computed here, which keeps this section testable without a stylesheet.
+ * Lightness and chroma are theme tokens (`--work-branch-*`); only the hue is computed here,
+ * which keeps this section testable without a stylesheet.
  */
 const BRANCH_HUES = [40, 85, 130, 175, 220, 265, 310, 355];
-const BRANCH_BAND = { hue: 12, light: 0.09 };
 function branchHues(labels) {
   const taken = new Set(), hues = new Map();
   for (const label of labels) {
@@ -103,35 +101,24 @@ function branchHues(labels) {
   }
   return hues;
 }
+/** Node id → the hue of the first-level group it sits under. Absent means in no group. */
 function branchTones(model) {
   const children = childIndex(model);
-  // Only a group on the core is first-level. A group inside a group is a child like any other,
-  // so it is a shade of the group holding it, never a hue of its own.
+  // Only a group on the core is first-level; a group inside a group wears its holder's colour.
   const groups = (children.get("core") || []).filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
   const hues = branchHues(groups.map((g) => g.title));
   const tones = new Map();
-  const spread = (node, tone) => {
-    tones.set(node.id, tone);
-    const kids = children.get(node.id) || [];
-    if (kids.length === 1) return spread(kids[0], tone);
-    const last = kids.length - 1;
-    kids.forEach((kid, i) => {
-      const at = (i / last) * 2 - 1, stepHue = (2 * tone.bandHue) / last, stepLight = (2 * tone.bandLight) / last;
-      spread(kid, { hue: tone.hue + at * tone.bandHue, light: tone.light + at * tone.bandLight,
-        bandHue: Math.min(stepHue, tone.bandHue) / 2, bandLight: Math.min(stepLight, tone.bandLight) / 2 });
-    });
+  const paint = (node, hue) => {
+    tones.set(node.id, hue);
+    for (const kid of children.get(node.id) || []) paint(kid, hue);
   };
-  for (const group of groups) {
-    spread(group, { hue: hues.get(group.title), light: 0, bandHue: BRANCH_BAND.hue, bandLight: BRANCH_BAND.light });
-  }
+  for (const group of groups) paint(group, hues.get(group.title));
   return tones;
 }
-/** A tone as CSS: the wire's lightness, or the label's darker one for text. Neutral without one. */
-function branchPaint(tone, part = "wire") {
-  if (!tone) return part === "label" ? "var(--fg)" : "var(--work-line)";
-  const light = part === "label" ? "var(--work-label-l)" : "var(--work-branch-l)";
-  const hue = ((tone.hue % 360) + 360) % 360;
-  return `oklch(calc(${light} ${tone.light < 0 ? "-" : "+"} ${Math.abs(tone.light).toFixed(3)}) var(--work-branch-c) ${hue.toFixed(1)})`;
+/** A hue as CSS: the wire's lightness, or the label's darker one for text. Neutral without one. */
+function branchPaint(hue, part = "wire") {
+  if (hue === undefined) return part === "label" ? "var(--fg)" : "var(--work-line)";
+  return `oklch(${part === "label" ? "var(--work-label-l)" : "var(--work-branch-l)"} var(--work-branch-c) ${hue})`;
 }
 
 /**
@@ -919,7 +906,7 @@ const CSS = `
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; } }
 :root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; }
-.hi-work__wires path { fill:none; stroke-width:1.6; }
+.hi-work__wires path { fill:none; stroke-width:2.2; }
 .hi-work__position { position:absolute; }
 .hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; }
 .hi-work__core-title { display:flex; gap:10px; align-items:center; margin:0; min-height:36px; font-size:24px; font-weight:600; }
@@ -960,11 +947,11 @@ const CSS = `
 /* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
    put a task's own results as far from it as the next task's were. Inheriting --rank-gap
    carries the tightest value on down, so a fourth rank is no looser than the third. */
-.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:1px solid var(--rail, var(--work-line)); }
+.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:2px solid var(--rail, var(--work-line)); }
 .hi-work__branch .hi-work__branch { --rank-gap:18px; margin-left:0; padding-left:12px; }
 .hi-work__branch .hi-work__branch .hi-work__branch { --rank-gap:10px; }
 .hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
-.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:1px solid var(--tick, var(--work-line)); }
+.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:2px solid var(--tick, var(--work-line)); }
 .hi-work__branch .hi-work__node { min-height:116px; }
 .hi-work__branch .hi-work__group { height:auto; min-height:28px; }
 .hi-work__branch .hi-work__tile { height:auto; aspect-ratio:16 / 9; max-width:240px; }
