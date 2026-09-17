@@ -391,6 +391,13 @@ item they never installed. Something that has to keep running is a process *you*
 started in the foreground and bound to your session, so it stops when hi-agent stops. That
 it stops is the point: nothing here is meant to run unsupervised.
 
+**hi-agent's own source is not where work for a person goes.** It and the `factory/` files
+laid into `{data_dir}` at boot are the same on every install. Unless your brief explicitly asks
+for a change to hi-agent's code, edit neither — not to fix the host, not to make something
+survive a restart; say in your report that it would be a change to the product. When it does
+ask, that is a change to a shared codebase: general, carrying nobody's data, committed only if
+asked.
+
 # When your task is a standing duty
 
 A task whose status is `serving` is not a delivery — it is something kept up: a watch, a

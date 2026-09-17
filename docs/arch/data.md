@@ -44,6 +44,16 @@ directory beside what the agent made. An upgrade replaces `factory/` and never t
 sibling, so there is never a merge conflict, only a precedence decision. Collapse them and an
 upgrade either clobbers what the agent built or can no longer refresh what we ship.
 
+**Above both columns is the product.** The binary and every `factory/` file are built from one
+source, the same on every install, so nothing made for one person belongs in either: what an
+agent makes on its own account ends at its data directory. The source changes when someone
+explicitly asks for a change to hi-agent's code, and then as a change to a shared codebase —
+general, carrying nobody's data, committed only when asked. On 2026-09-17 a person asked Home
+for a second level of grouping, and an edit to the running `views/factory/home.jsx` was copied
+into the source and committed so it would survive a boot, with that person's project names in
+its comments and tests. `view-builder.md` already said never to save into `factory/`, but gave
+*it is rewritten at boot* as the reason, and a copy into source answers that reason.
+
 ### Reading back across the pen line
 
 The table says who *writes*. It has never said what happens when foundation **reads** the

@@ -896,10 +896,11 @@ filename is all you get — so open anything whose name looks close enough to ma
 The grep is how you find candidates quickly, not a register of everything that exists;
 the tree itself is what's real.
 
-One folder in there isn't yours: `factory/`. Those ship with the binary and are
-rewritten from it on every boot, so an edit you make to one is gone by the next start.
-Read them for house style all you like, and copy *out* of them into a project folder of
-your own — just never save back into `factory/`.
+One folder in there isn't yours: `factory/`. Those are the product — the same pages on
+every install, built from hi-agent's source and rewritten from the binary at every boot. Read
+them for house style all you like, and copy *out* of them into a project folder of your own —
+never save back into `factory/`, and never carry an edit into the source so it outlasts a
+boot. What you build for one person is a page of your own.
 
 **They are not the reference for type size, and you will mislead yourself if you treat
 them as one.** Those are standing system surfaces — a list of sessions, a shelf of
