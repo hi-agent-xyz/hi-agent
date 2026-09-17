@@ -545,8 +545,10 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                  `label`, the task `members` in it (subject directory names under \
                  `memory/facets/tasks/`, in the order they should read), and an optional one-line \
                  `note` saying what the grouping was based on, which the person sees on the label. \
-                 Array order is what is drawn: groups outward from the centre, members top to \
-                 bottom. Read `home/grouping.md` first — it is what the person has said about how \
+                 A group can also hold `groups` of its own, the same shape at any depth, when the \
+                 person divides one group further — drawn under it, after its own members. Labels \
+                 are unique across every depth. Array order is what is drawn: groups outward from \
+                 the centre, members top to bottom. Read `home/grouping.md` first — it is what the person has said about how \
                  their work should be arranged, and their words beat any evidence you can find in \
                  the records. A task you cannot place belongs in no group: leave it out rather \
                  than inventing a home for it. Pass `groups: []` to clear the arrangement. A \
@@ -567,8 +569,9 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                                     "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
                                     "icon": { "type": "string", "description": "Optional: the ⟨ref: drive/…⟩ of an icon you drew for this group. Omit to keep the one the label already has." },
                                     "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
+                                    "groups": { "type": "array", "items": { "type": "object" }, "description": "Groups inside this one — each a group of this same shape (label, note, icon, members, groups). Omit when there are none." },
                                 },
-                                "required": ["label", "members"],
+                                "required": ["label"],
                             },
                         },
                     },
@@ -2280,14 +2283,7 @@ async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
     let mut out = if written.grouping.groups.is_empty() {
         "no groups — every task hangs off the core".to_owned()
     } else {
-        let shape = written
-            .grouping
-            .groups
-            .iter()
-            .map(|g| format!("{} ({})", g.label, g.members.len()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("home groups: {shape}")
+        format!("home groups: {}", group_shape(&written.grouping.groups))
     };
     let say = |out: &mut String, label: &str, names: &[String]| {
         if !names.is_empty() {
@@ -2315,6 +2311,19 @@ async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
         }
     }
     tool_ok(&out)
+}
+
+/// `KNQ (1: Site (2), Research (0: Notes (1)))` — a group's own member count, then what is
+/// inside it, so the writer reads back the depth it wrote as well as the counts.
+fn group_shape(groups: &[crate::foundation::server::home::Group]) -> String {
+    groups
+        .iter()
+        .map(|g| match g.groups.as_slice() {
+            [] => format!("{} ({})", g.label, g.members.len()),
+            inner => format!("{} ({}: {})", g.label, g.members.len(), group_shape(inner)),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// `hi_record_reflex`: teach a quick-action reflex (see [`crate::body::reflex`]). Stores the
@@ -3249,6 +3258,32 @@ mod surface_tests {
         );
         let anchor = crate::mind::memory::media::resolve_ref(dir.path(), home::ICON_ANCHOR_REF).await;
         assert_eq!(tokio::fs::read(anchor.unwrap()).await.unwrap(), home::DEFAULT_ICON);
+    }
+
+    /// Groups inside a group go through the call as the schema describes them, and the receipt
+    /// reads the depth back so the writer can see what it built.
+    #[tokio::test]
+    async fn a_nested_arrangement_lands_and_its_receipt_shows_the_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        for subject in ["rollup", "site-survey"] {
+            crate::mind::memory::facets::update_facet(
+                dir.path(),
+                crate::mind::memory::tasks::DIMENSION,
+                subject,
+                "---\nstatus: doing\ntitle: t\n---\n\nbody\n",
+            )
+            .await
+            .unwrap();
+        }
+        let got = set_home_groups(
+            dir.path(),
+            &json!({ "groups": [{ "label": "Client work", "members": ["rollup"],
+                "groups": [{ "label": "Site", "members": ["site-survey"] }] }] }),
+        )
+        .await;
+        assert_ne!(got.get("isError").and_then(Value::as_bool), Some(true), "{got}");
+        let text = got["content"][0]["text"].as_str().unwrap_or_default();
+        assert_eq!(text.lines().next(), Some("home groups: Client work (1: Site (1))"), "{text}");
     }
 
     /// Everything `hi_create_worker` needs that is not the errand itself, called as Cognition.

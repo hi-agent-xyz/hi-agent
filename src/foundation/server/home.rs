@@ -1,7 +1,7 @@
 //! `factory/home`'s own state: the grouping the work in hand is arranged into.
 //!
-//! A group is a name and an ordered list of task subjects, and it belongs to this one
-//! surface (`docs/arch/home.md#grouping`). Deliberately **not** a field on the task record:
+//! A group is a name, an ordered list of task subjects and the groups inside it, and it
+//! belongs to this one surface (`docs/arch/home.md#grouping`). Deliberately **not** a field on the task record:
 //! that would commit every reader of the ledger to one axis — project, or kind, or state —
 //! for the sake of one view, and the axis is the person's to change.
 //!
@@ -84,7 +84,8 @@ pub struct Grouping {
     pub groups: Vec<Group>,
 }
 
-/// One group: what it is called, why it exists, and which tasks are in it.
+/// One group: what it is called, why it exists, which tasks are in it, and the groups
+/// inside it.
 ///
 /// There is no id beside the `label`, because renaming a group *is* renaming it, and no
 /// `updated_at`, because the file's mtime already says when it was written.
@@ -108,6 +109,10 @@ pub struct Group {
     /// ledger.
     #[serde(default)]
     pub members: Vec<String>,
+    /// Groups inside this one, drawn after its own members in this order. Same shape at
+    /// every depth, and no depth limit: how finely a person divides their work is theirs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<Group>,
 }
 
 /// What stands right now, or nothing at all.
@@ -161,9 +166,10 @@ pub struct Written {
 /// dozen rows fit in one call, and patch operations over a list are a grammar to get wrong.
 ///
 /// Normalising, in order: labels and members are trimmed; a member that names no task
-/// directory is dropped; a member claimed by two groups stays in the first; a group left
-/// with no members is dropped. Two groups sharing a label is the one hard error — the label
-/// is the group's identity, so a duplicate makes the arrangement ambiguous rather than
+/// directory is dropped; a member claimed twice stays where it was first claimed, reading a
+/// group's own members before the groups inside it; a group left with no members and no
+/// groups is dropped. Two groups sharing a label — at any depth — is the one hard error: the
+/// label is the group's identity, so a duplicate makes the arrangement ambiguous rather than
 /// merely untidy, and nothing is written.
 ///
 /// Icons: one offered is filed as an icon-sized copy ([`file_icon`]) and recorded; one not
@@ -172,50 +178,25 @@ pub struct Written {
 /// what it had.
 pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Written> {
     let known = facets::subjects_in(data_dir, tasks::DIMENSION).await;
-    let known: std::collections::HashSet<&str> = known.iter().map(String::as_str).collect();
-    let previous: std::collections::HashMap<String, String> = read(data_dir)
-        .await
-        .groups
+    let previous: std::collections::HashMap<String, String> = every_group(&read(data_dir).await.groups)
         .into_iter()
-        .filter_map(|g| Some((g.label, g.icon?)))
+        .filter_map(|g| Some((g.label.clone(), g.icon.clone()?)))
         .collect();
+    let mut pass = Normalise {
+        known: known.iter().map(String::as_str).collect(),
+        labels: std::collections::HashSet::new(),
+        taken: std::collections::HashSet::new(),
+        unknown: Vec::new(),
+        duplicated: Vec::new(),
+    };
+    let mut groups = pass.groups(proposed.groups)?;
+    let Normalise { taken, unknown, duplicated, .. } = pass;
+
     let mut refused_icons = Vec::new();
-
-    let mut groups: Vec<Group> = Vec::new();
-    let mut labels: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut unknown = Vec::new();
-    let mut duplicated = Vec::new();
-
-    for group in proposed.groups {
-        let label = group.label.trim().to_owned();
-        if label.is_empty() {
-            anyhow::bail!("a group needs a label");
-        }
-        if !labels.insert(label.clone()) {
-            anyhow::bail!("two groups are both called `{label}`; a label is a group's identity");
-        }
-        let mut members = Vec::new();
-        for member in group.members {
-            let member = member.trim().to_owned();
-            if member.is_empty() {
-                continue;
-            }
-            if !known.contains(member.as_str()) {
-                unknown.push(member);
-                continue;
-            }
-            if !taken.insert(member.clone()) {
-                duplicated.push(member);
-                continue;
-            }
-            members.push(member);
-        }
-        if members.is_empty() {
-            continue;
-        }
-        let note = group.note.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
-        let offered = group.icon.map(|i| i.trim().to_owned()).filter(|i| !i.is_empty());
+    let mut icons = Vec::new();
+    icons_mut(&mut groups, &mut icons);
+    for (label, icon) in icons {
+        let offered = icon.take().map(|i| i.trim().to_owned()).filter(|i| !i.is_empty());
         let filed = match offered {
             Some(offered) => match file_icon(data_dir, &offered).await {
                 Ok(filed) => Some(filed),
@@ -226,17 +207,16 @@ pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Writte
             },
             None => None,
         };
-        let icon = match filed {
+        *icon = match filed {
             Some(filed) => Some(filed),
-            None => match previous.get(&label) {
+            None => match previous.get(label) {
                 Some(kept) if media::resolve_ref(data_dir, kept).await.is_some() => Some(kept.clone()),
                 _ => None,
             },
         };
-        groups.push(Group { label, note, icon, members });
     }
-
     let grouping = Grouping { groups };
+
     let dir = home_dir(data_dir);
     tokio::fs::create_dir_all(&dir).await?;
     let path = groups_path(data_dir);
@@ -245,7 +225,7 @@ pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Writte
     tokio::fs::rename(&tmp, &path).await?;
 
     let iconless =
-        grouping.groups.iter().filter(|g| g.icon.is_none()).map(|g| g.label.clone()).collect();
+        every_group(&grouping.groups).into_iter().filter(|g| g.icon.is_none()).map(|g| g.label.clone()).collect();
     Ok(Written {
         ungrouped: ungrouped_open_tasks(data_dir, &grouping, &taken).await,
         grouping,
@@ -317,6 +297,75 @@ pub async fn file_icon_anchor(data_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One normalising walk over the whole tree, so identity and first claim are decided across
+/// every depth at once rather than per level.
+struct Normalise<'a> {
+    known: std::collections::HashSet<&'a str>,
+    labels: std::collections::HashSet<String>,
+    taken: std::collections::HashSet<String>,
+    unknown: Vec<String>,
+    duplicated: Vec<String>,
+}
+
+impl Normalise<'_> {
+    fn groups(&mut self, proposed: Vec<Group>) -> anyhow::Result<Vec<Group>> {
+        let mut groups = Vec::new();
+        for group in proposed {
+            let label = group.label.trim().to_owned();
+            if label.is_empty() {
+                anyhow::bail!("a group needs a label");
+            }
+            if !self.labels.insert(label.clone()) {
+                anyhow::bail!("two groups are both called `{label}`; a label is a group's identity");
+            }
+            let mut members = Vec::new();
+            for member in group.members {
+                let member = member.trim().to_owned();
+                if member.is_empty() {
+                    continue;
+                }
+                if !self.known.contains(member.as_str()) {
+                    self.unknown.push(member);
+                    continue;
+                }
+                if !self.taken.insert(member.clone()) {
+                    self.duplicated.push(member);
+                    continue;
+                }
+                members.push(member);
+            }
+            let inner = self.groups(group.groups)?;
+            if members.is_empty() && inner.is_empty() {
+                continue;
+            }
+            let note = group.note.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
+            groups.push(Group { label, note, icon: group.icon, members, groups: inner });
+        }
+        Ok(groups)
+    }
+}
+
+/// Every group at every depth, each before the groups inside it.
+fn every_group(groups: &[Group]) -> Vec<&Group> {
+    let mut out = Vec::new();
+    for group in groups {
+        out.push(group);
+        out.extend(every_group(&group.groups));
+    }
+    out
+}
+
+/// Each group's label beside its icon slot, at every depth, in the same order as
+/// [`every_group`] — so icons are filed and kept the same way however deep a group sits.
+fn icons_mut<'a>(groups: &'a mut [Group], out: &mut Vec<(&'a str, &'a mut Option<String>)>) {
+    for group in groups {
+        let Group { label, icon, groups, .. } = group;
+        let label: &'a String = label;
+        out.push((label.as_str(), icon));
+        icons_mut(groups, out);
+    }
+}
+
 /// The open tasks this arrangement does not place. Closed ones are not owed a group: they
 /// leave the surface on their own, 24 hours after they close.
 async fn ungrouped_open_tasks(
@@ -368,7 +417,12 @@ mod tests {
             note: None,
             icon: None,
             members: members.iter().map(|m| (*m).into()).collect(),
+            groups: Vec::new(),
         }
+    }
+
+    fn holding(label: &str, members: &[&str], groups: Vec<Group>) -> Group {
+        Group { groups, ..group(label, members) }
     }
 
     fn with_icon(mut group: Group, icon: &str) -> Group {
@@ -421,6 +475,7 @@ mod tests {
                     note: Some("  9/16 说是一摊事  ".into()),
                     icon: None,
                     members: vec!["kt8-046".into(), " cantonese-table ".into()],
+                    groups: Vec::new(),
                 }],
             },
         )
@@ -512,6 +567,93 @@ mod tests {
         assert_eq!(written.ungrouped, ["vocabulary-book"]);
     }
 
+    /// **A group can hold groups, and the same rules hold at every depth.** A parent may carry
+    /// its own members as well as its groups, and one that carries only groups is kept.
+    #[tokio::test]
+    async fn groups_inside_a_group_come_back_as_written() {
+        let dir = tempfile::tempdir().unwrap();
+        for subject in ["rollup", "site-survey", "field-notes", "vocabulary-book"] {
+            task(dir.path(), subject).await;
+        }
+        let arranged = Grouping {
+            groups: vec![
+                holding(
+                    "Client work",
+                    &["rollup"],
+                    vec![
+                        group("Site", &["site-survey"]),
+                        holding("Research", &[], vec![group("Notes", &["field-notes"])]),
+                    ],
+                ),
+                group("Home", &["vocabulary-book"]),
+            ],
+        };
+        let written = write(dir.path(), arranged.clone()).await.unwrap();
+        assert_eq!(written.grouping, arranged);
+        assert!(written.ungrouped.is_empty(), "a task inside an inner group is placed");
+        assert_eq!(read(dir.path()).await, arranged);
+    }
+
+    /// Identity and first claim are decided across the whole tree, not level by level: a
+    /// group's own members are read before the groups inside it.
+    #[tokio::test]
+    async fn a_label_or_a_claim_is_unique_across_every_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "a").await;
+        task(dir.path(), "b").await;
+        let refused = write(
+            dir.path(),
+            Grouping { groups: vec![holding("Work", &["a"], vec![group("Work", &["b"])])] },
+        )
+        .await;
+        assert!(refused.is_err(), "an inner group may not reuse an outer label");
+
+        let written = write(
+            dir.path(),
+            Grouping { groups: vec![holding("Work", &["a"], vec![group("Inner", &["a", "b"])])] },
+        )
+        .await
+        .unwrap();
+        assert_eq!(written.grouping.groups[0].members, ["a"]);
+        assert_eq!(written.grouping.groups[0].groups[0].members, ["b"]);
+        assert_eq!(written.duplicated, ["a"]);
+    }
+
+    /// A parent whose inner groups all empty out is empty too, and goes with them.
+    #[tokio::test]
+    async fn a_group_whose_inner_groups_are_all_empty_is_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "a").await;
+        let written = write(
+            dir.path(),
+            Grouping {
+                groups: vec![group("Kept", &["a"]), holding("Hollow", &[], vec![group("Gone", &["nope"])])],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(written.grouping.groups.len(), 1);
+        assert_eq!(written.grouping.groups[0].label, "Kept");
+        assert_eq!(written.unknown, ["nope"]);
+    }
+
+    /// A record written before groups could nest reads back unchanged, and is written back
+    /// without an empty `groups` on every group.
+    #[tokio::test]
+    async fn a_flat_record_reads_and_writes_as_it_always_did() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "kt8-046").await;
+        tokio::fs::create_dir_all(home_dir(dir.path())).await.unwrap();
+        tokio::fs::write(groups_path(dir.path()), r#"{"groups":[{"label":"KTV","members":["kt8-046"]}]}"#)
+            .await
+            .unwrap();
+        let flat = read(dir.path()).await;
+        assert_eq!(flat, Grouping { groups: vec![group("KTV", &["kt8-046"])] });
+        write(dir.path(), flat).await.unwrap();
+        let raw = tokio::fs::read_to_string(groups_path(dir.path())).await.unwrap();
+        assert!(!raw.contains("\"groups\": []"), "{raw}");
+    }
+
     /// Clearing is a write like any other — the person can ask for no grouping at all.
     #[tokio::test]
     async fn an_empty_arrangement_is_a_legal_one() {
@@ -573,6 +715,40 @@ mod tests {
         assert_eq!(rewritten.grouping.groups[0].icon, None);
         assert_eq!(rewritten.iconless, ["学习类"]);
         assert_eq!(read(dir.path()).await.groups[1].icon, icon);
+    }
+
+    /// An inner group's icon is filed, kept and reported exactly as an outer one's is.
+    #[tokio::test]
+    async fn an_inner_group_keeps_its_icon_across_a_rewrite_like_any_other() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "rollup").await;
+        task(dir.path(), "site-survey").await;
+        let original = drawn(dir.path(), "generated/a-crane.png").await;
+        let first = write(
+            dir.path(),
+            Grouping {
+                groups: vec![holding(
+                    "Client work",
+                    &["rollup"],
+                    vec![with_icon(group("Site", &["site-survey"]), &original)],
+                )],
+            },
+        )
+        .await
+        .unwrap();
+        let icon = first.grouping.groups[0].groups[0].icon.clone();
+        assert!(icon.as_deref().is_some_and(|i| i.starts_with("drive/home/icons/")), "{icon:?}");
+        assert_eq!(first.iconless, ["Client work"]);
+
+        let rewritten = write(
+            dir.path(),
+            Grouping {
+                groups: vec![holding("Client work", &["rollup"], vec![group("Site", &["site-survey"])])],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(rewritten.grouping.groups[0].groups[0].icon, icon);
     }
 
     /// A kept icon whose file has gone is not kept: the label is back on the default, and the

@@ -549,7 +549,9 @@ Two files under `{data_dir}/home/`:
   log. "自己身上的毛病单独一组" said three weeks ago still decides where a row filed this
   morning goes.
 - **`groups.json` — the arrangement.** Written only by `hi_set_home_groups`, which replaces
-  it whole, so **send every group each time**, not the ones that changed.
+  it whole, so **send every group each time**, not the ones that changed. A group can hold
+  `groups` of its own — when they divide one group further ("KTV 里面再按项目分"), that is
+  groups inside it, not more groups beside it with the parent's name repeated in each label.
 
 **Their words beat the records, and the records do not group anything on their own.** What a
 task touches is not what it belongs to: `systems: feishu` on a birthday deck means the

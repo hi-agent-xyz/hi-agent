@@ -113,7 +113,8 @@ function groupIcon(ref) {
  *    relationship only; it must not pretend that two independent tasks are one piece of work.
  * 5. Overview uses useMessages()'s USER-VISIBLE transcript and factual task transitions.
  *    No registry tail, raw reasoning, or tool log is used to manufacture a public plan.
- * 6. Every task is its own branch off the core. There is no grouping rank — see below.
+ * 6. A task hangs off the core, or off the innermost group the person's arrangement puts it
+ *    in. Nothing infers a group — see below.
  * 7. Only a task's PICTURES are nodes, capped. Results as cards were 60.2% of the canvas.
  *
  * A view is a single-file transform. Pure model/layout functions stay here rather than
@@ -201,7 +202,8 @@ function taskResults(task, views) {
  */
 
 /**
- * **A group is a name over some tasks, and this surface is the only thing that knows it.**
+ * **A group is a name over some tasks and groups, and this surface is the only thing that
+ * knows it.**
  *
  * It is not a field on a task: that would make one view's axis — project, or kind, or state —
  * everybody's, and the axis is the person's to change. `/api/home/groups` serves what they
@@ -211,20 +213,30 @@ function taskResults(task, views) {
  *
  * A group that ends up with no drawn task is not a node. Tasks close and age off this
  * surface while the record still names them, and an empty heading is structure standing
- * where its content used to be.
+ * where its content used to be — at any depth, since a group is drawn only on the way to a
+ * task drawn inside it.
+ *
+ * **A group can hold groups**, so what a task maps to is the chain of groups it sits in,
+ * outermost first. The record's rules are the writer's, read the same way here so the two
+ * agree about a record written before a rule existed: a group's own members are claimed
+ * before the groups inside it, the first claim wins, and a label is one group — a second
+ * group carrying a label already seen is left out whole, rather than hung under two parents.
  */
 function groupIndex(groups) {
   const byTask = new Map();
-  groups.forEach((group, index) => {
+  const labels = new Set();
+  const walk = (list, chain) => (Array.isArray(list) ? list : []).forEach((group, index) => {
     const label = plain(group?.label);
-    if (!label) return;
+    if (!label || labels.has(label)) return;
+    labels.add(label);
+    const here = [...chain, { label, note: plain(group.note), icon: plain(group.icon), index }];
     for (const subject of group.members || []) {
       const key = plain(subject);
-      // First claim wins, the same rule the writer applies, so the two agree about a
-      // record written before that rule existed.
-      if (key && !byTask.has(key)) byTask.set(key, { label, note: plain(group.note), icon: plain(group.icon), index });
+      if (key && !byTask.has(key)) byTask.set(key, here);
     }
+    walk(group.groups, here);
   });
+  walk(groups, []);
   return byTask;
 }
 
@@ -261,16 +273,18 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     // A task hangs off its group when the arrangement puts it in one, and off the core when
     // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
     // here invents a group for a task the person has not placed.
-    const group = grouped.get(task.subject);
-    if (group) {
+    // A task inside an inner group draws every group on the way to it, each once however
+    // many tasks pass through it — `add` and `link` both dedupe by id.
+    const chain = grouped.get(task.subject);
+    let parent = "core";
+    for (const group of chain || []) {
       const id = `group:${group.label}`;
       add({ id, kind: "group", title: group.label, sourceRefs: [],
         data: { label: group.label, note: group.note, icon: group.icon, index: group.index } });
-      link("core", id);
-      link(id, node.id);
-    } else {
-      link("core", node.id);
+      link(parent, id);
+      parent = id;
     }
+    link(parent, node.id);
     // Pictures are second-level, the way a sub-step or a sub-result is — all of them, so that
     // one kind of record has one appearance. A task mid-flight often has process pictures and
     // no deliverable yet, and nothing here claims to know which of them is which.
@@ -321,6 +335,14 @@ function childIndex(model) {
   const children = new Map(model.nodes.map((n) => [n.id, []]));
   const nodes = new Map(model.nodes.map((n) => [n.id, n]));
   for (const edge of model.edges) if (edge.primary && nodes.has(edge.to)) children.get(edge.from)?.push(nodes.get(edge.to));
+  // **Inside a group: its own tasks, then its groups in the record's order.** Tasks keep the
+  // order they were drawn in. The groups inside it follow the record rather than whichever of
+  // their tasks happened to be drawn first. The core's branches are ordered by `arrange`.
+  const inner = (n) => (n.kind === "group" ? 1 : 0);
+  for (const [id, list] of children) {
+    if (nodes.get(id)?.kind !== "group") continue;
+    list.sort((a, b) => inner(a) - inner(b) || (inner(a) ? a.data.index - b.data.index : 0));
+  }
   return children;
 }
 

@@ -93,8 +93,8 @@ the same plain 1px border as a card.
 - A session's `subject` joins it to a task. Without a resolvable task it connects to the
   core and keeps its own title. Its technical `owner` remains inspectable but does not
   determine semantic placement or create a new task grouping.
-- **A task sits in a group when the grouping record puts it in one, and otherwise hangs off
-  the core.** See § *Grouping* below. Nothing about a task's own record decides this: there
+- **A task sits in a group when the grouping record puts it in one — under every group that
+  group is inside — and otherwise hangs off the core.** See § *Grouping* below. Nothing about a task's own record decides this: there
   was a topic rank named by a task's `project` or else its `systems`, and nothing has ever
   written a `project`, so every topic drawn was a `systems` value — and `systems` names the
   operational records a task touches, not what it belongs to: a birthday deck whose photos
@@ -150,13 +150,19 @@ activity only while its session is running.
 
 ## Grouping
 
-**A group is a name and an ordered list of task subjects, and it belongs to this surface
-alone.** It is not a field on a task, not a dimension of the memory store, and not a second
+**A group is a name, an ordered list of task subjects and the groups inside it, and it
+belongs to this surface alone.** It is not a field on a task, not a dimension of the memory store, and not a second
 ledger. Nothing else in the system reads it; delete the record and Home is what it was.
 
 **No axis is built in.** A group may be a project, a kind of work, a state, who asked for
 it, or "this week" — the structure is the same name-and-members either way, so the person
-can reorganise along a different axis without anything in the code changing. The alternative
+can reorganise along a different axis without anything in the code changing.
+
+**Nor is a depth.** A person who divides their work once often divides one part of it again —
+the company's projects as one group, each project a group inside it. So a group can hold
+groups, the same shape at every level, and nothing caps how deep. The depth lives in the
+record's structure, never in a label: a hierarchy spelled into names by a separator is a
+convention only its writer knows, and it splits names that were never meant as two. The alternative
 was a `project:` field on the task record, and it is the wrong shape twice over: it commits
 to one axis, and it puts a claim that only one surface consumes into a record everything
 reads.
@@ -200,16 +206,21 @@ moment of grouping rather than kept — a stored copy is a second ledger, going 
 { "groups": [ { "label": "KTV",
                 "note": "9/16 说粤语解说表和 KT8 是一摊事",
                 "icon": "drive/home/icons/0199568a….png",
-                "members": ["cantonese-…-20260916", "kt8-046-content-management"] } ] }
+                "members": ["cantonese-…-20260916", "kt8-046-content-management"],
+                "groups": [ { "label": "Content", "members": ["kt8-051-content-review"] } ] } ] }
 ```
 
-Array order is draw order: groups outward from the core, members top to bottom. `label` is
+Array order is draw order: groups outward from the core, members top to bottom, and inside a
+group its own members before the groups it holds. `groups` is optional and omitted when
+empty, so a record written before groups could nest is still the same record. `label` is
 the group's identity — there is no separate id, because renaming a group *is* renaming it —
-and labels must be unique. `note` is one line saying why this group exists; it is optional
-and it is read, as the label's hover text, so a person reviewing the arrangement can see
-what it was based on. `icon` is optional too; see § *Icons*. There is no `version` and no
-`updated_at`: the writer and the reader ship in one binary, and the file's mtime is already
-the time it was written.
+and labels must be unique across every depth. A task claimed twice stays where it was
+first claimed, reading a group's own members before the groups inside it. `note` is one line
+saying why this group exists; it is optional and it is read, as the label's hover text, so a
+person reviewing the arrangement can see what it was based on. `icon` is optional too, and
+belongs to its label at whatever depth the label sits; see § *Icons*. There is no `version`
+and no `updated_at`: the writer and the reader ship in one binary, and the file's mtime is
+already the time it was written.
 
 ### Icons
 
@@ -243,8 +254,11 @@ the object, does. So `hi_text_to_image` is never the way an icon is made.
 
 ### What the surface does with it
 
-- A task named by a group is drawn under it. A task in no group hangs off the core, beside
-  the groups, and that is an ordinary state rather than a fault.
+- A task named by a group is drawn under it, and a group inside another is drawn under that
+  one: core, group, inner group, card. A task in no group hangs off the core, beside the
+  groups, and that is an ordinary state rather than a fault.
+- **A group is drawn only on the way to a drawn task.** One whose tasks have all aged out
+  draws nothing, and neither does a group holding nothing else — at any depth.
 - **A member that names no drawn task is ignored.** Tasks close and age out while the record
   stands; the record is not the ledger and never resurrects one.
 - **Activities are not grouped, they follow.** A live session joined to a task is already

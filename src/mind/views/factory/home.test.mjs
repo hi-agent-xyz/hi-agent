@@ -195,6 +195,53 @@ test("a live session follows its task into the group, and a task claimed twice s
   assertConnected(model);
 });
 
+test("a group inside a group draws core, group, inner group, card", () => {
+  const model = project({
+    tasks: [task("rollup"), task("site-survey"), task("field-notes"), task("vocabulary-book"), task("loose")],
+    groups: [
+      { label: "Client work", note: "one company", members: ["rollup"], groups: [
+        { label: "Site", members: ["site-survey"] },
+        { label: "Research", groups: [{ label: "Notes", members: ["field-notes"] }] },
+      ] },
+      { label: "Home", members: ["vocabulary-book"] },
+    ] });
+  const children = childIndex(model);
+  assert.deepEqual(list(children.get("core").map((n) => n.id)).sort(), ["group:Client work", "group:Home", "task:loose"]);
+  assert.deepEqual(list(children.get("group:Client work").map((n) => n.id)),
+    ["task:rollup", "group:Site", "group:Research"], "its own task first, then its groups in the record's order");
+  assert.deepEqual(list(children.get("group:Research").map((n) => n.id)), ["group:Notes"], "a group holding only a group is still drawn");
+  assert.deepEqual(list(children.get("group:Notes").map((n) => n.id)), ["task:field-notes"]);
+  assert.equal(ofKind(model, "group").length, 5, "each group once");
+  assertConnected(model);
+  const placed = arrange(model).placed;
+  assert.equal(placed.length, model.nodes.filter((n) => n.kind !== "overview").length, "every node is laid out once");
+});
+
+test("inner groups keep the record's order, whichever of their tasks is drawn first", () => {
+  const model = project({
+    tasks: [task("late"), task("early")],
+    groups: [{ label: "Work", groups: [{ label: "First", members: ["early"] }, { label: "Second", members: ["late"] }] }] });
+  assert.deepEqual(list(childIndex(model).get("group:Work").map((n) => n.title)), ["First", "Second"]);
+});
+
+test("an inner group with nothing drawn, and the groups above it, are not headings", () => {
+  const model = project({
+    tasks: [task("a"), task("closed-long-ago", "done", 900)],
+    groups: [{ label: "Kept", members: ["a"] },
+      { label: "Outer", groups: [{ label: "Inner", members: ["closed-long-ago", "never-existed"] }] }] });
+  assert.deepEqual(list(ofKind(model, "group").map((n) => n.title)), ["Kept"]);
+  assertConnected(model);
+});
+
+test("a record naming one label twice keeps the first group, so nothing has two parents", () => {
+  const model = project({
+    tasks: [task("a"), task("b")],
+    groups: [{ label: "Work", members: ["a"] }, { label: "Other", groups: [{ label: "Work", members: ["b"] }] }] });
+  assert.deepEqual(list(childIndex(model).get("group:Work").map((n) => n.id)), ["task:a"]);
+  assert.equal(ofKind(model, "group").length, 1, "the second Work and the Other it made are not drawn");
+  assertConnected(model);
+});
+
 test("a group is a label, and a card is still a card beneath it", () => {
   const model = project({ tasks: [task("kt8-046")], groups: [{ label: "KTV", members: ["kt8-046"] }] });
   const placed = arrange(model).placed;
