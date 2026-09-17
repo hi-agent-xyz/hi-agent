@@ -549,9 +549,11 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                  bottom. Read `home/grouping.md` first — it is what the person has said about how \
                  their work should be arranged, and their words beat any evidence you can find in \
                  the records. A task you cannot place belongs in no group: leave it out rather \
-                 than inventing a home for it. Pass `groups: []` to clear the arrangement. The \
-                 answer says what landed, what named no task, what two groups both claimed, and \
-                 which open work is in no group.",
+                 than inventing a home for it. Pass `groups: []` to clear the arrangement. A \
+                 group's `icon` is the ref of one you drew for it; leave it out to keep the icon \
+                 that label already has. The answer says what landed, what named no task, what two \
+                 groups both claimed, which open work is in no group, and which groups still wear \
+                 the default icon.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -563,6 +565,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                                 "properties": {
                                     "label": { "type": "string", "description": "What this group is called, in the person's own vocabulary. Unique." },
                                     "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
+                                    "icon": { "type": "string", "description": "Optional: the ⟨ref: drive/…⟩ of an icon you drew for this group. Omit to keep the one the label already has." },
                                     "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
                                 },
                                 "required": ["label", "members"],
@@ -2295,6 +2298,22 @@ async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
     say(&mut out, "dropped — no such task", &written.unknown);
     say(&mut out, "kept in the first group only", &written.duplicated);
     say(&mut out, "open and in no group", &written.ungrouped);
+    say(&mut out, "icon not used, the label keeps what it had", &written.refused_icons);
+    if !written.iconless.is_empty() {
+        // The anchor is filed at the moment its ref is handed out, so the ref in this line
+        // is always one `hi_image_to_image` can read.
+        match home::file_icon_anchor(data_dir).await {
+            Ok(()) => say(
+                &mut out,
+                &format!("default icon still — draw from ⟨ref: {}⟩", home::ICON_ANCHOR_REF),
+                &written.iconless,
+            ),
+            Err(err) => {
+                tracing::warn!(error = %err, "could not file the group icon anchor");
+                say(&mut out, "default icon still (the picture to draw from could not be filed)", &written.iconless);
+            }
+        }
+    }
     tool_ok(&out)
 }
 
@@ -3201,6 +3220,35 @@ mod surface_tests {
             );
         }
         assert!(!super::super::server::home::groups_path(dir.path()).exists(), "and nothing was written");
+    }
+
+    /// **The answer is where a default icon gets noticed**, so it names every group still
+    /// wearing one and the picture to draw from — and that picture has to be readable the
+    /// moment its ref is handed out, or the next call is an edit of nothing.
+    #[tokio::test]
+    async fn the_answer_names_the_groups_on_the_default_icon_and_a_ref_that_reads() {
+        use crate::foundation::server::home;
+        let dir = tempfile::tempdir().unwrap();
+        crate::mind::memory::facets::update_facet(
+            dir.path(),
+            crate::mind::memory::tasks::DIMENSION,
+            "vocabulary-book",
+            "---\nstatus: doing\ntitle: t\n---\n\nbody\n",
+        )
+        .await
+        .unwrap();
+        let got = set_home_groups(
+            dir.path(),
+            &json!({ "groups": [{ "label": "学习类", "members": ["vocabulary-book"] }] }),
+        )
+        .await;
+        let text = got["content"][0]["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains(&format!("draw from ⟨ref: {}⟩: 学习类", home::ICON_ANCHOR_REF)),
+            "{text}"
+        );
+        let anchor = crate::mind::memory::media::resolve_ref(dir.path(), home::ICON_ANCHOR_REF).await;
+        assert_eq!(tokio::fs::read(anchor.unwrap()).await.unwrap(), home::DEFAULT_ICON);
     }
 
     /// Everything `hi_create_worker` needs that is not the errand itself, called as Cognition.

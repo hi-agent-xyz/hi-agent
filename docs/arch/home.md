@@ -68,10 +68,11 @@ contrast than metadata; they remain unframed labels, not cards.
 **Cards separate from the canvas.** A clearer neutral border and a shallow shadow separate
 white card surfaces from a barely tinted canvas. This applies equally to the core, tasks,
 sessions and picture tiles; it does not add a status-colored border or change their sizes.
-Group headings pair their label with a small Lucide grouping icon and one of six subdued
-colors, chosen deterministically from the label rather than its position. Color identifies
-a group, not its status, and is not guaranteed unique. The common icon denotes grouping;
-Home does not guess subject-specific icons from task text or invent grouping metadata.
+Group headings pair their label with a 40px icon and one of six subdued colors, chosen
+deterministically from the label rather than its position. Color identifies a group, not its
+status, and is not guaranteed unique. The icon is the group's own when one has been drawn
+for it and a shared default until then — see § *Icons* below. Home never picks one from a
+label or from task text.
 
 **A card says what it is without a label, and no side of its border means anything.** There
 are two kinds of card, a task and a live session, and each used to open with a line naming
@@ -198,6 +199,7 @@ moment of grouping rather than kept — a stored copy is a second ledger, going 
 ```json
 { "groups": [ { "label": "KTV",
                 "note": "9/16 说粤语解说表和 KT8 是一摊事",
+                "icon": "drive/home/icons/0199568a….png",
                 "members": ["cantonese-…-20260916", "kt8-046-content-management"] } ] }
 ```
 
@@ -205,8 +207,39 @@ Array order is draw order: groups outward from the core, members top to bottom. 
 the group's identity — there is no separate id, because renaming a group *is* renaming it —
 and labels must be unique. `note` is one line saying why this group exists; it is optional
 and it is read, as the label's hover text, so a person reviewing the arrangement can see
-what it was based on. There is no `version` and no `updated_at`: the writer and the reader
-ship in one binary, and the file's mtime is already the time it was written.
+what it was based on. `icon` is optional too; see § *Icons*. There is no `version` and no
+`updated_at`: the writer and the reader ship in one binary, and the file's mtime is already
+the time it was written.
+
+### Icons
+
+**A group's icon is drawn by the mind that groups, and every icon is an edit of one
+picture.** The default icon ships in the binary. Home draws it for any group without its own
+(`GET /api/home/group-icon`), and it is also filed at `drive/home/group-icon.png` as the source
+for `hi_image_to_image`. Choosing the object that stands for a group is a judgment about what
+the group is to the person, so it lives in the `task-manager`'s prompt, beside the arrangement
+it belongs to; no code maps a label to a picture.
+
+**The source picture carries the style, not a description of it.** Icons are drawn one at a
+time, weeks apart, whenever a label is new. A style described in words drifts a little with
+every call and every model, and eight icons drawn that way do not look like a set. An edit of
+one shared picture, keeping its background, palette, flat shapes and framing and changing only
+the object, does. So `hi_text_to_image` is never the way an icon is made.
+
+- **An icon belongs to its label, not to a write.** The arrangement is replaced whole on every
+  pass, and a writer that leaves `icon` out keeps the one that label already had. Rearranging
+  is not redrawing, and a forgotten field must not cost a generation per group to put back. A
+  renamed group is a new label and starts on the default unless the writer passes the old ref.
+- **What is recorded is an icon-sized copy.** A generation comes back at 1024px or more and a
+  megabyte or two, and Home draws every icon at 40px on every open. The write crops the offered
+  picture to its centred square, scales it to 120px (40px at 3x), files it under
+  `drive/home/icons/`, and records that ref. The original stays where it was made.
+- **An icon that cannot be used is refused on its own.** It might not be a `drive/` ref,
+  might name no file, or might not decode. The arrangement still lands, the label keeps what it
+  had, and the answer says why.
+- **The answer names every group still wearing the default**, with the ref to draw from, and
+  the anchor is filed at that moment, so the ref it hands out can always be read. A kept icon
+  whose file has since gone counts as the default again, which is what gets it redrawn.
 
 ### What the surface does with it
 
@@ -228,7 +261,7 @@ ship in one binary, and the file's mtime is already the time it was written.
 |---|---|---|
 | Reaction | nothing | it relays the ask in the person's words, like anything it cannot do itself |
 | Cognition | the basis | it is the rung that *hears* it, and the sentence must survive a worker that fails on the way to the screen |
-| `task-manager` | the result | one judgment over every open row, and *one manager, never one per row* is what keeps one hand on a file that is replaced whole |
+| `task-manager` | the result, icons included | one judgment over every open row, and *one manager, never one per row* is what keeps one hand on a file that is replaced whole |
 
 **The verb is the task-manager's and nothing else's**, enforced where the type is knowable
 rather than advertised away: the tool surface has no grain finer than `worker`, so every
@@ -291,6 +324,11 @@ an activity opens `factory/workers`. Home owns no detail panel of its own.
 Narrow views use a connected, recursively expandable flow of the same nodes and edges.
 
 ## Open
+
+- **A new default does not redraw the icons made from the old one.** The anchor in the drive
+  is refiled whenever the binary's default differs, so everything drawn afterwards matches the
+  new one, but icons already recorded were edits of the old picture and keep its look. Nothing
+  forgets them: a set drawn across that change is two sets until a person asks for a redraw.
 
 - **Nothing tidies the grouping record.** A task closes and ages out, and its line stays in
   `groups.json` until a mind next rewrites the file; a group whose members have all gone

@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLive, useWatched, useMessages, useViews, TEMPO } from "@hi/core";
 import { flextree } from "d3-flextree";
-import { FolderTree } from "lucide-react";
 
 const COPY = {
   en: {
@@ -74,6 +73,19 @@ function groupColor(label) {
   for (const char of label) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
   hash = (hash ^ (hash >>> 16)) >>> 0;
   return `var(--work-group-${GROUP_COLORS[hash % GROUP_COLORS.length]})`;
+}
+
+/**
+ * **A group wears the icon drawn for it, and the default until one is.** The icon is the
+ * grouping mind's call, drawn as an edit of the default picture so every icon is one set
+ * (`docs/arch/home.md#icons`); this surface only fetches it. Nothing here picks an icon
+ * from a label — a guess from the words is exactly the inference the grouping record exists
+ * to keep out of code.
+ */
+const DEFAULT_GROUP_ICON = "/api/home/group-icon";
+function groupIcon(ref) {
+  const rel = typeof ref === "string" && ref.startsWith("drive/") ? ref.slice("drive/".length) : "";
+  return rel ? `/api/drive/file/${rel.split("/").map(encodeURIComponent).join("/")}` : DEFAULT_GROUP_ICON;
 }
 
 /**
@@ -210,7 +222,7 @@ function groupIndex(groups) {
       const key = plain(subject);
       // First claim wins, the same rule the writer applies, so the two agree about a
       // record written before that rule existed.
-      if (key && !byTask.has(key)) byTask.set(key, { label, note: plain(group.note), index });
+      if (key && !byTask.has(key)) byTask.set(key, { label, note: plain(group.note), icon: plain(group.icon), index });
     }
   });
   return byTask;
@@ -253,7 +265,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     if (group) {
       const id = `group:${group.label}`;
       add({ id, kind: "group", title: group.label, sourceRefs: [],
-        data: { label: group.label, note: group.note, index: group.index } });
+        data: { label: group.label, note: group.note, icon: group.icon, index: group.index } });
       link("core", id);
       link(id, node.id);
     } else {
@@ -781,7 +793,9 @@ function Node({ node, now, children, openRef }) {
   if (node.kind === "group") return <article className="hi-work__group" data-node-id={node.id}
     data-kind="group" style={{ "--group-tone": groupColor(node.title) }}
     title={[node.title, node.data.note].filter(Boolean).join(" · ")}>
-    <FolderTree className="hi-work__group-icon" aria-hidden="true" strokeWidth={1.8} />
+    {/* A drawn icon whose file has gone since the last arrangement is the default again. */}
+    <img className="hi-work__group-icon" src={groupIcon(node.data.icon)} alt="" aria-hidden="true"
+      onError={(event) => { if (!event.currentTarget.src.endsWith(DEFAULT_GROUP_ICON)) event.currentTarget.src = DEFAULT_GROUP_ICON; }} />
     <span>{node.title}</span>
   </article>;
   const body = <>
@@ -840,7 +854,7 @@ const CSS = `
 /* A heading, not a card: no border and no background, because it is a name over the cards
    below it rather than a thing beside them. */
 .hi-work__group { height:100%; display:flex; align-items:center; gap:8px; padding:0 4px; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; overflow:hidden; overflow-wrap:anywhere; }
-.hi-work__group-icon { width:28px; height:28px; flex:0 0 28px; padding:5px; border-radius:7px; background:color-mix(in srgb, var(--group-tone) 12%, transparent); }
+.hi-work__group-icon { width:40px; height:40px; flex:0 0 40px; border-radius:10px; object-fit:cover; }
 .hi-work__group span { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:6px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }

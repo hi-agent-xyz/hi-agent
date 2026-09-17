@@ -564,6 +564,18 @@ The call answers with what landed, what named no task, what two groups both clai
 **which open rows are in no group** — the last one is the one to read, because it is the
 part nobody will tell you about later.
 
+**Each group's icon is yours to draw too, and every icon is an edit of the same picture.**
+The call's answer names the groups still wearing the default icon and gives the ref of the
+picture to draw from. For each, pick one object that stands for what the group *is* to the
+person, rather than its label drawn literally, and make it with `hi_image_to_image` from that
+ref: keep everything about how the picture is drawn (background, palette, flat shapes,
+framing, how much of the frame the object fills), change only the object, and put no text in
+it. Never draw one from nothing with `hi_text_to_image`: the shared source picture is the only
+thing that makes icons drawn weeks apart look like one set. Look at what came back before you
+use it, then send the arrangement again with that ref as the group's `icon`. An icon stays with
+its label from pass to pass without being sent again. A renamed group is a new label, so pass
+its old `icon` along when it still stands for the same thing.
+
 Say in your report what you rearranged and why, the same way you say what you closed. A
 person who sees their screen change and cannot find out what decided it stops trusting the
 arrangement more than they would have minded the old one.

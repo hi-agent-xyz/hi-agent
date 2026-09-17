@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor, groupIcon } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor, groupIcon });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -203,6 +203,18 @@ test("a group is a label, and a card is still a card beneath it", () => {
   assert.deepEqual([group.w, group.h], [144, 56], "a compact heading has room for two lines");
   assert.deepEqual([card.w, card.h], [240, 135]);
   assert.equal(card.x - (group.x + group.w), 48, "a shorter gutter preserves the connector");
+});
+
+test("a group wears the icon drawn for it, and the default until one is", () => {
+  const model = project({ tasks: [task("kt8-046"), task("vocabulary-book")],
+    groups: [{ label: "KTV", icon: "drive/home/icons/0192.png", members: ["kt8-046"] },
+      { label: "学习类", members: ["vocabulary-book"] }] });
+  const icons = Object.fromEntries(ofKind(model, "group").map((n) => [n.title, groupIcon(n.data.icon)]));
+  assert.equal(icons.KTV, "/api/drive/file/home/icons/0192.png");
+  assert.equal(icons["学习类"], "/api/home/group-icon");
+  // Only a drive ref is fetched; anything else is not this surface's to guess at.
+  assert.equal(groupIcon("https://example.com/icon.png"), "/api/home/group-icon");
+  assert.equal(groupIcon("drive/home/icons/a b.png"), "/api/drive/file/home/icons/a%20b.png");
 });
 
 test("group colors are stable identities, not positions or task statuses", () => {

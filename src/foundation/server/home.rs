@@ -24,6 +24,13 @@
 //! What is open, what is running, what each task is called: none of that is stored here. The
 //! mind that groups has the active-task projection and the switchboard in front of it
 //! already, and a copy of them would be a second ledger going stale.
+//!
+//! **A group's icon is drawn by the mind that groups, from one picture**
+//! (`docs/arch/home.md#icons`). Every group wears [`DEFAULT_ICON`] until it has its own, and
+//! every icon of its own is an edit of that same picture — [`ICON_ANCHOR_REF`] is where it is
+//! filed for `hi_image_to_image` to take. A style described in words drifts a little with
+//! every draw; a style carried by the source image is what keeps eight icons drawn weeks apart
+//! one set.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,7 +41,23 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::foundation::server::AppState;
+use crate::mind::memory::media::{self, DRIVE_PREFIX};
 use crate::mind::memory::{facets, tasks};
+
+/// The icon a group wears until one is drawn for it, and the picture every drawn one is an
+/// edit of. Bundled, so a fresh install has both before anything has been generated.
+pub const DEFAULT_ICON: &[u8] = include_bytes!("assets/home-group-icon.png");
+
+/// Where [`DEFAULT_ICON`] is filed in the drive, so a mind can hand it to `hi_image_to_image`.
+pub const ICON_ANCHOR_REF: &str = "drive/home/group-icon.png";
+
+/// Where the icon-sized copies live, under the drive. A generation comes back at 1024px or
+/// more and a megabyte or two; Home draws it at 40px on every open, so the copy is what is
+/// recorded and the original stays where it was made.
+const ICONS_DIR: &str = "home/icons";
+
+/// 40px at 3x.
+const ICON_PX: u32 = 120;
 
 /// `<data_dir>/home` — one surface's state, and nothing else reads it.
 pub fn home_dir(data_dir: &Path) -> PathBuf {
@@ -72,6 +95,14 @@ pub struct Group {
     /// it on the label as hover text, so a person reviewing the arrangement can see why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The group's own icon, a `drive/home/icons/…` ref. Absent means the default.
+    ///
+    /// **It belongs to the label, not to the write.** A rewrite that leaves it out keeps the
+    /// icon that label already had, because rearranging is not redrawing: the arrangement is
+    /// replaced whole every pass, and one that had to carry every icon forward by hand would
+    /// lose them to a forgotten field and pay a generation apiece to get them back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// Task subjects, top to bottom. A member naming no drawn task is ignored by the
     /// surface: tasks close and age out while the record stands, and the record is not the
     /// ledger.
@@ -118,6 +149,10 @@ pub struct Written {
     pub duplicated: Vec<String>,
     /// Open tasks in no group at all. Ordinary, not a fault — but worth knowing.
     pub ungrouped: Vec<String>,
+    /// Labels that landed wearing the default icon — the ones with nothing drawn yet.
+    pub iconless: Vec<String>,
+    /// `label: why` for each icon offered that could not be used. The label keeps what it had.
+    pub refused_icons: Vec<String>,
 }
 
 /// Replace the arrangement whole, or refuse and change nothing.
@@ -130,9 +165,21 @@ pub struct Written {
 /// with no members is dropped. Two groups sharing a label is the one hard error — the label
 /// is the group's identity, so a duplicate makes the arrangement ambiguous rather than
 /// merely untidy, and nothing is written.
+///
+/// Icons: one offered is filed as an icon-sized copy ([`file_icon`]) and recorded; one not
+/// offered is the label's previous icon, if its file is still there. An offered icon that
+/// cannot be used is refused on its own — the arrangement still lands, and the label keeps
+/// what it had.
 pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Written> {
     let known = facets::subjects_in(data_dir, tasks::DIMENSION).await;
     let known: std::collections::HashSet<&str> = known.iter().map(String::as_str).collect();
+    let previous: std::collections::HashMap<String, String> = read(data_dir)
+        .await
+        .groups
+        .into_iter()
+        .filter_map(|g| Some((g.label, g.icon?)))
+        .collect();
+    let mut refused_icons = Vec::new();
 
     let mut groups: Vec<Group> = Vec::new();
     let mut labels: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -168,7 +215,25 @@ pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Writte
             continue;
         }
         let note = group.note.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
-        groups.push(Group { label, note, members });
+        let offered = group.icon.map(|i| i.trim().to_owned()).filter(|i| !i.is_empty());
+        let filed = match offered {
+            Some(offered) => match file_icon(data_dir, &offered).await {
+                Ok(filed) => Some(filed),
+                Err(error) => {
+                    refused_icons.push(format!("{label}: {error}"));
+                    None
+                }
+            },
+            None => None,
+        };
+        let icon = match filed {
+            Some(filed) => Some(filed),
+            None => match previous.get(&label) {
+                Some(kept) if media::resolve_ref(data_dir, kept).await.is_some() => Some(kept.clone()),
+                _ => None,
+            },
+        };
+        groups.push(Group { label, note, icon, members });
     }
 
     let grouping = Grouping { groups };
@@ -179,7 +244,77 @@ pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Writte
     tokio::fs::write(&tmp, serde_json::to_vec_pretty(&grouping)?).await?;
     tokio::fs::rename(&tmp, &path).await?;
 
-    Ok(Written { ungrouped: ungrouped_open_tasks(data_dir, &grouping, &taken).await, grouping, unknown, duplicated })
+    let iconless =
+        grouping.groups.iter().filter(|g| g.icon.is_none()).map(|g| g.label.clone()).collect();
+    Ok(Written {
+        ungrouped: ungrouped_open_tasks(data_dir, &grouping, &taken).await,
+        grouping,
+        unknown,
+        duplicated,
+        iconless,
+        refused_icons,
+    })
+}
+
+/// File an offered icon as the copy Home draws, and return that copy's ref.
+///
+/// A ref already under [`ICONS_DIR`] is a copy this function made — a writer passing back
+/// what `groups.json` holds — and is kept as it is. Anything else is read from the drive,
+/// cropped to its centred square, scaled to [`ICON_PX`] and filed under a fresh name, so the
+/// original can be edited, moved or deleted without the screen changing.
+async fn file_icon(data_dir: &Path, offered: &str) -> anyhow::Result<String> {
+    let Some(rel) = offered.strip_prefix(DRIVE_PREFIX) else {
+        anyhow::bail!("`{offered}` is not a `drive/…` ref");
+    };
+    let Some(source) = media::resolve_in_drive(data_dir, rel).await else {
+        anyhow::bail!("nothing is filed at `{offered}`");
+    };
+    if rel.starts_with(&format!("{ICONS_DIR}/")) {
+        return Ok(offered.to_owned());
+    }
+    let bytes = tokio::fs::read(&source).await?;
+    let png = tokio::task::spawn_blocking(move || icon_sized(&bytes))
+        .await?
+        .map_err(|error| anyhow::anyhow!("`{offered}` is not a picture that can be read: {error}"))?;
+    let dir = media::drive_root(data_dir).join(ICONS_DIR);
+    tokio::fs::create_dir_all(&dir).await?;
+    let name = format!("{}.png", Uuid::now_v7().simple());
+    let tmp = dir.join(format!(".{name}.tmp"));
+    tokio::fs::write(&tmp, &png).await?;
+    tokio::fs::rename(&tmp, dir.join(&name)).await?;
+    Ok(format!("{DRIVE_PREFIX}{ICONS_DIR}/{name}"))
+}
+
+/// The centred square of a picture at [`ICON_PX`], as PNG. Not blown up when smaller.
+fn icon_sized(bytes: &[u8]) -> image::ImageResult<Vec<u8>> {
+    let img = image::load_from_memory(bytes)?;
+    let side = img.width().min(img.height());
+    let square = img.crop_imm((img.width() - side) / 2, (img.height() - side) / 2, side, side);
+    let scaled = if side > ICON_PX {
+        square.resize_exact(ICON_PX, ICON_PX, image::imageops::FilterType::Lanczos3)
+    } else {
+        square
+    };
+    let mut out = Vec::new();
+    scaled.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
+}
+
+/// Put [`DEFAULT_ICON`] at [`ICON_ANCHOR_REF`], so the ref a writer is told to draw from is
+/// there to be read. Written when missing or when this build's picture differs, so the
+/// anchor is always the one the screen is wearing.
+pub async fn file_icon_anchor(data_dir: &Path) -> anyhow::Result<()> {
+    let rel = ICON_ANCHOR_REF.strip_prefix(DRIVE_PREFIX).unwrap_or(ICON_ANCHOR_REF);
+    let path = media::drive_root(data_dir).join(rel);
+    if tokio::fs::read(&path).await.is_ok_and(|bytes| bytes == DEFAULT_ICON) {
+        return Ok(());
+    }
+    let dir = path.parent().unwrap_or(&path).to_path_buf();
+    tokio::fs::create_dir_all(&dir).await?;
+    let tmp = dir.join(format!(".group-icon.png.tmp-{}", Uuid::now_v7().simple()));
+    tokio::fs::write(&tmp, DEFAULT_ICON).await?;
+    tokio::fs::rename(&tmp, &path).await?;
+    Ok(())
 }
 
 /// The open tasks this arrangement does not place. Closed ones are not owed a group: they
@@ -209,6 +344,14 @@ pub async fn get_home_groups(State(state): State<Arc<AppState>>) -> Json<Groupin
     Json(read(&state.data_dir).await)
 }
 
+/// `GET /api/home/group-icon` — the icon a group wears until its own is drawn.
+///
+/// Served from the binary rather than from the drive copy, so it is on screen before any
+/// write has filed the anchor.
+pub async fn get_default_group_icon() -> impl axum::response::IntoResponse {
+    ([(axum::http::header::CONTENT_TYPE, "image/png")], DEFAULT_ICON)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,8 +366,27 @@ mod tests {
         Group {
             label: label.into(),
             note: None,
+            icon: None,
             members: members.iter().map(|m| (*m).into()).collect(),
         }
+    }
+
+    fn with_icon(mut group: Group, icon: &str) -> Group {
+        group.icon = Some(icon.into());
+        group
+    }
+
+    /// A picture in the drive the size a generation comes back at, and not square.
+    async fn drawn(dir: &Path, rel: &str) -> String {
+        let img = image::RgbImage::from_pixel(1254, 1024, image::Rgb([240, 232, 218]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let path = media::drive_root(dir).join(rel);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, png).await.unwrap();
+        format!("{DRIVE_PREFIX}{rel}")
     }
 
     #[tokio::test]
@@ -257,6 +419,7 @@ mod tests {
                 groups: vec![Group {
                     label: "  KTV  ".into(),
                     note: Some("  9/16 说是一摊事  ".into()),
+                    icon: None,
                     members: vec!["kt8-046".into(), " cantonese-table ".into()],
                 }],
             },
@@ -358,5 +521,116 @@ mod tests {
         let written = write(dir.path(), Grouping::default()).await.unwrap();
         assert!(written.grouping.groups.is_empty());
         assert_eq!(read(dir.path()).await, Grouping::default());
+    }
+    /// **What is recorded is a copy the size it is drawn at**, not the generation: Home draws
+    /// every icon on every open, and a generation is megabytes. The original stays put.
+    #[tokio::test]
+    async fn an_offered_icon_is_filed_as_an_icon_sized_square() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "kt8-046").await;
+        let original = drawn(dir.path(), "generated/2026-09-17/091634-a-microphone.png").await;
+        let written =
+            write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), &original)] })
+                .await
+                .unwrap();
+        let icon = written.grouping.groups[0].icon.clone().unwrap();
+        assert!(icon.starts_with("drive/home/icons/"), "{icon}");
+        let copy = media::resolve_ref(dir.path(), &icon).await.unwrap();
+        let img = image::open(copy).unwrap();
+        assert_eq!((img.width(), img.height()), (ICON_PX, ICON_PX));
+        assert!(media::resolve_ref(dir.path(), &original).await.is_some(), "the original is left where it was made");
+        assert!(written.iconless.is_empty() && written.refused_icons.is_empty());
+
+        // Handing back what `groups.json` already holds files nothing new.
+        let again = write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), &icon)] })
+            .await
+            .unwrap();
+        assert_eq!(again.grouping.groups[0].icon.as_deref(), Some(icon.as_str()));
+    }
+
+    /// **Rearranging is not redrawing.** The arrangement is replaced whole every pass, so an
+    /// icon the writer did not repeat is the label's, not lost — and a label that is new is
+    /// new, whatever it replaced.
+    #[tokio::test]
+    async fn a_rewrite_that_leaves_the_icon_out_keeps_the_one_the_label_had() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "kt8-046").await;
+        task(dir.path(), "vocabulary-book").await;
+        let original = drawn(dir.path(), "generated/2026-09-17/a-microphone.png").await;
+        let first =
+            write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), &original)] })
+                .await
+                .unwrap();
+        let icon = first.grouping.groups[0].icon.clone();
+
+        let rewritten = write(
+            dir.path(),
+            Grouping { groups: vec![group("学习类", &["vocabulary-book"]), group("KTV", &["kt8-046"])] },
+        )
+        .await
+        .unwrap();
+        assert_eq!(rewritten.grouping.groups[1].icon, icon);
+        assert_eq!(rewritten.grouping.groups[0].icon, None);
+        assert_eq!(rewritten.iconless, ["学习类"]);
+        assert_eq!(read(dir.path()).await.groups[1].icon, icon);
+    }
+
+    /// A kept icon whose file has gone is not kept: the label is back on the default, and the
+    /// receipt names it, which is what gets it drawn again.
+    #[tokio::test]
+    async fn a_kept_icon_whose_file_is_gone_is_the_default_again() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "kt8-046").await;
+        let original = drawn(dir.path(), "generated/a-microphone.png").await;
+        let first =
+            write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), &original)] })
+                .await
+                .unwrap();
+        let copy = media::resolve_ref(dir.path(), first.grouping.groups[0].icon.as_deref().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::remove_file(copy).await.unwrap();
+        let written = write(dir.path(), Grouping { groups: vec![group("KTV", &["kt8-046"])] }).await.unwrap();
+        assert_eq!(written.grouping.groups[0].icon, None);
+        assert_eq!(written.iconless, ["KTV"]);
+    }
+
+    /// **An icon that cannot be used is refused by itself.** The arrangement is the part the
+    /// person asked for; a bad picture must not cost them it, nor the icon the label had.
+    #[tokio::test]
+    async fn an_unusable_icon_is_refused_and_the_arrangement_still_lands() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "kt8-046").await;
+        let original = drawn(dir.path(), "generated/a-microphone.png").await;
+        let first =
+            write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), &original)] })
+                .await
+                .unwrap();
+        let kept = first.grouping.groups[0].icon.clone();
+        let notes = media::drive_root(dir.path()).join("notes.md");
+        tokio::fs::write(&notes, "not a picture").await.unwrap();
+
+        for offered in ["vision/2026-09-17/09/00-00.jpg", "drive/generated/never-made.png", "drive/notes.md"] {
+            let written =
+                write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), offered)] })
+                    .await
+                    .unwrap();
+            assert_eq!(written.grouping.groups[0].members, ["kt8-046"]);
+            assert_eq!(written.grouping.groups[0].icon, kept, "{offered}");
+            assert_eq!(written.refused_icons.len(), 1, "{offered}");
+            assert!(written.refused_icons[0].starts_with("KTV: "), "{:?}", written.refused_icons);
+        }
+    }
+
+    /// The ref a writer is told to draw from has to be there, and has to be this build's.
+    #[tokio::test]
+    async fn the_anchor_is_filed_as_the_default_icon_and_refiled_when_it_differs() {
+        let dir = tempfile::tempdir().unwrap();
+        file_icon_anchor(dir.path()).await.unwrap();
+        let path = media::resolve_ref(dir.path(), ICON_ANCHOR_REF).await.unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), DEFAULT_ICON);
+        tokio::fs::write(&path, b"an older picture").await.unwrap();
+        file_icon_anchor(dir.path()).await.unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), DEFAULT_ICON);
     }
 }
