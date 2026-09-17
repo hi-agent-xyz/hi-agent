@@ -20,7 +20,6 @@ import { useCaption } from "./caption";
 import { ViewSlot } from "./ViewSlot";
 import { Composer } from "./Composer";
 import { CameraPreview } from "./CameraPreview";
-import { HandoffOverlay } from "./HandoffOverlay";
 import { Panel, type Tab } from "./Panel";
 import { PanelGesture } from "./PanelGesture";
 
@@ -125,15 +124,7 @@ export function Shell() {
   // different rendering of the same list. `<Chat>` stays mounted through both.
   const chatShown = layout.conversation === "panel" && tab === "messages";
 
-  const handoff = useHandoff({
-    // Whether there is a line on screen to paste into. Since the line lives in
-    // the conversation, that is the same question as whether the conversation is
-    // drawn as itself: with the panel away, or on the other tab, a paste is sent
-    // rather than dropped into a box nobody can see.
-    textInputOpen: chatShown,
-    sendText,
-    pasteIntoTextInput,
-  });
+  const handoff = useHandoff({ openConversation, pasteIntoTextInput });
 
   // Escape retreats a stop, in every stop the panel is out in. It defers to
   // whoever already handled it, so clearing a half-typed line closes the line and
@@ -265,10 +256,8 @@ export function Shell() {
       ref={rootRef}
       className="hi-root"
       data-stop={stop}
-      data-file-drop={handoff.feedback?.state}
-      onDragEnterCapture={handoff.onFileDragEnter}
+      onDragEnterCapture={handoff.onFileDragOver}
       onDragOverCapture={handoff.onFileDragOver}
-      onDragLeaveCapture={handoff.onFileDragLeave}
       onDropCapture={handoff.onFileDrop}
     >
       <div className="hi-plane hi-plane--ground">
@@ -329,7 +318,7 @@ export function Shell() {
               pastedText={pastedInputText}
               onOpen={openConversation}
               onPickFiles={(files) => void handoff.sendFiles(files)}
-              filesSending={handoff.feedback?.state === "sending"}
+              filesSending={handoff.sending}
             />
           </Chat>
         </Panel>
@@ -337,12 +326,6 @@ export function Shell() {
         {/* Last, so the strip is over everything it may have to claim a touch from
             — including the panel it moves. */}
         <PanelGesture shape={shape} stop={stop} onStop={setStop} root={rootRef} />
-
-        <HandoffOverlay
-          feedback={handoff.feedback}
-          onRetry={handoff.retry}
-          onDismiss={handoff.dismiss}
-        />
       </div>
     </div>
   );

@@ -1,16 +1,11 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
   type DragEvent as ReactDragEvent,
 } from "react";
 
-import {
-  FileUploadError,
-  postInFiles,
-  type UploadResult,
-} from "../channels/in/file";
+import { postInFiles } from "../channels/in/file";
 import {
   filesFromTransfer,
   isBaseTextInputTarget,
@@ -18,233 +13,66 @@ import {
   transferHasFiles,
 } from "../lib/handoff";
 
-export type HandoffState =
-  | "hover"
-  | "sending"
-  | "sent"
-  | "partial"
-  | "error";
-export type HandoffKind = "files" | "text";
-
-export interface HandoffFeedback {
-  state: HandoffState;
-  kind: HandoffKind;
-  message: string;
-  retryable: boolean;
-}
-
 interface UseHandoffOptions {
-  textInputOpen: boolean;
-  sendText: (text: string) => void;
+  /** Bring the conversation up on the messages tab; a no-op where it already is. */
+  openConversation: () => void;
+  /** Append text to the line being written, with the caret after it. */
   pasteIntoTextInput: (text: string) => void;
 }
 
-const SUCCESS_VISIBLE_MS = 2400;
-
-function fileCountLabel(count: number): string {
-  return count === 1 ? "1 file" : `${count} files`;
-}
-
-function acceptedMessage(result: UploadResult, total: number): string {
-  const received = result.received || total;
-  return `Sent ${fileCountLabel(received)}`;
-}
-
-function failedFiles(error: FileUploadError, files: File[]): File[] {
-  const failed = error.result?.failed ?? [];
-  if (failed.length === 0) return files;
-  const indexes = new Set(failed.map((item) => item.index));
-  const retry = files.filter((_file, index) => indexes.has(index));
-  return retry.length > 0 ? retry : files;
-}
-
-function uploadFailureFeedback(
-  error: unknown,
-  files: File[],
-): { feedback: HandoffFeedback; retry: File[] } {
-  if (error instanceof FileUploadError) {
-    const retry = failedFiles(error, files);
-    const received = error.result?.received ?? 0;
-    if (received > 0) {
-      return {
-        feedback: {
-          state: "partial",
-          kind: "files",
-          message: `Sent ${received} of ${files.length} files`,
-          retryable: true,
-        },
-        retry,
-      };
-    }
-    return {
-      feedback: {
-        state: "error",
-        kind: "files",
-        // The core itself sets no upload ceiling, so a 413 is something in front of
-        // it saying no — a reverse proxy, a CDN. Naming a number here would be
-        // inventing one, and a retry would hit the same wall.
-        message:
-          error.status === 413
-            ? "Something between here and the agent rejected a file that size"
-            : "File upload failed",
-        retryable: error.status !== 413,
-      },
-      retry,
-    };
-  }
-
-  return {
-    feedback: {
-      state: "error",
-      kind: "files",
-      message: "File upload failed",
-      retryable: true,
-    },
-    retry: files,
-  };
-}
-
-export function useHandoff({
-  textInputOpen,
-  sendText,
-  pasteIntoTextInput,
-}: UseHandoffOptions) {
-  const [feedback, setFeedback] = useState<HandoffFeedback | null>(null);
-  const dragDepthRef = useRef(0);
-  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const uploadAbortRef = useRef<AbortController | null>(null);
-  const sendingRef = useRef(false);
-  const retryFilesRef = useRef<File[]>([]);
-
-  const clearStatusTimer = useCallback(() => {
-    if (statusTimerRef.current !== null) {
-      clearTimeout(statusTimerRef.current);
-      statusTimerRef.current = null;
-    }
-  }, []);
-
-  const showTimedFeedback = useCallback(
-    (next: HandoffFeedback) => {
-      clearStatusTimer();
-      setFeedback(next);
-      statusTimerRef.current = setTimeout(() => {
-        setFeedback(null);
-        statusTimerRef.current = null;
-      }, SUCCESS_VISIBLE_MS);
-    },
-    [clearStatusTimer],
-  );
-
-  const dismiss = useCallback(() => {
-    clearStatusTimer();
-    setFeedback(null);
-  }, [clearStatusTimer]);
+/**
+ * A file dropped or pasted anywhere on the face, and text pasted where nothing else
+ * takes it.
+ *
+ * **The conversation is the account of a handover, so a handover opens it.** A file
+ * that landed is a message in the list (`docs/arch/text-transcript.md`), drawn as
+ * the thing that was sent (`ui/Chat.tsx`); pasted text goes into the line, where it
+ * can be read before it is sent. There used to be a whole-face overlay here — "Drop
+ * to send", "Sending 1 file", "Sent 1 file", a Retry — that blurred everything to
+ * say, a moment later and less precisely, what the list says by growing a row.
+ *
+ * A batch that fails is logged and not drawn: what did not land is absent from the
+ * list, and the gesture is there to make again. Batches are independent posts, so a
+ * second drop during a first is sent rather than refused.
+ */
+export function useHandoff({ openConversation, pasteIntoTextInput }: UseHandoffOptions) {
+  // How many batches are on the wire. Drawn by the picker (`ui/Composer.tsx`), so a
+  // big file is not silent in the conversation until it lands.
+  const [inFlight, setInFlight] = useState(0);
 
   const sendFiles = useCallback(
-    async (incoming: File[]) => {
-      if (incoming.length === 0 || sendingRef.current) return;
-      const files = [...incoming];
-      sendingRef.current = true;
-      retryFilesRef.current = files;
-      clearStatusTimer();
-      setFeedback({
-        state: "sending",
-        kind: "files",
-        message: `Sending ${fileCountLabel(files.length)}`,
-        retryable: false,
-      });
-
-      const abort = new AbortController();
-      uploadAbortRef.current = abort;
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      openConversation();
+      setInFlight((n) => n + 1);
       try {
-        const result = await postInFiles({ files, signal: abort.signal });
-        retryFilesRef.current = [];
-        showTimedFeedback({
-          state: "sent",
-          kind: "files",
-          message: acceptedMessage(result, files.length),
-          retryable: false,
-        });
+        await postInFiles({ files });
       } catch (error) {
-        if (abort.signal.aborted) return;
-        const failed = uploadFailureFeedback(error, files);
-        retryFilesRef.current = failed.retry;
-        clearStatusTimer();
-        setFeedback(failed.feedback);
+        console.error("files were not sent", error);
       } finally {
-        if (uploadAbortRef.current === abort) uploadAbortRef.current = null;
-        sendingRef.current = false;
+        setInFlight((n) => n - 1);
       }
     },
-    [clearStatusTimer, showTimedFeedback],
+    [openConversation],
   );
 
-  const retry = useCallback(() => {
-    const files = retryFilesRef.current;
-    if (files.length > 0) void sendFiles(files);
-  }, [sendFiles]);
-
-  const resetDragHover = useCallback(() => {
-    dragDepthRef.current = 0;
-    setFeedback((current) => (current?.state === "hover" ? null : current));
+  // Bound to enter as well as over: cancelling both is what makes the face a drop
+  // target at all, and left alone the browser navigates to the dropped file.
+  const onFileDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!transferHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
   }, []);
-
-  const onFileDragEnter = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>) => {
-      if (!transferHasFiles(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = "copy";
-      dragDepthRef.current += 1;
-      if (dragDepthRef.current !== 1 || sendingRef.current) return;
-      clearStatusTimer();
-      setFeedback({
-        state: "hover",
-        kind: "files",
-        message: "Drop to send",
-        retryable: false,
-      });
-    },
-    [clearStatusTimer],
-  );
-
-  const onFileDragOver = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>) => {
-      if (!transferHasFiles(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = sendingRef.current ? "none" : "copy";
-    },
-    [],
-  );
-
-  const onFileDragLeave = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>) => {
-      if (dragDepthRef.current === 0 && !transferHasFiles(event.dataTransfer)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-      if (dragDepthRef.current === 0) resetDragHover();
-    },
-    [resetDragHover],
-  );
 
   const onFileDrop = useCallback(
     (event: ReactDragEvent<HTMLDivElement>) => {
       if (!transferHasFiles(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
-      dragDepthRef.current = 0;
-      const files = filesFromTransfer(event.dataTransfer);
-      if (files.length === 0) {
-        resetDragHover();
-        return;
-      }
-      void sendFiles(files);
+      void sendFiles(filesFromTransfer(event.dataTransfer));
     },
-    [resetDragHover, sendFiles],
+    [sendFiles],
   );
 
   const onClipboardPaste = useCallback(
@@ -267,45 +95,17 @@ export function useHandoff({
       // Let the host input perform an ordinary text paste at the caret.
       if (editable) return;
 
-      const rawText = data.getData("text/plain");
-      const text = rawText.trim();
-      if (!text) return;
+      const text = data.getData("text/plain");
+      if (!text.trim()) return;
       event.preventDefault();
       event.stopPropagation();
-      if (textInputOpen) {
-        pasteIntoTextInput(rawText);
-        return;
-      }
-      // A paste with no line on screen is sent outright, so this overlay is the only
-      // account of it the person gets — which means it has to be able to say "no" as
-      // well as "sent". It claimed "Sent clipboard text" unconditionally before,
-      // including for a paste that never left the window.
-      void sendText(text).then(
-        () =>
-          showTimedFeedback({
-            state: "sent",
-            kind: "text",
-            message: "Sent clipboard text",
-            retryable: false,
-          }),
-        (error: unknown) => {
-          console.error("clipboard text was not sent", error);
-          showTimedFeedback({
-            state: "error",
-            kind: "text",
-            message: "Couldn't send that — it's still on your clipboard",
-            retryable: false,
-          });
-        },
-      );
+      // What typing a character at the room does: the conversation comes up and the
+      // words wait in the line. The line holds them until it is on screen
+      // (`ui/Composer.tsx`), so this is the same whether or not it already was.
+      openConversation();
+      pasteIntoTextInput(text);
     },
-    [
-      pasteIntoTextInput,
-      sendFiles,
-      sendText,
-      showTimedFeedback,
-      textInputOpen,
-    ],
+    [openConversation, pasteIntoTextInput, sendFiles],
   );
 
   useEffect(() => {
@@ -313,39 +113,14 @@ export function useHandoff({
     return () => document.removeEventListener("paste", onClipboardPaste, true);
   }, [onClipboardPaste]);
 
-  useEffect(() => {
-    document.addEventListener("dragend", resetDragHover);
-    document.addEventListener("drop", resetDragHover);
-    window.addEventListener("blur", resetDragHover);
-    return () => {
-      document.removeEventListener("dragend", resetDragHover);
-      document.removeEventListener("drop", resetDragHover);
-      window.removeEventListener("blur", resetDragHover);
-    };
-  }, [resetDragHover]);
-
-  useEffect(() => {
-    return () => {
-      clearStatusTimer();
-      uploadAbortRef.current?.abort();
-    };
-  }, [clearStatusTimer]);
-
   // `sendFiles` is handed back because a picker calls it: the drop and the paste
   // are gestures a touch device does not have, so the line being written carries a
   // control that opens the system picker and hands what comes out to this same
-  // path (`ui/Composer.tsx`). Everything else here is what the host renders — the
-  // feedback overlay and its two verbs. Whether a batch is in flight is read off
-  // `feedback.state`, not handed back separately: `sendingRef` is a ref and moving
-  // it re-renders nothing.
+  // path (`ui/Composer.tsx`).
   return {
-    feedback,
-    retry,
-    dismiss,
+    sending: inFlight > 0,
     sendFiles,
-    onFileDragEnter,
     onFileDragOver,
-    onFileDragLeave,
     onFileDrop,
   };
 }

@@ -222,9 +222,10 @@ describe("the line being written", () => {
     expect(send).toBeGreaterThan(line);
   });
 
-  // The handoff takes one batch at a time and drops a second in silence, so the
-  // door is shut while one is on the wire rather than opening onto nothing.
-  it("shuts the picker while a batch is being sent", () => {
+  // Nothing else in the conversation says a batch is on the wire until the file
+  // lands in it, so the picker does. It stays open: batches are independent posts,
+  // and a second pick is sent too.
+  it("turns the picker while a batch is being sent, and leaves it open", () => {
     const line = (filesSending: boolean) =>
       renderToStaticMarkup(
         <Chat messages={[said("1", "帮我看下")]}>
@@ -239,9 +240,11 @@ describe("the line being written", () => {
       );
     const shut = (html: string) => html.split('disabled=""').length - 1;
 
-    // One either way is the send button, which an empty line always shuts.
+    // The one is the send button, which an empty line always shuts.
     expect(shut(line(false))).toBe(1);
-    expect(shut(line(true))).toBe(2);
+    expect(shut(line(true))).toBe(1);
+    expect(line(false)).not.toContain('aria-busy="true"');
+    expect(line(true)).toContain('aria-busy="true"');
   });
 });
 

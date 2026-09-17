@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpIcon, PlusIcon } from "lucide-react";
+import { ArrowUpIcon, LoaderCircleIcon, PlusIcon } from "lucide-react";
 
 import { TYPING_PING_INTERVAL_MS, postInTextTyping } from "../channels/in/text";
 import { isEditableTarget } from "../lib/handoff";
@@ -18,7 +18,8 @@ interface ComposerProps {
    * screen. Not a mount switch: the line stays mounted while the conversation is
    * away, because that is what keeps a half-written draft through a put-away. */
   shown: boolean;
-  /** Text pasted while the conversation is up but focus is outside the line. */
+  /** Text pasted with the focus outside the line. Held until the line is on
+   * screen, because a paste at the room opens the conversation it lands in. */
   pastedText?: { id: number; text: string } | null;
   /** Bring the conversation back — the person started typing while it was away.
    * `null` where there is nothing to bring back: a view rendering the words
@@ -28,8 +29,9 @@ interface ComposerProps {
   /** Hand files over. The same path a drop takes — `hooks/useHandoff`'s
    * `sendFiles` — reached through a picker instead of a gesture. */
   onPickFiles: (files: File[]) => void;
-  /** A batch is already on the wire. The picker is shut while it is, because the
-   * handoff takes one batch at a time and would drop a second pick in silence. */
+  /** A batch is on the wire. The picker turns while one is — nothing else in the
+   * conversation says so until the file lands in it — and still opens: batches are
+   * independent, so a second pick is simply sent too. */
   filesSending: boolean;
 }
 
@@ -211,12 +213,12 @@ export function Composer({
           <InputGroupButton
             size="icon-xs"
             variant="ghost"
-            disabled={filesSending}
             onClick={() => filesRef.current?.click()}
-            title="hand over a file"
+            title={filesSending ? "sending…" : "hand over a file"}
             aria-label="hand over a file"
+            aria-busy={filesSending || undefined}
           >
-            <PlusIcon />
+            {filesSending ? <LoaderCircleIcon className="animate-spin" /> : <PlusIcon />}
           </InputGroupButton>
         </InputGroupAddon>
         <InputGroupTextarea
