@@ -506,8 +506,7 @@ button,
      third**, the sidebar's measure or the screen's (`lib/panel.ts` § `measureOf`).
      The edge moves under a finger and this does not, so a drag reveals the panel
      instead of re-wrapping every line in it on the way in. It changes once a
-     gesture, at the moment of release, together with the position it is settling
-     to. */
+     gesture, at the moment of release, with the stop the position is settling to. */
   --hi-panel-measure: var(--hi-panel-width);
 
   /* A readable measure for anything the panel is asked to show across a whole
@@ -569,10 +568,25 @@ button,
 
 /* The agent's plane, and the one rule that makes the middle stop a *push* rather
    than an overlay: the view gives up the panel's measure and reflows into what is
-   left. Keyed on the committed stop alone — never on the drag — because a compiled
-   board re-laying itself sixty times a second under a moving finger is the one cost
-   of pushing that would have made pushing not worth it. During a drag the panel
-   simply slides over the view, and the view re-flows once, when the stop lands.
+   left. Keyed on the committed stop — never on where the drag has the edge — because
+   a compiled board re-laying itself sixty times a second under a moving finger is the
+   one cost of pushing that would have made pushing not worth it.
+
+   **The one thing a drag may do to it is reveal it, once.** A panel pulled in slides
+   over the view, and the view re-flows when the stop lands. A panel pulled back out
+   from this stop uncovers the view instead, and a view held at its inset width left
+   bare paper between its edge and the panel's for as long as the hand was moving —
+   the seam, which is one line at rest, torn into two. So once the edge has passed
+   the view's own, `data-revealing` hands the view the whole frame behind the glass
+   (`ui/PanelGesture.tsx`); it re-flows then instead of on release, and the release
+   takes the attribute away in the same style change that tells it the stop.
+
+   The reveal begins 40ms into its curve rather than at the start of it. A transition
+   draws its starting value on its first frame, and the panel's edge has already moved
+   on that frame, so a reveal from the top of the curve still showed a one-frame sliver
+   of paper — 20px on a seam drag, 9px on a trackpad swipe. Forty milliseconds in, the
+   view's edge is ~200px clear of the panel's on the first frame it is drawn, which is
+   more than a hand moves the edge in one.
 
    `full` does not inset: it covers. A view asked to reflow to zero width is a bug,
    not a stop. */
@@ -581,8 +595,12 @@ button,
   transition: right 260ms var(--host-ease);
 }
 
-.hi-root[data-stop="panel"] .hi-plane--view {
+.hi-root[data-stop="panel"]:not([data-revealing]) .hi-plane--view {
   right: var(--hi-panel-width);
+}
+
+.hi-root[data-revealing] .hi-plane--view {
+  transition-delay: -40ms;
 }
 
 /* The person's plane is transparent to the pointer as a whole; each surface on it

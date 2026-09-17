@@ -221,12 +221,24 @@ describe("the edge the gesture begins on", () => {
   });
 });
 
-// The settle's animation is played by the stylesheet and timed by `PanelGesture`: it
-// hands the panel to CSS at the target position, waits, and only then tells React
-// the stop changed. Those are two numbers for one duration, in two files, and
-// nothing else would notice them drifting — the symptom is a panel that snaps back
-// for a frame before it settles, which reads as a rendering glitch rather than as
-// a constant someone changed.
+// The panel is pulled back out from the middle stop over a board that is still at its
+// inset width. Unless the inset gives way while the board is being revealed, the seam
+// tears into two edges with bare paper between them for the length of the drag.
+describe("the board under a retreating panel", () => {
+  it("drops its inset while the edge is revealing it", () => {
+    const rule = CSS.match(/^\.hi-root\[data-stop="panel"\][^{]*\.hi-plane--view \{[^}]*\}/m)?.[0] ?? "";
+    expect(rule, "the middle stop insets the view plane").toContain("right: var(--hi-panel-width)");
+    expect(rule).toContain(':not([data-revealing])');
+  });
+});
+
+// The settle's animation is played by the stylesheet and guarded by `PanelGesture`: it
+// commits the stop and then refuses a new grip until the quarter-second is up, since a
+// gesture gripped mid-settle starts from the stop's resting position rather than from
+// where the box is drawn. Those are two numbers for one duration, in two files, and
+// nothing else would notice them drifting — the symptom is a panel that jumps when it
+// is caught mid-flight, which reads as a rendering glitch rather than as a constant
+// someone changed.
 describe("the settle's duration is stated once", () => {
   it("matches every panel transition in the stylesheet", () => {
     const durations = [...CSS.matchAll(/transition:[^;]*?(\d+)ms[^;]*;/g)]

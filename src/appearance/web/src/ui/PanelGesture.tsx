@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import {
   advance,
   leftOf,
-  measureOf,
+  pushes,
   reach,
   retreat,
   rolled,
@@ -113,14 +114,20 @@ import type { Shape } from "../lib/shape";
  * **The measure is not that variable, and it moves once a gesture at most.** The
  * box behind the edge is laid out at one of two widths (`measureOf`) and no gesture
  * touches it, so pulling the panel in *reveals* the conversation instead of
- * re-wrapping every line of it sixty times a second. The new measure is written at
- * the moment of release, together with the position it is settling to, so the
- * content re-lays once, while the box is already on its way.
+ * re-wrapping every line of it sixty times a second. The new measure arrives with
+ * the stop at the moment of release, so the content re-lays once, while the box is
+ * already on its way.
  *
- * **The content does not reflow under the hand.** The view plane's inset is keyed
- * on the committed stop alone, so during a gesture the panel slides *over* the view
- * and the view re-lays once, on release. A compiled board re-flowing sixty times a
- * second is the one cost of pushing that would have made pushing not worth it.
+ * **The content does not reflow under the hand, and the edge is a window onto it
+ * too.** The view plane's inset is keyed on the committed stop, so a panel pulled
+ * *in* slides over the board and the board re-lays once, on release. A panel pulled
+ * back *out* from the middle stop is the other way round: it uncovers the board, and
+ * a board still at its inset width would leave bare paper between its edge and the
+ * panel's for the whole of the drag — measured at 400px on a seam drag and 252px on
+ * a trackpad swipe. So the moment the edge passes the board's, the board takes the
+ * width it is being revealed at (`data-revealing`) and re-lays once, behind the
+ * glass. A compiled board re-flowing sixty times a second is the one cost of pushing
+ * that would have made pushing not worth it, and this is still once a gesture.
  */
 
 /** How long a settle takes. Named here because both ends need it — the stylesheet
@@ -156,9 +163,8 @@ interface PanelGestureProps {
   stop: Stop;
   /** Where to go. Called once, when the gesture is over. */
   onStop: (next: Stop) => void;
-  /** The face's root box. It carries the axis — `--hi-panel-left` and
-   * `--hi-panel-measure` — so the panel and the strip read one edge from one place
-   * rather than each being told where it is. */
+  /** The face's root box. It carries the axis — `--hi-panel-left` — so the panel and
+   * the strip read one edge from one place rather than each being told where it is. */
   root: React.RefObject<HTMLElement | null>;
 }
 
@@ -240,24 +246,35 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     state.left = next;
     state.lastT = at;
     box.style.setProperty("--hi-panel-left", `${next}px`);
+    // Past the board's own edge, the panel is uncovering the board rather than
+    // covering it. Once a gesture: pulled back in again, it stays revealed until the
+    // release says where it lands.
+    if (pushes(state.from) && next > state.startLeft) box.setAttribute("data-revealing", "");
   };
 
   /**
    * Let go, and land on a stop.
    *
-   * The throw is finished on the variables the panel is already being drawn by, and
    * **React is told immediately, not when the animation is over.** The view plane's
    * inset is keyed on the committed stop, so every millisecond between the panel
    * setting off and `onStop` being called is a millisecond the board sits at its old
    * width while the panel slides over it — and it showed: measured from the room on
    * a trackpad, the panel reached its stop at 399ms and the board did not begin
-   * giving up its width until 2282ms. Handing over immediately costs nothing,
-   * because the inline values written just above are exactly what `data-stop` is
-   * about to resolve to; the panel cannot tell the two apart, and the board and the
-   * panel now move on the same quarter-second.
+   * giving up its width until 2282ms.
    *
-   * The vars are cleared once that quarter-second is up — never before React has the
-   * stop, or the box would jump back to where it came from for a frame.
+   * **And told synchronously, so the gesture's own values go in the same breath.**
+   * The settle used to be written inline as a target in px and cleared on a
+   * quarter-second timer, on the reasoning that the panel could not tell the inline
+   * target from the stop's. It could: the transition starts at the next style pass,
+   * a frame or more after the write, so the timer fired before it had finished and
+   * clearing the target started a fresh quarter-second from wherever it had got to.
+   * The panel's tail trailed the board's, and the seam opened. With the stop committed
+   * inside `flushSync`, `data-stop` and the removal of every value the gesture wrote
+   * land in one style change, and the panel's `left` and the board's `right` start
+   * their transitions on the same frame.
+   *
+   * The timer that remains is a guard and nothing else: a gesture gripped mid-settle
+   * would start from the stop's resting position, not from where the box is drawn.
    */
   const land = (box: HTMLElement, next: Stop) => {
     const state = drag.current;
@@ -265,26 +282,19 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     box.removeAttribute("data-dragging");
     if (!state) return;
 
-    const { shape: s, onStop: go } = live.current;
-    if (next === state.from) {
-      // Changed their mind, or the gesture never went anywhere. Back to the resting
-      // position, animated by the transition the gesture switched off.
-      box.style.removeProperty("--hi-panel-left");
-      return;
+    if (next !== state.from) {
+      const { onStop: go } = live.current;
+      flushSync(() => go(next));
+      if (settling.current) clearTimeout(settling.current);
+      settling.current = setTimeout(() => {
+        settling.current = null;
+      }, PANEL_MS);
     }
-    box.style.setProperty("--hi-panel-left", `${leftOf(next, state.width, state.panelW)}px`);
-    box.style.setProperty(
-      "--hi-panel-measure",
-      `${measureOf(next, s, state.width, state.panelW)}px`,
-    );
-    go(next);
-    settling.current = setTimeout(() => {
-      settling.current = null;
-      // Cleared once the stop has landed, so the next gesture starts from the
-      // stylesheet's own resting position rather than from a stale pixel value.
-      box.style.removeProperty("--hi-panel-left");
-      box.style.removeProperty("--hi-panel-measure");
-    }, PANEL_MS);
+    // Where the gesture put the edge gives way to where the stop puts it — or, for a
+    // hand that changed its mind, back to where it began — animated by the transition
+    // the gesture switched off. A board that was being revealed is told the same stop.
+    box.style.removeProperty("--hi-panel-left");
+    box.removeAttribute("data-revealing");
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLSpanElement>) => {

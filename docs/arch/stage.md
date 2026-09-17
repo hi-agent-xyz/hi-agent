@@ -388,6 +388,54 @@ Two changes, and the second is the trackpad's alone: the stop is handed over whe
 begins rather than when it ends, and a wheel run that has reached the end of its reach lands
 then and there instead of waiting out the tail (*The trackpad's swipe* above).
 
+*September 17: "the panel cannot tell the handover apart" was not true, and the next section
+is what replaced it.*
+
+### The seam is one line under a hand too
+
+*September 17, 2026.*
+
+The section above made the seam one line **while settling**. It was two lines for as long as a
+hand was pulling the panel back out from the middle stop, and that is the gesture closing the
+panel most often is. Reported from the desktop as *visual gaps during sliding*, and measured
+frame by frame against a board on screen at 1512px, as the distance from the board's right
+edge to the panel's left:
+
+| | before | after |
+|---|---|---|
+| seam drag, `panel` → `room` | 400px, 100 frames | 0 |
+| trackpad swipe, `panel` → `room` | 252px, 139 frames | 0 |
+| fast trackpad flick, `panel` → `room` | 360px, 76 frames | 0 |
+| a drag that changes its mind and comes back | 200px, 99 frames | 0 |
+| click on the strip, `room` → `panel` | 6px, 16 frames | 0 |
+| Escape, and every gesture pulling the panel *in* | 0 | 0 |
+
+**Two causes, one per row group.**
+
+**Pulled out, the panel uncovers the board, and the board was not there.** The inset is keyed
+on the committed stop so that a board is never re-laid under a moving finger, and pulled *in*
+that costs nothing: the panel slides over a board that keeps its width. Pulled *out* it is the
+other way round. The board stayed at its inset width, and every pixel the edge moved uncovered
+paper. **So the edge is a window onto the board exactly as it is onto the panel** (*Two
+measures, and only the edge moves*): the moment it passes the board's own edge, the board is
+laid out at the width it is being revealed at — the whole frame, since `room` and `full` both
+give it that — and it re-lays once, behind the glass. A hand that brings the panel back pays
+a second re-lay on release. The reveal starts 40ms into its curve, because a transition draws
+its starting value on its first frame and the panel's edge has already moved on that frame;
+from the top of the curve it left a one-frame sliver of paper (20px on a drag, 9px on a swipe).
+
+**The handover was not atomic.** The settle's target was written inline in px and cleared on a
+`PANEL_MS` timer. The transition does not start until the next style pass, though, a frame or
+more after the write. So the timer fired before the transition finished, and clearing the value
+began a new quarter-second from wherever the panel had got to. The panel's tail trailed the
+board's, and the seam opened by a few pixels just as it closed. **The stop is now committed
+synchronously (`flushSync`), and every value the gesture wrote is removed in the same task.**
+The panel's `left` and the board's `right` take one style change and start on the same frame.
+The timer survives only as a guard against gripping mid-settle.
+
+Measured in headless Chromium with synthesised pointer and wheel input. WebKit and a real
+trackpad have not been watched.
+
 ### Both measures are composed for
 
 *September 8, 2026.*
@@ -636,6 +684,9 @@ idiom, so it still boots to the room.
   waits ~120ms before it snaps. A swipe that reaches the detent does not wait at all — see
   *The settle is where the stop is committed*, which is where the old version of this bullet
   said the beat cost nothing and was wrong.
+- **Pulling the panel back out from `panel` re-lays the board when the gesture starts, not
+  when it ends, and twice if the hand brings the panel back.** *The seam is one line under a
+  hand too* above.
 
 ### Open
 
