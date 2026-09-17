@@ -425,7 +425,7 @@ const MessageGroups = memo(function MessageGroups({ groups }: { groups: Group[] 
             <SenderAvatar sender={group.sender} role={group.role} />
             <MessageContent>
               {/* `w-full` is load-bearing, and it is what makes the bubbles'
-                  `max-w-[80%]` mean 80% OF THE RAIL. `MessageContent` puts
+                  80% cap mean 80% OF THE RAIL. `MessageContent` puts
                   `self-end` on its children on the person's side, which takes
                   the group off `stretch` and sizes it shrink-to-fit — i.e. to
                   the max-content of its widest bubble. Then that bubble's 80%
@@ -437,15 +437,26 @@ const MessageGroups = memo(function MessageGroups({ groups }: { groups: Group[] 
                   left the percentage measuring the wrong box.) Full width
                   fixes both: the cap is honest, the bubbles right-align on
                   their own `self-end`, and long paths wrap inside their
-                  bubble. */}
+                  bubble.
+
+                  The same goes one level down, for text selection: each
+                  `Bubble` spans the rail and the cap sits on its
+                  `BubbleContent`. With the shrink-wrapped `Bubble` the kit
+                  ships, the empty strip beside a short bubble was outside
+                  every box, and WebKit resolves a drag into it to "before
+                  the element" or "after" it. So pulling a selection sideways
+                  out of a line jumped to the end of the previous message and
+                  painted a stripe under it. Inside a full-width `Bubble` the
+                  same point resolves to that line's edge. */}
               <MessageGroup className="w-full">
                 {group.messages.map((message) => (
                   <Bubble
                     key={message.id}
                     align={group.role === "user" ? "end" : "start"}
                     variant={group.role === "user" ? "secondary" : "default"}
+                    className="w-full max-w-full"
                   >
-                    <BubbleContent>
+                    <BubbleContent className="max-w-[80%]">
                       {message.attachment && (
                         <AttachmentView attachment={message.attachment} />
                       )}

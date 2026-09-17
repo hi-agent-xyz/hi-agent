@@ -834,6 +834,49 @@ button,
   min-height: 0;
 }
 
+/* What a drag in the conversation selects: the words, and nothing else.
+
+   Before this, the whole scrollback was selectable, so a drag across two
+   messages picked up the timestamp between them, tinted the avatar and any
+   image beside them, and copied "2:59 PM" into the middle of what was said.
+   The rest of the scroller is `none` now and only a bubble's content is text.
+   Media inside a bubble stays out as well: WebKit paints a selected image
+   with the selection colour laid over it.
+
+   Scoped to the scroller, not `.hi-chat`, because WebKit *inherits*
+   `-webkit-user-select`. On `.hi-chat` it would reach the composer's
+   textarea in the foot, and on iOS a `none` there stops the field taking
+   input at all.
+
+   The one layout change this needs is in `ui/Chat.tsx` (a full-width
+   `Bubble`, with the 80% cap on its content). It stops a drag that leaves
+   a line sideways from jumping into the message before. */
+.hi-chat-scroller {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.hi-chat-scroller [data-slot="bubble-content"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.hi-chat-scroller [data-slot="bubble-content"] :is(img, video) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The agent's bubble is filled with the accent, and the page-wide selection
+   is the accent at 22%, so a selection there drew nothing at all — only
+   the caret's tick showed where it ended. It takes its highlight from the
+   bubble's own ink: a lighter band under cream type in the light skin, a darker
+   one under dark type in the dark skin. The ink stays the same colour in both,
+   because the global rule would otherwise swap it for `--host-fg`. */
+.hi-chat-scroller [data-slot="bubble"][data-variant="default"] ::selection {
+  background: color-mix(in srgb, var(--host-fill-ink) 34%, transparent);
+  color: var(--host-fill-ink);
+}
+
 /* The safe-area inset is here, and it is here alone: the panel reaches the floor of
    the window at every stop, so the line being written is the thing standing on the
    home indicator and nothing above it carries the notch on its behalf.
