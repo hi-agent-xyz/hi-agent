@@ -58,6 +58,13 @@ import type { Shape } from "../lib/shape";
  * ~20px where the gesture can begin — the same width the system's own edge
  * gesture claims.
  *
+ * **A mouse's press is claimed the same way, and for the same reason.** Pointer
+ * capture moves the pointer's events to the strip; it does not move the browser's
+ * own reading of the press, and WebKit reads a press dragged across a page as a
+ * text selection. Unclaimed, one drag on the edge selected 31,508 characters of the
+ * board and the conversation, highlighted across both halves of the screen.
+ * Chromium selected none, which is how it got past a check in Chromium.
+ *
  * **A tap in those twenty points may do nothing but move the panel**, and there is
  * now exactly one such band on screen instead of two — the same trade iOS makes
  * for its own edge, charged once.
@@ -298,6 +305,11 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLSpanElement>) => {
+    // Before any guard: a press on the strip is never the start of a selection,
+    // including one that lands mid-settle and grips nothing. Focus does not move
+    // either, which costs nothing — the panel goes `inert` at the room and takes
+    // the caret out with it.
+    event.preventDefault();
     const box = root.current;
     if (!box || !event.isPrimary || settling.current || drag.current) return;
     const strip = event.currentTarget;

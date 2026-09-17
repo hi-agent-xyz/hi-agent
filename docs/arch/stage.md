@@ -674,7 +674,10 @@ idiom, so it still boots to the room.
   panel** — the strip claims its touches up front, the same trade iOS makes for its own
   edge. It is charged once rather than twice now that there is one strip: at `room` those
   points are a board's right-hand edge, at `full` the panel's left-hand edge, and at `panel`
-  they straddle the seam, ten points of each.
+  they straddle the seam, ten points of each. **A mouse's press there is claimed the same
+  way** (*September 17*): pointer capture does not stop WebKit reading a press dragged across
+  the page as a text selection. Unclaimed, one drag on the edge highlighted 31,508 characters
+  across the board and the conversation, while Chromium selected none.
 - **A mouse cannot click its way from `panel` to `full`.** *One handle, and it is the seam*
   above.
 - **A settle between `panel` and `full` shows the window and the box inside it at different
