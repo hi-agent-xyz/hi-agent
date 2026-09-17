@@ -26,7 +26,9 @@ carrying only the work in hand has nothing to hide from.
 scrolls, centred on the core; pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and
 dragging pans from anywhere a tap would not open. There is no on-screen zoom control — a − /
 percentage / + stepper sat over the canvas and was removed as chrome — so a scale once taken
-stays the person's until Home is opened again.
+stays the person's until Home is opened again. Initial centring waits for both the task
+ledger and the other initial sources to settle, and for the viewport to be measured;
+centring an empty intermediate tree must not consume the one initial positioning.
 
 **Fitting to the window was tried and lost.** The chart used to open at the largest scale that
 put all of it in the window, never above 1x and never below a legibility floor of 0.7. No real
@@ -39,7 +41,7 @@ person can still pull back to the whole when that is what they want.
 
 **Height and width are both spent on legibility, not on fitting.** One appearance per kind of
 record, so a picture is never a strip inside a card; air graded by rank, so a branch can be
-seen to be one; a picture drawn large enough to read, below; and a generous 64px gutter between
+seen to be one; a picture drawn large enough to read, below; and a 48px gutter between
 ranks, because a wire runs from its parent's edge to the midpoint and arrives flat at its child,
 so a narrow gutter makes every curve the same near-vertical kink and a card can no longer be
 traced back to the branch that owns it. Each of these was once priced in scale. At 1x they are
@@ -58,7 +60,18 @@ branches as close as two siblings.
 stored 480x270, so the box draws it at exactly 2x with nothing cropped. Tiles were 120x76 —
 a crop of a different shape, too small to tell one page from another — and cards were 240x108.
 A card takes the picture's size rather than its own because the two sit in one rank as peers,
-and two sizes in a rank read as two ranks.
+and two sizes in a rank read as two ranks. Titles use up to three lines at 17px with 1.4
+line height, leaving the footer its own space instead of truncating over unused air.
+Group headings occupy a narrower 144x56 box, wrap to two lines, and use stronger text
+contrast than metadata; they remain unframed labels, not cards.
+
+**Cards separate from the canvas.** A clearer neutral border and a shallow shadow separate
+white card surfaces from a barely tinted canvas. This applies equally to the core, tasks,
+sessions and picture tiles; it does not add a status-colored border or change their sizes.
+Group headings pair their label with a small Lucide grouping icon and one of six subdued
+colors, chosen deterministically from the label rather than its position. Color identifies
+a group, not its status, and is not guaranteed unique. The common icon denotes grouping;
+Home does not guess subject-specific icons from task text or invent grouping metadata.
 
 **A card says what it is without a label, and no side of its border means anything.** There
 are two kinds of card, a task and a live session, and each used to open with a line naming

@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupColor });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -200,8 +200,19 @@ test("a group is a label, and a card is still a card beneath it", () => {
   const placed = arrange(model).placed;
   const group = placed.find((p) => p.node.kind === "group");
   const card = placed.find((p) => p.node.kind === "task");
-  assert.deepEqual([group.w, group.h], [176, 40], "a group promises no status, time or handoff");
+  assert.deepEqual([group.w, group.h], [144, 56], "a compact heading has room for two lines");
   assert.deepEqual([card.w, card.h], [240, 135]);
+  assert.equal(card.x - (group.x + group.w), 48, "a shorter gutter preserves the connector");
+});
+
+test("group colors are stable identities, not positions or task statuses", () => {
+  const labels = ["Learning", "Monitoring", "Personal", "生活类", "学习类", "监听项"];
+  const before = new Map(labels.map((label) => [label, groupColor(label)]));
+  for (const label of ["New group", ...labels.toReversed()]) {
+    assert.match(groupColor(label), /^var\(--work-group-(blue|green|teal|violet|amber|rose)\)$/);
+    if (before.has(label)) assert.equal(groupColor(label), before.get(label));
+  }
+  assert.ok(new Set(before.values()).size >= 3, "categories use multiple visual identities");
 });
 
 test("a result with no picture is not on Home at all", () => {
@@ -321,6 +332,21 @@ test("layout supports deeper nodes, rather than flattening every row into a hub 
   assertConnected(model);
   assert.equal(arrange(model).wires.length, 7);
   assert.equal(childIndex(model).get("deep:4")[0].id, "deep:5");
+});
+
+test("the core can be centred even when the tree is small or asymmetric", () => {
+  for (const count of [0, 1, 3, 20]) {
+    const chart = arrange(project({ tasks: Array.from({ length: count }, (_, i) => task(`t${i}`)) }));
+    const core = chart.placed[0];
+    for (const scale of [0.25, 1, 2]) {
+      const frame = { w: 1512, h: 850 };
+      const { canvas, offset } = stage(chart, frame, scale);
+      const left = offset.x + (core.x + core.w / 2) * scale - frame.w / 2;
+      const top = offset.y + (core.y + core.h / 2) * scale - frame.h / 2;
+      assert.ok(left >= 0 && left <= canvas.w - frame.w);
+      assert.ok(top >= 0 && top <= canvas.h - frame.h);
+    }
+  }
 });
 
 test("finished nodes gradually lose emphasis without making their text invisible", () => {

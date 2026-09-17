@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLive, useWatched, useMessages, useViews, TEMPO } from "@hi/core";
 import { flextree } from "d3-flextree";
+import { FolderTree } from "lucide-react";
 
 const COPY = {
   en: {
@@ -65,6 +66,15 @@ const TONE = { core: "var(--accent)", group: "var(--fg-mute)", todo: "var(--fg-m
   running: "var(--accent)", waiting: "var(--accent-2)", idle: "var(--fg-mute)",
   failed: "var(--danger)", interrupted: "var(--danger)", overview: "var(--accent)",
   result: "var(--accent-2)" };
+
+const GROUP_COLORS = ["blue", "green", "teal", "violet", "amber", "rose"];
+function groupColor(label) {
+  // Identity, not array position: adding or reordering groups must not recolor their neighbours.
+  let hash = 2166136261;
+  for (const char of label) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
+  hash = (hash ^ (hash >>> 16)) >>> 0;
+  return `var(--work-group-${GROUP_COLORS[hash % GROUP_COLORS.length]})`;
+}
 
 /**
  * HomeModel is a read projection, NEVER another task/session lifecycle store.
@@ -342,10 +352,9 @@ const CORE_W = 340, CORE_H = 320, CARD_W = 240, CARD_H = 135;
  * because it is also the room the wires bend in: a wire leaves its parent's edge, runs to the
  * midpoint and arrives flat at its child, so a narrow gutter makes every curve the same
  * near-vertical kink and the branch that owns a card stops being readable from its wire.
- * It was sized when the chart was fitted and width was nearly free; at 1x it is not, and a
- * two-sided chart is about 1604px wide, so a laptop window pans sideways as well as down.
+ * At 1x, a 48px gutter preserves the curve without spending a card's width on empty ranks.
  */
-const GAP_X = 64, MARGIN = 24;
+const GAP_X = 48, MARGIN = 24;
 /**
  * The air between two adjacent nodes, by **the rank their branches part at** — not by how deep
  * either of them happens to sit.
@@ -373,7 +382,7 @@ function divergence(a, b) {
  * status, no time and nothing to open, so a card-sized box would promise all three. Narrow
  * also costs the rank it adds the least width — the chart already runs wider than a laptop.
  */
-const GROUP_W = 176, GROUP_H = 40;
+const GROUP_W = 144, GROUP_H = 56;
 function dimensions(node) {
   return node?.kind === "group" ? { w: GROUP_W, h: GROUP_H } : { w: CARD_W, h: CARD_H };
 }
@@ -391,12 +400,22 @@ function dimensions(node) {
 const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
 const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
 
-/** Where the drawing sits at a scale: centred on an axis it is smaller than the window on. */
+/** Keep small drawings centred, with enough edge space to centre an asymmetric root. */
 function stage(chart, frame, scale) {
   const drawn = { w: chart.width * scale, h: chart.height * scale };
   const canvas = { w: Math.max(Math.floor(frame.w), Math.ceil(drawn.w)),
     h: Math.max(Math.floor(frame.h), Math.ceil(drawn.h)) };
-  return { canvas, offset: { x: (canvas.w - drawn.w) / 2, y: (canvas.h - drawn.h) / 2 } };
+  const offset = { x: (canvas.w - drawn.w) / 2, y: (canvas.h - drawn.h) / 2 };
+  const core = chart.placed?.find((row) => row.node.kind === "core");
+  if (core) {
+    // Asymmetric trees still need enough scrollable room to centre their root.
+    const cx = (core.x + core.w / 2) * scale, cy = (core.y + core.h / 2) * scale;
+    offset.x = Math.max(offset.x, frame.w / 2 - cx);
+    offset.y = Math.max(offset.y, frame.h / 2 - cy);
+    canvas.w = Math.ceil(Math.max(canvas.w, offset.x + drawn.w, offset.x + cx + frame.w / 2));
+    canvas.h = Math.ceil(Math.max(canvas.h, offset.y + drawn.h, offset.y + cy + frame.h / 2));
+  }
+  return { canvas, offset };
 }
 
 /** The scroll that keeps the chart point under `point` (window pixels) there across a zoom. */
@@ -477,6 +496,9 @@ export default function Home() {
   const { messages } = useMessages();
   const [source, setSource] = useState({ tasks: [], workers: [], views: [], groups: [] });
   const [loaded, setLoaded] = useState(false);
+  const [ledgerSettled, setLedgerSettled] = useState(false);
+  const [sourcesSettled, setSourcesSettled] = useState(false);
+  const [frameMeasured, setFrameMeasured] = useState(false);
   const [errors, setErrors] = useState([]);
   const [now, setNow] = useState(Date.now);
   const [frame, setFrame] = useState({ w: 1200, h: 760 });
@@ -507,7 +529,7 @@ export default function Home() {
         return next;
       });
       setErrors(results.flatMap((result, i) => result.status === "rejected" ? [requests[i][0]] : []));
-      setNow(Date.now()); setLoaded(true);
+      setNow(Date.now()); setLoaded(true); setSourcesSettled(true);
     } finally { inFlight.current = false; }
   }, []);
   useLive(refresh, { period: TEMPO.ledger });
@@ -522,12 +544,20 @@ export default function Home() {
       answer = await getJson(`/api/tasks${at}`);
     } catch {
       setErrors((prev) => (prev.includes("tasks") ? prev : [...prev, "tasks"]));
+      setLedgerSettled(true);
       return null;
     }
     setErrors((prev) => prev.filter((source) => source !== "tasks"));
-    if (answer.unchanged) return answer.version;
-    if (!Array.isArray(answer.tasks)) return null;
+    if (answer.unchanged) {
+      setLedgerSettled(true);
+      return answer.version;
+    }
+    if (!Array.isArray(answer.tasks)) {
+      setLedgerSettled(true);
+      return null;
+    }
     setSource((prev) => ({ ...prev, tasks: answer.tasks }));
+    setLedgerSettled(true);
     setNow(Date.now());
     setLoaded(true);
     return answer.version;
@@ -540,7 +570,10 @@ export default function Home() {
   useEffect(() => {
     const el = viewport.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setFrame({ w: entry.contentRect.width, h: entry.contentRect.height }));
+    const observer = new ResizeObserver(([entry]) => {
+      setFrame({ w: entry.contentRect.width, h: entry.contentRect.height });
+      setFrameMeasured(entry.contentRect.width > 0 && entry.contentRect.height > 0);
+    });
     observer.observe(el); return () => observer.disconnect();
   }, []);
   const [scale, setScale] = useState(1);
@@ -566,16 +599,20 @@ export default function Home() {
     viewport.current.scrollTo({ left: pending.current.left, top: pending.current.top, behavior: "instant" });
     pending.current = null;
   }, [scale]);
-  // Centre the core on first paint — which does nothing while the chart fits. Past that the
-  // scroll position is the person's.
+  // Centre once the initial sources and viewport are ready. Later updates keep the person's scroll.
   const centred = useRef(false);
   useLayoutEffect(() => {
-    if (!loaded || mobile || !viewport.current || centred.current) return;
+    if (!sourcesSettled || !ledgerSettled || !frameMeasured || mobile || !viewport.current || centred.current) return;
+    const el = viewport.current, style = getComputedStyle(el);
+    const height = el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const width = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    // A newly displayed error banner can resize the viewport before ResizeObserver runs.
+    if (Math.abs(height - frame.h) > 1 || Math.abs(width - frame.w) > 1) return;
     centred.current = true;
     const core = chart.placed[0];
     viewport.current.scrollTo({ left: offset.x + (core.x + core.w / 2) * scale - frame.w / 2,
       top: offset.y + (core.y + core.h / 2) * scale - frame.h / 2, behavior: "instant" });
-  }, [loaded, mobile, chart, frame, scale, offset.x, offset.y]);
+  }, [sourcesSettled, ledgerSettled, frameMeasured, mobile, chart, frame, scale, offset.x, offset.y]);
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
   // Pinch and ⌘/Ctrl-wheel zoom at the pointer. A plain wheel still scrolls. These are
   // registered by hand because React's wheel listener is passive and cannot stop the page
@@ -742,9 +779,13 @@ function Node({ node, now, children, openRef }) {
   // based on, so the person reading the chart can see why these three are one thing. It is
   // the only thing a group says beyond its name, and it opens nothing: `home.md` § Open.
   if (node.kind === "group") return <article className="hi-work__group" data-node-id={node.id}
-    data-kind="group" title={node.data.note || undefined}>{node.title}</article>;
+    data-kind="group" style={{ "--group-tone": groupColor(node.title) }}
+    title={[node.title, node.data.note].filter(Boolean).join(" · ")}>
+    <FolderTree className="hi-work__group-icon" aria-hidden="true" strokeWidth={1.8} />
+    <span>{node.title}</span>
+  </article>;
   const body = <>
-    <span className="hi-work__node-title">{node.title}</span>
+    <span className="hi-work__node-title" title={node.title}>{node.title}</span>
     <div className="hi-work__node-foot"><span className="hi-work__node-state">
       {node.kind === "activity" && <i className="hi-work__live" data-live={node.data.session.state === "running"} />}
       {L.status[state] || ""}</span>
@@ -764,7 +805,7 @@ function Branch({ nodes, ...props }) {
 }
 
 const CSS = `
-.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 28%, transparent); height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:var(--bg); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
+.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 46%, var(--bg)); --work-shadow:0 1px 2px #0000000a, 0 3px 10px #00000008; --work-group-blue:color-mix(in srgb, #3783d8 50%, var(--fg)); --work-group-green:color-mix(in srgb, #35945e 50%, var(--fg)); --work-group-teal:color-mix(in srgb, #249c9a 50%, var(--fg)); --work-group-violet:color-mix(in srgb, #996ad1 50%, var(--fg)); --work-group-amber:color-mix(in srgb, #c58a27 50%, var(--fg)); --work-group-rose:color-mix(in srgb, #cc668b 50%, var(--fg)); height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:color-mix(in srgb, var(--fg) 2%, var(--bg)); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
 .hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -795,16 +836,22 @@ const CSS = `
 .hi-work__overview p { margin:5px 0 0; font-size:16px; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
 .hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; display:flex; flex-direction:column; }
+.hi-work__node, .hi-work__core, .hi-work__tile { box-shadow:var(--work-shadow); }
 /* A heading, not a card: no border and no background, because it is a name over the cards
    below it rather than a thing beside them. */
-.hi-work__group { height:100%; display:flex; align-items:center; padding:0 4px; font-size:17px; font-weight:600; color:var(--fg-mute); letter-spacing:.02em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hi-work__group { height:100%; display:flex; align-items:center; gap:8px; padding:0 4px; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; overflow:hidden; overflow-wrap:anywhere; }
+.hi-work__group-icon { width:28px; height:28px; flex:0 0 28px; padding:5px; border-radius:7px; background:color-mix(in srgb, var(--group-tone) 12%, transparent); }
+.hi-work__group span { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:6px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
-.hi-work__node-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:19px; line-height:1.3; overflow-wrap:anywhere; font-weight:500; }
-.hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:6px; font-size:13px; color:var(--fg-mute); }
+.hi-work__node-title { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.4; overflow-wrap:anywhere; font-weight:500; }
+.hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:12px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }
+.hi-work__node { transition:border-color 160ms ease; }
+.hi-work__node:has(button:hover), .hi-work__node:focus-within { border-color:var(--fg-mute); }
+@media (prefers-reduced-motion:reduce) { .hi-work__node { transition:none; } }
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__node-state { display:flex; align-items:center; gap:6px; color:var(--node-tone); }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }
