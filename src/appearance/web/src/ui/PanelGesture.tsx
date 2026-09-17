@@ -114,9 +114,16 @@ import type { Shape } from "../lib/shape";
  * **The page is moved by a variable, not by React state.** A state update per
  * `pointermove` would re-render the shell — the conversation, the tabs, everything
  * — sixty times a second to move one box, so a gesture writes `--hi-panel-left`
- * straight onto the root element and the stylesheet turns it into geometry for the
- * panel *and* for the strip, which rides the same edge. React learns the stop when
- * the gesture is over, which is when there is finally something to tell it.
+ * straight onto the elements that ride the edge (`[data-rides-edge]`: the panel and
+ * this strip) and the stylesheet turns it into geometry for each. React learns the
+ * stop when the gesture is over, which is when there is finally something to tell it.
+ *
+ * **Onto the riders and nowhere above them**, because where a variable is written
+ * decides how much of the page every write re-styles. It was written on the root,
+ * and in WebKit that cost 33ms of style for each step of the hand with a board up —
+ * a drag held near thirty frames before anything was painted. On the riders, with
+ * the variable registered as not inheriting, a step costs well under a millisecond
+ * (`global.css` § `--hi-panel-left`).
  *
  * **The measure is not that variable, and it moves once a gesture at most.** The
  * box behind the edge is laid out at one of two widths (`measureOf`) and no gesture
@@ -170,8 +177,8 @@ interface PanelGestureProps {
   stop: Stop;
   /** Where to go. Called once, when the gesture is over. */
   onStop: (next: Stop) => void;
-  /** The face's root box. It carries the axis — `--hi-panel-left` — so the panel and
-   * the strip read one edge from one place rather than each being told where it is. */
+  /** The face's root box. It carries the stop and the gesture's own attributes, and
+   * the riders of the edge are found under it, so a gesture names them as one set. */
   root: React.RefObject<HTMLElement | null>;
 }
 
@@ -216,6 +223,8 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     panelW: number;
     /** The furthest the hand has been from where it started, for the click test. */
     travelled: number;
+    /** What the edge is written onto, found once at grip. */
+    riders: HTMLElement[];
   } | null>(null);
 
   // These three close over refs alone and read `live.current` when they run, so the
@@ -239,6 +248,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
       width,
       panelW,
       travelled: 0,
+      riders: [...box.querySelectorAll<HTMLElement>("[data-rides-edge]")],
     };
     box.setAttribute("data-dragging", "true");
   };
@@ -252,7 +262,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     if (dt > 0) state.vx = (next - state.left) / dt;
     state.left = next;
     state.lastT = at;
-    box.style.setProperty("--hi-panel-left", `${next}px`);
+    for (const rider of state.riders) rider.style.setProperty("--hi-panel-left", `${next}px`);
     // Past the board's own edge, the panel is uncovering the board rather than
     // covering it. Once a gesture: pulled back in again, it stays revealed until the
     // release says where it lands.
@@ -277,8 +287,8 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
    * clearing the target started a fresh quarter-second from wherever it had got to.
    * The panel's tail trailed the board's, and the seam opened. With the stop committed
    * inside `flushSync`, `data-stop` and the removal of every value the gesture wrote
-   * land in one style change, and the panel's `left` and the board's `right` start
-   * their transitions on the same frame.
+   * land in one style change, so the panel's `left` and the board's one step of
+   * `right` are timed from the same frame.
    *
    * The timer that remains is a guard and nothing else: a gesture gripped mid-settle
    * would start from the stop's resting position, not from where the box is drawn.
@@ -300,7 +310,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     // Where the gesture put the edge gives way to where the stop puts it — or, for a
     // hand that changed its mind, back to where it began — animated by the transition
     // the gesture switched off. A board that was being revealed is told the same stop.
-    box.style.removeProperty("--hi-panel-left");
+    for (const rider of state.riders) rider.style.removeProperty("--hi-panel-left");
     box.removeAttribute("data-revealing");
   };
 
@@ -471,6 +481,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
   return (
     <span
       className="hi-panel-edge"
+      data-rides-edge=""
       aria-hidden="true"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

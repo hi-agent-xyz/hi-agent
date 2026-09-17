@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -338,68 +339,7 @@ export function Chat({
           <StickToBottom tail={tail} viewportRef={viewportRef} />
           <MessageScrollerViewport ref={viewportRef} preserveScrollOnPrepend className="px-4 py-6">
             <MessageScrollerContent className="mx-auto w-full max-w-[var(--hi-read,52rem)] gap-6">
-              {/* One group is one item, and the item is a DIRECT child of the content.
-                  The scroller reads `data-message-id` off its own children only, so
-                  the wrapper div that used to hold the day separator hid every message
-                  from it — which quietly made `preserveScrollOnPrepend` a no-op, and
-                  scrolling back landed at the top of the page just fetched instead of
-                  holding the line being read. The separator goes inside the item.
-
-                  No `scrollAnchor`: that pins the newest item to the TOP of the
-                  viewport, which is the shape for a reply unfolding under your
-                  question. A messenger follows its foot instead — see `StickToBottom`. */}
-              {groups.map((group) => (
-                <MessageScrollerItem key={group.key} messageId={group.key}>
-                  {group.daySeparator && (
-                    <div className="my-4 text-center text-xs text-muted-foreground">
-                      {group.daySeparator}
-                    </div>
-                  )}
-                  <Message align={group.role === "user" ? "end" : "start"}>
-                    {/* First child, so `Message`'s own row-reverse on the person's
-                        side puts it on the outer edge without a second rule. */}
-                    <SenderAvatar sender={group.sender} role={group.role} />
-                    <MessageContent>
-                      {/* `w-full` is load-bearing, and it is what makes the bubbles'
-                          `max-w-[80%]` mean 80% OF THE RAIL. `MessageContent` puts
-                          `self-end` on its children on the person's side, which takes
-                          the group off `stretch` and sizes it shrink-to-fit — i.e. to
-                          the max-content of its widest bubble. Then that bubble's 80%
-                          cap resolves against its own width and clips it: a line that
-                          had room to spare wrapped one character early, every time,
-                          because it was the longest in its run. (Capping the group at
-                          `max-w-full` fixed the opposite overflow — one pasted
-                          `file:///…` path dragging the whole run past the frame — but
-                          left the percentage measuring the wrong box.) Full width
-                          fixes both: the cap is honest, the bubbles right-align on
-                          their own `self-end`, and long paths wrap inside their
-                          bubble. */}
-                      <MessageGroup className="w-full">
-                        {group.messages.map((message) => (
-                          <Bubble
-                            key={message.id}
-                            align={group.role === "user" ? "end" : "start"}
-                            variant={group.role === "user" ? "secondary" : "default"}
-                          >
-                            <BubbleContent>
-                              {message.attachment && (
-                                <AttachmentView attachment={message.attachment} />
-                              )}
-                              {message.text && <Body text={message.text} />}
-                            </BubbleContent>
-                          </Bubble>
-                        ))}
-                      </MessageGroup>
-                      <time
-                        className="mt-1 block text-[11px] text-muted-foreground"
-                        dateTime={group.messages[group.messages.length - 1]?.ts}
-                      >
-                        {TIME.format(new Date(group.messages[group.messages.length - 1]!.ts))}
-                      </time>
-                    </MessageContent>
-                  </Message>
-                </MessageScrollerItem>
-              ))}
+              <MessageGroups groups={groups} />
 
               {/* The line being recognized: a preview, so it sits outside the list
                   and is replaced by the real message when it settles. */}
@@ -444,6 +384,89 @@ export function Chat({
     </MessageScrollerProvider>
   );
 }
+
+/**
+ * The record itself, one item per group.
+ *
+ * **Memoised on `groups`, which is memoised on `messages`**, so it renders when the
+ * record changes and at no other time. `<Chat>` renders on everything the shell does —
+ * the panel moving to a stop, the interim line, the typing dots — and its foot is a
+ * fresh `children` element each time, so memoising `<Chat>` itself would never hold.
+ * Unmemoised, every one of those rendered every bubble in the scrollback: profiled on
+ * releasing the panel, the conversation was most of what was left of the release once
+ * the board had stopped re-rendering with it (`ui/ViewSlot.tsx`).
+ *
+ * A fragment, so each item is still a direct DOM child of the scroller's content,
+ * which is the only place the scroller looks for them.
+ */
+const MessageGroups = memo(function MessageGroups({ groups }: { groups: Group[] }) {
+  return (
+    <>
+      {/* One group is one item, and the item is a DIRECT child of the content.
+          The scroller reads `data-message-id` off its own children only, so
+          the wrapper div that used to hold the day separator hid every message
+          from it — which quietly made `preserveScrollOnPrepend` a no-op, and
+          scrolling back landed at the top of the page just fetched instead of
+          holding the line being read. The separator goes inside the item.
+
+          No `scrollAnchor`: that pins the newest item to the TOP of the
+          viewport, which is the shape for a reply unfolding under your
+          question. A messenger follows its foot instead — see `StickToBottom`. */}
+      {groups.map((group) => (
+        <MessageScrollerItem key={group.key} messageId={group.key}>
+          {group.daySeparator && (
+            <div className="my-4 text-center text-xs text-muted-foreground">
+              {group.daySeparator}
+            </div>
+          )}
+          <Message align={group.role === "user" ? "end" : "start"}>
+            {/* First child, so `Message`'s own row-reverse on the person's
+                side puts it on the outer edge without a second rule. */}
+            <SenderAvatar sender={group.sender} role={group.role} />
+            <MessageContent>
+              {/* `w-full` is load-bearing, and it is what makes the bubbles'
+                  `max-w-[80%]` mean 80% OF THE RAIL. `MessageContent` puts
+                  `self-end` on its children on the person's side, which takes
+                  the group off `stretch` and sizes it shrink-to-fit — i.e. to
+                  the max-content of its widest bubble. Then that bubble's 80%
+                  cap resolves against its own width and clips it: a line that
+                  had room to spare wrapped one character early, every time,
+                  because it was the longest in its run. (Capping the group at
+                  `max-w-full` fixed the opposite overflow — one pasted
+                  `file:///…` path dragging the whole run past the frame — but
+                  left the percentage measuring the wrong box.) Full width
+                  fixes both: the cap is honest, the bubbles right-align on
+                  their own `self-end`, and long paths wrap inside their
+                  bubble. */}
+              <MessageGroup className="w-full">
+                {group.messages.map((message) => (
+                  <Bubble
+                    key={message.id}
+                    align={group.role === "user" ? "end" : "start"}
+                    variant={group.role === "user" ? "secondary" : "default"}
+                  >
+                    <BubbleContent>
+                      {message.attachment && (
+                        <AttachmentView attachment={message.attachment} />
+                      )}
+                      {message.text && <Body text={message.text} />}
+                    </BubbleContent>
+                  </Bubble>
+                ))}
+              </MessageGroup>
+              <time
+                className="mt-1 block text-[11px] text-muted-foreground"
+                dateTime={group.messages[group.messages.length - 1]?.ts}
+              >
+                {TIME.format(new Date(group.messages[group.messages.length - 1]!.ts))}
+              </time>
+            </MessageContent>
+          </Message>
+        </MessageScrollerItem>
+      ))}
+    </>
+  );
+});
 
 /**
  * How far from the foot still counts as being at it. A hair more than the

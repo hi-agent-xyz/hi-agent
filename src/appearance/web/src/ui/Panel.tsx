@@ -74,6 +74,9 @@ export function Panel({ stop, tab, onTab, children, onChose, ...channels }: Pane
     <aside
       className="hi-panel"
       data-stop={stop}
+      // Positioned by the panel's left edge, which the stop rules and a drag write
+      // onto each rider (`--hi-panel-left` in `global.css`).
+      data-rides-edge=""
       aria-label="panel"
       // The room is the panel gone, so nothing in it is reachable by the focus, by
       // a screen reader, or by spatial navigation looking for something to the

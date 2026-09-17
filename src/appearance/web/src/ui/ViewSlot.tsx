@@ -1,5 +1,6 @@
 import {
   Component,
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -94,8 +95,17 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { crashed: bo
  * A view with a palette that isn't the theme's brings its own, and the border-not-
  * padding inset is what lets that one melt into the window instead of sitting in a
  * frame of paper the view never drew.
+ *
+ * **Memoised, so the host's state never re-renders the agent's.** A view reads the
+ * session through its own hooks and re-renders when what it reads changes; the slot
+ * takes no props, so nothing the shell does can be news to it. Without `memo` it was
+ * an ordinary child of the shell, and every shell render — each stop the panel moved
+ * to, each message, each interim word of a transcript — re-rendered the whole board
+ * under it. Profiled on releasing the panel with a report up: the board's own
+ * components were most of a 130ms release in Chromium, before the panel could start
+ * to settle.
  */
-export function ViewSlot() {
+export const ViewSlot = memo(function ViewSlot() {
   const { views } = useViews();
   if (views.length === 0) return null;
   return (
@@ -105,7 +115,7 @@ export function ViewSlot() {
       ))}
     </>
   );
-}
+});
 
 /**
  * One layer, holding the size question for the view inside it.

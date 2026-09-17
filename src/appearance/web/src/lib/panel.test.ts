@@ -232,6 +232,36 @@ describe("the board under a retreating panel", () => {
   });
 });
 
+// A drag writes the edge sixty times a second, so where it is written decides how much of
+// the face every write re-styles. On `.hi-root`, as an inheriting variable, that was every
+// element under it — 33ms a step in WebKit with a board up. Nothing here times a browser;
+// these hold the two things that made it cheap.
+describe("the edge is written where it is read", () => {
+  it("is registered as not inheriting", () => {
+    const rule = CSS.match(/@property --hi-panel-left \{[^}]*\}/)?.[0] ?? "";
+    expect(rule, "the edge is a registered property").not.toBe("");
+    expect(rule).toMatch(/inherits:\s*false/);
+  });
+
+  it("is declared on the riders and on nothing above them", () => {
+    const selectors = [...CSS.matchAll(/([^{}]+)\{[^}]*--hi-panel-left:[^}]*\}/g)].map((m) =>
+      m[1]!.trim(),
+    );
+    expect(selectors.length, "the stops declare the edge").toBeGreaterThan(0);
+    for (const selector of selectors) expect(selector).toContain("[data-rides-edge]");
+  });
+});
+
+// A moving `right` is a new layout of the board on every frame of a settle — 31ms a frame
+// in WebKit. The width may change in a step; it may not glide.
+describe("a settle re-lays the board once", () => {
+  it("never animates the view plane's width", () => {
+    const rules = [...CSS.matchAll(/[^{}]*\.hi-plane--view \{[^}]*\}/g)].map((m) => m[0]);
+    const animated = rules.filter((rule) => /transition/.test(rule));
+    for (const rule of animated) expect(rule).toMatch(/step-(start|end)/);
+  });
+});
+
 // The settle's animation is played by the stylesheet and guarded by `PanelGesture`: it
 // commits the stop and then refuses a new grip until the quarter-second is up, since a
 // gesture gripped mid-settle starts from the stop's resting position rather than from

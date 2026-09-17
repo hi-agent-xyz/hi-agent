@@ -420,9 +420,10 @@ paper. **So the edge is a window onto the board exactly as it is onto the panel*
 measures, and only the edge moves*): the moment it passes the board's own edge, the board is
 laid out at the width it is being revealed at — the whole frame, since `room` and `full` both
 give it that — and it re-lays once, behind the glass. A hand that brings the panel back pays
-a second re-lay on release. The reveal starts 40ms into its curve, because a transition draws
-its starting value on its first frame and the panel's edge has already moved on that frame;
-from the top of the curve it left a one-frame sliver of paper (20px on a drag, 9px on a swipe).
+a second re-lay on release. The reveal lands in one step rather than animating (*What a frame
+of the axis costs* below), which also closes the one-frame sliver an animated reveal left: a
+transition draws its starting value on its first frame, and the panel's edge has already moved
+on that frame (20px on a drag, 9px on a swipe).
 
 **The handover was not atomic.** The settle's target was written inline in px and cleared on a
 `PANEL_MS` timer. The transition does not start until the next style pass, though, a frame or
@@ -435,6 +436,56 @@ The timer survives only as a guard against gripping mid-settle.
 
 Measured in headless Chromium with synthesised pointer and wheel input. WebKit and a real
 trackpad have not been watched.
+
+### What a frame of the axis costs
+
+*September 17, 2026.*
+
+With the seam closed, the report from the desktop was that the panel still did not follow the
+hand: *the frame rate feels low*. The desktop app draws with WebKit, so it was measured there,
+against a real report on screen (8,087 elements, 6,567 of them the board's), as the main-thread
+work from a pointer event to style and layout done:
+
+| | WebKit before | WebKit after | Chromium before | Chromium after |
+|---|---|---|---|---|
+| one step of a drag | 35ms | 0ms (p95 1) | 4.9ms | 0.3ms |
+| letting go | 72ms | 17ms | 137ms | 10.5ms |
+| one frame of a settle, the board's share | 31ms | 0 | 0.1ms | 0 |
+
+**Every step of a drag re-styled the whole face.** The edge was an ordinary custom property
+written on `.hi-root`, and an ordinary custom property inherits, so every write made WebKit
+re-resolve every element under the root to see whether it read the variable. Two of them did.
+Thirty-five milliseconds a step is a drag held near thirty frames before anything was painted.
+**The edge is now registered as not inheriting and written on the elements that ride it** —
+the panel and the strip, marked `data-rides-edge` — both by the stop rules and by a drag.
+Writing an unregistered variable on those two still cost 6ms, because the panel's own 1,488
+descendants inherit it; `inherits: false` is what tells the engine none of them can be reading.
+
+**A settle re-laid the board on every frame of it.** The plane's `right` animated on the
+panel's quarter-second, and a moving `right` is a new layout of the board each frame: 31ms a
+frame in WebKit, so every open, close and release played at about thirty frames, with the
+panel dragged down alongside it. **The board's width now changes in one step per settle**, at
+the moment the panel covers the side that changes. Widening lands at once, before the panel has
+uncovered anything — the same thing the reveal does under a hand. Narrowing waits out the
+quarter-second, while the panel slides in over a board that still has its full width, and
+lands once the panel is there. This takes back *The settle is where the stop is committed*'s
+"the seam and the edge of the board move together": they are still one line wherever both can
+be seen, but the edge of the board no longer glides. Where it has to be seen move, it moves in
+one frame.
+
+**Letting go re-rendered the agent's board and the whole scrollback.** Committing the stop
+re-renders the shell, and two expensive subtrees were plain children of it: the view slot,
+whose compiled board rendered in full, and the message list, which rendered every bubble. A
+view reads the session through its own hooks, and the list depends only on the record, so both
+are memoised now. Neither renders on a stop, an interim word or the typing dots. That was every
+shell render, not only the panel's: each word of a live transcript had been re-rendering the
+board.
+
+What is left at release in WebKit is the one style pass for the new stop, and the reveal's one
+layout (~40ms) at the moment a hand first pulls the panel past the board's edge.
+
+Measured in headless WebKit and Chromium with synthesised input: main-thread time, not painted
+frames. The desktop app's own window has not been watched.
 
 ### Both measures are composed for
 
@@ -690,6 +741,9 @@ idiom, so it still boots to the room.
 - **Pulling the panel back out from `panel` re-lays the board when the gesture starts, not
   when it ends, and twice if the hand brings the panel back.** *The seam is one line under a
   hand too* above.
+- **The board does not glide to its new width.** It changes in one step per settle, behind the
+  panel on the side that changes; the side that can be seen re-lays in a single frame — at the
+  start when it widens, at the end when it narrows. *What a frame of the axis costs* above.
 
 ### Open
 
@@ -699,6 +753,13 @@ idiom, so it still boots to the room.
   one.
 - **A third tab.** Two is a thin tab strip. Nothing else has earned one yet; when something
   does, it goes here rather than growing a second navigator.
+- **Does the desktop's webview draw at the display's rate?** WebKit prefers rendering updates
+  near 60fps by default, and the desktop app's `WKWebView` is created with a default
+  configuration, so on a 120Hz display the axis presumably moves at half the rate of
+  everything else on the machine. Unmeasured: it needs the app's own window. Lifting it takes
+  a private WebKit preference (`PreferPageRenderingUpdatesNear60FPSEnabled` through
+  `_WKFeature`), and it is not free — every view animating on the page would draw twice as
+  often, which is the kind of cost the removed breathing glow was removed for.
 
 ## The phone stacks pages
 

@@ -455,6 +455,30 @@ button,
   initial-value: 420px;
 }
 
+/* Where the panel's left edge is, which is the whole of where the panel is. Every
+   stop is a position for this one edge (`lib/panel.ts`), so sliding in, sliding out,
+   widening and narrowing are one motion with different endpoints rather than four
+   animations to keep in step. Two things ride it — the panel and the strip that
+   moves it — and each carries `data-rides-edge`, so the stop rules below and a drag
+   in flight both name them as one set rather than telling them separately.
+
+   **Registered, and not inherited, because a drag writes it sixty times a second.**
+   It used to be an ordinary custom property written on `.hi-root`, and an ordinary
+   custom property inherits: every write made the engine re-resolve the style of
+   every element in the face, to see whether any of them read it. Two of them did,
+   out of 8,087 with a board up. Measured per drag step in WebKit, which is the
+   engine the desktop app draws with: **33ms on the root, ~0ms on the two riders**
+   (Chromium 4.6ms and ~0ms). Thirty-three milliseconds of style for every move of
+   the hand is a drag capped near thirty frames before a single pixel is painted,
+   and that is what "not following the hand" was. Written on an unregistered
+   property on the riders instead, the panel's own 1,488 descendants still paid 6ms;
+   `inherits: false` is what tells the engine that nothing below can be reading it. */
+@property --hi-panel-left {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+
 /* --- Root shell ------------------------------------------------------- */
 .hi-root {
   position: relative;
@@ -492,15 +516,6 @@ button,
      `ui/PanelGesture.tsx` for the drag's arithmetic, which is why it is a token and not
      a literal in one rule. */
   --hi-panel-width: min(420px, calc(100vw - 40px));
-  /* Where the panel's left edge is, which is the whole of where the panel is.
-     Every stop is a position for this one edge (`lib/panel.ts`), so sliding in,
-     sliding out, widening and narrowing are one motion with different endpoints
-     rather than four animations to keep in step. The resting value comes off
-     `data-stop` below; a drag in flight overwrites it in px and clears it on
-     release. Written on THIS element rather than on the panel, because two things
-     ride the edge — the panel and the strip that moves it — and they must not be
-     told about it separately. */
-  --hi-panel-left: 100%;
 
   /* How wide the box behind that edge is laid out — **two values and never a
      third**, the sidebar's measure or the screen's (`lib/panel.ts` § `measureOf`).
@@ -517,20 +532,28 @@ button,
   --hi-read: 52rem;
 }
 
-/* The three stops, and the only place the axis becomes geometry.
+/* The three stops, and the only place the axis becomes geometry. The edge is set on
+   the riders themselves (see `--hi-panel-left` above); a drag in flight overwrites it
+   on them in px and clears it on release.
    `docs/arch/stage.md` § *The panel, and the axis it runs on*. */
-.hi-root[data-stop="room"] {
+.hi-root[data-stop="room"] [data-rides-edge] {
   --hi-panel-left: 100%;
 }
 
 .hi-root[data-stop="panel"] {
-  --hi-panel-left: calc(100% - var(--hi-panel-width));
   --hi-panel-measure: var(--hi-panel-width);
 }
 
+.hi-root[data-stop="panel"] [data-rides-edge] {
+  --hi-panel-left: calc(100% - var(--hi-panel-width));
+}
+
 .hi-root[data-stop="full"] {
-  --hi-panel-left: 0px;
   --hi-panel-measure: 100vw;
+}
+
+.hi-root[data-stop="full"] [data-rides-edge] {
+  --hi-panel-left: 0px;
 }
 
 /* The room has no width of its own — it is the panel off the side of the screen —
@@ -546,8 +569,7 @@ button,
    track the pointer one-to-one rather than chasing it a quarter-second behind —
    the whole of what makes the gesture read as the panel being moved is that it is
    being moved. */
-.hi-root[data-dragging] .hi-panel,
-.hi-root[data-dragging] .hi-panel-edge {
+.hi-root[data-dragging] [data-rides-edge] {
   transition: none;
 }
 
@@ -581,26 +603,26 @@ button,
    (`ui/PanelGesture.tsx`); it re-flows then instead of on release, and the release
    takes the attribute away in the same style change that tells it the stop.
 
-   The reveal begins 40ms into its curve rather than at the start of it. A transition
-   draws its starting value on its first frame, and the panel's edge has already moved
-   on that frame, so a reveal from the top of the curve still showed a one-frame sliver
-   of paper — 20px on a seam drag, 9px on a trackpad swipe. Forty milliseconds in, the
-   view's edge is ~200px clear of the panel's on the first frame it is drawn, which is
-   more than a hand moves the edge in one.
+   **And a settle re-flows it once too, which is why its width does not animate.** It
+   used to: `right` ran on the panel's quarter-second, and a moving `right` is a board
+   laid out afresh on every frame of it — 31ms a frame in WebKit with a report up
+   (0.1ms in Chromium), so every open, close and release played at about thirty frames
+   with the panel dragged down alongside it. The width changes in one step instead, at
+   the one moment in each direction when the panel is standing over the part that
+   changes. Widening lands at once, before the panel has uncovered anything — the same
+   thing the reveal does under a hand. Narrowing waits out the quarter-second
+   (`step-end`), while the panel slides in over a board that still has its width, and
+   lands when the panel has arrived.
 
    `full` does not inset: it covers. A view asked to reflow to zero width is a bug,
    not a stop. */
 .hi-plane--view {
   z-index: var(--z-view);
-  transition: right 260ms var(--host-ease);
 }
 
 .hi-root[data-stop="panel"]:not([data-revealing]) .hi-plane--view {
   right: var(--hi-panel-width);
-}
-
-.hi-root[data-revealing] .hi-plane--view {
-  transition-delay: -40ms;
+  transition: right 260ms step-end;
 }
 
 /* The person's plane is transparent to the pointer as a whole; each surface on it

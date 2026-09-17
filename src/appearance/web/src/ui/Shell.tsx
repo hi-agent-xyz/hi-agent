@@ -90,9 +90,8 @@ export function Shell() {
   const [tab, setTab] = useState<Tab>("messages");
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
-  // The face's root box, handed to `<PanelGesture>`. The axis is written on it —
-  // `--hi-panel-left` and `--hi-panel-measure` — so the panel and the strip that
-  // moves it read one edge from one place.
+  // The face's root box, handed to `<PanelGesture>`. It carries the stop, and the
+  // panel and the strip that moves it are found under it as the edge's riders.
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Rotating a phone into landscape makes it `wide`, which has a stop the phone
