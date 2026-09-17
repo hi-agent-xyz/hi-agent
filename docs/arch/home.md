@@ -24,7 +24,9 @@ carrying only the work in hand has nothing to hide from.
 
 **It opens at 1x, and any other scale is the person's.** A chart larger than the window
 scrolls, centred on the core; pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and
-dragging pans from anywhere a tap would not open. There is no on-screen zoom control — a − /
+dragging pans from anywhere a tap would not open. Two fingers pan it too, except the one roll
+that is the host's: from the room, fingers moving left bring the panel in rather than panning
+([stage.md](stage.md) § *The trackpad's swipe*). There is no on-screen zoom control — a − /
 percentage / + stepper sat over the canvas and was removed as chrome — so a scale once taken
 stays the person's until Home is opened again. Initial centring waits for both the task
 ledger and the other initial sources to settle, and for the viewport to be measured;

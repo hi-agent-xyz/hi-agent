@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   advance,
   depth,
+  fills,
   initial,
   leftOf,
   measureOf,
@@ -17,6 +18,7 @@ import {
   settle,
   sideways,
   stops,
+  takes,
 } from "./panel";
 import { PANEL_MS } from "../ui/PanelGesture";
 
@@ -204,6 +206,48 @@ describe("two fingers sideways", () => {
     expect(reach("panel", "tv", WIDE, MEASURE)).toEqual([WIDE - MEASURE, WIDE]);
   });
 
+});
+
+// Home is one canvas wider than the window, so it scrolls across — and while every
+// scroller kept its own sideways roll, the swipe that opens the panel never reached the
+// axis anywhere on Home. Roll right (fingers left) is the way in.
+describe("a roll over something that scrolls across", () => {
+  it("leaves a part of the room its whole gesture", () => {
+    for (const from of ["room", "panel", "full"] as const) {
+      expect(takes("region", from, 40)).toBe(false);
+      expect(takes("region", from, -40)).toBe(false);
+    }
+  });
+
+  it("takes the way in from a room that is itself a canvas", () => {
+    expect(takes("room", "room", 40)).toBe(true);
+  });
+
+  it("leaves that canvas every other roll", () => {
+    // Back toward the room from the room moves nothing on the axis; beside the panel,
+    // the panel is on screen to be swiped on, and a sideways roll over the chart is a pan.
+    expect(takes("room", "room", -40)).toBe(false);
+    expect(takes("room", "panel", 40)).toBe(false);
+    expect(takes("room", "panel", -40)).toBe(false);
+  });
+
+  it("changes nothing where nothing scrolls across", () => {
+    for (const from of ["room", "panel", "full"] as const) {
+      expect(takes("nothing", from, 40)).toBe(true);
+      expect(takes("nothing", from, -40)).toBe(true);
+    }
+  });
+
+  it("counts a scroller as the room only when it covers most of it", () => {
+    const room = { left: 0, top: 0, right: WIDE, bottom: 900 };
+    // Home: the whole plane but the titlebar's height.
+    expect(fills({ left: 0, top: 28, right: WIDE, bottom: 900 }, room)).toBe(true);
+    // A wide table under a heading and a paragraph.
+    expect(fills({ left: 40, top: 320, right: WIDE - 40, bottom: 720 }, room)).toBe(false);
+    // Only what is inside the room counts: a canvas scrolled half out of it is half of it.
+    expect(fills({ left: 0, top: 450, right: WIDE, bottom: 1800 }, room)).toBe(false);
+    expect(fills({ left: 0, top: 0, right: 0, bottom: 0 }, { left: 0, top: 0, right: 0, bottom: 0 })).toBe(false);
+  });
 });
 
 // The strip that moves the panel stands on the panel's own left edge — the window's

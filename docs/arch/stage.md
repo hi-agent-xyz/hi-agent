@@ -657,9 +657,15 @@ be, or it would grip the edge a second time and walk on to the stop after the on
 asked for.
 
 **A run has to be taken hold of before it moves anything.** Twenty-four pixels of sideways
-travel are banked before the edge is gripped, so a scroll that leaned is not a swipe — and
-while that slop is unspent the frames are still the browser's, which is where they belong if
-it turns out to have been a scroll after all.
+travel are banked before the edge is gripped, so a scroll that leaned is not a swipe. **The
+banked frames are withheld from the browser all the same** (*September 17*). This paragraph
+used to say they were still the browser's, "which is where they belong if it turns out to
+have been a scroll after all" — but a browser decides who owns a gesture on its first frame
+with a delta and never reopens the question. Unless a listener cancels that frame, every later
+one, momentum included, arrives uncancelable (WebKit's `EventHandler::updateWheelGestureState`;
+Chromium latches the same way). Handing the slop back would hand the browser the whole run.
+Over a room with nothing to scroll that was invisible. Over a canvas it would mean the panel
+and the canvas moving together.
 
 **A scroller under the pointer keeps its own sideways gesture.** Any board with a wide table
 in it scrolls that way; if anything in the path can scroll across, the roll never reaches the
@@ -667,6 +673,21 @@ axis. (The views tab was the other example and is no longer one — its rows wra
 roll over them is the axis's.) Not conditional on that scroller having room left, either —
 a strip that reaches its end and then hands the next flick to the whole panel is a worse
 surprise than one that simply stops.
+
+**Except a scroller that is the room, for the roll that is the way in** (*September 17*). The
+rule above was written for a table inside a board, and nine days later Home became one canvas
+wider than the window. The canvas scrolls across, so under that rule the swipe fell to it
+everywhere on Home. From the room, where the room is all there is on screen, "anywhere"
+meant nowhere. It was reported exactly that way: two fingers on Home, and no panel. So a
+scroller that covers most of the view plane (three quarters of it,
+[`fills`](../../src/appearance/web/src/lib/panel.ts)) is the room rather than a part of it.
+**From `room`, the roll that brings the panel in is the axis's over it, and every other roll is
+still the canvas's** ([`takes`](../../src/appearance/web/src/lib/panel.ts)). Rolling back
+toward the room from the room moves nothing on the axis. At `panel` the panel is on screen, to
+be swiped on or pulled by its seam, so a sideways roll over the chart beside it is still a pan.
+The innermost scroller answers, so a wide table inside such a canvas is still a table. And a
+run whose first frame already went to the canvas is left to the canvas: its frames can no
+longer be cancelled, so taking it would move both.
 
 **The one that had to be got right is the one that is not a swipe at all.** Two fingers going
 down a long conversation are never perfectly vertical, and a face that read every stray pixel
@@ -731,6 +752,9 @@ idiom, so it still boots to the room.
   across the board and the conversation, while Chromium selected none.
 - **A mouse cannot click its way from `panel` to `full`.** *One handle, and it is the seam*
   above.
+- **From the room, a canvas that fills it cannot be panned toward its right-hand side by two
+  fingers.** That roll opens the panel. Dragging pans the canvas in every direction, and so
+  does a diagonal roll. *Except a scroller that is the room* above.
 - **A settle between `panel` and `full` shows the window and the box inside it at different
   sizes for a quarter of a second.** *Two measures, and only the edge moves* above.
 - **A trackpad run that stops short ends when the frames stop, which is a beat after the

@@ -212,6 +212,62 @@ export function sideways(x: number, y: number): boolean {
 }
 
 /**
+ * What a sideways roll begins over: nothing that scrolls across, a scroller that is
+ * **a part of the room** — a wide table, a strip — or a scroller that **is the room**,
+ * a view laid out as one canvas wider than the window. Home is one.
+ */
+export type Beneath = "nothing" | "region" | "room";
+
+/**
+ * Whether a sideways roll of `x` is the axis's, rather than the scroller's it began over.
+ *
+ * **A region keeps its own sideways gesture**, whether or not it has room left to
+ * scroll: the person aimed at it, and a strip that reaches its end and hands the next
+ * flick to the whole panel is a worse surprise than one that simply stops.
+ *
+ * **A scroller that is the room keeps it too — except the roll that brings the panel
+ * in from the room.** At `room` the room is all there is on screen, so a room that
+ * kept every roll would leave "two fingers, anywhere" meaning nowhere, and the one way
+ * in a laptop has that needs no aim would be gone. That was Home: its chart runs wider
+ * than the window, so it scrolls across, and the swipe never reached the axis on it.
+ * Every other roll stays the canvas's. Back toward the room from `room` moves nothing
+ * on the axis anyway; at `panel` the panel is on screen, to be swiped on or dragged by
+ * its seam, so a sideways roll over the chart beside it is still a pan.
+ */
+export function takes(beneath: Beneath, from: Stop, x: number): boolean {
+  switch (beneath) {
+    case "nothing":
+      return true;
+    case "region":
+      return false;
+    case "room":
+      return from === "room" && x > 0;
+  }
+}
+
+/** A box in window px — the shape of a `DOMRect`, so the rule is testable without one. */
+export interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** How much of the room a scroller has to cover to be the room rather than a part of
+ * it. Home covers all of it but a titlebar's height, and a board whose columns scroll
+ * across under a header covers most of it; a wide table under a paragraph covers well
+ * under this. The line is a judgement, drawn so that a table stays a table. */
+const ROOM_SHARE = 0.75;
+
+/** Whether `scroller`, as much of it as is inside `room`, is the room. */
+export function fills(scroller: Box, room: Box): boolean {
+  const w = Math.min(scroller.right, room.right) - Math.max(scroller.left, room.left);
+  const h = Math.min(scroller.bottom, room.bottom) - Math.max(scroller.top, room.top);
+  const area = (room.right - room.left) * (room.bottom - room.top);
+  return w > 0 && h > 0 && area > 0 && w * h >= ROOM_SHARE * area;
+}
+
+/**
  * How far one run of the wheel may move the edge: **to the neighbouring stop and
  * not one pixel further**, in either direction.
  *

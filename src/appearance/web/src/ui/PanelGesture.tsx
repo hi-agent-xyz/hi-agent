@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import {
   advance,
+  fills,
   leftOf,
   pushes,
   reach,
@@ -9,6 +10,8 @@ import {
   rolled,
   settle,
   sideways,
+  takes,
+  type Beneath,
   type Stop,
 } from "../lib/panel";
 import type { Shape } from "../lib/shape";
@@ -98,8 +101,10 @@ import type { Shape } from "../lib/shape";
  *
  * **The gesture has to be taken hold of before it moves anything.** A few pixels of
  * sideways drift is not a swipe, so a run banks its travel until it passes
- * `GRAB_PX` and only then grips the edge — which also leaves those first frames
- * with the browser, where they belong if it turns out to have been a scroll.
+ * `GRAB_PX` and only then grips the edge. The banked frames are withheld from the
+ * browser all the same, and have to be: a browser decides who owns a gesture on its
+ * first frame and never reopens the question, so a frame handed back while the run
+ * made up its mind would hand over the whole run.
  *
  * **A scroller under the pointer keeps its own sideways gesture.** Any board with a
  * wide table in it scrolls that way; if anything in the path can scroll across, the
@@ -108,6 +113,12 @@ import type { Shape } from "../lib/shape";
  * the next flick is a worse surprise than one that simply stops. The views tab was the
  * other example and is no longer one: its rows wrap now, so a sideways roll over them
  * reaches the axis.
+ *
+ * **Except where the scroller is the room, and the roll is the way in.** Home is one
+ * canvas wider than the window, so under that rule a laptop had no way into the panel
+ * from Home that did not need aiming — the swipe fell to the canvas everywhere. From
+ * `room`, the roll that brings the panel in is the axis's over a scroller like that;
+ * every other roll still pans it (`takes` in `lib/panel.ts`).
  *
  * ## What they share
  *
@@ -428,9 +439,21 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
         return;
       }
       if (settling.current) return;
-      // Asked once, at the start: mid-run the pointer has not moved, and a gesture
+      // Asked before the grip only: mid-run the pointer has not moved, and a gesture
       // that has taken hold is not up for reassignment.
-      if (!drag.current && scrollsAcross(event, box)) return;
+      if (!drag.current) {
+        const under = beneath(event, box);
+        if (!takes(under, live.current.stop, x)) return;
+        // **A browser settles who owns a gesture on its first frame with a delta**:
+        // unless a listener cancels that one, every later frame of the gesture —
+        // momentum included — arrives with `cancelable` false and scrolls whatever
+        // this does (WebKit: `EventHandler::updateWheelGestureState`; Chromium latches
+        // the same way). So a roll that began as a pan of the canvas cannot become the
+        // panel's halfway through, or the panel and the canvas would move together.
+        // Only here, where something competes for the frames: over a room that does
+        // not scroll across, an uncancelable run moves the panel and nothing else.
+        if (under === "room" && !event.cancelable) return;
+      }
 
       event.preventDefault();
       if (resting) clearTimeout(resting);
@@ -492,23 +515,30 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
 }
 
 /**
- * Whether something under the pointer scrolls sideways, in which case the roll is
- * its own and never reaches the axis.
+ * What under the pointer scrolls sideways — nothing, a part of the room, or the room
+ * itself — for `takes` to decide whose the roll is. The innermost scroller answers, so
+ * a wide table inside a canvas is still a table.
  *
  * Deliberately not "and has room left to scroll": a strip that reaches its end and
  * then hands the next flick to the whole panel is a worse surprise than one that
  * simply stops, and it is the surprise `overscroll-behavior: contain` is already
  * written into those scrollers to prevent.
  */
-function scrollsAcross(event: WheelEvent, root: HTMLElement): boolean {
+function beneath(event: WheelEvent, root: HTMLElement): Beneath {
   for (const node of event.composedPath()) {
-    if (node === root) return false;
+    if (node === root) return "nothing";
     if (!(node instanceof HTMLElement)) continue;
     if (node.scrollWidth <= node.clientWidth) continue;
     const across = getComputedStyle(node).overflowX;
-    if (across === "auto" || across === "scroll") return true;
+    if (across !== "auto" && across !== "scroll") continue;
+    // The room is the view plane: the whole window at `room`, the board's share of it
+    // at `panel`. A scroller in the panel is never the room.
+    const room = node.closest(".hi-plane--view");
+    return room && fills(node.getBoundingClientRect(), room.getBoundingClientRect())
+      ? "room"
+      : "region";
   }
-  return false;
+  return "nothing";
 }
 
 /** The panel's own measure at the middle stop, in px. Read off the root so the
