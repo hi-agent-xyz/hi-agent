@@ -423,14 +423,58 @@ overview content. A previous response is earlier context after a new user messag
 
 ## Retention
 
-**Age decides, and an unknown age reads as old.**
+**What keeps a closed card is the work it belongs to, not the clock. An unknown age reads
+as old.**
+
+A closed row is on a surface that draws the work in hand for one of two reasons, and they
+are not the same reason: **it just finished and the person may not know yet**, or **its
+result is still in play for something unfinished**. One window on closure time was a coarse
+proxy for the first and no proxy at all for the second, so it did both jobs badly. Measured
+on a real instance: of the 15 closed cards it was drawing, 7 were cancellations a
+`task-manager` sweep had closed in one batch 13 hours earlier, and a whole first-level group
+(4 members, none open) was drawing nothing but history. At the same time it was about to drop
+a shoe-research report the person was still working against, because the report was 24 hours
+old. The clock had no way to tell those apart.
 
 - All `todo`, `doing` and `serving` tasks are present however long they have been open.
-- A `done` or `cancelled` task is present only while its own closure is inside 24 hours.
-  Its visual emphasis decreases with age, not its readability.
+- **A `done` task whose thread is still in hand is present**: an open task shares its
+  innermost group. The person's own words for this were *the parent has not disappeared*,
+  and the innermost group is that parent. **Not the first-level branch** — a merged-video row
+  sat in `北控视频` with nothing else open while the `KNQ` branch above it was busy, and
+  testing the branch would have kept it.
+- **Everything else closed is a notice, and a notice is kept for a glance the person
+  actually gets**: until the first message they send *after* it closed, and an hour past that.
+  Nobody back yet means nobody has had their glance, so the card stays — work that closes at
+  3am is still there when they wake, which a fixed window could never promise.
+  - **The hour runs from that row's own collection, never from the newest message.** Measuring
+    it from the last thing the person said lets one message resurrect every closed row at once:
+    on the instance this was measured against, a message 0.3 hours old turned 14 closed cards
+    into 37, the oldest of them seven days closed.
+  - **This is not a read receipt, and it is not one being smuggled in.** It is the transcript's
+    own inbound timestamps, which `buildHome` already holds for the overview. No client
+    identity, no cursor, no acknowledgement — the text channel carries none of those and never
+    will ([text-transcript.md](text-transcript.md)).
+- **A cancellation is a notice whatever is running beside it.** It has nothing to come back
+  to — what it made on the way is process, and the row's own word says the work is not
+  happening — so a live sibling never keeps one.
+- **Seven days is the ceiling, and it is a backstop rather than a window.** Nothing else
+  bounds a thread that stays open, and the arrangement record cannot be the bound: it still
+  named 17 closed members, the oldest 45 hours past its closure, and
+  [nothing tidies it](#open).
 - **A closed record with no usable closure time is treated as old and is not drawn.** Not
   fabricating a missing timestamp is right; concluding from a missing one that the record
   is current is not. A task that IS drawn may still print its time as unknown.
+- Visual emphasis decreases over the first 24 hours, and **the fade no longer decides
+  retention**. The two were one constant when retention was one clock; a card kept because
+  the work it serves is still open should not read as a day-old leftover.
+
+**Whether the person has *seen* a result is deliberately not the test, and the measurement is
+why.** Their screen moves are recorded durably — 509 `went to "<ref>"` observations on that
+instance, each with a sender — but the only host-written task↔view join is the `made` line,
+and there were 17 of those across 12 of 208 tasks. A signal that can answer for 6% of rows
+cannot decide retention. Nor is seen the axis that was asked for: the report the person had
+already read is the one they wanted kept, because the work it serves was still open. Seen
+would have deleted it.
 - **A live session does not re-admit its own expired task.** That task is gone; the
   session connects to the core and keeps its own title.
 - All live sessions are present. Ended sessions are not on this surface at all.
@@ -447,6 +491,18 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
 
 ## Open
 
+- **The retention grace has never been watched on a live instance.** An hour past collection
+  was chosen because it made no difference to the measured board — 1 hour and 6 hours drew the
+  same 6 cards, because inbound messages are bursty and the first one after a closure is
+  usually hours later. That says the number is not sensitive on *that* day's traffic, not that
+  it is right. What would move it: a closure landing mid-conversation, where the person's next
+  message is a minute later and the hour is the whole of the glance they get.
+- **A closed row with pictures, in a finished thread, now leaves as fast as one with
+  nothing.** `在那段篮球 clip 上全自动标出一张正确的场地` was the measured instance of it —
+  two result tiles, its own group finished, so it is kept only by the grace. Whether a result
+  tile should itself be a keeper is undecided; the reason it is not one is that a picture says
+  nothing about whether anything still needs it, and § *Open* below already records that
+  nothing marks which result a task is *for*.
 - **A new default does not redraw the icons made from the old one.** The anchor in the drive
   is refiled whenever the binary's default differs, so everything drawn afterwards matches the
   new one, but icons already recorded were edits of the old picture and keep its look. Nothing

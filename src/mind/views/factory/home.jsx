@@ -49,7 +49,17 @@ const COPY = {
 };
 const L = typeof document !== "undefined" && /^zh/i.test(document.documentElement.lang || navigator.language)
   ? COPY.zh : COPY.en;
-const WINDOW_MS = 24 * 3600000;
+/**
+ * How long a closed card takes to fade to its dimmest, which is no longer how long it is kept
+ * — see `keepsClosed`. The two were one constant when retention was one clock, and a card that
+ * is kept because the work it serves is still open should not read as a day-old leftover for
+ * the six days the ceiling allows it.
+ */
+const FADE_MS = 24 * 3600000;
+/** How long a collected notice is kept past its collection, and the hard bound on any closed
+ *  row. Both belong to `keepsClosed`, which is where what they mean is written down. */
+const GRACE_MS = 1 * 3600000;
+const CEILING_MS = 7 * 24 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition"]);
 /**
  * **The agent's own upkeep is a group of its own, and code draws it.** Reflection, a sweep of the
@@ -204,9 +214,67 @@ const instant = (value) => {
  * "We cannot say when it closed" and "we can say it is not recent" are different claims.
  * The card may still print `Time unknown`; it may not use that to outlive the window.
  */
-const recent = (value, now) => instant(value) !== null && instant(value) >= now - WINDOW_MS;
+const recent = (value, now) => instant(value) !== null && instant(value) >= now - CEILING_MS;
 const taskEnd = (task) => task.status === "done" ? task.completedAt || task.statusSince || null
   : task.status === "cancelled" ? task.cancelledAt || task.statusSince || null : null;
+/**
+ * **What keeps a closed card is the work it belongs to, not the clock.**
+ *
+ * A closed row is on a surface that draws the work in hand for one of two reasons, and they
+ * are different reasons: it just finished and the person may not know yet (a notice), or its
+ * result is still in play for something unfinished (context). One 24h window on closure time
+ * was a coarse proxy for the first and no proxy at all for the second, so it did both jobs
+ * badly — it held a batch of seven sweep-cancelled rows for a day, and it dropped a report
+ * the person was still working against.
+ *
+ * `collected` is the person's own presence, and it is the transcript's, not a read receipt:
+ * the first inbound message *after* this row closed. No client identity, no cursor, no
+ * acknowledgement — `text.rs` has none of those and never will (`docs/arch/text-transcript.md`).
+ * It must be per-row: measuring the grace from the *newest* inbound message instead lets one
+ * message resurrect a week of history, which on the instance this was measured against turned
+ * 14 closed cards into 37.
+ *
+ * **Seen is deliberately not the test, and the measurement is why.** The person's screen moves
+ * *are* recorded durably — 509 `went to "<ref>"` observations on that instance — but the only
+ * host-written task↔view join is the `made` line, and there were 17 of those across 12 of 208
+ * tasks. A signal that can answer for 6% of rows cannot decide retention. Nor is seen the axis
+ * the person asked for: the report they had already read is the one they wanted kept, because
+ * the work it serves was still open.
+ */
+/**
+ * The first inbound message after `end`, or null if the person has not been back since. A row
+ * nobody has come back to is still a notice, so an absent one keeps the card: work that closes
+ * while they sleep is still there when they wake, which the fixed window could not promise.
+ *
+ * The transcript is the live window of 200 (`transcript.rs`), so for a row older than the
+ * oldest message kept, the earliest *retained* inbound stands in for the real one. That can
+ * only make a collection look earlier than it was, never later — it biases an old row toward
+ * leaving, which is the direction this surface already takes when it cannot tell.
+ */
+const collectedAt = (end, inbound) => {
+  const at = instant(end);
+  if (at === null) return null;
+  for (const ts of inbound) if (ts > at) return ts;
+  return null;
+};
+/**
+ * Whether a closed row is still kept, given its innermost group's own open work.
+ *
+ * `threadLive` is "an open task shares this row's innermost group" — the person's words for it
+ * were *the parent has not disappeared*, and the innermost group is that parent. The first-level
+ * branch is not: the merged-video row sat in `北控视频` with nothing else open while `KNQ` above
+ * it was busy, and testing the branch would have kept it.
+ *
+ * **A cancellation is never kept by a thread.** It has nothing to come back to — what it made
+ * on the way is process, and the row's own word says the work is not happening — so it is a
+ * notice whatever else is running beside it.
+ */
+function keepsClosed(task, end, { threadLive, inbound }, now) {
+  if (!recent(end, now)) return false;
+  if (task.status === "done" && threadLive) return true;
+  const collected = collectedAt(end, inbound);
+  return collected === null || now - collected < GRACE_MS;
+}
 const taskKey = (subject) => `task:${subject}`;
 const sessionKey = (s) => `session:${s.run}:${s.id || s.session}`;
 const plain = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -327,13 +395,31 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
   const core = add({ id: "core", kind: "core", title: L.core,
     sourceRefs: coreSessions.map((s) => ref("session", s.id)), data: { sessions: coreSessions, overviewIds: [] } });
   const grouped = groupIndex(groups);
+  // The person's own presence, oldest first, for `keepsClosed`. The transcript is already a
+  // parameter here — the overview below reads the same list — so a closed card's fate costs no
+  // record, no endpoint and no client identity that the text channel has refused to carry.
+  const inbound = messages.filter((m) => m.role === "user" && instant(m.ts) !== null)
+    .map((m) => instant(m.ts)).sort((a, b) => a - b);
+  // Which groups still hold open work, by innermost label. Built from the arrangement and the
+  // ledger together: the arrangement says what a row belongs with, the ledger says what is
+  // still running, and neither alone can answer whether a thread is finished.
+  const liveGroups = new Set();
+  for (const t of tasks) {
+    if (!OPEN.has(t.status)) continue;
+    const chain = grouped.get(t.subject);
+    if (chain?.length) liveGroups.add(chain[chain.length - 1].label);
+  }
   for (const task of tasks) {
     // **A live session no longer re-admits its expired task.** That rule kept a closed task
     // present "as context" whenever anything recent still named it, and it was the single
     // biggest leak: fifteen of the twenty-five closed tasks on the canvas arrived that way,
     // the oldest closed twenty-six days earlier, each drawn as a peer of the work in hand.
     // A session whose task has aged out now connects to the core and keeps its own title.
-    if (!OPEN.has(task.status) && !recent(taskEnd(task), now)) continue;
+    if (!OPEN.has(task.status)) {
+      const chain = grouped.get(task.subject);
+      const threadLive = !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
+      if (!keepsClosed(task, taskEnd(task), { threadLive, inbound }, now)) continue;
+    }
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
         endedAt: taskEnd(task), results: taskResults(task, views), sessions: [] } });
@@ -503,8 +589,8 @@ function nodeTime(node) {
 function emphasis(node, now) {
   const end = node.kind === "task" ? node.data.endedAt : null;
   if (instant(end) === null) return 1;
-  // Fade emphasis, not legibility: even at 24h the card and its wire remain readable.
-  return 1 - 0.22 * Math.min(1, Math.max(0, now - instant(end)) / WINDOW_MS);
+  // Fade emphasis, not legibility: even at its dimmest the card and its wire remain readable.
+  return 1 - 0.22 * Math.min(1, Math.max(0, now - instant(end)) / FADE_MS);
 }
 
 /**

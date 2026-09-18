@@ -367,7 +367,8 @@ fn icons_mut<'a>(groups: &'a mut [Group], out: &mut Vec<(&'a str, &'a mut Option
 }
 
 /// The open tasks this arrangement does not place. Closed ones are not owed a group: they
-/// leave the surface on their own, 24 hours after they close.
+/// leave the surface on their own — see `docs/arch/home.md` § *Retention* for what decides
+/// when, which is the work a row belongs to rather than a clock, and is the view's call.
 async fn ungrouped_open_tasks(
     data_dir: &Path,
     _grouping: &Grouping,

@@ -45,19 +45,79 @@ function assertConnected(model) {
   }
 }
 
-test("what is open is in hand however old it is; what is closed stays only while it is recent", () => {
+test("what is open is in hand however old it is; what is closed answers to the work, not the clock", () => {
   const model = project({ tasks: [
     task("stale-but-open", "todo", 900), task("serving", "serving", 900),
-    task("just-closed", "done", 3), task("closed-yesterday", "done", 30),
-  ] });
+    task("just-closed", "done", 3), task("closed-last-week", "done", 200),
+  ], messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(150) }] });
   assert.deepEqual(titles(model, "task"), ["just-closed", "serving", "stale-but-open"]);
   assertConnected(model);
 });
 
-test("the boundary is inclusive and uses closure time, not creation or last rewrite", () => {
+test("the ceiling is inclusive and uses closure time, not creation or last rewrite", () => {
   const at = (h) => project({ tasks: [{ ...task("a", "done", 0), completedAt: hoursAgo(h), statusSince: hoursAgo(0) }] });
-  assert.equal(ofKind(at(23.9), "task").length, 1);
-  assert.equal(ofKind(at(25), "task").length, 0);
+  assert.equal(ofKind(at(167), "task").length, 1);
+  assert.equal(ofKind(at(169), "task").length, 0);
+});
+
+test("a closed row is kept until the person has been back, and then not long", () => {
+  // A notice is kept for a glance the person actually gets. The fixed window could not promise
+  // that — work closing at 3am was a day old by the time anyone looked, and work closing
+  // mid-conversation held a card for the next 23 hours.
+  const closed = (h, inbound) => project({ tasks: [task("a", "done", h)],
+    messages: inbound.map((t, i) => ({ id: `m${i}`, role: "user", text: "ok", ts: hoursAgo(t) })) });
+  assert.equal(ofKind(closed(6, []), "task").length, 1, "nobody has been back: still a notice");
+  assert.equal(ofKind(closed(6, [8]), "task").length, 1, "they spoke BEFORE it closed; that is not collecting it");
+  assert.equal(ofKind(closed(6, [0.5]), "task").length, 1, "collected half an hour ago: inside the grace");
+  assert.equal(ofKind(closed(6, [2]), "task").length, 0, "collected two hours ago: the grace has run out");
+  // The grace is the FIRST message after it closed, not the most convenient one: a person who
+  // came back four hours ago and has kept talking has had it in front of them the whole time.
+  assert.equal(ofKind(closed(6, [4, 3, 0.1]), "task").length, 0, "collected four hours ago, still talking");
+});
+
+test("the grace runs from this row's own collection, never from the newest message", () => {
+  // Measuring it from the last inbound message lets one message resurrect every closed row at
+  // once: on the instance this was measured against, a message 0.3h old turned 14 closed cards
+  // into 37, the oldest of them seven days closed.
+  const model = project({ tasks: [task("ancient", "done", 120), task("fresh", "done", 0.2)],
+    messages: [{ id: "m0", role: "user", text: "ok", ts: hoursAgo(100) },
+      { id: "m1", role: "user", text: "ok", ts: hoursAgo(0.1) }] });
+  assert.deepEqual(titles(model, "task"), ["fresh"]);
+});
+
+test("a thread still in hand keeps its closed rows; a finished one does not", () => {
+  // The person's own words for it: the parent has not disappeared. The innermost group is that
+  // parent — testing the first-level branch instead would have kept a merged-video row whose
+  // own group was finished, because the client branch above it was busy.
+  const groups = [{ label: "client", members: [], groups: [
+    { label: "still-going", members: ["report", "open-work"] },
+    { label: "finished", members: ["merged-video"] } ] },
+    { label: "elsewhere", members: ["open-work-2"] }];
+  const model = project({ groups, tasks: [
+    task("open-work", "doing", 1), task("open-work-2", "doing", 1),
+    task("report", "done", 30), task("merged-video", "done", 30),
+  ], messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(20) }] });
+  assert.deepEqual(titles(model, "task"), ["open-work", "open-work-2", "report"]);
+  assertConnected(model);
+});
+
+test("a cancellation is a notice whatever is running beside it", () => {
+  // It has nothing to come back to: what it made on the way is process, and the row's own word
+  // says the work is not happening. Two of these, closed in one sweep, are what started this.
+  const groups = [{ label: "duties", members: ["dropped", "on-duty"] }];
+  const model = project({ groups, tasks: [task("on-duty", "serving", 1), task("dropped", "cancelled", 13)],
+    messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(11) }] });
+  assert.deepEqual(titles(model, "task"), ["on-duty"]);
+});
+
+test("a thread keeps a closed row past the fade, and the fade no longer decides retention", () => {
+  const groups = [{ label: "g", members: ["report", "open-work"] }];
+  const model = project({ groups, tasks: [task("open-work", "doing", 1), task("report", "done", 100)],
+    messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(90) }] });
+  assert.deepEqual(titles(model, "task"), ["open-work", "report"]);
+  // Dimmest, but drawn and readable: emphasis is about age, retention is about the work.
+  const node = model.nodes.find((n) => n.id === "task:report");
+  assert.equal(emphasis(node, NOW), 0.78);
 });
 
 test("an unknown closure time reads as old, not as timeless", () => {
@@ -196,7 +256,9 @@ test("a task waiting on the person says so on its card, and a closed one never d
 });
 
 test("overview uses public messages and factual transitions, never worker tail or reasoning", () => {
-  const model = project({ tasks: [task("shipped", "done", 2)], workers: [worker("w", "worker", { doing: "internal narration" })],
+  // `shipped` closed after the last thing the person said, so nobody has collected it yet and
+  // it is still drawn — this test is about what the overview may carry, not about retention.
+  const model = project({ tasks: [task("shipped", "done", 0.25)], workers: [worker("w", "worker", { doing: "internal narration" })],
     messages: [{ id: "m1", role: "user", text: "where are we", ts: hoursAgo(1) },
       { id: "m2", role: "agent", text: "shipped it", ts: hoursAgo(0.5) },
       { id: "m3", role: "tool", text: "internal narration", ts: hoursAgo(0.4) }] });
