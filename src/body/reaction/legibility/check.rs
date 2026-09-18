@@ -23,13 +23,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde::Deserialize;
 use tokio::time::Instant;
 
 use crate::foundation::config::tunables;
 use crate::mind::memory::quality::{self, Outcome, Scope};
 
-use super::judge::{Judge, json_object};
+use crate::body::legibility::judge::Judge;
+use crate::body::legibility::{Mode, read_verdict};
 
 /// Past this many characters a message is more than a short reply, and in scope. A
 /// starting value (`docs/arch/legibility.md` § Open), for the replay set to settle.
@@ -50,36 +50,9 @@ pub(crate) const MODEL_KEY: &str = "speech_check_model";
 const LEANS_ON_IT: &str = "a message sent in the same breath was sent back, and this one may \
 lean on it — read the note on that one first";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    /// Nothing is read.
-    Off,
-    /// Read and recorded; nothing is sent back. The default until the numbers say otherwise.
-    Shadow,
-    /// Read, recorded, and sent back when it fails.
-    On,
-}
-
-impl Mode {
-    pub fn from_setting(value: Option<&str>) -> Self {
-        match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-            Some("off") => Mode::Off,
-            Some("on") => Mode::On,
-            _ => Mode::Shadow,
-        }
-    }
-
-    pub fn from_tunables() -> Self {
-        Self::from_setting(tunables::get(MODE_KEY).as_deref())
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Mode::Off => "off",
-            Mode::Shadow => "shadow",
-            Mode::On => "on",
-        }
-    }
+/// The speech check's mode, from its setting.
+pub fn mode() -> Mode {
+    Mode::from_setting(tunables::get(MODE_KEY).as_deref())
 }
 
 /// What a turn gives its judges to read, gathered when the turn starts.
@@ -164,16 +137,6 @@ pub struct Speech {
     /// Held from a message's arrival at the mouth to its fate, so messages are read and
     /// sent in the order they were written.
     pub(crate) serial: tokio::sync::Mutex<()>,
-}
-
-#[derive(Deserialize)]
-struct Verdict {
-    #[serde(default)]
-    verdict: String,
-    #[serde(default)]
-    axis: Option<String>,
-    #[serde(default)]
-    note: Option<String>,
 }
 
 impl Speech {
@@ -363,31 +326,7 @@ impl CheckRecord {
         answer: anyhow::Result<String>,
         elapsed: Duration,
     ) -> Option<(Outcome, String)> {
-        let (outcome, axis, note) = match answer {
-            Ok(text) => match json_object::<Verdict>(&text) {
-                Some(v) if v.verdict.trim().eq_ignore_ascii_case("revise") => {
-                    let note = v.note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
-                    match note {
-                        Some(note) => (Outcome::Revise, quality::axis(v.axis.as_deref()), Some(note)),
-                        // A send-back with nothing to act on is not one.
-                        None => (Outcome::Pass, quality::axis(v.axis.as_deref()), None),
-                    }
-                }
-                Some(_) => (Outcome::Pass, None, None),
-                None => (Outcome::Error, None, None),
-            },
-            Err(err) if format!("{err:#}").contains("timed out") => (Outcome::Timeout, None, None),
-            Err(err) => {
-                tracing::debug!(error = %format!("{err:#}"), "speech check failed; the message goes out");
-                (Outcome::Error, None, None)
-            }
-        };
-        // A shadow verdict slower than the live limit is what live would have sent unread.
-        let outcome = if outcome != Outcome::Timeout && elapsed > CHECK_LIMIT && self.mode == Mode::Shadow {
-            Outcome::Timeout
-        } else {
-            outcome
-        };
+        let (outcome, axis, note) = read_verdict(answer, elapsed, CHECK_LIMIT, self.mode);
         tracing::info!(
             mode = self.mode.as_str(),
             scope = ?self.scope,

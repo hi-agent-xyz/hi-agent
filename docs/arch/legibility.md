@@ -55,22 +55,20 @@ A new human-facing surface ships with its seam or it does not ship
 
 ## The surfaces
 
-| What the person reads | Who writes it | Seam | State |
+| What the person reads | Who writes it | Seam | Judged |
 |---|---|---|---|
-| A spoken message | Reaction | `hi_say` | built — § A–K |
-| A task's title and its `created` line | Cognition | `hi_task_open` | designed — § L, gated |
-| A task's timeline line | any worker | `hi_task_note` | designed — § L, gated |
-| A task's *Where it stands* prose | any worker | `hi_task_note` (`stands`) | designed — § L, judged after |
-| A view on screen | a view builder | `hi_review_view` | verb exists; its verdict is not kept |
-| Home's group labels and notes | a task manager | `hi_set_home_groups` | verb exists; nothing judges it |
-| A file handed over (a report, a deck) | any worker | **none** | no verb — see § Open |
-| A report to Reaction that becomes speech | Cognition, workers | `hi_send_message` | verb exists; nothing judges it |
+| A spoken message | Reaction | `hi_say` | at the seam, gated — § A–K |
+| A task's title and its `created` line | Cognition | `hi_task_open` | at the seam, gated — § L–M |
+| A task's timeline line | any worker | `hi_task_note` | at the seam, gated — § L–M |
+| A task's *Where it stands* prose | any worker | `hi_task_note` (`stands`) | after it lands — § N |
+| A view on screen | a view builder | `hi_review_view` | by the view reviewer, its verdict kept — § *Views* |
+| Home's group labels and notes | a task manager | `hi_set_home_groups` | at the seam, gated: short, rare, and on every screen |
+| A report to Reaction that becomes speech | Cognition, workers | `hi_send_message` | as the input of the turn it feeds — § B, § G |
+| A file handed over (a report, a deck) | any worker | — | § Open |
 
-The bottom four are named, not built, and three of them already have a verb — what they need
-is the judgment recorded, not a mechanism. **A file handed to the person is the one with no
-verb at all**, and it is why this is a table of surfaces rather than a list of checks: the
-gap is found by enumerating what a person reads, never by enumerating what the host already
-intercepts.
+**A file handed to the person is the one row with no seam**, and it is why this is a table of
+surfaces rather than a list of checks: the gap is found by enumerating what a person reads,
+never by enumerating what the host already intercepts.
 
 ## The speech path
 
@@ -334,8 +332,7 @@ per turn. Model and context length are levers of this design, not background.
 
 ## Task records, end to end
 
-The second surface, designed here and built next. What a person reads of a record is not the
-file: [`tasks.jsx`](../../src/mind/views/factory/tasks.jsx) draws the title and **the newest
+What a person reads of a record is not the file: [`tasks.jsx`](../../src/mind/views/factory/tasks.jsx) draws the title and **the newest
 mind-written line, clamped to one line**, on the card, and behind it a panel that pins the
 `created` line under *What they asked for*, a `waiting` line as *Needs you*, the body's top
 prose under *Where it stands*, then the whole timeline. Home draws the title again. A title,
@@ -459,11 +456,11 @@ number (§ I) gains a surface column, Reflection (§ H) already reads that file,
 The builder writes against the standard and against **who the view is for** — a report for
 the person to review may mark what is unverified; something made to be shown to others (a
 deck, a shared page) carries no working notes, which go in the conversation. The reviewer
-judges against the same standard and already reads it. **Its verdict is not kept**, so
-nothing counts it, nothing learns from it, and a view that reads badly cannot appear in § I.
-Landing that verdict in `memory/quality/` under `surface: view` is all this surface needs and
-is the cheapest row in the table. The spoken line that goes with a view passes D and E like
-any other message.
+judges against the same standard, and **its verdict is kept** in `memory/quality/` under
+`surface: view` like any other judgment — a verdict nobody keeps is one nothing counts and
+nothing learns from, and a view that reads badly would never appear in § I. The reviewer is
+the view's judge already; what this surface needs is its answer recorded, not a second
+checker. The spoken line that goes with a view passes D and E like any other message.
 
 ## Decisions
 

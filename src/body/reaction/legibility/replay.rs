@@ -28,7 +28,7 @@ use crate::mind::memory::{Journal, layout, quality};
 use crate::types::JournalEntry;
 
 use super::check::Brief;
-use super::judge::Judge;
+use crate::body::legibility::judge::Judge;
 
 /// One model round's limit. A replayed turn is a whole generation on a long input.
 const ROUND_LIMIT: Duration = Duration::from_secs(240);

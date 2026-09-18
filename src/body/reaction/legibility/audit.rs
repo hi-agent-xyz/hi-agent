@@ -16,7 +16,7 @@ use crate::foundation::config::tunables;
 use crate::mind::memory::quality;
 
 use super::check::{Brief, Ended};
-use super::judge::{Judge, json_object};
+use crate::body::legibility::judge::{Judge, json_object};
 
 /// The `app_settings` keys: `speech_audit` = `off` turns both reads off; the model is its
 /// own tunable, since an audit can afford a slower one than the check.

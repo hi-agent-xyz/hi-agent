@@ -256,6 +256,17 @@ pub async fn for_judges(memory: &Memory, recent_chars: usize) -> (String, String
     (reader, transcript)
 }
 
+/// Who reads a task's record, for the judge of a line written on it
+/// (`docs/arch/legibility.md` § M): the owner's conduct and the per-subject read on what the
+/// agent's words have earned — the same blocks speech's judges read, for the one person whose
+/// errands the ledger holds.
+pub async fn for_record(data_dir: &Path) -> String {
+    let owner: Vec<String> = crate::foundation::config::owner(data_dir).into_iter().collect();
+    let conduct = crate::mind::memory::conduct::projection(data_dir, &owner).await;
+    let words = words_earned(data_dir).await;
+    join(&[conduct.as_str(), words.as_str()])
+}
+
 /// How far back [`shown_recently`] looks. Long enough to cover a piece of work finishing
 /// and being handed over across a few turns; short enough that it is a list of what just
 /// happened rather than a history to read.

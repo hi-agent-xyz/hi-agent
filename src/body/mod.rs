@@ -15,5 +15,6 @@
 
 pub mod capabilities;
 pub mod gesture;
+pub mod legibility;
 pub mod attachments;
 pub mod reaction;

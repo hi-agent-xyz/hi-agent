@@ -135,6 +135,8 @@ pub mod judges {
     pub const AUDIT: &str = include_str!("judges/audit.md");
     /// Whether the person's reply corrects how things were being put.
     pub const RECEPTION: &str = include_str!("judges/reception.md");
+    /// Whether one line goes onto a task's record as written.
+    pub const RECORD: &str = include_str!("judges/record.md");
 }
 
 /// A judge's whole instructions: its rubric, then the reading standard it judges against.

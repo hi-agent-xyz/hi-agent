@@ -1455,7 +1455,10 @@ async fn dispatch_tool(
             return do_review_view(data_dir, subject.as_deref(), args).await;
         }
         "hi_share_view" => return do_share_view(data_dir, args).await,
-        "hi_task_open" => return do_task_open(data_dir, args).await,
+        "hi_task_open" => {
+            let writer = slug.as_ref().map_or_else(|| "cognition".to_owned(), |s| s.to_string());
+            return do_task_open(data_dir, &writer, args).await;
+        }
         "hi_task_note" | "hi_task_set" => {
             // The row the caller serves, when it names none: the registry's `subject`, as for
             // `hi_review_view` — never a reading of the session's title.
@@ -1463,8 +1466,9 @@ async fn dispatch_tool(
                 .as_ref()
                 .and_then(|id| registry::global().status(id))
                 .and_then(|status| status.subject);
+            let writer = slug.as_ref().map_or_else(|| "worker".to_owned(), |s| s.to_string());
             return match name {
-                "hi_task_note" => do_task_note(data_dir, served.as_deref(), args).await,
+                "hi_task_note" => do_task_note(data_dir, &writer, served.as_deref(), args).await,
                 _ => do_task_set(data_dir, served.as_deref(), args).await,
             };
         }
@@ -2479,8 +2483,9 @@ fn string_list(args: &Value, key: &str) -> Option<Vec<String>> {
     Some(list.iter().filter_map(Value::as_str).map(str::to_owned).collect())
 }
 
-/// `hi_task_open` — Cognition opening a row, title and `created` line in one call.
-async fn do_task_open(data_dir: &Path, args: &Value) -> Value {
+/// `hi_task_open` — Cognition opening a row, title and `created` line in one call. The
+/// record's gate reads the pair first (`docs/arch/legibility.md` § M).
+async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
     use crate::mind::memory::tasks::{self, Liveness, Opening, TaskStatus};
 
     let status = match arg_text(args, "status").map(str::trim) {
@@ -2497,11 +2502,20 @@ async fn do_task_open(data_dir: &Path, args: &Value) -> Value {
     let field = |key: &str| {
         arg_text(args, key).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
     };
+    let subject = arg_text(args, "subject").unwrap_or_default();
+    let (title, wanted) =
+        (arg_text(args, "title").unwrap_or_default(), arg_text(args, "wanted").unwrap_or_default());
+    let writing = crate::body::legibility::record::Writing::Open { title, wanted };
+    if let crate::body::legibility::record::Review::SendBack(note) =
+        crate::body::legibility::record::review(data_dir, writer, subject, None, writing).await
+    {
+        return tool_error(&format!("not opened — {note}"));
+    }
     let opening = Opening {
-        subject: arg_text(args, "subject").unwrap_or_default().to_owned(),
-        title: arg_text(args, "title").unwrap_or_default().to_owned(),
+        subject: subject.to_owned(),
+        title: title.to_owned(),
         status,
-        wanted: arg_text(args, "wanted").unwrap_or_default().to_owned(),
+        wanted: wanted.to_owned(),
         account: field("account"),
         due_at,
         liveness: Liveness {
@@ -2519,8 +2533,9 @@ async fn do_task_open(data_dir: &Path, args: &Value) -> Value {
     }
 }
 
-/// `hi_task_note` — one thing said on a row, the store writing when and what kind.
-async fn do_task_note(data_dir: &Path, served: Option<&str>, args: &Value) -> Value {
+/// `hi_task_note` — one thing said on a row, the store writing when and what kind, after the
+/// record's gate has read it (`docs/arch/legibility.md` § M).
+async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args: &Value) -> Value {
     use crate::mind::memory::tasks::{self, Note};
 
     let Some(note) = arg_text(args, "kind").and_then(Note::parse) else {
@@ -2530,6 +2545,19 @@ async fn do_task_note(data_dir: &Path, served: Option<&str>, args: &Value) -> Va
         return tool_error("name the row — `subject` — since this session serves no task");
     };
     let text = arg_text(args, "text").unwrap_or_default();
+    // Read the row first: the judge needs it, and a row that is not there is answered as one.
+    let task = match tasks::read_task(data_dir, &subject).await {
+        Ok(Some(task)) => task,
+        Ok(None) => return no_such_row(data_dir, &subject).await,
+        Err(error) => return tool_error(&format!("could not read the row: {error}")),
+    };
+    let writing = crate::body::legibility::record::Writing::Note { note, text: text.trim() };
+    if !text.trim().is_empty()
+        && let crate::body::legibility::record::Review::SendBack(verdict) =
+            crate::body::legibility::record::review(data_dir, writer, &subject, Some(&task), writing).await
+    {
+        return tool_error(&format!("not recorded — {verdict}"));
+    }
     match tasks::note(data_dir, &subject, note, text, Utc::now()).await {
         Ok(Some(Ok(()))) => tool_ok(match note {
             Note::Stands => "on top of the account; the previous reading is beneath it",

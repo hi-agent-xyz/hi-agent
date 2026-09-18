@@ -91,6 +91,8 @@ pub enum Scope {
     Long,
     /// A record line asking the person to do something — the one whose burial costs most.
     Waiting,
+    /// A row being opened, or its name corrected: the title every card draws.
+    Opening,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

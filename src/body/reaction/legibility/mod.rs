@@ -17,7 +17,7 @@
 
 pub mod audit;
 pub mod check;
-pub mod judge;
 pub mod replay;
 
-pub use check::{Brief, Mode, Speech};
+pub use crate::body::legibility::Mode;
+pub use check::{Brief, Speech};

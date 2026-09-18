@@ -1202,7 +1202,7 @@ pub async fn start(
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
     let speech = Arc::new(legibility::Speech::new(
         memory.data_dir().to_path_buf(),
-        legibility::Mode::from_tunables(),
+        legibility::check::mode(),
     ));
     let reaction = Reaction {
         inner: Arc::new(ReactionInner {
