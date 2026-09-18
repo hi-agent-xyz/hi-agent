@@ -12,16 +12,44 @@ namespace HiAgent.Windows.Ui;
 /// the window comes and goes, this does not. The macOS twin is the menu-bar
 /// tray in `macos_tray.rs`, and the menu is deliberately the same short list.
 ///
+/// **It says what state the agent is in**, because the window that also says so
+/// can be closed and this cannot. macOS does it by putting text beside the
+/// menu-bar icon when the engine will not start (`⚠ needs setup`,
+/// `⚠ startup failed` in `lib.rs`); a notification-area icon has no text beside
+/// it, so the same fact arrives here as the tooltip, the first line of the menu,
+/// and the icon itself — colour when the agent is answering and grey when it is
+/// not. Hovering is a choice, so the colour is the part that does not need one.
+///
 /// Built in code rather than declared in XAML because the window it would be
 /// declared in is not shown at launch, and an icon in an unshown window's tree
 /// is never created. <c>ForceCreate</c> is the supported way to say that.
 /// </summary>
 internal sealed class TrayIcon : IDisposable
 {
+    /// <summary>
+    /// The mark in colour, and the same mark drained of it. Both are the brand
+    /// icon at 16/32/192 — `scripts/make-grey-ico.py` derives the second from the
+    /// first, so a change to the mark cannot leave the two showing different
+    /// logos.
+    /// </summary>
+    private const string LiveIcon = "ms-appx:///Assets/HiAgent.ico";
+
+    private const string QuietIcon = "ms-appx:///Assets/HiAgentGrey.ico";
+
+    /// <summary>
+    /// What `NOTIFYICONDATA.szTip` holds (Vista and later). Longer than this is
+    /// the platform's truncation rather than ours, and an ellipsis reads better
+    /// than a sentence cut mid-word.
+    /// </summary>
+    private const int TipLimit = 127;
+
     private readonly AppModel _model;
     private readonly MainWindow _window;
     private readonly TaskbarIcon _icon;
     private readonly MenuFlyout _menu = new();
+
+    /// <summary>Which of the two icons is up, so an unchanged state is not re-set every poll.</summary>
+    private string? _showing;
 
     internal TrayIcon(AppModel model, MainWindow window)
     {
@@ -37,9 +65,59 @@ internal sealed class TrayIcon : IDisposable
             NoLeftClickDelay = true,
         };
 
+        Sync();
+        _icon.ForceCreate();
+    }
+
+    /// <summary>Re-read the model. Cheap, and the roster is a handful of entries.</summary>
+    internal void Sync()
+    {
+        // Whether the agent is there, not whether its face has painted — the
+        // window can go a whole session without being opened, and the tray still
+        // has to be right. <see cref="AppModel.AgentIsHere"/> is where that
+        // difference is decided.
+        var here = _model.AgentIsHere;
+        var stage = _model.Stage;
+
+        ShowIcon(here ? LiveIcon : QuietIcon);
+
+        // Always "Hi Agent — what is going on", so the tooltip is worth reading
+        // rather than a label that repeats the icon. When all is well, what is
+        // going on is which agent this is attached to.
+        var sentence = here ? null : Sentence(stage);
+        _icon.ToolTipText = Clamp(
+            $"Hi Agent — {sentence ?? _model.Attached?.Label ?? "running"}");
+
+        Rebuild(sentence);
+    }
+
+    /// <summary>
+    /// What is going on, in one line. The detail when the model has one — it is
+    /// already a sentence written for a person, and wording it twice is how the
+    /// two come to disagree — and the stage's own words when it does not.
+    /// </summary>
+    private string Sentence(CoreStage stage) => _model.StageDetail ?? stage switch
+    {
+        CoreStage.Empty => "No agent yet",
+        CoreStage.Connecting => "Starting the agent…",
+        CoreStage.Waiting => "Waiting for the agent",
+        CoreStage.Failed => "The agent could not be reached",
+        _ => "Running",
+    };
+
+    private static string Clamp(string tip) =>
+        tip.Length <= TipLimit ? tip : tip[..(TipLimit - 1)] + "…";
+
+    private void ShowIcon(string source)
+    {
+        if (_showing == source)
+        {
+            return;
+        }
         try
         {
-            _icon.IconSource = new BitmapImage(new Uri("ms-appx:///Assets/HiAgent.ico"));
+            _icon.IconSource = new BitmapImage(new Uri(source));
+            _showing = source;
         }
         catch (Exception e)
         {
@@ -47,17 +125,20 @@ internal sealed class TrayIcon : IDisposable
             // the menu. Failing to start over it would not be.
             Log.Write($"tray icon image: {e.Message}");
         }
-
-        Rebuild();
-        _icon.ForceCreate();
     }
 
-    /// <summary>Re-read the model. Cheap, and the roster is a handful of entries.</summary>
-    internal void Sync() => Rebuild();
-
-    private void Rebuild()
+    private void Rebuild(string? state)
     {
         _menu.Items.Clear();
+
+        if (state is not null)
+        {
+            // A header, not a command: the menu is where a person looks after the
+            // icon has told them something is off, and it should say what without
+            // making them open the window to find out.
+            _menu.Items.Add(new MenuFlyoutItem { Text = state, IsEnabled = false });
+            _menu.Items.Add(new MenuFlyoutSeparator());
+        }
 
         _menu.Items.Add(Item("Open Hi Agent", () => _window.Reveal()));
         _menu.Items.Add(new MenuFlyoutSeparator());
@@ -82,6 +163,12 @@ internal sealed class TrayIcon : IDisposable
             _menu.Items.Add(new MenuFlyoutSeparator());
         }
 
+        // Settings are the local engine's, and there is nothing to open when this
+        // install hosts none — a person attached to somebody else's agent changes
+        // its settings on the machine running it.
+        var settings = Item("Settings…", () => _window.ShowSettingsWindow());
+        settings.IsEnabled = _model.LocalCoreUrl is not null;
+        _menu.Items.Add(settings);
         _menu.Items.Add(Item("Add an agent…", () => _window.ShowPairWindow()));
         _menu.Items.Add(new MenuFlyoutSeparator());
         _menu.Items.Add(Item("Open the agent's folder", () => Reveal(AppPaths.EngineData)));

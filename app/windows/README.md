@@ -54,6 +54,10 @@ on.
 9. Granting camera and microphone capture only to the attached core's exact web
    origin.
 10. A title bar that matches the face's own background in both appearances.
+11. Settings — General, Account, Reach, About — as a client of the engine's
+    loopback config API, holding no state and never reading a key back.
+12. A tray icon that says what state the agent is in, in colour and in words,
+    since the window that also says so can be closed.
 
 Notifications, start-at-login, Authenticode signing, and every capability
 mechanism (screen, input, accessibility, hotkey) are follow-up work — the last
@@ -61,11 +65,12 @@ group because the seam they would answer on does not exist yet.
 
 ## Status
 
-**Never compiled.** There is no Windows machine and no .NET SDK on any host this
-repo is developed from. Everything here is written blind, to be fixed forward on
-the first real build; `docs/platforms/windows.md` § *Verification* names the two
-API details most likely to be wrong and why the package versions are wildcards
-rather than pins.
+**Never compiled — though no longer untouched.** There is no Windows machine and
+no .NET SDK on any host this repo is developed from. Everything here is written
+blind, to be fixed forward on the first real build; what the v0.1.0 release runs
+on a hosted Windows runner got as far as, what they found, and which API details
+are still most likely to be wrong are all in `docs/platforms/windows.md`
+§ *Verification* — the running record.
 
 ## Dependencies worth knowing about
 

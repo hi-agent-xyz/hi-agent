@@ -64,7 +64,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      The mark, and the same mark with the colour taken out of it: the tray
+      shows the first while the agent answers and the second while it does not.
+      `scripts/make-grey-ico.py` derives the second from the first rather than
+      drawing it twice.
+    -->
     <Content Include="Assets\HiAgent.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\HiAgentGrey.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

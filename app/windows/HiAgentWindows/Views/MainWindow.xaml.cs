@@ -16,6 +16,14 @@ public sealed partial class MainWindow : Window
     private readonly AppModel _model;
     private readonly CoreWebView _face;
     private readonly TrayIcon _tray;
+    private readonly IDisposable _theme;
+    private readonly CancellationTokenSource _stopping = new();
+
+    /// <summary>The one Settings window, while it is open. A second "Settings…" raises the first.</summary>
+    private SettingsWindow? _settings;
+
+    /// <summary>Whether the engine has been asked what theme it holds. Once, per run.</summary>
+    private bool _themeAsked;
 
     internal MainWindow(AppModel model)
     {
@@ -23,6 +31,10 @@ public sealed partial class MainWindow : Window
         _model = model;
 
         Title = "Hi Agent";
+        // The windows live on this thread, and a theme arrives from an HTTP call
+        // that does not.
+        Theme.Install(DispatcherQueue);
+        _theme = Theme.Bind(Root);
         // `global::` throughout: this app's own namespace is `HiAgent.Windows`,
         // so a bare `Windows.Graphics` binds to it and not to the platform.
         AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1100, 760));
@@ -59,7 +71,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Give the tray icon back before the process ends. See <see cref="App.Quit"/>.</summary>
     internal void Shutdown()
     {
+        _stopping.Cancel();
         _model.StateChanged -= OnStateChanged;
+        _theme.Dispose();
         _tray.Dispose();
     }
 
@@ -99,6 +113,15 @@ public sealed partial class MainWindow : Window
             ? Visibility.Collapsed
             : Visibility.Visible;
 
+        // The engine holds the chosen theme, and this is the first moment there
+        // is an address to ask at. Waiting for it to answer is the follower's
+        // own job, so this only ever starts once.
+        if (!_themeAsked && _model.LocalCoreUrl is { } local)
+        {
+            _themeAsked = true;
+            _ = Theme.FollowEngineAsync(local, _stopping.Token);
+        }
+
         _face.Sync();
         _tray.Sync();
     }
@@ -116,6 +139,34 @@ public sealed partial class MainWindow : Window
     internal void ShowPairWindow()
     {
         var window = new AddAgentWindow(_model);
+        window.Activate();
+    }
+
+    /// <summary>
+    /// Open — or raise — Settings. A preferences window is a singleton on every
+    /// desktop, and a second "Settings…" brings the first one forward.
+    ///
+    /// It configures **the agent on this computer**, which is the only one it
+    /// can: the engine's config surface is loopback-gated, and a remote agent's
+    /// credentials and reachability are its own machine's business. When this
+    /// install hosts no engine there is nothing to open, and the tray says so by
+    /// greying the item rather than by opening an empty window.
+    /// </summary>
+    internal void ShowSettingsWindow()
+    {
+        if (_settings is { } open)
+        {
+            open.Activate();
+            return;
+        }
+        if (_model.LocalCoreUrl is not { } local)
+        {
+            return;
+        }
+
+        var window = new SettingsWindow(local);
+        window.Closed += (_, _) => _settings = null;
+        _settings = window;
         window.Activate();
     }
 

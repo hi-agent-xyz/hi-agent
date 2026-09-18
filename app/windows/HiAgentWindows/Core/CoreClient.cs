@@ -24,8 +24,12 @@ internal static partial class CoreClient
     /// No cookie jar. The session belongs to WebView2's store, and a second
     /// copy here would be a second place for it to be stale. iOS makes the same
     /// choice with an ephemeral `URLSession`, Android with `CookieJar.NO_COOKIES`.
+    ///
+    /// Shared with <see cref="SettingsClient"/>: one HTTP stack for the app, so
+    /// there is one place connections, timeouts and the absence of a cookie jar
+    /// are decided.
     /// </summary>
-    private static readonly HttpClient Http = new(new HttpClientHandler
+    internal static readonly HttpClient Http = new(new HttpClientHandler
     {
         UseCookies = false,
         AllowAutoRedirect = true,

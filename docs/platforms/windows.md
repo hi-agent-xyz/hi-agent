@@ -36,7 +36,9 @@ The Windows app owns:
 - session exchange and health checks;
 - the WebView2 lifecycle;
 - **the engine process** — starting it, restarting it, and killing it;
-- the notification-area icon, which is the app's presence when no window is open.
+- the notification-area icon, which is the app's presence when no window is open
+  — and which says what state the agent is in, because the window that also says
+  so can be closed.
 
 The core remains the authority for identity, credential issuance and revocation,
 memory, cognition, and channel behavior. Supervision is not management: the
@@ -98,6 +100,58 @@ folded into an `Expander` for a self-hosted core with no name in the default zon
 button drives both, because only one of the two is ever the thing being filled in.
 
 Written 2026-09-11 and, like everything else here, **never compiled** — see § *Verification*.
+
+## Settings
+
+`Views/SettingsWindow.xaml` and `Core/SettingsClient.cs`. Before it there was
+nowhere on Windows to change the credential mode, enter a key, turn the relay on
+or read the version: the engine's config store was reachable only by editing it
+by hand.
+
+It is a **client of the engine's config API** — `GET /api/settings` and four
+small PUTs, the boundary [`../core-shell-config-api.md`](../core-shell-config-api.md)
+defines — which is the same thing `HiSettings.swift` is on macOS, and the panes
+are that window's panes: General, Account, Reach, About, in that order and in its
+words. It holds no state of its own, so there is no second copy of a setting to
+drift from `config.db`; a key can be written and never read back, because the
+read surface carries `configured: bool` and no secret. Nothing about it is a
+Windows invention except the sidebar, which is a `NavigationView` because that is
+what a settings window is here.
+
+**It configures the agent on this computer, and only that one.** The config
+routes are loopback-gated at the engine, and rightly: they read and write
+credentials. So the window points at `LocalCore`'s address rather than at
+whichever core the face happens to be showing — a remote agent's credentials,
+energy and reachability belong to the machine hosting it. With no local engine
+there is nothing to open, and the tray greys the item rather than opening an
+empty window.
+
+One thing it does beyond persisting: **theme.** "Core persists, shell applies" —
+the engine stores the choice and `Ui/Theme.cs` puts it on each window's root
+element. That is not decoration. The face paints `--bg-1` directly under the
+title bar and `MainWindow.ApplyTitleBarTheme` matches the bar to it off the
+*system* theme, so a stored "dark" under a light Windows would draw a pale strip
+across the top of a dark page — the exact seam that code exists to close. The
+shell therefore reads the stored theme once the engine answers, at every start.
+
+## What the tray says
+
+macOS puts text beside the menu-bar icon when the engine will not come up —
+`⚠ needs setup`, `⚠ startup failed` ([`../../src/lib.rs`](../../src/lib.rs)). A
+notification-area icon has no text beside it, so the same fact arrives three
+ways: the tooltip (`Hi Agent — starting the agent…`), the first line of the menu,
+and the icon itself — the mark in colour while the agent answers, and drained of
+colour while it does not. Hovering is a choice; the colour is the part that is
+not.
+
+The grey mark is **derived from the colour one** by
+[`../../scripts/make-grey-ico.py`](../../scripts/make-grey-ico.py), at every size
+the icon carries, so changing the logo cannot leave the two states showing
+different marks.
+
+The sentence is the one the window would show, which is where it comes from:
+`AppModel.StageDetail` when the model has one — it is already written for a
+person — and the stage's own words otherwise. Nothing is worded twice.
 
 ## Where Windows differs from the phones
 
@@ -218,13 +272,29 @@ binds a local `make win-app` as much as CI, and the workflow installs that
 band so the pin can be satisfied.
 
 **What is verified is therefore: restore succeeds, the C# compiles, and the
-XAML compiles.** Packaging does not, yet. Nothing has linked, nothing has run,
-and no window has ever appeared. `TaskbarIcon.IconSource` — the other API
-flagged as probably wrong where it is used — remains unsettled, along with
-every runtime question behind it: whether the tray appears, whether the
-WebView loads the face, whether the engine child is adopted and dies with its
-parent. `make exe` and `make installer` are verified to *build* on the Mac
-mini and have never been run on Windows either.
+XAML compiles** — as of run 3, and of the code that existed then. Packaging
+does not, yet. Nothing has linked, nothing has run, and no window has ever
+appeared. `TaskbarIcon.IconSource` — the other API flagged as probably wrong
+where it is used — remains unsettled, along with every runtime question behind
+it: whether the tray appears, whether the WebView loads the face, whether the
+engine child is adopted and dies with its parent. `make exe` and `make
+installer` are verified to *build* on the Mac mini and have never been run on
+Windows either.
+
+**Settings and the tray's state, added 2026-09-18, have not met even that
+much** — they were written after run 3 and no run has happened since. Three
+things about them are worth knowing before the next one:
+
+- `TaskbarIcon.IconSource` is now load-bearing rather than cosmetic: it is
+  assigned on every state change, not once at startup. If that property turns
+  out to be the wrong shape, what breaks is the state signal and not just the
+  picture.
+- `ms-appx:///Assets/…` is resolved twice now, for two icons. It has never been
+  resolved once — the app is unpackaged (`WindowsPackageType=None`), where WinUI
+  maps those URIs to the install directory, and nothing has confirmed that.
+- The Settings window's controls are filled from the engine's own snapshot, so
+  the first real question it can answer is whether `GET /api/settings` reaches a
+  Windows client at all — one call, before any of the writes matter.
 
 ## See also
 

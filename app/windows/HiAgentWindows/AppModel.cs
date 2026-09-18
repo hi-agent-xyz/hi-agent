@@ -21,12 +21,43 @@ internal sealed class AppModel : IDisposable
 
     private Task? _health;
 
+    /// <summary>The attached core answered the last time it was asked.</summary>
+    private bool _answering;
+
     internal CoreStage Stage { get; private set; } = CoreStage.Connecting;
 
     /// <summary>A sentence for the person when <see cref="Stage"/> alone will not do.</summary>
     internal string? StageDetail { get; private set; }
 
+    /// <summary>
+    /// Whether the agent is there — which is a different question from whether
+    /// its face has painted, and the one the tray has to answer.
+    ///
+    /// <see cref="CoreStage"/> is the window's question. It reaches
+    /// <see cref="CoreStage.Ready"/> only when the WebView reports a load, and a
+    /// launch is quiet: the window is built and never shown, so on a machine
+    /// where nobody opens it that never happens however well the engine is
+    /// running. So a painted face counts, and so does a core that answers while
+    /// its face is still on the way — but a rejected credential does not, because
+    /// an agent this machine cannot attach to is not one you can talk to.
+    /// </summary>
+    internal bool AgentIsHere =>
+        Stage is CoreStage.Ready || (Stage is CoreStage.Connecting && _answering);
+
     internal CoreSession? Session { get; private set; }
+
+    /// <summary>
+    /// The engine on this machine, once it has an address — whether this shell
+    /// started it or adopted one already answering. Null when this install hosts
+    /// none, which is the state a dev checkout with no `hi-agent.exe` beside the
+    /// shell is in.
+    ///
+    /// This is the only core whose settings can be read or written from here:
+    /// the engine's config surface is loopback-gated, and its credentials, energy
+    /// and reachability belong to the machine hosting it rather than to whoever
+    /// is looking at its face.
+    /// </summary>
+    internal Uri? LocalCoreUrl => _local.BaseUrl;
 
     internal IReadOnlyList<RosterEntry> Roster => _roster.Entries;
 
@@ -84,6 +115,9 @@ internal sealed class AppModel : IDisposable
 
             _roster.Attach(id);
             Session = null;
+            // A different core has not answered anything yet, whatever the last
+            // one was doing.
+            _answering = false;
             Set(CoreStage.Connecting, null);
 
             if (entry.IsLocal)
@@ -293,6 +327,7 @@ internal sealed class AppModel : IDisposable
         {
             if (await CoreClient.HealthAsync(entry.Uri, token).ConfigureAwait(false) is HealthState.Here)
             {
+                _answering = true;
                 return;
             }
             if (_local.Failure is { } failure)
@@ -336,11 +371,19 @@ internal sealed class AppModel : IDisposable
                 continue;
             }
             var health = await CoreClient.HealthAsync(entry.Uri, token).ConfigureAwait(false);
+            var was = _answering;
+            _answering = health is HealthState.Here;
             if (health is HealthState.Here)
             {
                 if (Stage is CoreStage.Waiting)
                 {
                     Set(CoreStage.Connecting, null);
+                }
+                else if (!was)
+                {
+                    // The stage did not move, but whether the agent is there did,
+                    // and the tray draws from that.
+                    StateChanged?.Invoke();
                 }
                 continue;
             }
