@@ -109,6 +109,12 @@ accent outline. Reduced-motion preferences disable entry and movement effects.
 Group headings pair their label with a 40px icon, and the label is drawn in its group's
 colour. The icon is the group's own when one has been drawn for it and a shared default until
 then — see § *Icons* below. Home never picks one from a label or from task text.
+**A heading sits against the wire that reaches it**, since one box width for every group
+leaves a short label half a box of slack: on the chart's right the icon leads, on the left it
+trails, so both hug the wire from their parent and the slack falls outward where the
+children's wires bend. Siblings still line their icons up, because the flush edge is the same
+for all of them at a rank. A group taken as the centre is centred instead — it has no parent
+and its wires leave both ways, so packing it to a side drew the hub off its own spine.
 
 **A wire's colour is its category's, and never a status.** Wires used to take the status of
 the node they pointed at: accent for in progress, accent-2 for on duty and for a picture, grey

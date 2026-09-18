@@ -1105,7 +1105,10 @@ export default function Home() {
             <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
               {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} style={{ stroke: wire.paint }} />)}
             </svg>
+            {/* The side a node sits on is on the node, because a group's label is laid out
+                against the wire that reaches it — see `.hi-work__group > button` in the CSS. */}
             {chart.placed.map((row, index) => <div key={row.node.id} className="hi-work__position"
+              data-dir={row.dir}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
                 "--enter-delay": `${Math.min(index, 8) * 28}ms` }}>
               {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now} />
@@ -1260,6 +1263,18 @@ const CSS = `
 .hi-work__group { height:100%; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; }
 .hi-work__group > button { width:100%; height:100%; display:flex; align-items:center; gap:8px; padding:0 4px; border-radius:10px; overflow:hidden; overflow-wrap:anywhere; transition:background-color 160ms ease; }
 .hi-work__group > button:hover { background:color-mix(in srgb, var(--group-tone) 10%, transparent); }
+/* **A label sits against the wire that reaches it.** The box is one width for every group,
+   so a two-character label leaves half of it empty — and packed to the left, that slack fell
+   on whichever side the box happened to have. On the chart's left the icon ended up flush
+   against the wires leaving for its own children while the wire from its parent arrived a
+   half-box away, which is the one wire that says where the label belongs. So a group on the
+   left draws its icon on its right edge: both sides now hug their parent, the slack always
+   falls outward where the children's wires have room to bend, and siblings still line their
+   icons up in a column because the flush edge is the same for all of them. The centre has no
+   parent and wires leave it both ways, so it is centred — the one place packing to a side
+   drew the hub off its own spine. */
+.hi-work__position[data-dir="-1"] .hi-work__group > button { flex-direction:row-reverse; text-align:right; }
+.hi-work__position[data-dir="0"] .hi-work__group > button { justify-content:center; }
 .hi-work__group-icon { width:40px; height:40px; flex:0 0 40px; border-radius:10px; object-fit:cover; }
 /* The group at the centre is the same heading a size up, standing where the core stood. */
 .hi-work__group[data-root] { font-size:22px; }
