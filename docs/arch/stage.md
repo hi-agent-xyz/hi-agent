@@ -1588,7 +1588,17 @@ someone looking. The others are not a second review; they are the background pas
 **A thumbnail is rendered at the tile's own frame, and nobody else's** — amended September
 8, 2026, reversing the amendment of September 7 that this paragraph replaces. Every picture
 in the band, from a show or from an open, renders at a fixed 1280×720 and lands on disk as
-480×270. One picture per view, every face reads it, nothing is passed about who is asking.
+960×540. One picture per view, every face reads it, nothing is passed about who is asking.
+
+**The frame is a constant; so is the density, and it is set by the largest box rather than by
+the reader.** Amended September 18, 2026. The render is taken at DPR 2 — 2560×1440 for the
+same 1280×720 layout — and downscaled to 960×540, so the reduction is a supersample rather
+than a resize of a 1× rasterisation. 960 is where Home reads a picture at its largest: a
+240×135 CSS box at 2× zoom on a 2× screen. At 480 the stored picture was exactly 1:1 only at
+1× zoom on a retina screen, and everything past that was a plain upscale — the zoom range
+exists to reach in far enough to read a picture, and reaching in was what made it soft. A
+picture short of 960 across is re-taken by the same writer-not-reader rule that re-takes a
+wrong shape.
 
 **The September 7 reasoning is worth keeping**, because it was sound and its conclusion was
 still wrong. What was seen live: a phone reported at 12:11 that day and never yielded the

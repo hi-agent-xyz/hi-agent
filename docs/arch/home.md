@@ -88,7 +88,10 @@ Divergence, not depth, is the quantity: depth would still put two deep nodes fro
 branches as close as two siblings.
 
 **Every card and every picture is one 240x135 box.** A shot is rendered at a 16:9 frame and
-stored 480x270, so the box draws it at exactly 2x with nothing cropped. Tiles were 120x76 —
+stored 960x540, so the box draws it with nothing cropped and four image pixels to a CSS
+pixel — which is 1:1 *device* pixels at full zoom on a retina screen. Stored 480x270 it was
+1:1 at 1x and a plain upscale from there, so zooming in to look at a picture, which is what
+the zoom range reaches in for, was the one act that blurred it. Tiles were 120x76 —
 a crop of a different shape, too small to tell one page from another — and cards were 240x108.
 A card takes the picture's size rather than its own because the two sit in one rank as peers,
 and two sizes in a rank read as two ranks. Titles use up to three lines at 17px with 1.4

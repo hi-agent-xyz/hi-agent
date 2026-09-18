@@ -474,7 +474,8 @@ test("every picture is an image node below its task, and no card wears one", () 
     ["result:views/slide", "result:views/other-slide"]);
   for (const id of ["result:views/slide", "result:views/other-slide"]) {
     const tile = arrange(shots).placed.find((p) => p.node.id === id);
-    // A shot is stored 480x270, so a tile draws it at exactly 2x, and a card is that box too.
+    // A shot is stored 960x540, so a tile has device pixels to spare at full zoom, and a
+    // card is that box too.
     assert.deepEqual([tile.w, tile.h], [240, 135], "and every tile is the size of a card");
   }
 

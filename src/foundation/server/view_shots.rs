@@ -34,6 +34,11 @@
 //! recognised in a 118x76 box, and the box is 16:9; a picture of any other shape arrives
 //! there letterboxed, which is the one defect at this size a person can actually see.
 //!
+//! **The frame is fixed; the density is set by the largest box, at its largest zoom.** Home
+//! draws the same picture at 240x135 CSS px and zooms to 2x, so on a retina screen it is
+//! read at 960x540 device pixels — which is what [`THUMB_WIDTH`] is, and why the render is
+//! taken at 2x. Neither number is a reading of who is asking.
+//!
 //! It was the reader's frame for a day, and that is a lesson worth keeping. The argument
 //! was that a view is responsive, so a picture taken at 393px is a picture of the mobile
 //! layout and not of what a desktop band is about to show. True, and invisible at 118x76 —
@@ -65,9 +70,20 @@ use std::path::{Path, PathBuf};
 
 use crate::body::capabilities::view_render;
 
-/// The thumbnail's long edge, in pixels. The largest box a shot is drawn in is Home's
-/// 240×135 CSS px, so this is 2× that, while keeping a shot around 40–80 KB.
-const THUMB_WIDTH: u32 = 480;
+/// The thumbnail's long edge, in pixels.
+///
+/// **A picture is sized by the most device pixels it is ever drawn into, not by the box it
+/// sits in.** The largest box is Home's 240×135 CSS px — but Home zooms to 2×, and the
+/// screens these are read on are 2× again, so at its largest that box is 960×540 *device*
+/// pixels. At 480 a shot was 1:1 only at 1× zoom on a retina screen and a plain upscale
+/// everywhere past it, which made zooming in to look at a picture — the thing the zoom range
+/// reaches in *for* — the one act guaranteed to blur it.
+///
+/// The cost is bytes, measured on a real capture of the same views: `factory/tasks` 8 KB →
+/// 32 KB, `factory/home` 24 KB → 124 KB, a dense research view 96 KB → 247 KB. A full cache
+/// goes from roughly 100 MB to 300 MB — 0.4% of a data dir whose journal and codex home are
+/// tens of gigabytes, which is why it does not buy a second format or a tighter [`KEEP`].
+const THUMB_WIDTH: u32 = 960;
 
 /// How many shots to keep. The history is bounded at 24 entries, but the *cache* is
 /// keyed by artifact and would otherwise grow with every view ever recompiled. This
@@ -82,14 +98,17 @@ const KEEP: usize = 200;
 const REFRESH_AFTER: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// The frame every thumbnail is rendered at: the tile's own 16:9, at a size a view lays
-/// itself out for like a desktop window. Downscaling puts 480x270 on disk, which fills the
-/// tile exactly on every device.
+/// itself out for like a desktop window, **at 2× device pixels**. 1280×720 is the layout the
+/// view sees; the capture comes back 2560×1440 and downscales to [`THUMB_WIDTH`]×540, so the
+/// reduction is a supersample rather than a resize of a 1× rasterisation — text and hairlines
+/// land with the antialiasing a retina screen would have given them.
 ///
-/// A constant rather than a reading of the stage, and that is the point — see the module
-/// docs. It is also why nothing here takes an `X-HI-Face`: there is no longer a question
-/// a face could answer.
+/// The *frame* is a constant rather than a reading of the stage, and that is the point — see
+/// the module docs. It is also why nothing here takes an `X-HI-Face`: there is no longer a
+/// question a face could answer. The *density* was never a question about the reader either;
+/// it is set by the box, and every box is the same box.
 const TILE: view_render::Viewport =
-    view_render::Viewport { width: 1280, height: 720, scale: 1.0 };
+    view_render::Viewport { width: 1280, height: 720, scale: 2.0 };
 
 /// How far a picture's aspect may sit from [`TILE`]'s before it is re-taken. Tight,
 /// because the render target is a constant and anything off it was written by a version
@@ -167,7 +186,7 @@ pub fn url_for_ref(data_dir: &Path, view_ref: &str) -> Option<String> {
 }
 
 /// Does the picture behind `view_ref` need taking — is there none at all, or is the one
-/// on disk of some frame other than [`TILE`]?
+/// on disk of some frame or density other than [`TILE`]'s?
 ///
 /// The second half is what carries a core off the pictures an older version left at these
 /// paths. Deliberately not the whole of [`take_ref`]'s rule: the fifteen-minute clock and
@@ -256,10 +275,11 @@ impl Keep {
 
 /// Is `path` a picture we are content to keep?
 ///
-/// The shape check is unconditional — a record shot's too. It is not a judgement about
-/// the reader (there is no reader here any more) but about the writer: anything not
-/// [`TILE`]-shaped was rendered by a version that aimed at a different frame, and the tile
-/// it goes into is 16:9 whoever is holding it.
+/// The shape-and-size check is unconditional — a record shot's too. It is not a judgement
+/// about the reader (there is no reader here any more) but about the writer: anything not
+/// [`TILE`]-shaped or short of [`THUMB_WIDTH`] was rendered by a version that aimed at a
+/// different frame or a lower density, and the tile it goes into is 16:9 at 960 device pixels
+/// whoever is holding it.
 fn good_enough(path: &Path, keep: Keep) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
@@ -281,16 +301,24 @@ fn good_enough(path: &Path, keep: Keep) -> bool {
     }
 }
 
-/// Is the picture at `path` shaped like the tile it is going into?
+/// Does the picture at `path` fill the tile it is going into — in shape, and in pixels?
 ///
 /// Reads the PNG header only — [`image::image_dimensions`] does not decode the pixels —
 /// so this is a `stat` and a few bytes on a path that is already being `stat`ed. A file
 /// whose dimensions cannot be read is not a picture worth keeping, so it answers false
 /// and the caller re-takes it.
+///
+/// The width floor is exact rather than tolerant, and it cannot oscillate: [`downscale`]
+/// caps at [`THUMB_WIDTH`] and never blows up, and every capture this renderer takes is
+/// wider than that — 2560 at [`TILE`]'s density, and still 1280 on a browser that ignored
+/// the density — so what replaces a rejected file is always exactly 960 wide.
 fn fills_the_tile(path: &Path) -> bool {
     let Ok((width, height)) = image::image_dimensions(path) else {
         return false;
     };
+    if width < THUMB_WIDTH {
+        return false;
+    }
     let have = width as f64 / height.max(1) as f64;
     let want = TILE.width as f64 / TILE.height as f64;
     if !have.is_finite() {
@@ -340,9 +368,10 @@ async fn run(path: &Path, module_url: &str, keep: Keep) -> anyhow::Result<bool> 
     let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url);
     // The tile's own frame, not the stage's. `RenderRequest::new` starts from the stage,
     // which is right for a review — that is a picture of what someone is reading on — and
-    // wrong for a thumbnail, which is a picture *of a place*, read at 118x76 in a box that
-    // is 16:9 on every device. It is already at 1x: a tile does not want retina pixels it
-    // is about to throw away.
+    // wrong for a thumbnail, which is a picture *of a place*, read in a box that is 16:9 on
+    // every device. The 2x in it is not the stage's either: the box is 960 device pixels
+    // across at Home's full zoom on a retina screen, and a picture has to be rendered at the
+    // pixels it is read at.
     req.viewport = TILE;
     // The skin the stage is in. Unlike the frame this genuinely is a fact about the
     // person — a light picture of a view they read dark is a wrong picture of it — and
@@ -508,7 +537,7 @@ mod tests {
 
         write_png(&path, 393, 852);
         assert!(!good_enough(&path, keep), "a portrait phone picture");
-        write_png(&path, 480, 300);
+        write_png(&path, 960, 600);
         assert!(!good_enough(&path, keep), "a 1280x800 stage picture");
 
         write_tile(&path);
@@ -520,8 +549,24 @@ mod tests {
         );
         assert!(fills_the_tile(&path));
 
-        write_png(&path, 479, 271);
-        assert!(good_enough(&path, keep), "1.006 off is the same picture, not a re-render");
+        write_png(&path, 963, 540);
+        assert!(good_enough(&path, keep), "1.003 off is the same picture, not a re-render");
+    }
+
+    /// The same rule carries a core off the 480x270 pictures every version before
+    /// 2026-09-18 wrote: right shape, half the pixels of the box Home draws them in at
+    /// full zoom. They heal one at a time on the band's read, like a wrong shape does.
+    #[test]
+    fn a_picture_of_the_right_shape_but_too_few_pixels_is_re_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+
+        write_png(&path, 480, 270);
+        assert!(!fills_the_tile(&path), "16:9, and half the width the tile is read at");
+        assert!(!good_enough(&path, Keep::write_once()), "a record shot heals too");
+
+        write_tile(&path);
+        assert!(fills_the_tile(&path));
     }
 
     /// The agent rewrites views, and a picture of the build before the rewrite is wrong
@@ -552,12 +597,12 @@ mod tests {
 
     #[test]
     fn a_wide_screenshot_comes_back_as_a_tile() {
-        let wide = image::DynamicImage::new_rgb8(1280, 800);
+        let wide = image::DynamicImage::new_rgb8(2560, 1600);
         let mut png = Vec::new();
         wide.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
 
         let thumb = image::load_from_memory(&downscale(&png).unwrap()).unwrap();
         assert_eq!(thumb.width(), THUMB_WIDTH);
-        assert_eq!(thumb.height(), 300, "the frame's aspect is kept");
+        assert_eq!(thumb.height(), 600, "the frame's aspect is kept");
     }
 }

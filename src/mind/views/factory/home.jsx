@@ -595,9 +595,12 @@ function emphasis(node, now) {
 
 /**
  * **A card is the size of a picture, and a picture is the size of its shot.** Shots are
- * rendered at a 16:9 frame and stored 480x270 (`view_shots.rs`), so 240x135 draws one at
- * exactly 2x with nothing cropped. A card is the same box because the two sit in one rank as
- * peers of one another: two sizes there made the rank read as two ranks.
+ * rendered at a 16:9 frame and stored 960x540 (`view_shots.rs`), so 240x135 draws one with
+ * nothing cropped and four image pixels to a CSS pixel — which is exactly 1:1 device pixels
+ * at `ZOOM_MAX` on a retina screen. Stored 480x270 it was 1:1 at 1x and an upscale from
+ * there, so the zoom that reaches in to look at a picture was the thing that blurred it.
+ * A card is the same box because the two sit in one rank as peers of one another: two sizes
+ * there made the rank read as two ranks.
  */
 const CORE_W = 340, CORE_H = 320, CARD_W = 240, CARD_H = 135;
 /**
