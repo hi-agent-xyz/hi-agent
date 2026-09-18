@@ -380,7 +380,21 @@ own cost. Two things carry it instead:
   overturns *a task is a facet* and is stated where it was decided
   ([`data.md`](data.md#tasks)).
 - **The store holds what it last wrote.** A record that changed by any other route is a
-  finding in `memory/quality/` under the same surface, counted in § I.
+  finding in `memory/quality/` under the same surface, counted in § I. The pass that does
+  this exists: [`reconcile`](../../src/mind/memory/tasks.rs) already re-reads every record on
+  every window build and already keeps a `LAST_SEEN` mark per row, which is why detection is
+  an extension rather than a mechanism.
+
+**This overturns a decision `reconcile` was written under, and it is worth saying which
+half.** Its reasoning — *the ledger has no code on its write path and should not get one; a
+verb an agent could be asked to use is a door beside an open wall, absent exactly when it is
+forgotten and silent about being absent* — is correct and is why the two measures above
+exist rather than a verb alone. What it did not weigh is the difference between the two
+things in a record. **Mechanical fields can be repaired by a pass that re-reads the bytes;
+prose cannot.** No later pass can turn a line written badly into the line that should have
+been written, because the context that would have produced it belonged to the session that
+wrote it and is gone. That is the whole reason this surface needs a seam and the status word
+never did: a check is only worth having while the writer can still act on it.
 
 That is weaker than a wall and much stronger than the prompts that produced 41 of 41: a
 hand-patched record becomes a countable defect instead of an invisible one, which is the
