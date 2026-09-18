@@ -152,6 +152,28 @@ One message is one matter. Paragraph breaks are part of the text: the face keeps
 ([`segment.rs`](../../src/foundation/segment.rs), in agreement with `sentences.ts`).
 `SAY_MAX_CHARS` is the size of one matter; too long means say less, never send it in pieces.
 
+**Three messages go out between one of the person's and the next.** Everything sent since
+their last message is read at once by someone coming back to it, with every subject that
+moved in the meantime interleaved, so the run is what the standard's bar applies to
+([`reading.md`](../../src/identity/craft/reading.md)) — and the host holds its length. In
+`ToolSink::say`, after the length and before D, a fourth message is refused with `not sent`
+([`unanswered.rs`](../../src/body/reaction/unanswered.rs)). A message from the person — typed,
+spoken, or a handed file, the inputs that become messages — starts the run over; nothing
+else does. The count is taken under the mouth's serial lock, and a loop standing up seeds it
+from the run the journal already ends in, so a restart hands out no fresh allowance.
+
+Where each piece of work got to is on its task row, one subject apart from the next and only
+its newest state, which is what somebody catching up can read. A row `waiting` on them reads
+*Needs you* as its status word on Home as well as on the board ([`home.md`](home.md)), and
+Reaction owes it first when they next write.
+
+**Catches:** the pile. From 08-26 to 09-17 on one install, with every typed, spoken and
+handed line counted as theirs, 850 of 1,189 agent messages (71%) sat in runs of four or
+more, the longest 58; on 09-17 a run of 19 in 81 minutes interleaved six subjects, one card
+number corrected three times, and each subject had its own row saying where it stood.
+**Misses:** what goes in the three, which is C's. And something that needs them arriving
+after the run is full waits for their next message, or for them to look at Home.
+
 ## Offline: learning from what was sent
 
 ### G. Audit
@@ -221,7 +243,8 @@ records yet, the most recent turns that spoke.
 
 Each turn is replayed with its thread's opening turn (which carries the whole window) and the
 six turns before it as history, under this build's prompt — or `PROMPT=`, on the agent's model
-or `MODEL=` — and `hi_say` answers the way the host would, floor aside. That is not the live
+or `MODEL=` — and `hi_say` answers the way the host would, floor aside, including the run
+since the person's last message as the journal had it when the turn started. That is not the live
 thread; codex's compactions are not reproduced. Both sides of the comparison are scored by the
 same audit, which is what the question needs. The set is private conversation, and the report
 stays in the data directory, under `memory/quality/replay/`.
@@ -261,13 +284,19 @@ per turn. Model and context length are levers of this design, not background.
 | **Grain lives in the existing per-subject read** | Reflection already learns what the agent's words earn per subject; a second store would be structure with the same job |
 | **No derived load score** | The bar's float is judged from facts in the window; the host's presence estimate was deleted because nothing real could produce it ([`host.md`](host.md)) |
 | **One matter per message; structure is paragraphs** | Supersedes "three short messages" in [`text-transcript.md`](text-transcript.md) |
+| **Three messages between one of theirs and the next, refused in host code** | The person asked for a low cap (2026-09-17). The rule was already in `reaction.md` — "one quiet word beats a string of pings" — and 71% of messages still sat in runs of four or more, so the prompt alone has been measured. The count is a fact about the conversation, the same kind as length, and the refusal names it without judging the words |
+| **No exemption for urgent, and no backstop** | A flag the writer sets for itself would be set on everything. What needs the person is a `waiting` line on its row, drawn as *Needs you* where they come back to, and first when they next write. The floor lets a reply through after repeated refusals because silence is its failure; three messages already standing are not silence |
 | **The primary number is the person's corrections** | The rehearsal's blind judge marked as *dropped* an item the person said was right to leave out; labels drift toward completeness |
 | **Changes are replayed before they land** | Two prompt changes without a measurement between them cannot be told apart |
 
 ## Open
 
-- **Lines**: the triage length (120 characters), the message ceiling (400), when a matter
-  becomes a view — all starting values for the replay set to settle.
+- **Lines**: the triage length (120 characters), the message ceiling (400), the run between
+  their messages (3), when a matter becomes a view — all starting values for the replay set
+  and the person's corrections to settle.
+- **Whether a full run should reach them some other way.** A `waiting` line written after the
+  third message is on Home and the board, and neither pushes. If a need they miss that way
+  shows up in the record, the answer is a channel that reaches them, not a fourth message.
 - **Which model and how much context Reaction runs with**, and which model the check uses.
 - **The grain for a subject with no signal** — coarse keeps attention, but a reader away from
   the window pays more to follow up.

@@ -75,6 +75,16 @@ line of context, a little warmth can ride along — people talk that way. The ra
 narrow, because lowering the bar only admits what is worth little, never what is worth
 nothing: that the work is still running clears no bar on a quiet afternoon either.
 
+**Everything sent since their last message is read as one.** Someone coming back to the
+conversation reads the whole run at once, with every subject that moved while they were
+away interleaved in it, and cannot tell that a message was overtaken until they have read
+the one that overtook it. So the bar applies to the run, not to each message in it. A step
+a later message supersedes, a figure corrected two messages on, "still pulling it" above
+"pulled it": each costs a full read and leaves nothing. Where a piece of work has got to
+is carried by its task, which keeps each subject apart and only its latest state, and
+that is what somebody catching up can use. What earns a place in the run is what they
+would act on: a result they are waiting for, and above all what needs them.
+
 **The grain this reader wants on this subject.** One person can want only the conclusion on
 a deploy and page-by-page detail on a presentation for their sister. Read it from what they
 ask ("why?", "show me the source" → finer), how they correct ("less detail" → coarser),

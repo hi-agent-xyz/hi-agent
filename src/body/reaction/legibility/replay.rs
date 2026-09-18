@@ -24,7 +24,8 @@ use futures::StreamExt as _;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::mind::memory::{layout, quality};
+use crate::mind::memory::{Journal, layout, quality};
+use crate::types::JournalEntry;
 
 use super::check::Brief;
 use super::judge::Judge;
@@ -297,14 +298,18 @@ fn history_items(turn: &Turn, n: usize, out: &mut Vec<Value>) {
     }
 }
 
-/// What the host would have answered a replayed call, floor aside.
-fn stub(name: &str, arguments: &Value) -> String {
+/// What the host would have answered a replayed call, floor aside. `run` is the messages
+/// sent since the person's last one, as the turn found it and as this replay adds to it.
+fn stub(name: &str, arguments: &Value, run: &mut u64) -> String {
     match name.trim_start_matches("mcp__hi_agent__") {
         "hi_say" => {
             let text = arguments.get("text").and_then(Value::as_str).unwrap_or("");
             if text.chars().count() > super::super::tools::SAY_MAX_CHARS {
                 super::super::Spoken::TooLong.ack()
+            } else if *run >= super::super::unanswered::MAX_UNANSWERED {
+                super::super::Spoken::Unanswered.ack()
             } else {
+                *run += 1;
                 super::super::Spoken::Sent.ack()
             }
         }
@@ -314,13 +319,15 @@ fn stub(name: &str, arguments: &Value) -> String {
     }
 }
 
-/// Run one turn again. Returns what it said and what it put on screen.
+/// Run one turn again. Returns what it said and what it put on screen. `run` is the
+/// messages that had gone out since the person's last one when the turn started.
 async fn replay_turn(
     judge: &Judge,
     prompt: &str,
     thread: &[&Turn],
     at: usize,
     context: usize,
+    mut run: u64,
 ) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let mut input = Vec::new();
     let from = at.saturating_sub(context);
@@ -369,7 +376,7 @@ async fn replay_turn(
                 .and_then(|a| serde_json::from_str(a).ok())
                 .unwrap_or(Value::Null);
             let id = call["call_id"].as_str().map(str::to_string).unwrap_or(format!("r{round}_{i}"));
-            let answer = stub(&name, &arguments);
+            let answer = stub(&name, &arguments, &mut run);
             if name.ends_with("hi_say")
                 && answer.starts_with("sent")
                 && let Some(text) = arguments.get("text").and_then(Value::as_str)
@@ -542,6 +549,8 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
     let records = quality::read_since(data_dir, DateTime::<Utc>::MIN_UTC).await;
     let chosen = choose(&turns, &records, opts.limit);
     anyhow::ensure!(!chosen.is_empty(), "no spoken Reaction turns in the frame logs under {}", data_dir.display());
+    let earliest = chosen.iter().map(|c| turns[c.0].ts).min().unwrap_or_else(Utc::now);
+    let conversation = conversation_before(data_dir, earliest).await;
     eprintln!(
         "replaying {} turns on {} (audit on {}) under {}",
         chosen.len(),
@@ -563,8 +572,8 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
         .map(|(i, why, corrected_axis, known)| {
             let turns = &turns;
             let threads = &threads;
-            let (replayer, auditor, prompt, audit_instructions) =
-                (&replayer, &auditor, &prompt, &audit_instructions);
+            let (replayer, auditor, prompt, audit_instructions, conversation) =
+                (&replayer, &auditor, &prompt, &audit_instructions, &conversation);
             async move {
                 let turn = &turns[i];
                 let members: Vec<&Turn> = threads[&(turn.file.clone(), turn.thread.clone())]
@@ -587,8 +596,10 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
                         .await
                     }
                 };
+                let upto = conversation.partition_point(|e| message_ts(e) < turn.ts);
+                let run = super::super::unanswered::trailing_run(&conversation[..upto]);
                 let (replay, replay_error) =
-                    match replay_turn(replayer, prompt, &members, at, context).await {
+                    match replay_turn(replayer, prompt, &members, at, context, run).await {
                         Ok((said, _)) if said.is_empty() => (
                             Some(quality::Audit {
                                 ts: Utc::now(),
@@ -649,6 +660,36 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
     )?;
     println!("\nreport: {}", path.display());
     Ok(())
+}
+
+/// The conversation's messages, oldest first, from a month before `earliest` — enough to
+/// count the run each replayed turn started inside. A month is the window the live list is
+/// seeded from, so a run longer than that is cut the same way in both.
+async fn conversation_before(data_dir: &Path, earliest: DateTime<Utc>) -> Vec<JournalEntry> {
+    let since = earliest - chrono::Duration::days(crate::foundation::server::SEED_DAYS);
+    let entries = match Journal::open(data_dir.to_path_buf()).await {
+        Ok(journal) => journal.recent(since, usize::MAX).await,
+        Err(err) => Err(err),
+    };
+    match entries {
+        Ok(entries) => entries
+            .into_iter()
+            .filter(|e| matches!(e, JournalEntry::Message { .. }))
+            .collect(),
+        // Every turn then replays with an empty run: the cap cannot bite, which reads as
+        // the host before it had one. Said, so a report is not mistaken for the whole host.
+        Err(err) => {
+            eprintln!("journal unreadable, replaying without the run since their last message: {err:#}");
+            Vec::new()
+        }
+    }
+}
+
+fn message_ts(entry: &JournalEntry) -> DateTime<Utc> {
+    match entry {
+        JournalEntry::Message { message, .. } => message.ts,
+        _ => DateTime::<Utc>::MIN_UTC,
+    }
 }
 
 fn print_table(before: &Tally, after: &Tally, results: &[Replayed]) {
@@ -734,10 +775,15 @@ mod tests {
 
     #[test]
     fn a_replayed_say_is_answered_the_way_the_host_would() {
-        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": "好" })).starts_with("sent"));
+        let mut run = 0;
+        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": "好" }), &mut run).starts_with("sent"));
         let long = "字".repeat(super::super::super::tools::SAY_MAX_CHARS + 1);
-        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": long })).starts_with("too long"));
-        assert_eq!(stub("mcp__hi_agent__hi_show", &json!({})), "shown");
+        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": long }), &mut run).starts_with("too long"));
+        assert_eq!(stub("mcp__hi_agent__hi_show", &json!({}), &mut run), "shown");
+        assert_eq!(run, 1, "only the message that went out counts");
+
+        let mut full = super::super::super::unanswered::MAX_UNANSWERED;
+        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": "好" }), &mut full).starts_with("not sent"));
     }
 
     #[test]

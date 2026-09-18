@@ -182,6 +182,8 @@ pub(super) struct Mouth {
     /// The second reading a message may get before the floor is asked
     /// ([`super::legibility::check`]).
     pub(super) speech: Arc<super::legibility::Speech>,
+    /// The messages sent since the person last sent one ([`super::unanswered`]).
+    pub(super) unanswered: Arc<super::unanswered::Unanswered>,
 }
 
 
@@ -218,12 +220,16 @@ impl ToolOwner {
 /// reason about.
 ///
 /// What remains are the facts the caller can act on, because only the caller can act
-/// on them: the message was too long to be a message, a second reading sent it back, or
-/// the floor was not Reaction's to take ([`super::floor`]).
+/// on them: the message was too long to be a message, enough had already gone out since
+/// the person's last one, a second reading sent it back, or the floor was not Reaction's
+/// to take ([`super::floor`]).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Spoken {
     /// Rejected: longer than a message. Nothing was sent.
     TooLong,
+    /// Rejected: [`MAX_UNANSWERED`](super::unanswered::MAX_UNANSWERED) messages have gone out
+    /// since the person last sent one ([`super::unanswered`]). Nothing was sent.
+    Unanswered,
     /// Sent back by the pre-send check, with its note on where the line fails
     /// ([`super::legibility::check`]). Nothing was sent, and nothing about the room moved.
     NotSent(String),
@@ -244,6 +250,10 @@ impl Spoken {
     pub fn ack(&self) -> String {
         match self {
             Spoken::TooLong => "too long for one message — nothing was sent".into(),
+            Spoken::Unanswered => format!(
+                "not sent — {} messages have already gone out since their last one",
+                super::unanswered::MAX_UNANSWERED
+            ),
             Spoken::NotSent(note) => format!("not sent — {note}"),
             Spoken::NotSaid(super::Busy::Speaking) => {
                 "not said — they were still talking, so the floor was theirs".into()
@@ -318,6 +328,12 @@ impl ToolSink {
         // fate, so a later call waits for an earlier one's check and floor.
         let arrived = Instant::now();
         let _in_order = mouth.speech.serial.lock().await;
+        // **Under the lock, before anything costs time.** Two messages in one turn must not
+        // both read a count of two, and a message that will not go out is not worth a check.
+        if mouth.unanswered.is_full() {
+            tracing::info!("not sent — the run since their last message is full");
+            return Ok(Said { spoken: Spoken::Unanswered });
+        }
         // **Before the floor, not after.** The check can take seconds, and whether the room
         // is free is a property of the moment the words are actually ready to go.
         if let super::legibility::check::Review::SendBack(note) =
@@ -345,6 +361,7 @@ impl ToolSink {
         // Counted where the utterance is accepted, so `TooLong` (rejected above, never
         // sent) does not read as speech.
         mouth.said.fetch_add(1, Ordering::Relaxed);
+        mouth.unanswered.note_sent();
         Ok(Said { spoken: Spoken::Sent })
     }
 
@@ -440,6 +457,7 @@ mod tests {
                 said: Arc::new(AtomicU64::new(0)),
                 floor: crate::body::reaction::Floor::new(),
                 speech: Arc::new(crate::body::reaction::legibility::Speech::off()),
+                unanswered: Arc::new(super::super::unanswered::Unanswered::default()),
             }),
         };
         (sink, rx)
@@ -591,11 +609,12 @@ mod tests {
             Spoken::TooLong.ack(),
             Spoken::Sent.ack(),
             Spoken::NotSent("「公网 200」是常规检查".into()).ack(),
+            Spoken::Unanswered.ack(),
         ];
         for a in &acks {
             assert!(!a.is_empty(), "an ack must state what happened: {a:?}");
         }
-        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+        assert_eq!(acks.iter().collect::<std::collections::HashSet<_>>().len(), 4);
         assert!(acks[2].starts_with("not sent — ") && acks[2].contains("公网 200"));
     }
 
@@ -607,5 +626,37 @@ mod tests {
         let ack = Spoken::TooLong.ack();
         assert!(ack.contains("nothing was sent"));
         assert!(!ack.contains("shorter") && !ack.contains("a few"));
+    }
+    /// Past the cap nothing reaches the sequencer, however often it is asked — there is no
+    /// backstop the way the floor has one — and the person's next message opens it again.
+    #[tokio::test]
+    async fn the_run_past_the_cap_is_refused_until_they_send_something() {
+        use super::super::unanswered::MAX_UNANSWERED;
+        let (sink, mut rx) = mouth();
+        let mouth = sink.mouth.as_ref().unwrap();
+
+        for _ in 0..MAX_UNANSWERED {
+            assert_eq!(sink.say("progress".into()).await.unwrap().spoken, Spoken::Sent);
+            assert!(rx.try_recv().is_ok());
+        }
+        for _ in 0..5 {
+            assert_eq!(sink.say("more".into()).await.unwrap().spoken, Spoken::Unanswered);
+        }
+        assert!(rx.try_recv().is_err(), "a refused message reached the sequencer");
+        assert_eq!(mouth.said.load(Ordering::Relaxed), MAX_UNANSWERED);
+
+        mouth.unanswered.note_person();
+        assert_eq!(sink.say("answer".into()).await.unwrap().spoken, Spoken::Sent);
+    }
+
+    /// A message that was never sent does not use up the run.
+    #[tokio::test]
+    async fn a_rejected_message_does_not_count_toward_the_run() {
+        let (sink, _rx) = mouth();
+        sink.say("x".repeat(SAY_MAX_CHARS + 1)).await.unwrap();
+        assert!(!sink.mouth.as_ref().unwrap().unanswered.is_full());
+        for _ in 0..super::super::unanswered::MAX_UNANSWERED {
+            assert_eq!(sink.say("hi".into()).await.unwrap().spoken, Spoken::Sent);
+        }
     }
 }

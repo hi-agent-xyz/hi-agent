@@ -461,10 +461,10 @@ impl AppState {
 /// How far back the boot seed reads. The live window is bounded anyway, so this
 /// only has to be long enough that a quiet week still opens on a conversation
 /// rather than on nothing; older messages are reached by scrolling.
-const SEED_DAYS: i64 = 30;
+pub(crate) const SEED_DAYS: i64 = 30;
 /// Journal lines the seed will consider. Most of them are not conversation and are
 /// filtered out, so this is generous relative to the window it fills.
-const SEED_SCAN_MAX: usize = 5000;
+pub(crate) const SEED_SCAN_MAX: usize = 5000;
 
 pub fn build(
     memory: Memory,

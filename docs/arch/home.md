@@ -160,8 +160,9 @@ So the card keeps the one status line it had, and the sessions are marks in it:
 The test is the board's: the task is open and the newest line a mind wrote on it is a
 `waiting` one, read from the same `latest` field, so the two cannot disagree. Its time is that
 line's. It is the one status that asks the reader to act, and Home is where somebody comes
-back to for what the conversation did not tell them. *In progress* on a row that is waiting
-on them says the opposite of what is true.
+back to once the conversation has stopped saying where each thing got to — three messages go
+out between one of theirs and the next ([legibility.md](legibility.md) § *F*). *In progress*
+on a row that is waiting on them says the opposite of what is true.
 
 ## Internal mapping
 

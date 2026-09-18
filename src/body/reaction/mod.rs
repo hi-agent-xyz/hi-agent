@@ -84,6 +84,7 @@ pub mod legibility;
 pub mod outbound;
 mod sequencer;
 mod tools;
+mod unanswered;
 mod upkeep;
 mod workers;
 
@@ -1098,6 +1099,10 @@ struct ReactionInner {
     /// the turn it belongs to, opened and closed by [`run_reaction_turn`]. See
     /// [`legibility`].
     speech: Arc<legibility::Speech>,
+    /// The messages sent since the person last sent one: reset in [`Reaction::deliver`],
+    /// counted and capped by the mouth, seeded from the journal as a loop stands up. See
+    /// [`unanswered`].
+    unanswered: Arc<unanswered::Unanswered>,
     /// Shared, process-wide LLM-vendor reachability + recovery policy. Read by every
     /// reaction loop (via [`Vendor::turn_gate`]) to decide whether and when to drive a
     /// turn; managed energy is written by the global vendor gate, while turn failures
@@ -1202,6 +1207,7 @@ pub async fn start(
     let reaction = Reaction {
         inner: Arc::new(ReactionInner {
             speech,
+            unanswered: Arc::new(unanswered::Unanswered::default()),
             memory,
             agent,
             out,
@@ -1624,6 +1630,13 @@ impl Reaction {
         // until the turn that needs the fact is already over. A reply produced after
         // this point is out of date, and [`floor::Floor::may_speak`] refuses it.
         self.inner.floor.note_heard();
+        // A message from them is the one thing that ends a run of ours. Every
+        // `Inbound::Message` is one the carrier has just appended to the conversation.
+        if let crate::types::Inbound::Message(m) = &input
+            && !m.from.is_agent()
+        {
+            self.inner.unanswered.note_person();
+        }
         let queued = match input {
             crate::types::Inbound::Message(m) => LoopInput::Message(m),
             crate::types::Inbound::Observed(s) => LoopInput::Observed(s),
@@ -1690,6 +1703,26 @@ impl Reaction {
         // How many utterances the mouth has accepted. The mouth's own; the loop used to
         // hold the other end to pace the check-in floor, and there is no floor now.
         let said = Arc::new(AtomicU64::new(0));
+        // The run the conversation already ends in, before the mouth can add to it. Read
+        // from the journal, which every message reaches before it is published, over the
+        // window the conversation list is seeded from — so a restart inherits the run the
+        // person would see, and a loop that stands up again mid-process recounts the same.
+        let since = Utc::now() - chrono::Duration::days(crate::foundation::server::SEED_DAYS);
+        match self
+            .inner
+            .memory
+            .journal
+            .recent(since, crate::foundation::server::SEED_SCAN_MAX)
+            .await
+        {
+            Ok(entries) => self.inner.unanswered.seed(unanswered::trailing_run(&entries)),
+            // Fails open to an empty run, which is the host before it had a cap: a restart
+            // with an unreadable journal lets up to three more out. Logged, not surfaced.
+            Err(err) => tracing::error!(
+                error = %format!("{err:#}"),
+                "could not read the run since their last message; starting from none"
+            ),
+        }
         self.inner
             .tools
             .register(
@@ -1701,6 +1734,7 @@ impl Reaction {
                         said: said.clone(),
                         floor: self.inner.floor.clone(),
                         speech: self.inner.speech.clone(),
+                        unanswered: self.inner.unanswered.clone(),
                     }),
                 },
             )
