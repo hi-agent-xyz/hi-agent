@@ -158,6 +158,17 @@ Each is a statement we can test, and each has a real failure behind it.
     and *unknown* is an answer the record keeps. A name inferred from content is
     indistinguishable from one that was verified, so the inference is not available; see
     [`signal-attribution.md`](signal-attribution.md).
+13. **Everything a person reads leaves through a seam, and every seam judges the same
+    standard.** Text written for a person — a message, a task line, a title, a view, a label —
+    leaves through a verb the host can see, is judged against
+    [`craft/reading.md`](../../src/identity/craft/reading.md), and the judgment is recorded
+    naming which surface it was on. **A new human-facing surface ships with its seam or it
+    does not ship.** The failure behind it: the whole mechanism was bound to `hi_say`, so
+    beside a speech path with triage, a check, an audit, a number and a replay set, task
+    records had no verb at all — and 41 of the 41 opened in the four days before 2026-09-18
+    carried project jargon and machine timestamps, against rules written out in three
+    prompts. A rule held nowhere is a rule the system does not have. See
+    [`legibility.md`](legibility.md).
 
 ## Contents
 

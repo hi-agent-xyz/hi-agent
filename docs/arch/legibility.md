@@ -11,7 +11,68 @@ be held by a mechanism that fixes the inputs, checks the output, and learns from
 what form, and the reasons — is [`../human-friendly-communication.md`](../human-friendly-communication.md).
 This document is how the system keeps it true.
 
-## The mechanism, end to end
+## What it is bound to
+
+**The standard is bound to a class of artifact — text a person will read — and never to a
+verb.** That distinction is the design. Getting it wrong is what the 2026-09-18 audit of one
+live store found: every stage below sat on `hi_say`, so the mechanism covered exactly what
+that one verb carried, and the surface beside it was untouched. Of 211 task records, 197
+carried project vocabulary the reader has no copy of (`挂屏`, `写手`, `口径`, `ref`), 144
+carried machine timestamps, 80% of 2,017 timeline lines ran past the length a card can draw,
+the longest was 1,807 characters, and **41 of the 41 records opened in the four days before
+the audit did all of it** — while the rules they broke stood written out in three separate
+prompts, one of which quotes the previous measurement of the same failure. Nothing was
+ignoring the standard. Workers reach `facet.md` with `apply_patch`, so there was no seam for
+a standard to be held at, and a rule held nowhere is a rule the system does not have.
+
+Three things bind, and they are the same three on every surface:
+
+1. **One seam.** Everything a person reads leaves through a verb the host can see. A surface
+   with no verb cannot be triaged, checked, audited, counted or replayed, and no amount of
+   prompt substitutes for one — that is what the measurement above is.
+2. **One standard, one judge, one record.** [`craft/reading.md`](../../src/identity/craft/reading.md)
+   is the single text every writer writes against and every reader-of-writing judges against;
+   [`judge.rs`](../../src/body/reaction/legibility/judge.rs) is one model request carrying it
+   as a cacheable prefix; every judgment lands in `memory/quality/` **naming which surface it
+   was on**. One record rather than one per surface, because a correction the person makes
+   about how they are spoken to is a fact about *them* — "以后简要汇报" is supposed to shorten
+   their task lines too, and today it cannot reach them.
+
+   **So the check stops being Reaction's.** It sits under
+   [`body/reaction/legibility/`](../../src/body/reaction/legibility/) because speech was the
+   only surface it had; a worker calling `hi_task_note` reaches the host through MCP and not
+   through Reaction's mouth, so the module moves to where every seam can call it. What stays
+   Reaction-shaped is the triage (§ D), which reads a *turn* — each other surface brings its
+   own facts to triage on.
+3. **Judged at the seam, gated at some of them.** Every seam records a judgment. A seam also
+   *gates* — answers `not sent`, `not recorded`, and lets the writer try once more — only
+   where the writer can still act on the answer and something is waiting on the text. Short
+   and frequent gates. Long and rare is judged after it lands, where a gate would buy a wait
+   and nothing else.
+
+A new human-facing surface ships with its seam or it does not ship
+([invariant 13](arch.md#invariants)).
+
+## The surfaces
+
+| What the person reads | Who writes it | Seam | State |
+|---|---|---|---|
+| A spoken message | Reaction | `hi_say` | built — § A–K |
+| A task's title and its `created` line | Cognition | `hi_task_open` | designed — § L, gated |
+| A task's timeline line | any worker | `hi_task_note` | designed — § L, gated |
+| A task's *Where it stands* prose | any worker | `hi_task_note` (`stands`) | designed — § L, judged after |
+| A view on screen | a view builder | `hi_review_view` | verb exists; its verdict is not kept |
+| Home's group labels and notes | a task manager | `hi_set_home_groups` | verb exists; nothing judges it |
+| A file handed over (a report, a deck) | any worker | **none** | no verb — see § Open |
+| A report to Reaction that becomes speech | Cognition, workers | `hi_send_message` | verb exists; nothing judges it |
+
+The bottom four are named, not built, and three of them already have a verb — what they need
+is the judgment recorded, not a mechanism. **A file handed to the person is the one with no
+verb at all**, and it is why this is a table of surfaces rather than a list of checks: the
+gap is found by enumerating what a person reads, never by enumerating what the host already
+intercepts.
+
+## The speech path
 
 ```
                     ┌──────────────── in Reaction's window every turn ────────────────┐
@@ -44,7 +105,7 @@ This document is how the system keeps it true.
 
 Each stage exists because the one before it misses something measurable.
 
-## Online: one spoken turn
+## Speech, online: one turn
 
 ### A. What reaches Reaction's window
 
@@ -62,9 +123,17 @@ window every turn.
   [`snapshot.rs`](../../src/mind/memory/snapshot.rs)), widened from *when to speak* to *how
   much detail lands on this subject*.
 - **The standard** — one written standard, `src/identity/craft/reading.md`, distilled from
-  the principles document. It is part of Reaction's prompt and the one text that the view
-  builder, the view reviewer, the check (E) and the audit (G) are all written against. The
-  rules now repeated across those prompts fold into it.
+  the principles document, and the one text every writer and every judge is written against.
+
+  **A rung that writes for a person carries it whole; it is never handed the path.** Reaction
+  does today, because it cannot open a file. Everyone else — the general worker, the view
+  builder and reviewer, Cognition, the task manager — is given
+  `{data_dir}/prompts/craft/reading.md` to go and open, and each prompt restates the parts
+  its author thought applied. That is a second copy of a standard whose whole value is being
+  one, and it is measurably not holding: [`general.md`](../../src/identity/workers/general.md)
+  restates the length rule beside the previous measurement of records breaking it, and the
+  records opened after it broke it 41 times out of 41. The page is 12 KB against windows that
+  run past 100K at a ~99% cache hit. It is carried, and the restatements are deleted.
 
 **Catches:** a reader's preferences and grain being unknown at the moment of writing.
 **Misses:** a writer that has them and still does not apply them.
@@ -174,7 +243,7 @@ number corrected three times, and each subject had its own row saying where it s
 **Misses:** what goes in the three, which is C's. And something that needs them arriving
 after the run is full waits for their next message, or for them to look at Home.
 
-## Offline: learning from what was sent
+## Speech, offline: learning from what was sent
 
 ### G. Audit
 
@@ -198,8 +267,9 @@ Whether the check agreed is computed from the records, not asked: the audit neve
 check's verdict, so it stays independent. The `speech_audit` setting turns both reads off;
 `speech_audit_model` picks their model.
 
-Also covers views put on screen (through the reviewer's verdict) and task-record lines written
-in the window.
+**It reads a spoken turn and nothing else.** A view the turn put on screen and a task line a
+worker wrote in the same minute are not in it, and were never in it: the audit is keyed on a
+turn, and a worker's write is not part of one. § N is the same read pointed at a record.
 
 **Catches:** what the check cannot — dropped answers, repetition across turns, a subject that
 should have become a view, the check being wrong.
@@ -260,16 +330,85 @@ the primary measures.
 108 to 15; over those days the live Reaction ran `deepseek-flash` with 75K–236K input tokens
 per turn. Model and context length are levers of this design, not background.
 
-## Views and task records
+## Task records, end to end
 
-- **Views**: the builder writes against the standard and against **who the view is for** — a
-  report for the person to review may mark what is unverified; something made to be shown to
-  others (a deck, a shared page) carries no working notes, which go in the conversation. The
-  reviewer judges against the same standard. The spoken line that goes with a view passes D
-  and E like any other message.
-- **Task records**: workers write timeline lines to the standard (one fact per line, the
-  person's language, what happened rather than the machinery). The audit reads lines written
-  in its window.
+The second surface, designed here and built next. What a person reads of a record is not the
+file: [`tasks.jsx`](../../src/mind/views/factory/tasks.jsx) draws the title and **the newest
+mind-written line, clamped to one line**, on the card, and behind it a panel that pins the
+`created` line under *What they asked for*, a `waiting` line as *Needs you*, the body's top
+prose under *Where it stands*, then the whole timeline. Home draws the title again. A title,
+a line and a paragraph are three reads with three different budgets, so the seam has to be
+able to tell them apart.
+
+### L. The seam — two verbs, and the host owns the file
+
+Cognition opens a row and every worker appends to it with `apply_patch` on `facet.md`
+([`general.md`](../../src/identity/workers/general.md)), which is why nothing in § D–G can
+see any of it. Two verbs replace that, and `## Timeline` stops being hand-patched:
+
+    hi_task_open(subject, title, wanted)
+    hi_task_note(subject, kind: update | delivered | waiting | stands, text)
+
+- **The host writes the instant and the kind**; a caller passes prose and nothing else. That
+  removes the corpus's most common failure by construction rather than by rule — 2,959
+  machine timestamps across 144 records, in the prose because hand-writing the whole line is
+  what the format asked for.
+- **`stands` is the one that is not a line.** It puts new prose at the top of the body and
+  pushes what was there down — what the prompt already asks for by hand, and what 154 of 211
+  records run past a screenful of.
+- **`created` is written once, at open, by `hi_task_open`**, so the acceptance line and the
+  title are one call by the rung that was in the conversation. A second `created` is refused.
+  Nothing enforces the "once" today and nothing reports its absence: of 106 rows in one
+  store, three had one.
+- **`moved` is not in the enum.** The store writes it, as it does now.
+- **Nothing else writes the frontmatter or `## Timeline`.** A worker's own working files in
+  the task folder are unchanged; the record is the host's.
+
+**Deleting the hand-patched path is part of this change, not a follow-up.** Two ways to write
+a record is a door beside the check, and a compatibility path kept until the prompts catch up
+is the one that stays.
+
+### M. The gate — on a line, not on a record
+
+A line is short, the worker writes it holding everything it is about, and the card can draw
+one line of it. All three say gate. The rules are § D–E's unchanged, because they were
+derived against the same problem:
+
+- **Triage in code, facts only**: past a length, or `kind: waiting`. The line that asks the
+  person to act is the one whose burial costs most — on one store the longest ran 920
+  characters with the ask in the middle and a second, unrelated ask behind it. Everything
+  else is recorded untouched.
+- **One model request** — the same [`judge.rs`](../../src/body/reaction/legibility/judge.rs),
+  a rubric in `judges/record.md`, the standard as the cacheable prefix, plus who the reader is
+  (their conduct) and the row's recent lines, without which "the same thing said again" is
+  invisible.
+- **`not recorded — <note>`, once.** The worker rewrites, and the second attempt is written
+  whatever it says. Speech can be dropped; a record cannot. An unrecorded fact is worse than
+  an ugly one, and a gate able to lose facts would be a worse failure than the one it fixes.
+- **Fail open, shadow first** — `record_check`, the ladder `speech_check` is already on. A
+  timeout writes the line.
+
+### N. What is read after it lands
+
+The body under *Where it stands* is long, rewritten rarely, and nothing waits on it, so it is
+judged after the write instead of before: one read per `stands`, and one read of the whole
+record when a task manager closes it — the two moments the artifact is finished. Same judge,
+same standard, findings to `memory/quality/` under `surface: record`, nothing sent back.
+
+§ G–K need no second copy. The audit's per-message read becomes a per-artifact read, the
+number (§ I) gains a surface column, Reflection (§ H) already reads that file, and replay
+(§ J) works on any seam whose input the frame log holds.
+
+### Views
+
+The builder writes against the standard and against **who the view is for** — a report for
+the person to review may mark what is unverified; something made to be shown to others (a
+deck, a shared page) carries no working notes, which go in the conversation. The reviewer
+judges against the same standard and already reads it. **Its verdict is not kept**, so
+nothing counts it, nothing learns from it, and a view that reads badly cannot appear in § I.
+Landing that verdict in `memory/quality/` under `surface: view` is all this surface needs and
+is the cheapest row in the table. The spoken line that goes with a view passes D and E like
+any other message.
 
 ## Decisions
 
@@ -288,12 +427,28 @@ per turn. Model and context length are levers of this design, not background.
 | **No exemption for urgent, and no backstop** | A flag the writer sets for itself would be set on everything. What needs the person is a `waiting` line on its row, drawn as *Needs you* where they come back to, and first when they next write. The floor lets a reply through after repeated refusals because silence is its failure; three messages already standing are not silence |
 | **The primary number is the person's corrections** | The rehearsal's blind judge marked as *dropped* an item the person said was right to leave out; labels drift toward completeness |
 | **Changes are replayed before they land** | Two prompt changes without a measurement between them cannot be told apart |
+| **Bound to the artifact class, not to `hi_say`** | A mechanism wired to one verb covers what that verb carries. Beside a speech path with triage, a check, an audit, a number and a replay set, 41 of 41 task records opened in four days carried jargon and machine timestamps, against rules written in three prompts |
+| **One record for every surface, carrying which surface it was** | A correction about how the person is told things is a fact about the person. Kept per surface, "以后简要汇报" teaches speech and leaves their task lines alone |
+| **The standard is carried whole, never linked** | Four rungs were handed the path and each restated the parts it thought applied. One of those restatements quotes the measurement of the failure its own records then repeated 41 times |
+| **The host writes a record's instant and kind; a caller passes prose** | 2,959 machine timestamps across 144 records were written into prose because hand-writing the whole line is what the format asked for. Removing the ask removes the class |
+| **A refused record line lands on the second attempt; a refused message does not** | Speech that is dropped is silence, which the floor already answers for. A fact that is not recorded is gone, and a gate able to lose facts is a worse failure than the one it fixes |
+| **Gate the line, judge the body after it lands** | A gate is worth a wait only where the writer can still act on it and something is waiting on the text. Nothing waits on *Where it stands*, and a builder must not queue behind a judge |
+| **The hand-patched path is deleted, not deprecated** | Two ways to write a record is a door beside the check, and the compatibility path kept until the prompts catch up is the one that stays |
 
 ## Open
 
 - **Lines**: the triage length (120 characters), the message ceiling (400), the run between
   their messages (3), when a matter becomes a view — all starting values for the replay set
-  and the person's corrections to settle.
+  and the person's corrections to settle. The record line's triage length is the same kind of
+  starting value, and the card draws roughly one line of it.
+- **The surface with no verb: a file handed over.** A weekly report, a deck, a page written
+  into the drive for the person to open is read by them and passes through nothing. Whether
+  the seam is a verb that hands a file over, or the delivering `hi_say` carrying the ref, is
+  undecided — and until it is decided, this is the one row of the table that the invariant
+  cannot yet be tested against.
+- **Whether a record's judgment should reach the person at all.** § I counts it and Reflection
+  learns from it. Nothing draws it on the board, and a row that showed its own writing quality
+  would be the agent grading itself where the work should be.
 - **Whether a full run should reach them some other way.** A `waiting` line written after the
   third message is on Home and the board, and neither pushes. If a need they miss that way
   shows up in the record, the answer is a channel that reaches them, not a fourth message.
