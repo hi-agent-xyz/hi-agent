@@ -701,6 +701,9 @@ pub(crate) async fn write_raw(data_dir: &Path, subject: &str, content: &str) -> 
 
 /// Write a record's text in place. Atomic: a temp sibling renamed over it, so a board polling
 /// every few seconds reads the old record or the new one, never half of one.
+///
+/// Every write the host makes to a record comes through here, so this is also where it
+/// remembers what it wrote ([`last_written`]).
 async fn write_record(data_dir: &Path, subject: &str, content: &str) -> anyhow::Result<()> {
     let dir = layout::task_records_dir(data_dir);
     tokio::fs::create_dir_all(&dir).await?;
@@ -708,7 +711,39 @@ async fn write_record(data_dir: &Path, subject: &str, content: &str) -> anyhow::
     let tmp = dir.join(format!(".{}.tmp-{}", facets::slug(subject), uuid::Uuid::now_v7().simple()));
     tokio::fs::write(&tmp, content).await?;
     tokio::fs::rename(&tmp, &path).await?;
+    if let Ok(mut written) = last_written().lock() {
+        written.insert(path, fingerprint(content));
+    }
     Ok(())
+}
+
+/// What the host last wrote to each record, by path — the other half of the seam
+/// (`docs/arch/legibility.md` § L). Workers run unsandboxed, so nothing can stop a record
+/// being edited by hand; what can be done is noticing, and this is what [`reconcile`]
+/// compares against. In memory on purpose: after a restart the first look seeds it, because
+/// while the host is down nothing that could write a record is running.
+fn last_written() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, u64>> {
+    static WRITTEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, u64>>> =
+        std::sync::OnceLock::new();
+    WRITTEN.get_or_init(Default::default)
+}
+
+fn fingerprint(content: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether `content` at `path` is what the host last wrote there. `true` on a first sight,
+/// which is seeded rather than judged.
+fn written_by_host(path: &Path, content: &str) -> bool {
+    let Ok(mut written) = last_written().lock() else { return true };
+    let now = fingerprint(content);
+    match written.insert(path.to_path_buf(), now) {
+        None => true,
+        Some(before) => before == now,
+    }
 }
 
 /// Write a record, and tell [`reconcile`] this status is now the one on disk.
@@ -1372,6 +1407,20 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         // already on disk.
         let wanted = render(&task);
         let stored = read_record(data_dir, &subject).await?;
+        if let Some(stored) = &stored
+            && !written_by_host(&record_path(data_dir, &subject), stored)
+        {
+            // Countable rather than invisible, which is the whole of what detection promises.
+            tracing::warn!(task = %subject, "a task record was written around its verbs");
+            let bypass = super::quality::Record::Bypass(super::quality::Bypass {
+                ts: Utc::now(),
+                surface: super::quality::Surface::Record,
+                subject: subject.clone(),
+            });
+            if let Err(error) = super::quality::append(data_dir, &bypass).await {
+                tracing::warn!(%error, "could not record a bypass");
+            }
+        }
         if stored.as_deref() != Some(wanted.as_str()) {
             write_record(data_dir, &subject, &wanted).await?;
             rewritten += 1;
@@ -3670,6 +3719,34 @@ mod verb_tests {
         assert!(folder("clash").join(facets::FACET_FILE).exists(), "never chosen between");
 
         assert_eq!(adopt_task_records(dir.path()).await.unwrap(), 0, "idempotent");
+    }
+
+    /// **A record written around the verbs is counted, and one written through them is not.**
+    /// Nothing can stop the hand edit — workers run unsandboxed — so this is the half of the
+    /// seam that can be held.
+    #[tokio::test]
+    async fn a_record_edited_by_hand_is_counted_as_a_bypass() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("hand-edited")).await.unwrap().unwrap();
+        note(dir.path(), "hand-edited", Note::Update, "through the verb", Utc::now()).await.unwrap();
+        reconcile(dir.path()).await.unwrap();
+
+        let path = record_path(dir.path(), "hand-edited");
+        let mut text = tokio::fs::read_to_string(&path).await.unwrap();
+        text.push_str("- 2026-09-18T09:00:00Z update — typed into the file\n");
+        tokio::fs::write(&path, text).await.unwrap();
+        reconcile(dir.path()).await.unwrap();
+        reconcile(dir.path()).await.unwrap();
+
+        let records = super::super::quality::read_since(dir.path(), Utc::now() - chrono::Duration::hours(1)).await;
+        let bypasses: Vec<_> = records
+            .iter()
+            .filter_map(|r| match r {
+                super::super::quality::Record::Bypass(b) => Some(b.subject.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bypasses, vec!["hand-edited"], "once, and not for the verb's own writes");
     }
 
     /// **Two writers on one row both land.** Each verb reads, changes and writes the record

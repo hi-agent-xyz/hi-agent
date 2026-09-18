@@ -824,6 +824,7 @@ mod frontier_tests {
         let records = vec![
             quality::Record::Audit(quality::Audit {
                 ts: at,
+                surface: quality::Surface::Speech,
                 turn: "t".into(),
                 model: "m".into(),
                 messages: vec![

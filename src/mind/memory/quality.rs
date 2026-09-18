@@ -44,12 +44,28 @@ pub fn axis(raw: Option<&str>) -> Option<String> {
     AXES.contains(&a.as_str()).then_some(a)
 }
 
+/// Which kind of thing a person reads a judgment was about (`docs/arch/legibility.md` §
+/// *The surfaces*). **One file for all of them**, because a correction about how the person is
+/// told things is a fact about the person, and a store split by surface could not carry it
+/// from one to the next.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Surface {
+    /// A spoken message. Every record written before surfaces existed is one, which is what
+    /// the default reads it back as.
+    #[default]
+    Speech,
+    /// A task's record: a line, a title, where it stands.
+    Record,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Record {
     Check(Check),
     Audit(Audit),
     Reception(Reception),
+    Bypass(Bypass),
 }
 
 impl Record {
@@ -58,6 +74,7 @@ impl Record {
             Record::Check(c) => c.ts,
             Record::Audit(a) => a.ts,
             Record::Reception(r) => r.ts,
+            Record::Bypass(b) => b.ts,
         }
     }
 }
@@ -70,8 +87,10 @@ pub enum Scope {
     Report,
     /// Not the first message of the turn.
     Later,
-    /// Longer than a short reply.
+    /// Longer than a short reply, or than a line a card can draw.
     Long,
+    /// A record line asking the person to do something — the one whose burial costs most.
+    Waiting,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,11 +104,14 @@ pub enum Outcome {
     Error,
 }
 
-/// One pre-send read of one message.
+/// One pre-send read of one message — or, on a record, one line before it is written.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Check {
     pub ts: DateTime<Utc>,
-    /// The turn it belongs to — the key audits and receptions share.
+    #[serde(default)]
+    pub surface: Surface,
+    /// What it belongs to: the turn, for speech — the key audits and receptions share — and
+    /// the task's subject, for a record.
     pub turn: String,
     pub message: String,
     pub scope: Scope,
@@ -116,10 +138,13 @@ pub struct Audited {
     pub note: Option<String>,
 }
 
-/// The independent read of one spoken turn.
+/// The independent read of one spoken turn — or of one record, after it was written.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Audit {
     pub ts: DateTime<Utc>,
+    #[serde(default)]
+    pub surface: Surface,
+    /// The turn, or the task's subject.
     pub turn: String,
     pub model: String,
     pub messages: Vec<Audited>,
@@ -129,6 +154,16 @@ pub struct Audit {
     /// Said and not true to what reached the turn.
     #[serde(default)]
     pub wrong: Vec<String>,
+}
+
+/// A surface written some other way than through its seam — a record the host did not write
+/// the last version of. The seam is held by detection rather than by a wall
+/// (`docs/arch/legibility.md` § L), so this is what makes a walk-around countable.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Bypass {
+    pub ts: DateTime<Utc>,
+    pub surface: Surface,
+    pub subject: String,
 }
 
 /// What the person's next message said about how the turns before it were put.
@@ -203,7 +238,18 @@ pub async fn read_since(data_dir: &Path, since: DateTime<Utc>) -> Vec<Record> {
     out
 }
 
-/// The numbers (§ I). Server-side, beside the logs; no card in the face.
+/// The numbers (§ I), one set per surface. Server-side, beside the logs; no card in the face.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Legibility {
+    pub speech: Numbers,
+    pub record: Numbers,
+}
+
+pub fn legibility(records: &[Record]) -> Legibility {
+    Legibility { speech: numbers(records, Surface::Speech), record: numbers(records, Surface::Record) }
+}
+
+/// The numbers for one surface.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Numbers {
     pub from: Option<DateTime<Utc>>,
@@ -223,6 +269,8 @@ pub struct Numbers {
     /// Whether the check deserves its place: its verdicts against the audit's, message by
     /// message, for every message both read.
     pub agreement: Agreement,
+    /// Writes that went around the seam. Zero on speech, which has no other way out.
+    pub bypasses: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -260,10 +308,22 @@ fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
     Some(sorted[rank - 1])
 }
 
-pub fn numbers(records: &[Record]) -> Numbers {
+/// Whether a record is about `surface`. A reception reads the person's reply to what was
+/// *said*, so it belongs to speech.
+fn on(record: &Record, surface: Surface) -> bool {
+    match record {
+        Record::Check(c) => c.surface == surface,
+        Record::Audit(a) => a.surface == surface,
+        Record::Reception(_) => surface == Surface::Speech,
+        Record::Bypass(b) => b.surface == surface,
+    }
+}
+
+pub fn numbers(records: &[Record], surface: Surface) -> Numbers {
+    let records: Vec<&Record> = records.iter().filter(|r| on(r, surface)).collect();
     let mut n = Numbers {
-        from: records.first().map(Record::ts),
-        to: records.last().map(Record::ts),
+        from: records.first().map(|r| r.ts()),
+        to: records.last().map(|r| r.ts()),
         ..Numbers::default()
     };
     let mut latencies = Vec::new();
@@ -273,8 +333,9 @@ pub fn numbers(records: &[Record]) -> Numbers {
     let mut findings: BTreeMap<String, u32> = BTreeMap::new();
     let mut unsaid = 0u32;
 
-    for record in records {
+    for record in &records {
         match record {
+            Record::Bypass(_) => n.bypasses += 1,
             Record::Reception(r) => {
                 n.receptions += 1;
                 if r.corrects {
@@ -308,7 +369,7 @@ pub fn numbers(records: &[Record]) -> Numbers {
             }
         }
     }
-    for record in records {
+    for record in &records {
         let Record::Audit(a) = record else { continue };
         for m in &a.messages {
             let Some(&sent_back) = checked.get(&(a.turn.as_str(), m.text.as_str())) else {
@@ -350,6 +411,7 @@ mod tests {
     fn check(turn: &str, message: &str, outcome: Outcome, latency_ms: u64) -> Record {
         Record::Check(Check {
             ts: at("2026-09-15T01:00:00Z"),
+            surface: Surface::Speech,
             turn: turn.into(),
             message: message.into(),
             scope: Scope::Report,
@@ -360,6 +422,33 @@ mod tests {
             latency_ms,
             model: "m".into(),
         })
+    }
+
+    /// **One file, one set of numbers per surface.** A record's check never counts as
+    /// speech's, a reception is always speech's, and a bypass is counted where it happened.
+    #[test]
+    fn each_surface_is_counted_apart_from_one_file() {
+        let mut on_record = check("resume", "简历在你盘上了", Outcome::Revise, 800);
+        if let Record::Check(c) = &mut on_record {
+            c.surface = Surface::Record;
+        }
+        let records = vec![
+            check("t1", "a", Outcome::Pass, 1_000),
+            on_record,
+            Record::Bypass(Bypass {
+                ts: at("2026-09-15T01:30:00Z"),
+                surface: Surface::Record,
+                subject: "resume".into(),
+            }),
+        ];
+        let both = legibility(&records);
+        assert_eq!((both.speech.check.checked, both.speech.bypasses), (1, 0));
+        assert_eq!((both.record.check.checked, both.record.check.revise, both.record.bypasses), (1, 1, 1));
+
+        // Written before surfaces existed, read back as speech.
+        let old = r#"{"kind":"check","ts":"2026-09-15T01:00:00Z","turn":"t","message":"m","scope":"long","mode":"shadow","outcome":"pass","latency_ms":5,"model":"m"}"#;
+        let Record::Check(c) = serde_json::from_str::<Record>(old).unwrap() else { panic!() };
+        assert_eq!(c.surface, Surface::Speech);
     }
 
     #[test]
@@ -402,6 +491,7 @@ mod tests {
             check("t2", "d", Outcome::Timeout, 2_500),
             Record::Audit(Audit {
                 ts: at("2026-09-15T01:01:00Z"),
+                surface: Surface::Speech,
                 turn: "t1".into(),
                 model: "m".into(),
                 messages: vec![
@@ -422,7 +512,7 @@ mod tests {
                 quote: Some("不用说这么细".into()),
             }),
         ];
-        let n = numbers(&records);
+        let n = numbers(&records, Surface::Speech);
         assert_eq!(n.corrections, 1);
         assert_eq!(n.corrections_per_day.get(&"2026-09-15".parse().unwrap()), Some(&1));
         assert_eq!(n.messages_audited, 4);

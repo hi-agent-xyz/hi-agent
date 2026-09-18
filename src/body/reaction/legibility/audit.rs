@@ -83,6 +83,7 @@ pub(crate) async fn audit(
     };
     Some(quality::Audit {
         ts: Utc::now(),
+        surface: quality::Surface::Speech,
         turn: key.to_string(),
         model: judge.model().to_string(),
         messages: fold_answers(sent, answer.messages),

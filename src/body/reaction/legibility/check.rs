@@ -398,6 +398,7 @@ impl CheckRecord {
         );
         let record = quality::Record::Check(quality::Check {
             ts: Utc::now(),
+            surface: quality::Surface::Speech,
             turn: self.key,
             message: self.message,
             scope: self.scope,

@@ -603,6 +603,7 @@ pub async fn run(opts: Options) -> anyhow::Result<()> {
                         Ok((said, _)) if said.is_empty() => (
                             Some(quality::Audit {
                                 ts: Utc::now(),
+                                surface: quality::Surface::Speech,
                                 turn: "replay".into(),
                                 model: auditor.model().to_string(),
                                 messages: vec![],

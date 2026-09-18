@@ -1,4 +1,6 @@
-//! `GET /api/speech?days=7` — the numbers on what was sent (`docs/arch/legibility.md` § I).
+//! `GET /api/legibility?days=7` — the numbers on what a person read, one set per surface
+//! (`docs/arch/legibility.md` § I). It was `/api/speech` while speech was the only surface
+//! anything judged.
 //!
 //! Derived on read from the judges' records ([`crate::mind::memory::quality`]), like
 //! `/api/stats` is from the frame logs: a counter kept beside them would be free to drift.
@@ -20,15 +22,15 @@ use crate::mind::memory::quality;
 const DEFAULT_DAYS: i64 = 7;
 
 #[derive(Debug, Deserialize, Default)]
-pub struct SpeechQuery {
+pub struct LegibilityQuery {
     days: Option<i64>,
 }
 
-pub async fn get_speech(
+pub async fn get_legibility(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<SpeechQuery>,
+    Query(query): Query<LegibilityQuery>,
 ) -> Response {
     let days = query.days.unwrap_or(DEFAULT_DAYS).clamp(1, 366);
     let records = quality::read_since(&state.data_dir, Utc::now() - Duration::days(days)).await;
-    Json(quality::numbers(&records)).into_response()
+    Json(quality::legibility(&records)).into_response()
 }

@@ -291,7 +291,8 @@ Both reach Reaction through A. Nothing new is stored beside them.
 
 ### I. The number
 
-Server-side, beside the logs; no card in the face. `GET /api/speech?days=7` computes them
+Server-side, beside the logs; no card in the face. `GET /api/legibility?days=7` computes them,
+one set per surface — `speech` and `record` —
 from the records on read.
 
 | Measure | Why |
@@ -301,6 +302,7 @@ from the records on read.
 | owed and left unsaid, per 100 turns | so shorter never passes for better |
 | pre-send revise rate; latency p50/p95; timeouts | whether the source is getting fixed, and what the check costs |
 | check–audit agreement | whether the check deserves its place |
+| writes around the seam, per surface | the record seam is held by detection, not a wall (§ L); this is the number that says whether it is holding |
 
 ### J. Replay
 
