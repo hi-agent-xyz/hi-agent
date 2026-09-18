@@ -368,6 +368,22 @@ see any of it. Two verbs replace that, and `## Timeline` stops being hand-patche
 a record is a door beside the check, and a compatibility path kept until the prompts catch up
 is the one that stays.
 
+**And the seam is held by detection, not by a wall — say so rather than imply otherwise.**
+Cognition and workers run `danger-full-access`
+([`process.rs`](../../src/foundation/codex/process.rs)), so a verb cannot stop anyone from
+reaching `facet.md` with `apply_patch`; a sandbox that could is a separate decision with its
+own cost. Two things carry it instead:
+
+- **The record moves out of the folder the worker writes in.** The task folder keeps the
+  deliverable and the working notes; the record does not sit in the middle of them, so the
+  file a worker is editing is never the one the host owns.
+- **The store holds what it last wrote.** A record that changed by any other route is a
+  finding in `memory/quality/` under the same surface, counted in § I.
+
+That is weaker than a wall and much stronger than the prompts that produced 41 of 41: a
+hand-patched record becomes a countable defect instead of an invisible one, which is the
+whole difference this design turns on.
+
 ### M. The gate — on a line, not on a record
 
 A line is short, the worker writes it holding everything it is about, and the card can draw
@@ -394,6 +410,14 @@ The body under *Where it stands* is long, rewritten rarely, and nothing waits on
 judged after the write instead of before: one read per `stands`, and one read of the whole
 record when a task manager closes it — the two moments the artifact is finished. Same judge,
 same standard, findings to `memory/quality/` under `surface: record`, nothing sent back.
+
+**The closing read also answers what the record does not say**, against the sessions that
+served the row. A gate on length is an incentive to write fewer lines, not shorter ones, and
+a line never written is invisible forever — worse than the long one it replaced, because a
+record's whole job is that somebody downstream was not in the room. Speech already carries
+this counterweight (*owed and left unsaid*, § I, so shorter never passes for better); the
+record surface needs its own or the gate will be measured as a success while making records
+thinner. It is the one number to watch first when the gate leaves shadow.
 
 § G–K need no second copy. The audit's per-message read becomes a per-artifact read, the
 number (§ I) gains a surface column, Reflection (§ H) already reads that file, and replay
