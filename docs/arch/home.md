@@ -156,6 +156,13 @@ So the card keeps the one status line it had, and the sessions are marks in it:
   nothing is progressing. Only while nothing else on the same row is running, and never on a
   closed row, where a stale failure underneath is not the news.
 
+**A task waiting on the person says *Needs you*, in the danger tone, in place of its status.**
+The test is the board's: the task is open and the newest line a mind wrote on it is a
+`waiting` one, read from the same `latest` field, so the two cannot disagree. Its time is that
+line's. It is the one status that asks the reader to act, and Home is where somebody comes
+back to for what the conversation did not tell them. *In progress* on a row that is waiting
+on them says the opposite of what is true.
+
 ## Internal mapping
 
 - A task is `task:<subject>` from the task ledger. Its status and lifecycle timestamps

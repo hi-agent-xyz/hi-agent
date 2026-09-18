@@ -851,7 +851,8 @@ they forget, and reads exactly like a row nobody is waiting on. A wait that deca
 overtaken cannot be left set.
 
 **And the panel says it in words, on the card.** *Needs you* renders above the record when
-the newest spoken line is a `waiting` one, and on the board card beside the title — because a
+the newest spoken line is a `waiting` one, on the board card beside the title, and as the status
+word on the task's Home card ([`home.md`](home.md)) — because a
 red stripe inside a modal is a colour the reader has to interpret, and the question they
 actually have is whether to wait or to act. The rest of the record is history and should
 read as history.

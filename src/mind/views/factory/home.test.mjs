@@ -178,6 +178,23 @@ test("idle is live, last-turn failure is not session termination, stale doing is
   assert.equal(stateOf(failed), "failed");
 });
 
+test("a task waiting on the person says so on its card, and a closed one never does", () => {
+  const waiting = { kind: "waiting", at: hoursAgo(0.25), text: "needs a root password on the box" };
+  const model = project({ tasks: [{ ...task("open"), latest: waiting }, { ...task("closed", "done", 0), latest: waiting },
+    { ...task("moved-on"), latest: { kind: "update", at: hoursAgo(0.1), text: "went round it" } }] });
+  const state = (subject) => stateOf(model.nodes.find((n) => n.id === `task:${subject}`));
+  assert.equal(state("open"), "needsYou");
+  assert.equal(state("closed"), "done");
+  assert.equal(state("moved-on"), "doing");
+  assert.ok(TONE.needsYou);
+
+  // A cut turn says our side stopped; a wait says the next step is theirs, and that is the
+  // one they can act on.
+  const cut = project({ tasks: [{ ...task("open"), latest: waiting }],
+    workers: [worker("w", "worker", { subject: "open", state: "idle", last_turn: { outcome: "failed" } })] });
+  assert.equal(stateOf(cut.nodes.find((n) => n.id === "task:open")), "needsYou");
+});
+
 test("overview uses public messages and factual transitions, never worker tail or reasoning", () => {
   const model = project({ tasks: [task("shipped", "done", 2)], workers: [worker("w", "worker", { doing: "internal narration" })],
     messages: [{ id: "m1", role: "user", text: "where are we", ts: hoursAgo(1) },

@@ -24,7 +24,7 @@ const COPY = {
     failed: "Some sources could not be refreshed", retry: "Retry", stale: "Earlier context",
     unknown: "Time unknown", untitled: "Untitled activity", noMessages: "No conversation yet",
     status: { todo: "To do", doing: "In progress", serving: "On duty", done: "Completed", cancelled: "Cancelled",
-      running: "Working", waiting: "Work queued", idle: "Idle",
+      needsYou: "Needs you", running: "Working", waiting: "Work queued", idle: "Idle",
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
     roles: { reaction: "Conversation", cognition: "Coordination", reflection: "Review" },
     source: { tasks: "tasks", workers: "live sessions", views: "results", groups: "grouping" },
@@ -38,7 +38,7 @@ const COPY = {
     failed: "部分数据未能刷新", retry: "重试", stale: "较早的上下文",
     unknown: "时间未知", untitled: "未命名活动", noMessages: "还没有对话",
     status: { todo: "待开始", doing: "进行中", serving: "值守", done: "已完成", cancelled: "已取消",
-      running: "正在处理", waiting: "有工作待处理", idle: "空闲",
+      needsYou: "等你处理", running: "正在处理", waiting: "有工作待处理", idle: "空闲",
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
     roles: { reaction: "交流", cognition: "协调", reflection: "回顾" },
     source: { tasks: "任务", workers: "在线会话", views: "成果", groups: "分组" },
@@ -80,6 +80,7 @@ const TASK_BOARD = "factory/tasks", SESSION_BOARD = "factory/workers";
 /** The status word's tone on a card. Only the word: no wire and no border carries status. */
 const TONE = { todo: "var(--fg-mute)",
   doing: "var(--accent)", serving: "var(--accent-2)", done: "var(--fg-mute)", cancelled: "var(--fg-mute)",
+  needsYou: "var(--danger)",
   running: "var(--accent)", waiting: "var(--accent-2)", idle: "var(--fg-mute)",
   failed: "var(--danger)", interrupted: "var(--danger)" };
 
@@ -431,6 +432,21 @@ function childIndex(model) {
 }
 
 /**
+ * **Whether the person is wanted on this task**: it is open and the newest line a mind wrote
+ * on it is a `waiting` one. The same rule as `factory/tasks`' `waitsOnPerson`, over the same
+ * `latest` field, so the card and the board cannot disagree.
+ *
+ * It is the card's status word because it is the one status the person has to act on, and
+ * Home is where somebody comes back to once the conversation has stopped telling them where
+ * each thing got to (`docs/arch/legibility.md` § F). "In progress" on a row that is waiting
+ * on them says the opposite of what is true. It wins over a cut turn below, which says our
+ * side stopped: a row whose last step is theirs is not one anybody is progressing.
+ */
+function waitsOnPerson(task) {
+  return OPEN.has(task.status) && task.latest?.kind === "waiting";
+}
+
+/**
  * **One word, because the two states are not independent.** A card used to be able to carry a
  * ledger status and a session state at once — `To do` above `Working`, `Completed` above `Idle` —
  * and most of that grid does not exist: nothing is being worked on while it is still to do, and
@@ -443,6 +459,7 @@ function childIndex(model) {
  */
 function stateOf(node) {
   if (node.kind === "task") {
+    if (waitsOnPerson(node.data.task)) return "needsYou";
     const sessions = node.data.sessions || [];
     if (!OPEN.has(node.data.status) || sessions.some((s) => s.state === "running")) return node.data.status;
     const cut = sessions.find((s) => ["failed", "interrupted"].includes(s.lastTurn?.outcome));
@@ -476,6 +493,8 @@ function age(value, now) {
 }
 
 function nodeTime(node) {
+  // A card's time is how long its status word has held, so a wait is timed from its line.
+  if (node.kind === "task" && waitsOnPerson(node.data.task)) return node.data.task.latest.at || node.data.task.statusSince;
   return node.kind === "task" ? node.data.endedAt || node.data.task.statusSince
     : node.kind === "activity" ? node.data.session.stateSince
     : node.kind === "overview" ? node.data.updatedAt : null;
