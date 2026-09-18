@@ -46,9 +46,23 @@ struct AddAgentRequest: Identifiable, Equatable {
         self.opensScanner = opensScanner
     }
 
+    /// Whether this URL is addressed to us at all.
+    ///
+    /// `onOpenURL` is not a pairing-only door. iOS hands it Universal Links too —
+    /// which the comment in `ContentView` asserted it did not, and the code was
+    /// written to that assertion. On 2026-09-18 the share extension's own hand-off,
+    /// `https://hi-agent.xyz/ios-share/<id>`, arrived here after staging a photo
+    /// perfectly, and this parser answered a link that had worked with **"This is
+    /// not a Hi Agent link."** So the scheme is asked about *before* parsing: a URL
+    /// on somebody else's scheme is another door's business, and saying nothing is
+    /// the whole of the correct response to it.
+    static func handles(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "hiagent"
+    }
+
     init(url: URL) throws {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              components.scheme?.lowercased() == "hiagent",
+        guard Self.handles(url),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.host?.lowercased() == "pair"
         else {
             throw AddAgentRequestError.invalidLink

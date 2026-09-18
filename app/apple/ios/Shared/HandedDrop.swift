@@ -22,6 +22,39 @@ enum AppGroup {
     }
 }
 
+/// The one address the two targets agree on.
+///
+/// `https://hi-agent.xyz/ios-share/<id>` — minted by the extension
+/// (`HiAgentShare/OpenHost.swift`) and recognised by the app. It is written here, in
+/// the file both targets compile, because the two ends are separate processes that
+/// cannot be kept in step by a compiler: two spellings of this path is how the app
+/// came to answer its own working hand-off link with "This is not a Hi Agent link"
+/// on 2026-09-18.
+///
+/// **The apex, and not the core's own address.** A Universal Link only works for a
+/// domain listed in the app's `associated-domains` entitlement, so it cannot be the
+/// person's own core — `ana.hi-agent.xyz` is a tunnel into their machine, and a
+/// self-hosted core is on a domain this app has never heard of. The apex is the one
+/// host the site itself serves, and the claim there is narrowed to this one path so
+/// that opening a link to somebody's shared *view* never opens your app pointed at
+/// their agent's page.
+enum ShareHandoff {
+    static let host = "hi-agent.xyz"
+    static let path = "/ios-share/"
+
+    static func url(dropID: String) -> URL? {
+        URL(string: "https://\(host)\(path)\(dropID)")
+    }
+
+    /// Whether a URL is this hand-off.
+    ///
+    /// Asked on **both** doors iOS delivers one on — `onOpenURL` and
+    /// `onContinueUserActivity` — because which of them fires is not ours to choose.
+    static func isHandoff(_ url: URL) -> Bool {
+        url.host?.lowercased() == host && url.path.hasPrefix(path)
+    }
+}
+
 /// One act of handing something over, parked on disk until it lands.
 ///
 /// **The extension writes these; the app sends them.** That split is the whole design

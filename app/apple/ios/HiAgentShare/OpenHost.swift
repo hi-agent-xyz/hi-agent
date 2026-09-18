@@ -22,7 +22,7 @@ import SwiftUI
 /// **It must be a Universal Link.** A custom scheme (`hiagent://`) goes through the
 /// machinery Apple has been closing off; an `https` URL this domain claims in its
 /// `apple-app-site-association` is routed to the app by Associated Domains, which is
-/// a different path entirely and the one still open. Hence `shareURL` below rather
+/// a different path entirely and the one still open. Hence `ShareHandoff.url` rather
 /// than the app's own scheme.
 ///
 /// Still best-effort, and still nothing depends on it: the drop is on disk before
@@ -30,19 +30,6 @@ import SwiftUI
 /// this buys is landing the person *in the conversation*, which is the reason to
 /// share something to your agent at all.
 enum OpenHost {
-    /// The apex, and not the core's own address.
-    ///
-    /// A Universal Link only works for a domain listed in the app's
-    /// `associated-domains` entitlement, so this cannot be the person's own core —
-    /// `ana.hi-agent.xyz` is a tunnel into their machine, and a self-hosted core is
-    /// on a domain this app has never heard of. The apex is the one host the site
-    /// itself serves, and the claim there is narrowed to this one path so that a
-    /// shared view link never opens somebody else's app. See
-    /// `backend/internal/server/applinks.go` in the hi-agent.xyz repo.
-    static func shareURL(dropID: String) -> URL? {
-        URL(string: "https://hi-agent.xyz/ios-share/\(dropID)")
-    }
-
     /// Ask iOS to hand the URL to the app.
     ///
     /// No result: `OpenURLAction` has no completion handler, so whether the app

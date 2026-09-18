@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let keychain = KeychainStore()
     private let storageKey = "hi.agent.ios.roster.v1"
+    /// A delivery is in flight. See [`deliverQueued`].
+    private var isDelivering = false
 
     init() {
         load()
@@ -36,6 +38,12 @@ final class AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
+        // A URL that is not on our scheme is not a malformed pairing link, and must
+        // not be answered like one — see [`AddAgentRequest.handles`], which is where
+        // the "This is not a Hi Agent link" alert came from on 2026-09-18.
+        guard AddAgentRequest.handles(url) else {
+            return
+        }
         do {
             addRequest = try AddAgentRequest(url: url)
             addLinkError = nil
@@ -223,14 +231,26 @@ final class AppModel: ObservableObject {
 
     /// Send everything waiting, oldest first.
     ///
-    /// Called when the app comes forward, and on the `hiagent://shared` the share
-    /// extension opens — **not on a timer and not from a background task.** The queue
-    /// is drained where its result can be seen, because a failure that nobody is
-    /// looking at is a file that quietly stops existing.
+    /// Called when the app comes forward and on the share extension's hand-off —
+    /// **not on a timer and not from a background task.** The queue is drained where
+    /// its result can be seen, because a failure that nobody is looking at is a file
+    /// that quietly stops existing.
     ///
     /// Reports rather than throws: the caller is a scene phase or a URL, neither of
     /// which has anywhere to put an error. The banner does.
     func deliverQueued() async {
+        // **One delivery at a time.** Those callers are not alternatives: one share
+        // fires the hand-off *and* the foreground transition, and the hand-off itself
+        // arrives on two doors. Without this the second call reads the same queue
+        // before the first has discarded anything, and the person's photo is
+        // delivered twice — the duplicate that discarding only after a send lands, in
+        // the loop below, exists to avoid.
+        guard !isDelivering else {
+            return
+        }
+        isDelivering = true
+        defer { isDelivering = false }
+
         let drops = HandedDrop.queued()
         guard !drops.isEmpty else {
             return

@@ -137,7 +137,7 @@ final class ShareModel: ObservableObject {
     /// to open — what was shared is already on disk, so the app will send it the
     /// next time it is opened either way.
     func openApp(then done: @escaping () -> Void) {
-        guard let dropID, let url = OpenHost.shareURL(dropID: dropID), let openHost else {
+        guard let dropID, let url = ShareHandoff.url(dropID: dropID), let openHost else {
             done()
             return
         }

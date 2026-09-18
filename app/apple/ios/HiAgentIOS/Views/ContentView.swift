@@ -69,20 +69,31 @@ struct ContentView: View {
         }
         .onOpenURL { url in
             showingRoster = false
+            // **iOS delivers a Universal Link here as well as to the modifier
+            // below.** The comment on that one asserted the opposite, and this
+            // handler was written to the assertion: on 2026-09-18 the share
+            // extension's own hand-off arrived here, went to the pairing parser, and
+            // put "This is not a Hi Agent link" in front of somebody whose photo had
+            // just staged perfectly. So the hand-off is recognised on both doors.
+            if ShareHandoff.isHandoff(url) {
+                Task { await model.deliverQueued() }
+                return
+            }
             model.handleIncomingURL(url)
         }
-        // Universal Links land here rather than in `onOpenURL`, and the share
-        // extension's hand-off is one: `https://hi-agent.xyz/ios-share/<id>`, which
-        // iOS routes to this app instead of Safari because the domain's
-        // `apple-app-site-association` claims that path. It is the only way an
-        // extension can still bring its containing app forward — see
-        // `HiAgentShare/OpenHost.swift` for the three that no longer work.
+        // Universal Links arrive here, and the share extension's hand-off is one:
+        // `https://hi-agent.xyz/ios-share/<id>`, which iOS routes to this app
+        // instead of Safari because the domain's `apple-app-site-association` claims
+        // that path. It is the only way an extension can still bring its containing
+        // app forward — see `HiAgentShare/OpenHost.swift` for the three that no
+        // longer work. Both doors are wired, because which of them fires is not ours
+        // to choose.
         //
         // The id is not read. Coming forward drains the whole queue, which has to
         // happen anyway for drops nobody opened a link for, so the arrival is the
         // signal and the address is just what makes each one distinct.
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-            guard let url = activity.webpageURL, url.path.hasPrefix("/ios-share/") else {
+            guard let url = activity.webpageURL, ShareHandoff.isHandoff(url) else {
                 return
             }
             showingRoster = false
