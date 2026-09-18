@@ -1105,8 +1105,9 @@ export default function Home() {
             <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
               {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} style={{ stroke: wire.paint }} />)}
             </svg>
-            {chart.placed.map((row) => <div key={row.node.id} className="hi-work__position"
-              style={{ left: row.x, top: row.y, width: row.w, height: row.h }}>
+            {chart.placed.map((row, index) => <div key={row.node.id} className="hi-work__position"
+              style={{ left: row.x, top: row.y, width: row.w, height: row.h,
+                "--enter-delay": `${Math.min(index, 8) * 28}ms` }}>
               {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now} />
                 : <Node node={row.node} root={row.node.id === shown.rootId} up={up} {...common} />}
             </div>)}
@@ -1206,14 +1207,15 @@ function Node({ node, now, children, openRef, tones, centreOn, root = false, up 
 /** The narrow flow's rail is its parent's colour and each tick its own, as a wire would be. */
 function Branch({ nodes, parent, ...props }) {
   return <ul className="hi-work__branch" style={{ "--rail": branchPaint(props.tones.get(parent)) }}>
-    {nodes.map((node) => <li key={node.id} style={{ "--tick": branchPaint(props.tones.get(node.id)) }}>
+    {nodes.map((node, index) => <li key={node.id} style={{ "--tick": branchPaint(props.tones.get(node.id)),
+      "--enter-delay": `${Math.min(index, 8) * 28}ms` }}>
       <Node node={node} {...props} />
       {props.children.get(node.id)?.length > 0 && <Branch nodes={props.children.get(node.id)} parent={node.id} {...props} />}
     </li>)}</ul>;
 }
 
 const CSS = `
-.hi-work { --bg: var(--bg-0); --work-line: color-mix(in srgb, var(--fg-mute) 46%, var(--bg)); --work-shadow:0 1px 2px #0000000a, 0 3px 10px #00000008; --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:color-mix(in srgb, var(--fg) 2%, var(--bg)); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
+.hi-work { --bg:var(--bg-0); --work-line:color-mix(in srgb, var(--fg-mute) 25%, var(--bg)); --work-glint:#ffffffd9; --work-shade:#343c5010; --work-shadow:inset 0 1px 0 var(--work-glint), 0 2px 4px #20283805, 0 8px 22px var(--work-shade); --work-shadow-raised:inset 0 1px 0 var(--work-glint), 0 3px 6px #20283808, 0 14px 30px var(--work-shade); --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:linear-gradient(115deg, color-mix(in srgb, #ff9393 9%, var(--bg)), var(--bg) 46%, color-mix(in srgb, #86c7ed 12%, var(--bg))); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
 .hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -1227,11 +1229,11 @@ const CSS = `
 .hi-work__canvas img { -webkit-user-drag:none; }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; } }
-:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; }
-.hi-work__wires path { fill:none; stroke-width:2.2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000038; } }
+:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000038; }
+.hi-work__wires path { fill:none; stroke-width:1.8; stroke-linecap:round; opacity:0.8; }
 .hi-work__position { position:absolute; }
-.hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; }
+.hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:linear-gradient(145deg, color-mix(in srgb, #ff9393 7%, var(--bg)), var(--bg) 45%, color-mix(in srgb, #86c7ed 5%, var(--bg))); border:1px solid var(--work-line); border-radius:8px; }
 .hi-work__core-title { display:flex; gap:10px; align-items:center; margin:0; min-height:36px; font-size:24px; font-weight:600; }
 .hi-work__pip { width:11px; height:11px; flex:0 0 11px; border-radius:50%; background:var(--accent); }
 .hi-work__roles { display:flex; gap:14px; padding:10px 0 12px; border-bottom:1px solid var(--work-line); }
@@ -1246,8 +1248,13 @@ const CSS = `
 .hi-work__overview time { font-size:11px; }
 .hi-work__overview p { margin:5px 0 0; font-size:16px; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
-.hi-work__node { height:100%; background:var(--bg); border:1px solid var(--work-line); border-radius:6px; display:flex; flex-direction:column; }
+.hi-work__node { height:100%; background:linear-gradient(155deg, var(--bg), color-mix(in srgb, var(--bg) 94%, transparent)); border:1px solid var(--work-line); border-radius:8px; display:flex; flex-direction:column; }
 .hi-work__node, .hi-work__core, .hi-work__tile { box-shadow:var(--work-shadow); }
+/* Animate the contents, never the positioned chart or its zoom transform. Backwards fill
+   releases opacity afterwards so the model's emphasis still owns the settled card. */
+.hi-work__node, .hi-work__core, .hi-work__tile, .hi-work__group { animation:hi-work-enter 380ms cubic-bezier(.2,.7,.2,1) var(--enter-delay, 0ms) backwards; }
+.hi-work__core { --enter-delay:0ms; box-shadow:var(--work-shadow-raised); }
+@keyframes hi-work-enter { from { opacity:0; transform:translateY(10px) scale(.985); } }
 /* A heading, not a card: no border and no background, because it is a name over the cards
    below it rather than a thing beside them. */
 .hi-work__group { height:100%; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; }
@@ -1265,15 +1272,24 @@ const CSS = `
 .hi-work__trail strong { color:var(--fg); font-weight:600; }
 .hi-work__group span { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
-.hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:6px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
+.hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:8px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
 .hi-work__node-title { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.4; overflow-wrap:anywhere; font-weight:500; }
 .hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:12px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }
-.hi-work__node { transition:border-color 160ms ease; }
-.hi-work__node:has(button:hover), .hi-work__node:focus-within { border-color:var(--fg-mute); }
-@media (prefers-reduced-motion:reduce) { .hi-work__node, .hi-work__group > button { transition:none; } }
+.hi-work__node, .hi-work__tile { transition:border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.hi-work__node:focus-within, .hi-work__tile:focus-within { border-color:var(--accent); box-shadow:var(--work-shadow-raised); }
+.hi-work__tile:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
+@media (hover:hover) and (pointer:fine) {
+  .hi-work__node:has(button:hover), .hi-work__tile:has(button:hover) { border-color:color-mix(in srgb, var(--fg-mute) 48%, var(--bg)); box-shadow:var(--work-shadow-raised); transform:translateY(-2px); }
+}
+.hi-work__node:has(button:active), .hi-work__tile:has(button:active) { transform:translateY(0); box-shadow:var(--work-shadow); }
+@media (prefers-reduced-motion:reduce) {
+  .hi-work__node, .hi-work__core, .hi-work__tile, .hi-work__group { animation:none; transition:none; }
+  .hi-work__node:has(button:hover), .hi-work__tile:has(button:hover) { transform:none; }
+  .hi-work__group > button { transition:none; }
+}
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__node-state { display:flex; align-items:center; gap:6px; color:var(--node-tone); }
 /* The hands on a task sit in its one status line: a dot each, filled while one runs. */

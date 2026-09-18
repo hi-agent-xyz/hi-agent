@@ -96,9 +96,16 @@ line height, leaving the footer its own space instead of truncating over unused 
 Group headings occupy a narrower 144x56 box, wrap to two lines, and use stronger text
 contrast than metadata; they remain unframed labels, not cards.
 
-**Cards separate from the canvas.** A clearer neutral border and a shallow shadow separate
-white card surfaces from a barely tinted canvas. This applies equally to the core, tasks,
-sessions and picture tiles; it does not add a status-colored border or change their sizes.
+**Cards separate from the canvas.** A soft, broad warm-to-cool canvas wash sits behind
+near-opaque cards with neutral hairline borders, an inset edge highlight and layered soft
+shadows. The core carries a little more elevation and a faint warm-to-cool surface tint.
+Tasks, sessions and picture tiles share the same 8px corners; nothing adds a status-colored
+border or changes their sizes. Dark mode softens the highlight and deepens the shadow.
+Cards enter with a short fade and 10px rise, staggered at 28ms intervals capped at 224ms.
+Stable node identities keep live refreshes from replaying entry animations. Animation never
+owns layout or the canvas zoom transform, and releases opacity back to the model's emphasis
+when finished. Pointer hover raises actionable cards 2px; keyboard focus has an explicit
+accent outline. Reduced-motion preferences disable entry and movement effects.
 Group headings pair their label with a 40px icon, and the label is drawn in its group's
 colour. The icon is the group's own when one has been drawn for it and a shared default until
 then — see § *Icons* below. Home never picks one from a label or from task text.
