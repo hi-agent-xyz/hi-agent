@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, hands, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, hands, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -88,20 +88,82 @@ test("an ended session is not this surface's subject at all", () => {
   assert.deepEqual(titles(model, "activity"), ["Work live"]);
 });
 
-test("core roles aggregate centrally; every other live session is an activity", () => {
-  const model = project({ workers: [worker("r", "reaction"), worker("c", "cognition"),
-    worker("f", "reflection"), worker("w1"), worker("w2")] });
-  assert.equal(model.nodes[0].data.sessions.length, 3);
-  assert.equal(ofKind(model, "activity").length, 2);
+test("conversation and coordination make the core; a session on a drawn task is a line on it", () => {
+  const model = project({ tasks: [task("a")], workers: [worker("r", "reaction"), worker("c", "cognition"),
+    worker("f", "reflection"), worker("w1", "worker", { subject: "a" }), worker("w2", "worker", { subject: "a" })] });
+  assert.deepEqual(list(model.nodes[0].data.sessions.map((s) => s.role)).sort(), ["cognition", "reaction"]);
+  // Reflection is the only card: the two working the task are that task card's own state.
+  assert.deepEqual(titles(model, "activity"), ["Review"]);
+  const drawn = ofKind(model, "task")[0];
+  assert.deepEqual(list(drawn.data.sessions.map((s) => s.slug)).sort(), ["w1", "w2"]);
+  assert.deepEqual(list(childIndex(model).get("task:a")), [], "and it hangs nothing below the card");
+  assert.ok(drawn.sourceRefs.some((r) => r.kind === "session"), "the sessions stay source references");
   assertConnected(model);
 });
 
-test("subject attaches every activity to its task, not its technical owner", () => {
+test("one word for a task, and a mark for each hand on it", () => {
+  // The grid the two-line card promised mostly does not exist: nothing is being worked on while
+  // it is still to do, and a closed row is closed whatever is still warm beside it.
+  const of = (status, workers) => ofKind(project({ tasks: [task("a", status)], workers }), "task")[0];
+  const on = (state, extra = {}) => worker(`w${state}`, "worker", { subject: "a", state, ...extra });
+  assert.equal(stateOf(of("todo", [])), "todo");
+  assert.equal(stateOf(of("doing", [on("running")])), "doing", "the word stays the ledger's");
+  assert.equal(stateOf(of("serving", [on("idle")])), "serving");
+  assert.equal(stateOf(of("done", [on("idle")])), "done");
+  // The one thing a session says that the ledger cannot: its last turn was cut off.
+  const cut = of("doing", [on("idle", { last_turn: { outcome: "failed" } })]);
+  assert.equal(stateOf(cut), "failed");
+  assert.equal(TONE[stateOf(cut)], "var(--danger)");
+  // Not while something else on the same row is still running — that row is progressing.
+  assert.equal(stateOf(of("doing", [on("idle", { last_turn: { outcome: "failed" } }), on("running")])), "doing");
+  // A closed row is closed: a stale failure under it is not the card's word.
+  assert.equal(stateOf(of("cancelled", [on("idle", { last_turn: { outcome: "interrupted" } })])), "cancelled");
+  // Running first, then the newest; three marks at most and the rest is a number.
+  const many = of("doing", [on("idle"), on("running"), worker("w3", "worker", { subject: "a", state: "waiting" }),
+    worker("w4", "worker", { subject: "a", state: "idle" })]);
+  const { shown, more, title } = hands(many);
+  assert.equal(shown[0].state, "running");
+  assert.equal(shown.length, 3);
+  assert.equal(more, 1);
+  assert.match(title, /Work wrunning · Working/, "every hand is named in the hover text");
+});
+
+test("the agent's own upkeep is a group code draws: Reflection and every session with no subject", () => {
+  // Dispatch refuses a subject to the kinds that serve no one task and to anything Reflection
+  // starts, so no subject means upkeep by construction — nothing here reads a title or a kind.
+  const model = project({ tasks: [task("a")], groups: [{ label: "Work", members: ["a"] }],
+    workers: [worker("reflection", "reflection"), worker("sweep", "worker", { type: "task-manager", owner: "cognition" }),
+      worker("reader", "worker", { owner: "reflection" }), worker("builder", "worker", { subject: "a" }),
+      worker("orphan", "worker", { subject: "aged-out" })] });
+  const kids = childIndex(model);
+  const upkeep = model.nodes.find((n) => n.id === "upkeep");
+  assert.equal(upkeep.kind, "group");
+  assert.equal(upkeep.title, "Upkeep");
+  assert.deepEqual(list(ofKind(model, "task")[0].data.sessions.map((s) => s.slug)), ["builder"], "a session on a drawn task is not in here");
+  assert.deepEqual(list(kids.get("upkeep").map((n) => n.id)).sort(),
+    ["session:0123456789ab:reader", "session:0123456789ab:reflection", "session:0123456789ab:sweep"]);
+  assert.equal(kids.get("upkeep").find((n) => n.data.session.role === "reflection").title, "Review");
+  // One whose task is not drawn is still somebody's work, and stays a card on the core.
+  assert.ok(kids.get("core").some((n) => n.id === "session:0123456789ab:orphan"));
+  // It comes after the person's own groups, takes a hue of its own, and can be taken as the centre.
+  assert.deepEqual(list(kids.get("core").filter((n) => n.kind === "group").map((n) => n.id)), ["group:Work", "upkeep"]);
+  const tones = branchTones(model);
+  assert.notEqual(tones.get("session:0123456789ab:sweep"), undefined);
+  assert.notEqual(tones.get("upkeep"), tones.get("group:Work"));
+  assert.equal(focusOn(model, "upkeep").nodes.length, 4);
+  assert.deepEqual(list(focusOn(model, "group:Work").nodes.map((n) => n.id)), ["group:Work", "task:a"]);
+  assertConnected(model);
+  // Nothing live that is upkeep draws no heading.
+  assert.equal(project({ workers: [worker("builder", "worker", { subject: "a" })], tasks: [task("a")] }).nodes.some((n) => n.id === "upkeep"), false);
+});
+
+test("subject decides which card a session lands on, never its technical owner", () => {
   const model = project({ tasks: [task("a"), task("b")],
     workers: [worker("boss", "worker", { subject: "a" }), worker("hand", "worker", { subject: "b", owner: "boss" })] });
-  const kids = childIndex(model);
-  assert.deepEqual(list(kids.get("task:b").map((n) => n.title)), ["Work hand"]);
-  assert.equal(ofKind(model, "activity").find((n) => n.title === "Work hand").data.ownerSessionId, "session:0123456789ab:boss");
+  const on = (subject) => ofKind(model, "task").find((n) => n.id === `task:${subject}`).data.sessions;
+  assert.deepEqual(list(on("b").map((s) => s.slug)), ["hand"], "the owner's task does not claim it");
+  assert.equal(on("b")[0].ownerSessionId, "session:0123456789ab:boss", "the owner stays inspectable");
+  assert.deepEqual(list(on("a").map((s) => s.slug)), ["boss"]);
 });
 
 test("a missing task or an owner cycle never disconnects a session", () => {
@@ -191,7 +253,8 @@ test("a live session follows its task into the group, and a task claimed twice s
   const children = childIndex(model);
   assert.deepEqual(list(children.get("group:KTV").map((n) => n.id)), ["task:kt8-046"]);
   assert.equal(children.get("core").some((n) => n.id === "group:别的"), false, "the second claim is not a group");
-  assert.deepEqual(list(children.get("task:kt8-046").map((n) => n.kind)), ["activity"], "the session is inside the group with its task");
+  assert.deepEqual(list(ofKind(model, "task")[0].data.sessions.map((s) => s.slug)), ["w1"], "the session is a line on the card in the group");
+  assert.deepEqual(list(children.get("task:kt8-046")), [], "and not a card of its own beside it");
   assertConnected(model);
 });
 
@@ -289,9 +352,9 @@ test("a wire is its first-level group's one colour at every depth, and never the
   const knq = tones.get("group:KNQ");
   assert.notEqual(knq, tones.get("group:学习类"), "two first-level groups, two colours");
 
-  // Tasks, inner groups, their tasks, sessions and pictures: all of it is KNQ's colour.
+  // Tasks, inner groups, their tasks and pictures: all of it is KNQ's colour.
   const under = model.nodes.map((n) => n.id).filter((id) => !["core", "group:KNQ", "group:学习类", "task:vocab", "task:loose"].includes(id));
-  assert.ok(under.some((id) => id.startsWith("session:")) && under.some((id) => id.startsWith("result:")));
+  assert.ok(under.some((id) => id.startsWith("result:")) && under.some((id) => id.startsWith("group:")));
   for (const id of under) assert.equal(tones.get(id), knq, `${id} wears KNQ's colour`);
   for (const wire of arrange(model).wires.filter((w) => under.includes(w.to))) assert.equal(wire.paint, branchPaint(knq));
 
@@ -404,9 +467,9 @@ test("a zoom keeps the point under the pointer where it was, fitted or overflowi
     const [ax, ay] = under(from, scroll, point), [bx, by] = under(to, next, point);
     assert.ok(Math.abs(ax - bx) < 1e-9 && Math.abs(ay - by) < 1e-9, `${from} -> ${to}`);
   }
-  // A drawing smaller than the window is centred in it; one larger starts at the origin.
-  assert.deepEqual({ ...stage(chart, frame, 0.5).offset }, { x: 100, y: 150 });
-  assert.deepEqual({ ...stage(chart, frame, 2).offset }, { x: 0, y: 0 });
+  // Half a window of air on every side, whatever the scale.
+  assert.deepEqual({ ...stage(chart, frame, 0.5).offset }, { x: 500, y: 350 });
+  assert.deepEqual({ ...stage(chart, frame, 2).canvas }, { w: 4200, h: 2300 });
   // The person's range, either side of the 1x Home opens at.
   assert.equal(clampZoom(0.01), 0.25);
   assert.equal(clampZoom(9), 2);
@@ -426,19 +489,64 @@ test("layout supports deeper nodes, rather than flattening every row into a hub 
   assert.equal(childIndex(model).get("deep:4")[0].id, "deep:5");
 });
 
-test("the core can be centred even when the tree is small or asymmetric", () => {
+test("every card, the outermost included, can be brought to the middle of the window", () => {
+  // The failure: the canvas was the drawing plus only what centring the core needed, so a card
+  // on the chart's edge stopped at the window's edge and could not be dragged in to be read.
   for (const count of [0, 1, 3, 20]) {
     const chart = arrange(project({ tasks: Array.from({ length: count }, (_, i) => task(`t${i}`)) }));
-    const core = chart.placed[0];
     for (const scale of [0.25, 1, 2]) {
       const frame = { w: 1512, h: 850 };
       const { canvas, offset } = stage(chart, frame, scale);
-      const left = offset.x + (core.x + core.w / 2) * scale - frame.w / 2;
-      const top = offset.y + (core.y + core.h / 2) * scale - frame.h / 2;
-      assert.ok(left >= 0 && left <= canvas.w - frame.w);
-      assert.ok(top >= 0 && top <= canvas.h - frame.h);
+      for (const row of chart.placed) for (const [px, py] of [[row.x, row.y], [row.x + row.w, row.y + row.h]]) {
+        const left = offset.x + px * scale - frame.w / 2, top = offset.y + py * scale - frame.h / 2;
+        assert.ok(left >= -1e-9 && left <= canvas.w - frame.w + 1e-9, `${row.node.id} x at ${scale}`);
+        assert.ok(top >= -1e-9 && top <= canvas.h - frame.h + 1e-9, `${row.node.id} y at ${scale}`);
+      }
     }
   }
+});
+
+test("a group taken as the centre draws its branch alone, in the colour it has on the whole chart", () => {
+  const groups = [{ label: "KNQ", members: ["rollup"], groups: [{ label: "Saima", members: ["closing", "tiers"] }] },
+    { label: "Life", members: ["shoes"] }];
+  const model = project({ tasks: ["rollup", "closing", "tiers", "shoes", "loose"].map((s) => task(s)), groups,
+    workers: [worker("builder", "worker", { subject: "closing" })] });
+  const knq = focusOn(model, "group:KNQ");
+  assert.equal(knq.rootId, "group:KNQ");
+  assert.deepEqual(list(knq.nodes.map((n) => n.id)).sort(),
+    ["group:KNQ", "group:Saima", "task:closing", "task:rollup", "task:tiers"]);
+  assertConnected({ ...knq, nodes: [{ id: "core" }, ...knq.nodes], edges: [{ from: "core", to: "group:KNQ", primary: true }, ...knq.edges] });
+  const whole = branchTones(model), chart = arrange(knq, whole);
+  assert.equal(chart.placed[0].node.id, "group:KNQ", "the group stands where the core stood");
+  assert.equal(chart.wires.length, chart.placed.length - 1);
+  for (const wire of chart.wires) assert.equal(wire.paint, branchPaint(whole.get("group:KNQ")), "still KNQ's colour");
+  for (const a of chart.placed) for (const b of chart.placed) {
+    if (a.node.id >= b.node.id) continue;
+    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "boxes do not overlap");
+  }
+  // A task is not a centre, and a group that is not drawn is the whole chart again.
+  assert.equal(focusOn(model, "task:shoes"), null);
+  assert.equal(focusOn(model, "group:Gone"), null);
+  assert.equal(focusOn(model, null), null);
+  // The way back out names every group from the core down.
+  assert.deepEqual(list(trail(model, "group:Saima").map((n) => n.id)), ["group:KNQ", "group:Saima"]);
+});
+
+test("where the window was is kept as a card and an offset, and survives the chart moving", () => {
+  const before = arrange(project({ tasks: ["a", "b", "c"].map((s) => task(s)) }));
+  const card = before.placed.find((p) => p.node.id === "task:b");
+  const middle = { x: card.x + card.w / 2 + 30, y: card.y + card.h / 2 - 10 };
+  const anchor = anchorAt(before, middle);
+  assert.deepEqual({ ...anchor }, { id: "task:b", dx: 30, dy: -10 });
+  // A day later more work is filed and every branch moves; the same card comes back to the middle.
+  const after = arrange(project({ tasks: ["0", "1", "2", "a", "b", "c", "d"].map((s) => task(s)) }));
+  const moved = after.placed.find((p) => p.node.id === "task:b");
+  assert.deepEqual({ ...anchorPoint(after, anchor) }, { x: moved.x + moved.w / 2 + 30, y: moved.y + moved.h / 2 - 10 });
+  // Inside the core's box is the core; a card that is gone is the root's centre.
+  const core = after.placed[0];
+  assert.equal(anchorAt(after, { x: core.x + 5, y: core.y + 5 }).id, "core");
+  assert.deepEqual({ ...anchorPoint(after, { id: "task:closed-since", dx: 400, dy: 400 }) }, { x: core.x + core.w / 2, y: core.y + core.h / 2 });
+  assert.deepEqual({ ...anchorPoint(after, undefined) }, { x: core.x + core.w / 2, y: core.y + core.h / 2 });
 });
 
 test("finished nodes gradually lose emphasis without making their text invisible", () => {

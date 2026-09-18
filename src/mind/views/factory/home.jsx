@@ -28,6 +28,8 @@ const COPY = {
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
     roles: { reaction: "Conversation", cognition: "Coordination", reflection: "Review" },
     source: { tasks: "tasks", workers: "live sessions", views: "results", groups: "grouping" },
+    trail: "Where this branch sits", back: "Step back out",
+    upkeep: "Upkeep", upkeepNote: "The agent keeping its own house: nobody asked for this work, so no task holds it",
     ago: (n, unit) => `${n}${unit} ago`,
   },
   zh: {
@@ -40,13 +42,28 @@ const COPY = {
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
     roles: { reaction: "交流", cognition: "协调", reflection: "回顾" },
     source: { tasks: "任务", workers: "在线会话", views: "成果", groups: "分组" },
+    trail: "这一支所在的位置", back: "退回上一层",
+    upkeep: "自身维护", upkeepNote: "Hi Agent 在打理自己：没有人要过这些活，所以没有任务行承载它们",
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
   },
 };
 const L = typeof document !== "undefined" && /^zh/i.test(document.documentElement.lang || navigator.language)
   ? COPY.zh : COPY.en;
 const WINDOW_MS = 24 * 3600000;
-const CORE_ROLES = new Set(["reaction", "cognition", "reflection"]);
+const CORE_ROLES = new Set(["reaction", "cognition"]);
+/**
+ * **The agent's own upkeep is a group of its own, and code draws it.** Reflection, a sweep of the
+ * ledger, a read of a person's record, a tidy of the workshop: none of that is anything a person
+ * asked for, so the ledger holds no row for it (`docs/arch/data.md#tasks`) and dispatch refuses
+ * it a `subject` (`hi_create_worker`). That refusal is what makes this a fact rather than a guess:
+ * a live session with no subject is upkeep by construction, and Reflection is upkeep by role.
+ *
+ * It used to hang off the core, beside the person's work, and Reflection sat in the core's role
+ * strip. With nothing drawing it, a grouping mind asked to place "the rest" coined a group for the
+ * agent's own faults and then filed a person's project under it because the person had said
+ * "our code". The group is not in the arrangement record and no mind places anything in it.
+ */
+const UPKEEP = "upkeep";
 const OPEN = new Set(["todo", "doing", "serving"]);
 /**
  * How many pictures a task hangs below itself.
@@ -106,13 +123,14 @@ function branchTones(model) {
   const children = childIndex(model);
   // Only a group on the core is first-level; a group inside a group wears its holder's colour.
   const groups = (children.get("core") || []).filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
-  const hues = branchHues(groups.map((g) => g.title));
+  // By label, not title: the upkeep group's title is in the reader's language, its label is not.
+  const hues = branchHues(groups.map((g) => g.data.label));
   const tones = new Map();
   const paint = (node, hue) => {
     tones.set(node.id, hue);
     for (const kid of children.get(node.id) || []) paint(kid, hue);
   };
-  for (const group of groups) paint(group, hues.get(group.title));
+  for (const group of groups) paint(group, hues.get(group.data.label));
   return tones;
 }
 /** A hue as CSS: the wire's lightness, or the label's darker one for text. Neutral without one. */
@@ -140,7 +158,7 @@ function groupIcon(ref) {
  * HomeNode = { id, kind, title, summary?, sourceRefs: SourceRef[], data: NodeData }
  * NodeData is discriminated by kind:
  * - core: { sessions: SessionState[], overviewIds: string[] }
- * - task: { task: TaskDto, status, endedAt, results: Result[] }
+ * - task: { task: TaskDto, status, endedAt, results: Result[], sessions: SessionState[] }
  * - activity: { session: SessionState, taskId?, ownerSessionId?, currentAction? }
  * - overview: { category, text, updatedAt, freshness, relatedNodeIds }
  * HomeEdge = { id, from, to, relation, primary }
@@ -153,9 +171,11 @@ function groupIcon(ref) {
  * 2. Registry Status (/api/workers) -> session:<run>:<id>. running means busy; waiting
  *    means QUEUED WORK, not waiting for the user; idle is still a LIVE session. Only live
  *    sessions are here at all — a session that has ended is `factory/workers`' subject.
- * 3. Reaction/Cognition/Reflection sessions compose the one core. All other live sessions
- *    become activities, even without a task.
- * 4. subject is the authoritative activity -> task join. owner is a technical session
+ * 3. Reaction/Cognition sessions compose the one core. A session working on a drawn task is
+ *    that task's `data.sessions` — one line on its card, never a card of its own. The rest are
+ *    activity cards: Reflection and every session with no subject in the built-in upkeep
+ *    group, and a session whose task is not drawn on the core.
+ * 4. subject is the authoritative session -> task join. owner is a technical session
  *    relationship only; it must not pretend that two independent tasks are one piece of work.
  * 5. Overview uses useMessages()'s USER-VISIBLE transcript and factual task transitions.
  *    No registry tail, raw reasoning, or tool log is used to manufacture a public plan.
@@ -315,7 +335,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     if (!OPEN.has(task.status) && !recent(taskEnd(task), now)) continue;
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
-        endedAt: taskEnd(task), results: taskResults(task, views) } });
+        endedAt: taskEnd(task), results: taskResults(task, views), sessions: [] } });
     // A task hangs off its group when the arrangement puts it in one, and off the core when
     // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
     // here invents a group for a task the person has not placed.
@@ -344,9 +364,27 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
   }
   for (const session of activities) {
     const taskId = session.subject && byId.has(taskKey(session.subject)) ? taskKey(session.subject) : null;
-    add({ id: session.id, kind: "activity", title: session.title, sourceRefs: [ref("session", session.id)],
-      data: { session, taskId, ownerSessionId: session.ownerSessionId, currentAction: session.currentAction } });
-    link(taskId || "core", session.id, taskId ? "works-on" : "contains");
+    // **A session working on a drawn task is that card's own state, not a card beside it.** The
+    // two cards carried one fact between them: the session's title is the errand as it was handed
+    // out, which is mostly the task's title said again, and the session's own contribution is
+    // whether anybody is on it right now. A whole column for that.
+    if (taskId) {
+      const task = byId.get(taskId);
+      task.data.sessions.push(session);
+      task.sourceRefs.push(ref("session", session.id));
+      continue;
+    }
+    // A subject whose task is not drawn stays on the core: that is somebody's work, aged out.
+    const upkeep = session.role === "reflection" || !session.subject;
+    if (upkeep) {
+      add({ id: UPKEEP, kind: "group", title: L.upkeep, sourceRefs: [],
+        data: { label: UPKEEP, note: L.upkeepNote, icon: "", index: Number.MAX_SAFE_INTEGER, builtin: true } });
+      link("core", UPKEEP);
+    }
+    add({ id: session.id, kind: "activity", title: session.role === "reflection" ? L.roles.reflection : session.title,
+      sourceRefs: [ref("session", session.id)],
+      data: { session, taskId: null, ownerSessionId: session.ownerSessionId, currentAction: session.currentAction } });
+    link(upkeep ? UPKEEP : "core", session.id, "contains");
   }
   const publicMessages = messages.filter((m) => (m.role === "user" || m.role === "agent") && plain(m.text));
   const lastUser = [...publicMessages].reverse().find((m) => m.role === "user");
@@ -392,12 +430,42 @@ function childIndex(model) {
   return children;
 }
 
+/**
+ * **One word, because the two states are not independent.** A card used to be able to carry a
+ * ledger status and a session state at once — `To do` above `Working`, `Completed` above `Idle` —
+ * and most of that grid does not exist: nothing is being worked on while it is still to do, and
+ * a closed row is closed whatever is still warm. What the session actually adds to a row that is
+ * open is whether anybody is on it *now*, which is a mark beside the word, not a word of its own.
+ *
+ * The one thing a session says that the ledger cannot is that **its last turn failed or was cut
+ * off**: the row reads in progress and nothing is progressing. That replaces the word, and only
+ * while nothing else is running on the same row.
+ */
 function stateOf(node) {
-  if (node.kind === "task") return node.data.status;
+  if (node.kind === "task") {
+    const sessions = node.data.sessions || [];
+    if (!OPEN.has(node.data.status) || sessions.some((s) => s.state === "running")) return node.data.status;
+    const cut = sessions.find((s) => ["failed", "interrupted"].includes(s.lastTurn?.outcome));
+    return cut ? cut.lastTurn.outcome : node.data.status;
+  }
   if (node.kind !== "activity") return node.kind;
   const s = node.data.session;
   if (s.state !== "running" && ["failed", "interrupted"].includes(s.lastTurn?.outcome)) return s.lastTurn.outcome;
   return s.state;
+}
+
+/**
+ * The live sessions on a task, running first: one dot each, filled while it runs. **Three at
+ * most**, because the question a glance asks is whether anybody is on it, and the count is the
+ * rest of the answer; past three the rest is a number. Their titles and states are the line's
+ * hover text, and `factory/workers` has all of it.
+ */
+const HANDS = 3;
+function hands(node) {
+  const sessions = [...(node.data.sessions || [])].sort((a, b) =>
+    (b.state === "running") - (a.state === "running") || String(b.stateSince).localeCompare(String(a.stateSince)));
+  return { shown: sessions.slice(0, HANDS), more: Math.max(0, sessions.length - HANDS),
+    title: sessions.map((s) => `${s.title} · ${L.status[s.state] || s.state}`).join("\n") };
 }
 
 function age(value, now) {
@@ -459,17 +527,20 @@ function divergence(a, b) {
 }
 /**
  * **A group is a label, not a card**, and that is the whole of its appearance: it holds no
- * status, no time and nothing to open, so a card-sized box would promise all three. Narrow
+ * status, no time and no board to hand off to, so a card-sized box would promise all three. Narrow
  * also costs the rank it adds the least width — the chart already runs wider than a laptop.
  */
 const GROUP_W = 144, GROUP_H = 56;
+/** A group taken as the centre stands where the core was: the same heading, a size up. */
+const FOCUS_W = 240, FOCUS_H = 80;
 function dimensions(node) {
   return node?.kind === "group" ? { w: GROUP_W, h: GROUP_H } : { w: CARD_W, h: CARD_H };
 }
 
 /**
- * **Home opens at 1x, and any other scale is the person's.** It used to open fitted to the
- * window with a floor of 0.7, and the floor was where every real day landed: fitting shrank
+ * **Home opens at 1x the first time, and after that at the scale this window left it at.** It
+ * used to open fitted to the window with a floor of 0.7, and the floor was where every real
+ * day landed: fitting shrank
  * every card to 70% — a 17px title drawn at 12px, a 16:9 picture at 168x95 — to buy the one
  * view of the whole chart that nobody was reading at that size. A day that is wider or taller
  * than the window scrolls from the core outward instead, and pinch or ⌘/Ctrl-wheel is there
@@ -480,22 +551,20 @@ function dimensions(node) {
 const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
 const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
 
-/** Keep small drawings centred, with enough edge space to centre an asymmetric root. */
+/**
+ * **Every point of the chart can be brought to the middle of the window**, so the drawing
+ * sits inside half a window of air on every side.
+ *
+ * The canvas used to be the drawing and no more, padded only far enough to centre the core.
+ * A card on the chart's outer edge could be scrolled no further than the window's edge, so
+ * zooming in on one pinned it there, half off screen, with no way to drag it to where it
+ * could be read. Half a frame each side is exactly the room that makes every edge reachable,
+ * and it centres the core — or a focused group — without a rule of its own.
+ */
 function stage(chart, frame, scale) {
   const drawn = { w: chart.width * scale, h: chart.height * scale };
-  const canvas = { w: Math.max(Math.floor(frame.w), Math.ceil(drawn.w)),
-    h: Math.max(Math.floor(frame.h), Math.ceil(drawn.h)) };
-  const offset = { x: (canvas.w - drawn.w) / 2, y: (canvas.h - drawn.h) / 2 };
-  const core = chart.placed?.find((row) => row.node.kind === "core");
-  if (core) {
-    // Asymmetric trees still need enough scrollable room to centre their root.
-    const cx = (core.x + core.w / 2) * scale, cy = (core.y + core.h / 2) * scale;
-    offset.x = Math.max(offset.x, frame.w / 2 - cx);
-    offset.y = Math.max(offset.y, frame.h / 2 - cy);
-    canvas.w = Math.ceil(Math.max(canvas.w, offset.x + drawn.w, offset.x + cx + frame.w / 2));
-    canvas.h = Math.ceil(Math.max(canvas.h, offset.y + drawn.h, offset.y + cy + frame.h / 2));
-  }
-  return { canvas, offset };
+  return { canvas: { w: Math.ceil(drawn.w + frame.w), h: Math.ceil(drawn.h + frame.h) },
+    offset: { x: frame.w / 2, y: frame.h / 2 } };
 }
 
 /** The scroll that keeps the chart point under `point` (window pixels) there across a zoom. */
@@ -506,15 +575,75 @@ function zoomAround(chart, frame, from, to, scroll, point) {
 }
 
 /**
+ * **A group can be taken as the centre**, and then the chart is that group's branch and
+ * nothing else: the group where the core was, with its tasks, inner groups, sessions and
+ * pictures around it. Null when `id` is not a group this model draws — a focus kept from an
+ * earlier open whose group has since closed to nothing is the whole chart again, never an
+ * empty one.
+ *
+ * It is a lens, not a collapse: the same model cut at a node, so every rule that places a card
+ * places it the same way here. Like the scroll, the focus belongs to the window.
+ */
+function focusOn(model, id) {
+  const root = id ? model.nodes.find((n) => n.id === id) : null;
+  if (!root || root.kind !== "group") return null;
+  const children = childIndex(model), keep = new Set();
+  const walk = (node) => { keep.add(node.id); for (const kid of children.get(node.id) || []) walk(kid); };
+  walk(root);
+  return { ...model, rootId: id, nodes: [root, ...model.nodes.filter((n) => keep.has(n.id) && n !== root)],
+    edges: model.edges.filter((e) => keep.has(e.from) && keep.has(e.to)) };
+}
+
+/** The nodes from the core's first child down to `id`, outermost first: the way back out. */
+function trail(model, id) {
+  const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
+  const nodes = new Map(model.nodes.map((n) => [n.id, n]));
+  const path = [];
+  for (let at = id; at && at !== model.rootId && nodes.has(at); at = parent.get(at)) path.unshift(nodes.get(at));
+  return path;
+}
+
+/**
+ * **Where the window was is a card, not a pixel.** The chart is laid out afresh on every open,
+ * and a task filed since the last one moves every branch below it, so a remembered scroll
+ * offset lands somewhere else on the next day's chart. What is kept instead is the card
+ * nearest the middle of the window and how far the middle was from that card's centre, in
+ * chart units; on the way back that card is put in the same place. A card that is gone falls
+ * back to the root.
+ */
+function anchorAt(chart, point) {
+  let best = null, bestDistance = Infinity;
+  for (const row of chart.placed) {
+    const cx = row.x + row.w / 2, cy = row.y + row.h / 2;
+    // To the box, not its centre: anywhere inside the core's large box is the core.
+    const distance = Math.hypot(Math.max(0, Math.abs(point.x - cx) - row.w / 2),
+      Math.max(0, Math.abs(point.y - cy) - row.h / 2));
+    if (distance < bestDistance) { best = row; bestDistance = distance; }
+  }
+  return best && { id: best.node.id, dx: point.x - (best.x + best.w / 2), dy: point.y - (best.y + best.h / 2) };
+}
+function anchorPoint(chart, anchor) {
+  const row = (anchor && chart.placed.find((p) => p.node.id === anchor.id)) || null;
+  const at = row || chart.placed[0];
+  return { x: at.x + at.w / 2 + (row ? Number(anchor.dx) || 0 : 0),
+    y: at.y + at.h / 2 + (row ? Number(anchor.dy) || 0 : 0) };
+}
+
+/**
  * Semantic edges determine the hierarchy; flextree only computes its geometry.
  * Overview children are embedded INSIDE the core, not duplicated as peripheral cards.
  *
- * **The whole tree is drawn, always.** There is no collapse, because with the work in hand
- * and nothing else there is nothing to hide from: the instance that laid out 225 cards over
- * 2556x16529px lays out 20.
+ * **The whole tree is drawn** unless the person has taken a group as the centre (`focusOn`).
+ * There is no collapse, because with the work in hand and nothing else there is nothing to
+ * hide from: the instance that laid out 225 cards over 2556x16529px lays out 20.
+ *
+ * `tones` are the whole model's, so a focused branch keeps the colour it wears on the whole
+ * chart instead of going neutral for want of a core above its group.
  */
-function arrange(model) {
+function arrange(model, tones = branchTones(model)) {
   const children = childIndex(model);
+  const root = model.nodes.find((n) => n.id === model.rootId);
+  const rootBox = root.kind === "core" ? { w: CORE_W, h: CORE_H } : { w: FOCUS_W, h: FOCUS_H };
   const branches = children.get(model.rootId).filter((n) => n.kind !== "overview");
   const tree = (node) => ({ node, ...dimensions(node),
     children: (children.get(node.id) || []).map(tree) });
@@ -526,8 +655,9 @@ function arrange(model) {
   // nobody's order to follow, so it keeps the id sort — ids, not activity states, are what
   // hold a branch still between updates. Which *side* either lands on is still the balance's
   // call, and that is the part a person cannot predict: `home.md` § Open.
+  // A focused group's own children are already in the record's order (`childIndex`).
   const rank = (n) => (n.kind === "group" ? [0, n.data.index, ""] : [1, 0, n.id]);
-  const inOrder = [...branches].sort((a, b) => {
+  const inOrder = root.kind !== "core" ? branches : [...branches].sort((a, b) => {
     const [ak, ai, aid] = rank(a), [bk, bi, bid] = rank(b);
     return ak - bk || ai - bi || aid.localeCompare(bid);
   });
@@ -535,17 +665,17 @@ function arrange(model) {
     const t = tree(branch), side = load[0] <= load[1] ? 0 : 1;
     sides[side].push(t); load[side] += weight(t);
   }
-  const placed = [{ node: model.nodes[0], x: -CORE_W / 2, y: -CORE_H / 2, w: CORE_W, h: CORE_H, dir: 0 }];
+  const placed = [{ node: root, x: -rootBox.w / 2, y: -rootBox.h / 2, ...rootBox, dir: 0 }];
   for (let side = 0; side < 2; side++) {
     if (!sides[side].length) continue;
     // The node's own extent only; the air between two of them is `spacing`, which sees both
     // and so can ask where they parted. A padded `nodeSize` cannot — it is one number per node.
     const layout = flextree({ nodeSize: (n) => [n.data.h, n.data.w + GAP_X],
       spacing: (a, b) => gapAt(divergence(a, b)) });
-    const root = layout.hierarchy({ w: CORE_W / 2, h: CORE_H, children: sides[side] });
-    layout(root);
+    const hub = layout.hierarchy({ w: rootBox.w / 2, h: rootBox.h, children: sides[side] });
+    layout(hub);
     const dir = side === 0 ? 1 : -1;
-    for (const n of root.descendants().slice(1)) {
+    for (const n of hub.descendants().slice(1)) {
       placed.push({ node: n.data.node, w: n.data.w, h: n.data.h, dir,
         x: dir > 0 ? n.y : -n.y - n.data.w, y: n.x - n.data.h / 2 });
     }
@@ -556,7 +686,6 @@ function arrange(model) {
   const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + MARGIN;
   for (const row of placed) { row.x -= x0; row.y -= y0; }
   const byId = new Map(placed.map((p) => [p.node.id, p]));
-  const tones = branchTones(model);
   const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) => {
     const from = byId.get(edge.from), to = byId.get(edge.to), right = to.dir > 0;
     const sx = from.x + (right ? from.w : 0), sy = from.y + from.h / 2;
@@ -570,6 +699,24 @@ async function getJson(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${response.status}`);
   return response.json();
+}
+
+/**
+ * **Where this window was on Home — its scale, the group it took as the centre, the card in
+ * the middle — is kept by the window, for the next time Home is opened in it.** It is not a
+ * record and nothing else reads it: another device, or a phone beside this laptop, keeps its
+ * own. A store that refuses (a private window, storage switched off) opens Home the way a
+ * first visit does.
+ */
+const PLACE_KEY = "hi-home-place";
+function readPlace() {
+  try {
+    const place = JSON.parse(localStorage.getItem(PLACE_KEY) || "null");
+    return place && typeof place === "object" ? place : {};
+  } catch { return {}; }
+}
+function writePlace(place) {
+  try { localStorage.setItem(PLACE_KEY, JSON.stringify({ ...readPlace(), ...place })); } catch { /* opens fresh next time */ }
 }
 
 export default function Home() {
@@ -646,9 +793,21 @@ export default function Home() {
   useWatched(readLedger);
   const model = useMemo(() => buildHome({ ...source, messages }, now), [source, messages, now]);
   const children = useMemo(() => childIndex(model), [model]);
-  const chart = useMemo(() => arrange(model), [model]);
   const tones = useMemo(() => branchTones(model), [model]);
+  const kept = useRef(null);
+  if (kept.current === null) kept.current = readPlace();
+  const [focus, setFocus] = useState(() => (typeof kept.current.focus === "string" ? kept.current.focus : null));
+  const focused = useMemo(() => focusOn(model, focus), [model, focus]);
+  const shown = focused || model;
+  const chart = useMemo(() => arrange(shown, tones), [shown, tones]);
+  const path = useMemo(() => (focused ? trail(model, focus) : []), [model, focused, focus]);
   const mobile = frame.w < 760;
+  const settled = sourcesSettled && ledgerSettled;
+  // A focus whose group has closed to nothing is let go once the sources have answered, so the
+  // group coming back later does not pull the window into it unasked.
+  useEffect(() => {
+    if (settled && focus && !focused) { setFocus(null); writePlace({ focus: null }); }
+  }, [settled, focus, focused]);
   useEffect(() => {
     const el = viewport.current;
     if (!el) return;
@@ -658,12 +817,29 @@ export default function Home() {
     });
     observer.observe(el); return () => observer.disconnect();
   }, []);
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState(() => clampZoom(Number(kept.current.scale) || 1));
   const { canvas, offset } = stage(chart, frame, scale);
   // Wheel and gesture events arrive faster than renders, so each zoom composes on the scale and
   // scroll the previous one asked for rather than on what is on screen yet.
-  const live = useRef({ scale, chart, frame }), pending = useRef(null);
-  live.current = { scale: pending.current?.scale ?? scale, chart, frame };
+  const live = useRef({ scale, chart, frame, focus }), pending = useRef(null);
+  live.current = { scale: pending.current?.scale ?? scale, chart, frame, focus };
+  // The place is read off the scroll as it moves, which is cheap — a nearest box among a few
+  // dozen — and written a moment after it stops, and once more as Home goes away.
+  const centred = useRef(false), place = useRef(null), writing = useRef(0);
+  const remember = useCallback(() => {
+    const el = viewport.current;
+    if (!el || !centred.current) return;
+    const { scale, chart, frame, focus } = live.current, { offset } = stage(chart, frame, scale);
+    const middle = { x: (el.scrollLeft + frame.w / 2 - offset.x) / scale, y: (el.scrollTop + frame.h / 2 - offset.y) / scale };
+    place.current = { scale, focus, anchor: anchorAt(chart, middle) };
+    clearTimeout(writing.current);
+    writing.current = setTimeout(() => { writePlace(place.current); writing.current = 0; }, 300);
+  }, []);
+  useEffect(() => () => {
+    if (writing.current) { clearTimeout(writing.current); writePlace(place.current); }
+  }, []);
+  const scrollToPoint = (point) => viewport.current?.scrollTo({ left: offset.x + point.x * scale - frame.w / 2,
+    top: offset.y + point.y * scale - frame.h / 2, behavior: "instant" });
   const zoomTo = useCallback((next, point) => {
     const el = viewport.current;
     if (!el) return;
@@ -680,21 +856,40 @@ export default function Home() {
     if (!pending.current || !viewport.current) return;
     viewport.current.scrollTo({ left: pending.current.left, top: pending.current.top, behavior: "instant" });
     pending.current = null;
-  }, [scale]);
-  // Centre once the initial sources and viewport are ready. Later updates keep the person's scroll.
-  const centred = useRef(false);
+    remember();
+  }, [scale, remember]);
+  // Place once the initial sources and viewport are ready: on the card this window was last
+  // looking at, or on the centre the first time. Later updates keep the person's scroll.
   useLayoutEffect(() => {
-    if (!sourcesSettled || !ledgerSettled || !frameMeasured || mobile || !viewport.current || centred.current) return;
+    if (!settled || !frameMeasured || mobile || !viewport.current || centred.current) return;
     const el = viewport.current, style = getComputedStyle(el);
     const height = el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
     const width = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
     // A newly displayed error banner can resize the viewport before ResizeObserver runs.
     if (Math.abs(height - frame.h) > 1 || Math.abs(width - frame.w) > 1) return;
+    // A kept focus is either drawn by now or about to be let go; place on the chart it settles to.
+    if (focus && !focused) return;
     centred.current = true;
-    const core = chart.placed[0];
-    viewport.current.scrollTo({ left: offset.x + (core.x + core.w / 2) * scale - frame.w / 2,
-      top: offset.y + (core.y + core.h / 2) * scale - frame.h / 2, behavior: "instant" });
-  }, [sourcesSettled, ledgerSettled, frameMeasured, mobile, chart, frame, scale, offset.x, offset.y]);
+    scrollToPoint(anchorPoint(chart, kept.current.anchor));
+    remember();
+  }, [settled, frameMeasured, mobile, chart, frame, scale, offset.x, offset.y, focus, focused, remember]);
+  // Taking a group as the centre puts it in the middle; stepping back out puts the group just
+  // left in the middle of the wider chart, so the person sees where it sits.
+  const recentre = useRef(null);
+  const centreOn = useCallback((next) => {
+    const from = live.current.focus;
+    if (next === from) return;
+    const outward = next === null || trail(model, from).some((n) => n.id === next);
+    recentre.current = { id: outward ? from : next, dx: 0, dy: 0 };
+    setFocus(next);
+    if (mobile) writePlace({ focus: next });
+  }, [model, mobile]);
+  useLayoutEffect(() => {
+    if (!recentre.current || mobile || !centred.current) return;
+    scrollToPoint(anchorPoint(chart, recentre.current));
+    recentre.current = null;
+    remember();
+  });
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
   // Pinch and ⌘/Ctrl-wheel zoom at the pointer. A plain wheel still scrolls. These are
   // registered by hand because React's wheel listener is passive and cannot stop the page
@@ -741,13 +936,27 @@ export default function Home() {
     return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, at: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } };
   };
   const branches = children.get("core")?.filter((n) => n.kind !== "overview") || [];
-  const common = { now, children, openRef, tones };
+  const common = { now, children, openRef, tones, centreOn };
+  // One step out from a focused group: the group holding it, or the whole chart.
+  const up = path.length > 1 ? path[path.length - 2].id : null;
   return (
     <div className="hi-work">
       <style>{CSS}</style>
       {errors.length > 0 && <div className="hi-work__error" role="status">{L.failed}: {errors.map((key) => L.source[key]).join(" · ")}
         <button onClick={refresh}>{L.retry}</button></div>}
-      <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} onPointerDown={(e) => {
+      <div className="hi-work__frame">
+      {/* The way back out, and only while there is somewhere to go back to: the whole chart has
+          no chrome over it, the way it has no zoom control. */}
+      {focused && <nav className="hi-work__trail" aria-label={L.trail}>
+        <button onClick={() => centreOn(null)}>{L.core}</button>
+        {path.map((node, i) => <span key={node.id} className="hi-work__trail-step">
+          <span aria-hidden="true">›</span>
+          {i < path.length - 1 ? <button onClick={() => centreOn(node.id)}>{node.title}</button>
+            : <strong aria-current="location">{node.title}</strong>}
+        </span>)}
+      </nav>}
+      <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
+        onScroll={mobile ? undefined : remember} onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
         const el = e.currentTarget;
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -782,8 +991,9 @@ export default function Home() {
         {!loaded && <p className="hi-work__loading" role="status">{L.reading}</p>}
         {loaded && !branches.length && <p className="hi-work__loading" role="status">{L.nothing}</p>}
         {mobile ? <div className="hi-work__flow">
-          <Core node={model.nodes[0]} model={model} now={now} />
-          <Branch nodes={branches} parent="core" {...common} />
+          {focused ? <Node node={focused.nodes[0]} root up={up} {...common} />
+            : <Core node={model.nodes[0]} model={model} now={now} />}
+          <Branch nodes={focused ? children.get(focus) || [] : branches} parent={shown.rootId} {...common} />
         </div> : <div className="hi-work__canvas" style={{ width: canvas.w, height: canvas.h }}>
           <div className="hi-work__stage" style={{ left: offset.x, top: offset.y, width: chart.width, height: chart.height,
             transform: `scale(${scale})` }}>
@@ -793,10 +1003,11 @@ export default function Home() {
             {chart.placed.map((row) => <div key={row.node.id} className="hi-work__position"
               style={{ left: row.x, top: row.y, width: row.w, height: row.h }}>
               {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now} />
-                : <Node node={row.node} {...common} />}
+                : <Node node={row.node} root={row.node.id === shown.rootId} up={up} {...common} />}
             </div>)}
           </div>
         </div>}
+      </div>
       </div>
     </div>
   );
@@ -847,7 +1058,7 @@ function Core({ node, model, now }) {
  * lands you arrive at the board and find the row yourself. The item that takes this back is
  * a targeted view-open; see `docs/arch/home.md` § Open.
  */
-function Node({ node, now, children, openRef, tones }) {
+function Node({ node, now, children, openRef, tones, centreOn, root = false, up = null }) {
   const state = stateOf(node), time = nodeTime(node);
   const board = node.kind === "task" ? TASK_BOARD : node.kind === "activity" ? SESSION_BOARD : null;
   // A tile is the one handoff that lands exactly where it points: `openRef` takes a view ref
@@ -858,20 +1069,26 @@ function Node({ node, now, children, openRef, tones }) {
     </button>
   </article>;
   // A group carries its own note as hover text — one line saying what the grouping was
-  // based on, so the person reading the chart can see why these three are one thing. It is
-  // the only thing a group says beyond its name, and it opens nothing: `home.md` § Open.
+  // based on, so the person reading the chart can see why these three are one thing.
+  // **A group opens its own branch**, on this surface: pressed, it becomes the centre, and the
+  // group at the centre pressed again steps back out one level.
   if (node.kind === "group") return <article className="hi-work__group" data-node-id={node.id}
-    data-kind="group" style={{ "--group-tone": branchPaint(tones.get(node.id), "label") }}
-    title={[node.title, node.data.note].filter(Boolean).join(" · ")}>
-    {/* A drawn icon whose file has gone since the last arrangement is the default again. */}
-    <img className="hi-work__group-icon" src={groupIcon(node.data.icon)} alt="" aria-hidden="true"
-      onError={(event) => { if (!event.currentTarget.src.endsWith(DEFAULT_GROUP_ICON)) event.currentTarget.src = DEFAULT_GROUP_ICON; }} />
-    <span>{node.title}</span>
+    data-kind="group" data-root={root ? "" : undefined} style={{ "--group-tone": branchPaint(tones.get(node.id), "label") }}>
+    <button onClick={() => centreOn(root ? up : node.id)}
+      title={[root ? L.back : node.title, node.data.note].filter(Boolean).join(" · ")}>
+      {/* A drawn icon whose file has gone since the last arrangement is the default again. */}
+      <img className="hi-work__group-icon" src={groupIcon(node.data.icon)} alt="" aria-hidden="true"
+        onError={(event) => { if (!event.currentTarget.src.endsWith(DEFAULT_GROUP_ICON)) event.currentTarget.src = DEFAULT_GROUP_ICON; }} />
+      <span>{node.title}</span>
+    </button>
   </article>;
+  const onIt = node.kind === "task" ? hands(node) : null;
   const body = <>
     <span className="hi-work__node-title" title={node.title}>{node.title}</span>
-    <div className="hi-work__node-foot"><span className="hi-work__node-state">
+    <div className="hi-work__node-foot"><span className="hi-work__node-state" title={onIt?.title || undefined}>
       {node.kind === "activity" && <i className="hi-work__live" data-live={node.data.session.state === "running"} />}
+      {onIt?.shown.map((s) => <i key={s.id} className="hi-work__live" data-live={s.state === "running"} />)}
+      {onIt?.more > 0 && <small className="hi-work__more">+{onIt.more}</small>}
       {L.status[state] || ""}</span>
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
   </>;
@@ -897,6 +1114,7 @@ const CSS = `
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .hi-work__error { padding:8px 24px; color:var(--danger); font-size:13px; display:flex; align-items:center; gap:12px; }
 .hi-work__error button { text-decoration:underline; min-height:36px; }
+.hi-work__frame { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
 .hi-work__viewport { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; position:relative; touch-action:pan-x pan-y; padding-bottom:100px; }
 .hi-work__viewport[data-chart] { touch-action:none; cursor:grab; }
 .hi-work__viewport[data-chart]:active { cursor:grabbing; }
@@ -927,8 +1145,19 @@ const CSS = `
 .hi-work__node, .hi-work__core, .hi-work__tile { box-shadow:var(--work-shadow); }
 /* A heading, not a card: no border and no background, because it is a name over the cards
    below it rather than a thing beside them. */
-.hi-work__group { height:100%; display:flex; align-items:center; gap:8px; padding:0 4px; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; overflow:hidden; overflow-wrap:anywhere; }
+.hi-work__group { height:100%; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; }
+.hi-work__group > button { width:100%; height:100%; display:flex; align-items:center; gap:8px; padding:0 4px; border-radius:10px; overflow:hidden; overflow-wrap:anywhere; transition:background-color 160ms ease; }
+.hi-work__group > button:hover { background:color-mix(in srgb, var(--group-tone) 10%, transparent); }
 .hi-work__group-icon { width:40px; height:40px; flex:0 0 40px; border-radius:10px; object-fit:cover; }
+/* The group at the centre is the same heading a size up, standing where the core stood. */
+.hi-work__group[data-root] { font-size:22px; }
+.hi-work__group[data-root] > button { gap:12px; padding:0 8px; }
+.hi-work__group[data-root] .hi-work__group-icon { width:56px; height:56px; flex-basis:56px; border-radius:14px; }
+.hi-work__trail { position:absolute; top:12px; left:16px; z-index:3; max-width:calc(100% - 32px); display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 14px; font-size:13px; line-height:1.4; color:var(--fg-mute); background:var(--bg); border:1px solid var(--work-line); border-radius:999px; box-shadow:var(--work-shadow); }
+.hi-work__trail-step { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.hi-work__trail button { color:var(--fg-mute); }
+.hi-work__trail button:hover { color:var(--fg); text-decoration:underline; text-underline-offset:3px; }
+.hi-work__trail strong { color:var(--fg); font-weight:600; }
 .hi-work__group span { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:6px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
@@ -939,10 +1168,15 @@ const CSS = `
 .hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:12px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }
 .hi-work__node { transition:border-color 160ms ease; }
 .hi-work__node:has(button:hover), .hi-work__node:focus-within { border-color:var(--fg-mute); }
-@media (prefers-reduced-motion:reduce) { .hi-work__node { transition:none; } }
+@media (prefers-reduced-motion:reduce) { .hi-work__node, .hi-work__group > button { transition:none; } }
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__node-state { display:flex; align-items:center; gap:6px; color:var(--node-tone); }
+/* The hands on a task sit in its one status line: a dot each, filled while one runs. */
+.hi-work__node-state .hi-work__live + .hi-work__live { margin-left:-3px; }
+.hi-work__more { color:var(--fg-mute); font-size:11px; margin-right:2px; }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }
+.hi-work__viewport[data-focused] .hi-work__flow { padding-top:64px; }
+.hi-work__flow > .hi-work__group { height:auto; min-height:64px; }
 .hi-work__flow .hi-work__core { height:auto; min-height:320px; }
 /* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
    put a task's own results as far from it as the next task's were. Inheriting --rank-gap

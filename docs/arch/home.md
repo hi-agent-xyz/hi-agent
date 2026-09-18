@@ -22,15 +22,44 @@ never to a task or a session. Overview nodes are embedded in the core rather tha
 as peripheral cards. **The whole tree is drawn**: there is no collapse, because a surface
 carrying only the work in hand has nothing to hide from.
 
-**It opens at 1x, and any other scale is the person's.** A chart larger than the window
-scrolls, centred on the core; pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and
-dragging pans from anywhere a tap would not open. Two fingers pan it too, except the one roll
-that is the host's: from the room, fingers moving left bring the panel in rather than panning
-([stage.md](stage.md) § *The trackpad's swipe*). There is no on-screen zoom control — a − /
-percentage / + stepper sat over the canvas and was removed as chrome — so a scale once taken
-stays the person's until Home is opened again. Initial centring waits for both the task
-ledger and the other initial sources to settle, and for the viewport to be measured;
-centring an empty intermediate tree must not consume the one initial positioning.
+**A group can be taken as the centre.** Pressing a group heading draws that group's branch
+and nothing else — the group where the core stood, a size up, with its tasks, inner groups,
+sessions and pictures around it, laid out by the same rules and in the colour the branch wears
+on the whole chart. It is a lens the person takes, not a collapse the surface imposes. Pressing
+the group at the centre steps back out one level, and a trail at the top of the window names
+every group from the core down, each one a way back; the whole chart has no trail over it,
+the way it has no zoom control. Stepping in puts the new centre in the middle of the window;
+stepping out puts the group just left there, so the person sees where it sits. Escape is not
+the way out: the host already owns it for retreating the panel ([stage.md](stage.md)). A task
+is not a centre — a card's press is its handoff.
+
+**It opens at 1x the first time, and after that where this window left it.** A chart larger
+than the window scrolls, centred on the core; pinch or ⌘/Ctrl-wheel zooms at the pointer, from
+0.25 to 2, and dragging pans from anywhere a tap would not open. Two fingers pan it too, except
+the one roll that is the host's: from the room, fingers moving left bring the panel in rather
+than panning ([stage.md](stage.md) § *The trackpad's swipe*). There is no on-screen zoom
+control — a − / percentage / + stepper sat over the canvas and was removed as chrome. Initial
+positioning waits for both the task ledger and the other initial sources to settle, and for the
+viewport to be measured; positioning on an empty intermediate tree must not consume the one
+initial positioning.
+
+**What is kept is the scale, the centre taken, and the card in the middle of the window — not
+the scroll offset.** A scale once taken used to stay the person's only until Home was opened
+again, and every open started back at 1x on the core; that was reported as losing their place.
+A pixel offset would not have kept it either: the chart is laid out afresh on each open, and a
+task filed in between moves every branch below it, so the same offset lands on a different
+card. So the window keeps the card nearest its middle and how far the middle was from that
+card, and puts the same card back in the same place. A card that has since gone falls back to
+the centre; a group that has closed to nothing lets go of the focus, once the sources have
+answered, rather than pulling the window into it when it reappears. **It is the window's**,
+kept in the webview's own storage: another device keeps its own, nothing on the server reads
+it, and a webview that refuses storage opens as a first visit does. The narrow flow keeps the
+centre taken; it has no scale or pan to keep.
+
+**Every card can be brought to the middle of the window.** The drawing sits inside half a
+window of air on every side. The canvas used to be the drawing plus only what centring the core
+needed, so a card on the chart's outer edge stopped at the window's edge: zoomed in, it stayed
+pinned there half off screen, with no way to drag it to where it could be read.
 
 **Fitting to the window was tried and lost.** The chart used to open at the largest scale that
 put all of it in the window, never above 1x and never below a legibility floor of 0.7. No real
@@ -98,9 +127,34 @@ status word's, and only the word's.
 **A card says what it is without a label, and no side of its border means anything.** There
 are two kinds of card, a task and a live session, and each used to open with a line naming
 its kind. A session instead wears the dot the core's roles wear — it is the same fact, a live
-session, filled while it runs — and a task wears none; where each sits in the tree says the
-rest. Status tone, which was a coloured left edge, is carried by the status word. The core has
-the same plain 1px border as a card.
+session, filled while it runs — and a task wears none of its own; where each sits in the tree
+says the rest. Status tone, which was a coloured left edge, is carried by the status word. The
+core has the same plain 1px border as a card.
+
+**A session working on a task is a line on that task's card, and one line, because the two
+states are not independent.** It used to be a card of its own beside the task, and between them
+the two cards carried one fact: a session's title is the errand as it was handed out, which is
+mostly the task's title said again — *VICTOR 球拍智联传感器能统计哪些信息* next to *把 VICTOR
+VI-01 能统计什么做成一页* — and what the session adds is whether anybody is on it now. A whole
+column of the chart for that. Stacking the two states as two rows on one card was no better: it
+spends a card's height on a grid that mostly does not exist, since nothing is being worked on
+while it is still to do, and a closed row is closed whatever is still warm beside it.
+
+So the card keeps the one status line it had, and the sessions are marks in it:
+
+- **The word is the ledger's** — to do, in progress, on duty, completed, cancelled — and so is
+  the time beside it. The card is the task; how long *this session* has been idle is
+  `factory/workers`'.
+- **Each live session on the row is one dot**, the same dot a session card wears, filled while
+  that session is running. Three at most: a glance asks whether anybody is on it, and past
+  three the rest of the answer is a number, so a fourth becomes `+1`. Their titles and states
+  are the line's hover text.
+- **Nothing on it means nobody is on it.** A row in progress with no dot is the ledger's
+  *nobody on it*, in the one place a reader is already looking.
+- **A last turn that failed or was cut off replaces the word**, in the danger tone, because
+  that is the one thing a session knows that the ledger cannot: the row says in progress and
+  nothing is progressing. Only while nothing else on the same row is running, and never on a
+  closed row, where a stale failure underneath is not the news.
 
 ## Internal mapping
 
@@ -109,11 +163,13 @@ the same plain 1px border as a card.
 - An activity is `session:<run>:<session>`, and only a live one. The run is required
   because session slugs can recur after restart. A session that has ended belongs to
   `factory/workers`, not here.
-- Reaction, Cognition and Reflection sessions compose the single core. Other live
-  sessions remain visible activities regardless of owner, role, or task binding.
-- A session's `subject` joins it to a task. Without a resolvable task it connects to the
-  core and keeps its own title. Its technical `owner` remains inspectable but does not
-  determine semantic placement or create a new task grouping.
+- Reaction and Cognition sessions compose the single core. Every other live session is a
+  visible activity.
+- A session's `subject` joins it to a task. A subject whose task is not drawn connects the
+  session to the core, where it keeps its own title. **A session with no subject, and
+  Reflection, are the agent's own upkeep** and sit in the built-in group § *Grouping*
+  describes. Its technical `owner` remains inspectable but does not determine semantic
+  placement or create a new task grouping.
 - **A task sits in a group when the grouping record puts it in one — under every group that
   group is inside — and otherwise hangs off the core.** See § *Grouping* below. Nothing about a task's own record decides this: there
   was a topic rank named by a task's `project` or else its `systems`, and nothing has ever
@@ -124,8 +180,8 @@ the same plain 1px border as a card.
 - **A task's pictures are image nodes one rank below it, and its other results are not on
   Home.** Drawn as sibling cards, results were 60.2% of the canvas on a real instance — 125 of
   them, 106 nothing but a filename. So a task hangs its pictures below itself as `result`
-  tiles: image only, no title, no status, alongside the live sessions working on it. Those are
-  its sub-steps and sub-results in one rank.
+  tiles: image only, no title, no status. That rank is the task's pictures and nothing else —
+  the sessions working on it are a line on its own card, above.
   - **One kind of record has one appearance.** The card used to wear the first picture inside
     itself, beside its text, and hang only the rest as tiles — so the same kind of thing was a
     strip in a bordered card here and a bare tile there, and which one it got turned on nothing
@@ -167,7 +223,9 @@ the same plain 1px border as a card.
 `running`, `waiting` and `idle` are registry states of a live session. In particular,
 `waiting` means queued work, not a request for the person to answer. Last-turn outcome
 and session termination are separate facts. A retained tool action describes current
-activity only while its session is running.
+activity only while its session is running. On a task's card only two of these distinctions
+survive — running or not, and a last turn that failed — because that is what the row's own
+word cannot already say; the rest is `factory/workers`'.
 
 ## Grouping
 
@@ -175,7 +233,7 @@ activity only while its session is running.
 belongs to this surface alone.** It is not a field on a task, not a dimension of the memory store, and not a second
 ledger. Nothing else in the system reads it; delete the record and Home is what it was.
 
-**No axis is built in.** A group may be a project, a kind of work, a state, who asked for
+**No axis over the person's work is built in.** A group may be a project, a kind of work, a state, who asked for
 it, or "this week" — the structure is the same name-and-members either way, so the person
 can reorganise along a different axis without anything in the code changing.
 
@@ -205,9 +263,12 @@ birthday deck is filed under "feishu" again.
 | Path | `data/home/grouping.md` | `data/home/groups.json` |
 | Parsed by code | never | strictly |
 
-The basis is what the person asked for, in their own words, dated — "粤语解说表和 KT8 是一摊
-事", "自己身上的毛病单独一组". It is standing, so a task filed next week obeys an instruction
-given today without the person repeating it. Regularising it into fields would compress the
+The basis is what the person asked for, in their own words, dated — that two pieces of work
+are one thing, that a kind of work goes on its own. It is standing, so a task filed next week
+obeys an instruction given today without the person repeating it. **Only a line quoted there
+is theirs.** This document and the prompts once illustrated it with sentences written as if a
+person had said them, and a grouping mind took one of those for an instruction and named a
+group after it; an illustration of what a person might say is described, never quoted. Regularising it into fields would compress the
 ask before a model reads it, and a model is its only reader.
 
 The result is a snapshot: which task is in which group, and in what order. Home renders it
@@ -224,11 +285,11 @@ moment of grouping rather than kept — a stored copy is a second ledger, going 
 ### The shape of the result
 
 ```json
-{ "groups": [ { "label": "KTV",
-                "note": "9/16 说粤语解说表和 KT8 是一摊事",
+{ "groups": [ { "label": "<client>",
+                "note": "<when and what the person said makes these one thing>",
                 "icon": "drive/home/icons/0199568a….png",
-                "members": ["cantonese-…-20260916", "kt8-046-content-management"],
-                "groups": [ { "label": "Content", "members": ["kt8-051-content-review"] } ] } ] }
+                "members": ["<task subject>", "<task subject>"],
+                "groups": [ { "label": "<project>", "members": ["<task subject>"] } ] } ] }
 ```
 
 Array order is draw order: groups outward from the core, members top to bottom, and inside a
@@ -283,9 +344,27 @@ the object, does. So `hi_text_to_image` is never the way an icon is made.
 - **A member that names no drawn task is ignored.** Tasks close and age out while the record
   stands; the record is not the ledger and never resurrects one.
 - **Activities are not grouped, they follow.** A live session joined to a task is already
-  inside that task's branch, so it is in the task's group. One with no task stays at the
-  core: its identity is run-scoped, so a durable record naming it would be a dangling
+  inside that task's branch, so it is in the task's group. One whose task is not drawn stays
+  at the core: its identity is run-scoped, so a durable record naming it would be a dangling
   reference by the next restart.
+- **The agent's own upkeep is one more group, and code draws it.** Reflection, a
+  `task-manager` sweeping the ledger, a `person-reader` reading a person's record, a
+  `skills-manager` keeping the shelf: nobody asked for any of it, so the ledger holds no row for
+  it ([data.md](data.md#tasks)) and dispatch refuses it a `subject` ([agents.md](agents.md)).
+  That refusal is what lets code draw the group without inferring anything: a live session with
+  no subject is upkeep by construction, and Reflection is upkeep by role. So Reflection is a
+  card here rather than a role in the core's strip, and the core is the conversation and the
+  coordination. The group is titled in the reader's language (「自身维护」, *Upkeep*), sits
+  after the person's own groups, takes a hue like any first-level group, and is drawn only
+  while something in it is live. It is not in the arrangement record, and no mind places
+  anything in it — **nor does any mind make a group of its own for the agent's own work**:
+  every ledger row is something a person asked for, a change to hi-agent they asked for
+  included, so it is grouped along their axis like the rest of their work.
+  - *Why it exists.* Before it, upkeep sessions hung off the core beside the person's work.
+    Asked to organise "the rest", the grouping mind coined 「自己身上的毛病」 for the agent's
+    own faults — a phrase this document and its prompt had quoted as if a person had said it —
+    and then filed a person's own open-source project there, because they had called its
+    code "ours".
 - **A record that cannot be read leaves no groups.** A missing file, malformed JSON, or an
   unusable shape degrades to every task on the core — the surface as it was — with the fault
   in the server's log and nothing about it on screen.
@@ -371,11 +450,6 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   draw makes this harmless to look at, and the open work in hand is a dozen rows, so the
   sweep it would take is not worth owning. It becomes worth owning if the record ever
   outgrows what one rewrite can hold.
-- **A group is a label, not a handoff.** Every other box on this surface opens something;
-  the group opens nothing, because the thing it would open is a `factory/memories` subject
-  that the grouping deliberately does not have to name. It reads as inert next to cards that
-  respond, and the fix is either a target for the view-open above or a group that knows what
-  record it stands for — neither is decided.
 - **The order within a side is the record's, but which side is not.** Groups and ungrouped
   tasks are fed to the layout in the order the record gives, and the two-sided balance then
   takes them alternately as weight allows, so "first in the file" means near the core rather
