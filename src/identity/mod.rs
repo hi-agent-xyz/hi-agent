@@ -1055,13 +1055,15 @@ mod soul_tests {
         }
     }
 
-    /// One pen on the ledger. Cognition writes it; nobody else is told how — and "nobody"
-    /// now genuinely means all nine roles, not the four this used to look at.
+    /// One pen that opens rows. Cognition holds it; nobody else is told they do — and
+    /// "nobody" genuinely means every role. The verb itself is Cognition's alone too
+    /// (`hi_task_open`, `foundation::mcp`), so this pins the telling and the surface test
+    /// there pins the tool.
     #[test]
     fn exactly_one_prompt_hands_out_the_ledger_pen() {
         let carriers: Vec<&str> = Role::ALL
             .iter()
-            .filter(|r| r.base().contains("only writer of the task ledger"))
+            .filter(|r| r.base().contains("only one who opens a row on the task ledger"))
             .map(|r| r.prompt_name())
             .collect();
         assert_eq!(carriers, vec!["cognition"], "the pen must be held once");
@@ -1901,16 +1903,15 @@ mod soul_tests {
         }
     }
 
-    /// "Sole writer of the ledger" is not enforced by any rail — it is enforced by exactly
-    /// one prompt carrying the instruction. So the thing that can silently go wrong is the
-    /// instruction existing in two places, or in none: two writers means one is wrong with
-    /// no way to tell which, and none means every promise the agent makes dies at the next
-    /// restart. The sweep over every role is
+    /// Opening a row was enforced by no rail until `hi_task_open` — only by one prompt
+    /// carrying the instruction. The verb is a rail now, but the telling still matters: a
+    /// rung not told the pen is its opens nothing, and every promise the agent makes dies at
+    /// the next restart. The sweep over every role is
     /// [`exactly_one_prompt_hands_out_the_ledger_pen`]; this pins the positive half.
     #[test]
     fn exactly_one_rung_is_told_to_write_the_ledger() {
         assert!(
-            COGNITION_BASE.contains("only writer of the task ledger"),
+            COGNITION_BASE.contains("only one who opens a row on the task ledger"),
             "Cognition must be told the pen is its"
         );
     }
@@ -2237,7 +2238,7 @@ mod soul_tests {
              anything else"
         );
         assert!(
-            COGNITION_BASE.contains("memory/facets/tasks/<subject>/facet.md"),
+            COGNITION_BASE.contains("with `hi_task_open`, then create the worker"),
             "cognition.md must say how to open a row, or the fence has no way past it"
         );
         assert!(
@@ -2254,7 +2255,7 @@ mod soul_tests {
             "reflection.md must say every worker it starts is refused a subject"
         );
         assert!(
-            !REFLECTION_BASE.contains("memory/facets/tasks/<subject>/facet.md"),
+            !REFLECTION_BASE.contains("hi_task_open"),
             "reflection.md must not teach it to open a row — the ledger is not its to write"
         );
         assert!(

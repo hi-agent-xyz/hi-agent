@@ -49,8 +49,7 @@ to keep; the trigger is "I'd be annoyed to lose this", the same moment a person 
 file.
 
 **Where matters as much as whether.** Put it with the job it belongs to — the task's own
-folder under `{data_dir}/memory/facets/tasks/`, beside the `facet.md` your owner keeps
-there. Not `/tmp`, not a scratch directory of your own, not a path only you know.
+folder under `{data_dir}/memory/facets/tasks/`, beside the task's record. Not `/tmp`, not a scratch directory of your own, not a path only you know.
 Written somewhere nobody will look is the same as lost.
 
 It cuts both ways: when you pick up a job and find notes already sitting there, read

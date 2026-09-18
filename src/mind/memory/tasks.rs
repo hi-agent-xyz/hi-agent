@@ -842,6 +842,9 @@ pub struct Opening {
     pub account: Option<String>,
     pub due_at: Option<DateTime<Utc>>,
     pub liveness: Liveness,
+    /// The systems it touches — what [`super::snapshot::work_record`] puts in front of the
+    /// worker before its brief.
+    pub systems: Vec<String>,
 }
 
 /// Open a row. The subject it landed on, or why not.
@@ -876,6 +879,7 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
     task.due_at = opening.due_at;
     task.liveness = opening.liveness;
     task.body = opening.account.unwrap_or_default().trim().to_owned();
+    set_systems(&mut task.extra, &opening.systems);
     task.timeline.push(TimelineEntry::new(TimelineKind::Created, now, wanted));
     write_task(data_dir, &task).await?;
     Ok(Ok(subject))
@@ -895,6 +899,8 @@ pub struct Setting {
     pub restart: Option<Option<String>>,
     pub owner: Option<Option<String>>,
     pub start_key: Option<Option<String>>,
+    /// The systems it touches, replacing what it named before. Empty clears it.
+    pub systems: Option<Vec<String>>,
 }
 
 /// Apply a [`Setting`] to the row at `subject`. `None` when there is no row; otherwise the
@@ -950,7 +956,37 @@ impl Task {
                 changed.push(name);
             }
         }
+        if let Some(systems) = setting.systems
+            && set_systems(&mut self.extra, &systems)
+        {
+            changed.push("systems");
+        }
         changed
+    }
+}
+
+/// Write the `systems:` line among a record's unschema'd frontmatter, where
+/// [`super::snapshot`] reads it and where it deliberately stays — outside the schema, so
+/// no writer that does not know it can drop it. `true` when the line changed.
+fn set_systems(extra: &mut Vec<String>, systems: &[String]) -> bool {
+    let names: Vec<&str> = systems.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let line = (!names.is_empty()).then(|| format!("systems: {}", names.join(", ")));
+    let at = extra.iter().position(|l| l.split_once(':').is_some_and(|(k, _)| k.trim() == "systems"));
+    match (at, line) {
+        (Some(i), Some(line)) if extra[i] == line => false,
+        (Some(i), Some(line)) => {
+            extra[i] = line;
+            true
+        }
+        (Some(i), None) => {
+            extra.remove(i);
+            true
+        }
+        (None, Some(line)) => {
+            extra.push(line);
+            true
+        }
+        (None, None) => false,
     }
 }
 
@@ -3390,6 +3426,7 @@ mod verb_tests {
             account: None,
             due_at: None,
             liveness: Liveness::default(),
+            systems: vec!["songguo".into()],
         }
     }
 
@@ -3405,6 +3442,7 @@ mod verb_tests {
         assert_eq!(task.title, "导入赵力的简历");
         assert_eq!(task.status, TaskStatus::Doing);
         assert_eq!(task.created().map(|c| c.text.as_str()), Some("要能直接改的一份简历"));
+        assert_eq!(task.extra, vec!["systems: songguo"], "read by snapshot::work_record");
 
         assert_eq!(
             open(dir.path(), opening("resume")).await.unwrap(),

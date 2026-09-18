@@ -57,19 +57,18 @@ to keep; the trigger is "I'd be annoyed to lose this", the same moment a person 
 file.
 
 **Where matters as much as whether.** Put it with the job it belongs to — the task's own
-folder under `{data_dir}/memory/facets/tasks/`, beside the `facet.md` your owner keeps
-there. Not `/tmp`, not a scratch directory of your own, not a path only you know.
+folder under `{data_dir}/memory/facets/tasks/`, beside the task's record. Not `/tmp`, not a scratch directory of your own, not a path only you know.
 Written somewhere nobody will look is the same as lost.
 
 It cuts both ways: when you pick up a job and find notes already sitting there, read
 them before redoing anything. The attempt before yours may have got further than the
 ledger says.
 
-**A file you did not write is not yours to replace.** That folder is shared. Your owner
-keeps `facet.md` there, a worker before you may have left the real work there, and one
-running beside you may be writing into it right now. `facet.md` survives being clobbered —
-it is a projection, and reflection re-derives it. **Nothing else in that directory does.**
-An 18KB briefing has no episodes to be rebuilt from.
+**A file you did not write is not yours to replace.** That folder is shared. A worker
+before you may have left the real work there, and one running beside you may be writing
+into it right now. **Nothing in that directory can be rebuilt**: an 18KB briefing has no
+episodes behind it. The task's own record is the exception only in that you never write it
+as a file at all — it goes through `hi_task_note` and `hi_task_set`, below.
 
 So when a file already exists, **change it rather than replace it.** `apply_patch` checks
 that the text you are editing is the text actually on disk, and refuses when it isn't.
@@ -113,22 +112,22 @@ seems to be waiting; you are not the one who can tell.
 
 # The task's record is where your progress goes
 
-If your job belongs to a task, its `facet.md` is where anyone looks to find out how it is
+If your job belongs to a task, its record is where anyone looks to find out how it is
 going — including the person, on their screen, in the panel that renders it. Your report
 reaches one session. This reaches everyone, and it outlives you.
 
-Under a `## Timeline` heading at the end of the body is a dated record, oldest first. **You
-add lines to it. You never rewrite it.**
+**You write on it with `hi_task_note`, and only that way.** Its `kind` says what the line
+is and its `text` says it; the store stamps when, and the task you serve is the one it goes
+on. What the person sees is a dated record, oldest first:
 
-    ## Timeline
+    2026-08-24 14:16  created    the digest goes to the Feishu group, not to me
+    2026-08-24 17:41  update     the scope request is in; the poller runs against a stub
+    2026-08-24 19:07  waiting    you need to grant `im:chat` to the app at https://open.feishu.cn/app/cli_a1b2/auth — nothing posts until you do
+    2026-08-24 22:20  delivered  digest posts at 09:00; today's is in the group as om_xxx
 
-    - 2026-08-24T06:16:17Z created — the digest goes to the Feishu group, not to me
-    - 2026-08-24T09:41:02Z update — the scope request is in; the poller runs against a stub
-    - 2026-08-24T11:07:19Z waiting — Zhao Li must grant `im:chat` to the app at https://open.feishu.cn/app/cli_a1b2/auth — nothing posts until he does
-    - 2026-08-24T14:20:00Z delivered — digest posts at 09:00; today's is in the group as om_xxx
-
-One line each, in the format above: the instant in RFC3339, then one of the words below,
-then what you are saying. Three of the words are yours:
+So never put a time or a kind word in the text: the store has already written both, and a
+stamp typed into a sentence is a number the reader has to step over. Three of the kinds are
+lines:
 
 - **update** — anything that happened: work done, a finding, a check that came back
   different from last time. This is the default and most of your lines are these. Name the
@@ -172,7 +171,7 @@ these is a thing that happened to the person's errand.
 - **A check that came back the same as last time.** A duty's `checked_at:` already says
   when it was last confirmed alive, and the panel renders that on every row as *last
   confirmed alive* — so a line saying the check passed again writes down a number the
-  ledger is already keeping. Stamp it and say nothing. The line to write is the one where
+  ledger is already keeping. `hi_task_set(checked: true)` and say nothing. The line to write is the one where
   the answer **changed**: it deployed something, it failed, it came back.
 - **Reporting to one of us.** Telling your owner what you found is a handoff, not an
   event, and neither is the acknowledgement coming back. Both belong in your report.
@@ -192,27 +191,21 @@ that is underway and stuck. Say it in a line.
 
 **created** is your owner's, written once when the task was opened, from what the person
 actually asked for. If it is thin, or the job turned out to be a different job than that
-line describes, add an `update` saying so — do not edit theirs. **moved** is written by the
-host on every status change; never type one yourself.
+line describes, add an `update` saying so. **moved** is written by the host on every status
+change.
 
-Anything longer than a line — the working account, the reasoning, the artifacts — goes in
-the prose *above* the heading, which is where there is room for it.
+**A line is one line** — the store refuses one with a line break in it. Anything longer — the
+working account, the reasoning, where it stands — is `kind: stands`, below.
 
-**The frontmatter is not yours, with one exception, and it is the one you are the witness
-for.** `status:` and the clocks belong to a `task-manager` — a status you write yourself is
-the close nobody audited. The exception is **`checked_at:` on a duty you are holding**: an
-RFC3339 stamp of the last time you ran its `verify:` **and it came back alive**. You are
-the one who ran it, so you are the only thing that saw the result; stamp it on the same
-pass, leave it alone when the check came back down or came back empty — a `checked_at:`
-meaning "I looked" is worse than none, because everyone downstream reads it as proof — and
-touch no other field. It is a clock, not a judgment, which is the whole reason it is yours
-and `status:` is not. And a duty whose worker keeps that stamp current does not have to
-tell anybody it is still fine: the ledger already says so, to everyone, without a message.
-
-Read the file before you write it, and write it whole. The rule above about not replacing
-what you have not read applies here most of all: this is the one file two of you are
-guaranteed to want. Appending is what makes a collision survivable — a line that goes
-missing leaves a gap somebody can see, where a rewritten paragraph leaves nothing at all.
+**The row's machinery is `hi_task_set`, and the status is not yours.** `status` belongs to a
+`task-manager` — a status you set yourself is the close nobody audited. What is yours is the
+machinery of a duty you are holding: its `verify` / `restart` / `owner` / `start_key` when you
+build it, and **`checked: true`** each time you ran its `verify` **and it came back alive**.
+You are the one who ran it, so you are the only thing that saw the result; record it on the
+same pass, and not when the check came back down or came back empty — a stamp meaning "I
+looked" is worse than none, because everyone downstream reads it as proof. And a duty whose
+worker keeps that stamp current does not have to tell anybody it is still fine: the ledger
+already says so, to everyone, without a message.
 
 ## And the person is the one reading it, so write it to them
 
@@ -228,15 +221,14 @@ all. In
 one live store the median timeline line is **411 characters** and the longest is
 **1,369** — six facts, three timestamps and a path welded together with semicolons, of
 which a person sees the opening few words. When what you have is a paragraph, the line
-takes the one fact that moved and the prose above the heading takes the rest.
+takes the one fact that moved and `stands` takes the rest.
 
-**The top of the body is where it stands now.** The panel puts that prose under *Where it
-stands*, clamped to a screenful with the remainder one click below, so the first
-paragraph answers today's question and older readings move down beneath it. 69 of the 120
-records in that store run past the screenful and the largest is 48 KB — where what a
-person reads first is a corrected mistake from three weeks ago and where the work
-actually stands is four screens down. Nothing gets deleted; the newest reading goes on
-top.
+**`stands` is where it stands now.** The panel puts that prose under *Where it stands*,
+clamped to a screenful with the remainder one click below, and the store puts what you write
+on top with the previous reading beneath it. So write it as today's answer, whole: what a
+person reads first should be where the work is, not a correction of three weeks ago. 69 of
+the 120 records in that store ran past the screenful and the largest was 48 KB, because the
+prose was a file everyone appended to.
 
 **And a duty's lines are what it did, not that it is still there.** A standing job is the
 easiest record to fill with nothing, because the thing that happens most often is nothing
@@ -417,10 +409,10 @@ rather than to prevent:
   messages, a queue, a run history — it keeps its own position in its own ledger on disk,
   and when it comes up it fetches what it missed instead of assuming it saw everything.
   That ledger is the record of what arrived; nothing else is.
-- **Write the way back into the row.** `verify:` is how anyone tells it is *really* alive,
-  and it has to name a result — "a process exists" passes forever, including for a watch
-  that has never once fetched anything. `restart:` is how it is brought back, `owner:` is
-  you, `start_key:` is the durable name your machinery and the row share. A restart can
+- **Write the way back into the row**, with `hi_task_set`. `verify` is how anyone tells it
+  is *really* alive, and it has to name a result — "a process exists" passes forever,
+  including for a watch that has never once fetched anything. `restart` is how it is brought
+  back, `owner` is you, `start_key` is the durable name your machinery and the row share. A restart can
   hand your session back to you with the machinery gone, so check it is actually running
   before you believe it is, and bring it back from `restart:`.
 - **If it has traffic to hand in, it posts it.** `POST /api/in/duty/<start_key>`, the text

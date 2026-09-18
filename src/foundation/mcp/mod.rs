@@ -213,9 +213,8 @@ fn create_worker_tool() -> Value {
                                     refusal lists what is open so you can pick. A \
                                     follow-up, a review or a second pass serves the task it is \
                                     *about* — name that row, not a new one. If the work is \
-                                    genuinely new and a person asked for it, open its row first (write \
-                                    `memory/facets/tasks/<subject>/facet.md`) and then create \
-                                    the worker; a row nobody decided to owe is how the list \
+                                    genuinely new and a person asked for it, open its row first \
+                                    with `hi_task_open` and then create the worker; a row nobody decided to owe is how the list \
                                     stops being worth reading. It is the whole join between a \
                                     task and the session doing it: set, the task reads as being \
                                     worked on and by whom; missing, the work runs where no list \
@@ -485,8 +484,10 @@ fn task_open_tool() -> Value {
          reading you had to take because they did not say. `account` is optional opening \
          prose for *Where it stands*. A `serving` duty says how its machinery is checked \
          (`verify`, a result, never an existence), brought back (`restart`), whose it is \
-         (`owner`) and the name it and the row share (`start_key`). `due_at` only when they \
-         set one. Refused, naming the row, when the subject is already open.",
+         (`owner`) and the name it and the row share (`start_key`). `systems` names what it \
+         touches — the record we keep on each is put in front of the worker before your \
+         brief. `due_at` only when they set one. Refused, naming the row, when the subject \
+         is already open.",
         json!({
             "type": "object",
             "properties": {
@@ -500,6 +501,7 @@ fn task_open_tool() -> Value {
                 "restart": { "type": "string" },
                 "owner": { "type": "string" },
                 "start_key": { "type": "string" },
+                "systems": { "type": "array", "items": { "type": "string" }, "description": "The systems it touches, by the name their record is filed under, e.g. [\"songguo\", \"hi-agent-xyz\"]." },
             },
             "required": ["subject", "title", "status", "wanted"],
         }),
@@ -555,6 +557,7 @@ fn task_set_tool() -> Value {
                 "restart": { "type": "string" },
                 "owner": { "type": "string" },
                 "start_key": { "type": "string" },
+                "systems": { "type": "array", "items": { "type": "string" }, "description": "Replaces the systems it names; empty clears them." },
                 "fold_into": { "type": "string", "description": "The surviving row's subject, when this row is the same promise." },
             },
         }),
@@ -1871,9 +1874,8 @@ async fn dispatch_tool(
                             "no task is filed under `{asked}`, so nothing was started. Name the \
                              row this work belongs to — a follow-up, a review or a second pass \
                              serves the task it is about, not a task of its own. {ledger}\n\
-                             If this really is new work, open its row first — write \
-                             `memory/facets/tasks/{asked}/facet.md` with `status:`, `title:` \
-                             and `created_at:` — then create the worker."
+                             If this really is new work, open its row first with \
+                             `hi_task_open`, then create the worker."
                         ));
                     }
                     // The ledger could not be read at all — no disk, no permission. Refused
@@ -2462,6 +2464,11 @@ fn arg_text<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
 }
 
+fn string_list(args: &Value, key: &str) -> Option<Vec<String>> {
+    let list = args.get(key)?.as_array()?;
+    Some(list.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+}
+
 /// `hi_task_open` — Cognition opening a row, title and `created` line in one call.
 async fn do_task_open(data_dir: &Path, args: &Value) -> Value {
     use crate::mind::memory::tasks::{self, Liveness, Opening, TaskStatus};
@@ -2493,6 +2500,7 @@ async fn do_task_open(data_dir: &Path, args: &Value) -> Value {
             owner: field("owner"),
             start_key: field("start_key"),
         },
+        systems: string_list(args, "systems").unwrap_or_default(),
     };
     match tasks::open(data_dir, opening).await {
         Ok(Ok(subject)) => tool_ok(&format!("opened `{subject}`")),
@@ -2564,6 +2572,7 @@ async fn do_task_set(data_dir: &Path, served: Option<&str>, args: &Value) -> Val
         restart: field("restart"),
         owner: field("owner"),
         start_key: field("start_key"),
+        systems: string_list(args, "systems"),
     };
     match tasks::set(data_dir, &subject, setting, Utc::now()).await {
         Ok(Some(changed)) if changed.is_empty() => tool_ok("nothing changed — the row already says that"),
