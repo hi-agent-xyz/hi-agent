@@ -532,7 +532,7 @@ worker edits all day is reached with `apply_patch` by habit, which is how 41 of 
 opened in four days came to break rules written in three prompts. Cognition and workers run
 unsandboxed, so moving the file is not a wall — it is the difference between a worker having
 to go out of its way and having it under the cursor. The new tools are the point, not a cost:
-`hi_task_open` and `hi_task_note`, with the host writing the instant and the kind.
+`hi_task_open`, `hi_task_note` and `hi_task_set`, with the host writing the instant and the kind.
 
 What survives unchanged: one ledger, the open dimension for the folder, and the guidance
 being what is special rather than the machinery.

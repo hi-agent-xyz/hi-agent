@@ -272,6 +272,10 @@ pub enum Hand {
     /// A mind's own edit to `status:`, found by the pass that re-reads the bytes. Says
     /// nothing about which mind: the store did not watch it happen, it read the result.
     Witnessed,
+    /// A mind, through [`set`] — the store was told rather than finding out. Unmarked on the
+    /// page like [`Self::Witnessed`]; kept apart because once the verbs are the way a record
+    /// is written, a witnessed transition is one that came in some other way.
+    Mind,
 }
 
 impl TimelineEntry {
@@ -639,14 +643,397 @@ pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> 
 /// [`Task::record_made`] on the record at `subject`, written back only when it added a line.
 /// `false` for a subject with no record — a session can name a task nobody filed.
 pub async fn record_made(data_dir: &Path, subject: &str, view_ref: &str) -> anyhow::Result<bool> {
+    let added = edit(data_dir, subject, |task| task.record_made(view_ref, Utc::now())).await?;
+    Ok(added.unwrap_or(false))
+}
+
+/// The one lock over every read-modify-write the host does to a record.
+///
+/// A verb reads a record, changes it and writes it back whole. Two workers noting one row at
+/// the same moment — or a worker and the board — would each write back a copy missing the
+/// other's line, which is the clobber the append-only timeline was designed against, done by
+/// the host itself. Writes are rare and each is one small file, so one lock over the whole
+/// ledger costs nothing anyone could notice, and [`reconcile`] holds it for its pass so it
+/// cannot write back a copy it read before a verb landed.
+pub(crate) fn write_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Read the record at `subject`, let `change` alter it, and write it back if it says it did.
+/// `None` when there is no such row.
+pub async fn edit<R>(
+    data_dir: &Path,
+    subject: &str,
+    change: impl FnOnce(&mut Task) -> R,
+) -> anyhow::Result<Option<R>>
+where
+    R: Changed,
+{
+    let _held = write_lock().lock().await;
     let Some(mut task) = read_task(data_dir, subject).await? else {
-        return Ok(false);
+        return Ok(None);
     };
-    if !task.record_made(view_ref, Utc::now()) {
-        return Ok(false);
+    let outcome = change(&mut task);
+    if outcome.changed() {
+        write_task(data_dir, &task).await?;
     }
+    Ok(Some(outcome))
+}
+
+/// Whether an [`edit`] changed the record, so an edit that did nothing writes nothing.
+pub trait Changed {
+    fn changed(&self) -> bool;
+}
+
+impl Changed for bool {
+    fn changed(&self) -> bool {
+        *self
+    }
+}
+
+impl<T, E> Changed for Result<T, E> {
+    fn changed(&self) -> bool {
+        self.is_ok()
+    }
+}
+
+/// What a mind may write on a row, and the only kinds of line that are prose
+/// (`docs/arch/legibility.md` § L). `created` is [`open`]'s; `moved` and `made` are the
+/// store's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Note {
+    Update,
+    Delivered,
+    Waiting,
+    /// Where it stands now. Not a line: the prose goes on top of the account and what was
+    /// there moves down beneath it, so the first paragraph a person reads is today's.
+    Stands,
+    /// The row's name, corrected — a title that grew into a report cut back to what it is
+    /// called. Prose a person reads on every card, so it goes through here and not
+    /// [`set`].
+    Title,
+}
+
+impl Note {
+    pub fn parse(word: &str) -> Option<Self> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "update" => Some(Self::Update),
+            "delivered" => Some(Self::Delivered),
+            "waiting" => Some(Self::Waiting),
+            "stands" => Some(Self::Stands),
+            "title" => Some(Self::Title),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Update => "update",
+            Self::Delivered => "delivered",
+            Self::Waiting => "waiting",
+            Self::Stands => "stands",
+            Self::Title => "title",
+        }
+    }
+
+    fn kind(self) -> Option<TimelineKind> {
+        match self {
+            Self::Update => Some(TimelineKind::Update),
+            Self::Delivered => Some(TimelineKind::Delivered),
+            Self::Waiting => Some(TimelineKind::Waiting),
+            Self::Stands | Self::Title => None,
+        }
+    }
+}
+
+/// Why a verb refused what it was handed. Each says what to do instead, because the reader
+/// is the model that called it and will act on the words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refused {
+    Empty,
+    /// A line is one line. What needs a paragraph goes in `stands`.
+    Paragraph,
+    /// Opening a row that is already there.
+    Exists(String),
+    /// A row is opened because something is owed, so only an open status opens one.
+    Closed,
+    NoSubject,
+    FoldIntoItself,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("nothing to write — the text is empty"),
+            Self::Paragraph => f.write_str(
+                "a line is one line — say the one thing that happened; what needs a paragraph \
+                 goes in `stands`",
+            ),
+            Self::Exists(subject) => write!(
+                f,
+                "`{subject}` is already a row — write on it with hi_task_note instead of opening it again"
+            ),
+            Self::Closed => f.write_str(
+                "a row is opened because something is owed — open it as todo, doing or serving",
+            ),
+            Self::NoSubject => f.write_str("the subject must contain a usable character"),
+            Self::FoldIntoItself => f.write_str("a row cannot be folded into itself"),
+        }
+    }
+}
+
+/// Write one thing a mind has to say on the row at `subject`. `None` when there is no row.
+///
+/// **The instant and the kind are the store's, and the caller hands over prose and nothing
+/// else.** A line used to be typed whole — stamp, word, dash, text — and that is how 2,959
+/// machine timestamps came to sit inside the sentences of 144 records.
+pub async fn note(
+    data_dir: &Path,
+    subject: &str,
+    note: Note,
+    text: &str,
+    at: DateTime<Utc>,
+) -> anyhow::Result<Option<Result<(), Refused>>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(Some(Err(Refused::Empty)));
+    }
+    edit(data_dir, subject, |task| task.note(note, text, at)).await
+}
+
+impl Task {
+    /// [`note`] on a record in hand.
+    pub fn note(&mut self, note: Note, text: &str, at: DateTime<Utc>) -> Result<(), Refused> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(Refused::Empty);
+        }
+        let one_line = note != Note::Stands;
+        if one_line && text.contains('\n') {
+            return Err(Refused::Paragraph);
+        }
+        match note.kind() {
+            Some(kind) => self.timeline.push(TimelineEntry::new(kind, at, text)),
+            None if note == Note::Title => self.title = text.to_owned(),
+            None => {
+                let before = self.body.trim();
+                self.body = if before.is_empty() {
+                    text.to_owned()
+                } else {
+                    format!("{text}\n\n{before}")
+                };
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A row as the rung that was in the conversation opens it: its name, what they want, and
+/// where it starts.
+#[derive(Debug, Clone)]
+pub struct Opening {
+    pub subject: String,
+    pub title: String,
+    pub status: TaskStatus,
+    /// The `created` line — what they want to end up with, in their words.
+    pub wanted: String,
+    /// Opening prose for *Where it stands*, when there is more to say than the line.
+    pub account: Option<String>,
+    pub due_at: Option<DateTime<Utc>>,
+    pub liveness: Liveness,
+}
+
+/// Open a row. The subject it landed on, or why not.
+///
+/// **The title and the `created` line are one call**, by the rung that was in the
+/// conversation, and the `created` line cannot be written any other way — so "once, at open,
+/// or never" is a property of the store instead of an instruction, and a row can no longer be
+/// opened without one.
+pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<String, Refused>> {
+    let subject = facets::slug(&opening.subject);
+    if subject.is_empty() {
+        return Ok(Err(Refused::NoSubject));
+    }
+    let title = opening.title.trim();
+    let wanted = opening.wanted.trim();
+    if title.is_empty() || wanted.is_empty() {
+        return Ok(Err(Refused::Empty));
+    }
+    if title.contains('\n') || wanted.contains('\n') {
+        return Ok(Err(Refused::Paragraph));
+    }
+    if !opening.status.is_active() {
+        return Ok(Err(Refused::Closed));
+    }
+    let _held = write_lock().lock().await;
+    if read_task(data_dir, &subject).await?.is_some() {
+        return Ok(Err(Refused::Exists(subject)));
+    }
+    let now = Utc::now();
+    let mut task = Task::new(title, opening.status);
+    task.subject = subject.clone();
+    task.due_at = opening.due_at;
+    task.liveness = opening.liveness;
+    task.body = opening.account.unwrap_or_default().trim().to_owned();
+    task.timeline.push(TimelineEntry::new(TimelineKind::Created, now, wanted));
     write_task(data_dir, &task).await?;
-    Ok(true)
+    Ok(Ok(subject))
+}
+
+/// The row's machinery — what is validated rather than judged, because none of it is prose a
+/// person reads. Each field left `None` is left as it is.
+#[derive(Debug, Clone, Default)]
+pub struct Setting {
+    pub status: Option<TaskStatus>,
+    /// `Some(None)` clears it.
+    pub due_at: Option<Option<DateTime<Utc>>>,
+    /// Its `verify` was just run and came back alive. The store stamps the instant.
+    pub checked: bool,
+    /// Each `Some(None)` clears that field.
+    pub verify: Option<Option<String>>,
+    pub restart: Option<Option<String>>,
+    pub owner: Option<Option<String>>,
+    pub start_key: Option<Option<String>>,
+}
+
+/// Apply a [`Setting`] to the row at `subject`. `None` when there is no row; otherwise the
+/// names of the fields that changed, empty when the record already said all of it.
+pub async fn set(
+    data_dir: &Path,
+    subject: &str,
+    setting: Setting,
+    at: DateTime<Utc>,
+) -> anyhow::Result<Option<Vec<&'static str>>> {
+    let changed = edit(data_dir, subject, |task| Changes(task.set(setting, at))).await?;
+    Ok(changed.map(|Changes(names)| names))
+}
+
+struct Changes(Vec<&'static str>);
+
+impl Changed for Changes {
+    fn changed(&self) -> bool {
+        !self.0.is_empty()
+    }
+}
+
+impl Task {
+    /// [`set`] on a record in hand.
+    pub fn set(&mut self, setting: Setting, at: DateTime<Utc>) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+        if let Some(status) = setting.status
+            && status != self.status
+        {
+            self.set_status(status, at, Hand::Mind);
+            changed.push("status");
+        }
+        if let Some(due_at) = setting.due_at
+            && due_at != self.due_at
+        {
+            self.due_at = due_at;
+            changed.push("due_at");
+        }
+        if setting.checked {
+            self.checked_at = Some(at);
+            changed.push("checked_at");
+        }
+        for (name, value, slot) in [
+            ("verify", setting.verify, &mut self.liveness.verify),
+            ("restart", setting.restart, &mut self.liveness.restart),
+            ("owner", setting.owner, &mut self.liveness.owner),
+            ("start_key", setting.start_key, &mut self.liveness.start_key),
+        ] {
+            let Some(value) = value else { continue };
+            let value = value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+            if value != *slot {
+                *slot = value;
+                changed.push(name);
+            }
+        }
+        changed
+    }
+}
+
+/// Fold the row at `from` into `into` — two rows that are one promise
+/// (`task-manager.md` § *One promise, one row*). `None` when either is missing.
+///
+/// **Mechanical, so the store does it.** Everything the folded row says is carried into the
+/// survivor: its account beneath the survivor's, its lines merged into the survivor's by
+/// when they happened — each keeping the instant it was written at, which a mind re-typing
+/// them could not — its `created` line kept as an `update` so the survivor still has one
+/// ask, and its `due_at` if the survivor has none. The folded row is then closed as
+/// `cancelled` with a line naming where the promise went. Nothing is deleted.
+pub async fn fold(
+    data_dir: &Path,
+    from: &str,
+    into: &str,
+    at: DateTime<Utc>,
+) -> anyhow::Result<Option<Result<(), Refused>>> {
+    let (from, into) = (facets::slug(from), facets::slug(into));
+    if from == into {
+        return Ok(Some(Err(Refused::FoldIntoItself)));
+    }
+    let _held = write_lock().lock().await;
+    let (Some(mut folded), Some(mut survivor)) =
+        (read_task(data_dir, &from).await?, read_task(data_dir, &into).await?)
+    else {
+        return Ok(None);
+    };
+    survivor.absorb(&folded);
+    folded.set_status(TaskStatus::Cancelled, at, Hand::Mind);
+    folded.timeline.push(TimelineEntry::new(TimelineKind::Update, at, format!("folded into `{into}`")));
+    write_task(data_dir, &survivor).await?;
+    write_task(data_dir, &folded).await?;
+    Ok(Some(Ok(())))
+}
+
+impl Task {
+    /// [`fold`]'s carry, on records in hand.
+    fn absorb(&mut self, other: &Task) {
+        let theirs = other.body.trim();
+        if !theirs.is_empty() {
+            let ours = self.body.trim();
+            self.body = if ours.is_empty() { theirs.to_owned() } else { format!("{ours}\n\n{theirs}") };
+        }
+        if self.due_at.is_none() {
+            self.due_at = other.due_at;
+        }
+        let carried = other.timeline.iter().cloned().map(|mut entry| {
+            if entry.kind == TimelineKind::Created {
+                entry.kind = TimelineKind::Update;
+            }
+            entry
+        });
+        // Two records, each already in the order it was written: merge them by instant, and
+        // where either line carries none, keep the survivor's first — nothing here invents a
+        // time to sort by.
+        let mut merged = Vec::with_capacity(self.timeline.len() + other.timeline.len());
+        let mut ours = std::mem::take(&mut self.timeline).into_iter().peekable();
+        let mut carried = carried.peekable();
+        loop {
+            let take_ours = match (ours.peek(), carried.peek()) {
+                (Some(a), Some(b)) => match (a.at, b.at) {
+                    (Some(a), Some(b)) => a <= b,
+                    _ => true,
+                },
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let next = if take_ours { ours.next() } else { carried.next() };
+            merged.extend(next);
+        }
+        self.timeline = merged;
+    }
+}
+
+/// A timestamp as a mind would write one: RFC3339 or a bare date. Empty is `None`.
+pub fn timestamp(s: &str) -> Option<Option<DateTime<Utc>>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Some(None);
+    }
+    parse_timestamp(s).map(Some)
 }
 
 pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<String> {
@@ -787,6 +1174,9 @@ fn last_seen() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, S
 /// honest. `render` is canonical, so the first pass over a hand-written store rewrites
 /// what it normalises and every pass after it writes nothing.
 pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
+    // Held for the pass: it reads every record and may write each back, and a verb landing
+    // between the two would be erased by a copy read before it.
+    let _held = write_lock().lock().await;
     let mut rewritten = 0;
     for mut task in scan(data_dir).await? {
         let subject = task.subject.clone();
@@ -2983,5 +3373,163 @@ mod without_elapsed_tests {
         let overdue = "- [doing, overdue since 2026-07-20 08:00Z] Renew the domain";
         assert_eq!(without_elapsed(overdue), overdue);
         assert_eq!(without_elapsed("- [todo] KT8-059 timestamp control"), "- [todo] KT8-059 timestamp control");
+    }
+}
+
+/// The three verbs a record is written through (`docs/arch/legibility.md` § L).
+#[cfg(test)]
+mod verb_tests {
+    use super::*;
+
+    fn opening(subject: &str) -> Opening {
+        Opening {
+            subject: subject.into(),
+            title: "导入赵力的简历".into(),
+            status: TaskStatus::Doing,
+            wanted: "要能直接改的一份简历".into(),
+            account: None,
+            due_at: None,
+            liveness: Liveness::default(),
+        }
+    }
+
+    /// **The title and the `created` line land in one call, and the second call is refused.**
+    /// "Once, at open, or never" used to be an instruction; of 106 rows in one store, three
+    /// carried the line.
+    #[tokio::test]
+    async fn opening_writes_the_name_and_the_ask_together_once() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(open(dir.path(), opening("resume")).await.unwrap(), Ok("resume".into()));
+
+        let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
+        assert_eq!(task.title, "导入赵力的简历");
+        assert_eq!(task.status, TaskStatus::Doing);
+        assert_eq!(task.created().map(|c| c.text.as_str()), Some("要能直接改的一份简历"));
+
+        assert_eq!(
+            open(dir.path(), opening("resume")).await.unwrap(),
+            Err(Refused::Exists("resume".into()))
+        );
+        let mut closed = opening("other");
+        closed.status = TaskStatus::Done;
+        assert_eq!(open(dir.path(), closed).await.unwrap(), Err(Refused::Closed));
+    }
+
+    /// **The caller hands over prose; the store writes the instant and the kind.** A line
+    /// typed whole is how machine timestamps came to sit inside sentences.
+    #[tokio::test]
+    async fn a_note_is_stamped_by_the_store_and_a_line_stays_one_line() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("resume")).await.unwrap().unwrap();
+        let at = Utc.with_ymd_and_hms(2026, 9, 18, 9, 0, 0).unwrap();
+
+        assert_eq!(note(dir.path(), "resume", Note::Delivered, "简历在你盘上了", at).await.unwrap(), Some(Ok(())));
+        let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
+        let last = task.timeline.last().unwrap();
+        assert_eq!((last.kind, last.at, last.text.as_str()), (TimelineKind::Delivered, Some(at), "简历在你盘上了"));
+
+        assert_eq!(
+            note(dir.path(), "resume", Note::Update, "one\ntwo", at).await.unwrap(),
+            Some(Err(Refused::Paragraph))
+        );
+        assert_eq!(note(dir.path(), "resume", Note::Update, "  ", at).await.unwrap(), Some(Err(Refused::Empty)));
+        assert_eq!(note(dir.path(), "missing", Note::Update, "x", at).await.unwrap(), None);
+
+        note(dir.path(), "resume", Note::Title, "简历", at).await.unwrap().unwrap().unwrap();
+        let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
+        assert_eq!(task.title, "简历");
+        assert_eq!(task.timeline.len(), 2, "a rename is not a line");
+    }
+
+    /// **`stands` puts today's reading first and keeps the old one beneath it.** The panel
+    /// clamps the account to a screenful, so what is on top is what gets read.
+    #[tokio::test]
+    async fn stands_goes_on_top_and_pushes_the_previous_reading_down() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("resume")).await.unwrap().unwrap();
+        let at = Utc::now();
+        note(dir.path(), "resume", Note::Stands, "第一版在做。", at).await.unwrap();
+        note(dir.path(), "resume", Note::Stands, "交付了，等你看。\n第二段。", at).await.unwrap();
+
+        let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
+        assert_eq!(task.body, "交付了，等你看。\n第二段。\n\n第一版在做。");
+        assert_eq!(task.timeline.len(), 1, "stands is not a line");
+    }
+
+    /// **Machinery is validated, not judged, and a status set through the verb is marked as a
+    /// mind's.** `checked` is stamped by the store; an empty string clears a field.
+    #[tokio::test]
+    async fn setting_machinery_moves_the_status_and_stamps_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("watch")).await.unwrap().unwrap();
+        let at = Utc.with_ymd_and_hms(2026, 9, 18, 10, 0, 0).unwrap();
+
+        let setting = Setting {
+            status: Some(TaskStatus::Serving),
+            checked: true,
+            verify: Some(Some("the digest for today is in the group".into())),
+            ..Setting::default()
+        };
+        let changed = set(dir.path(), "watch", setting, at).await.unwrap().unwrap();
+        assert_eq!(changed, vec!["status", "checked_at", "verify"]);
+
+        let task = read_task(dir.path(), "watch").await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Serving);
+        assert_eq!(task.checked_at, Some(at));
+        let moved = task.timeline.iter().find(|e| e.kind == TimelineKind::Moved).unwrap();
+        assert_eq!(moved.text, "doing \u{2192} serving");
+
+        let clear = Setting { verify: Some(Some(String::new())), ..Setting::default() };
+        assert_eq!(set(dir.path(), "watch", clear, at).await.unwrap().unwrap(), vec!["verify"]);
+        let again = Setting { verify: Some(Some(String::new())), ..Setting::default() };
+        assert!(set(dir.path(), "watch", again, at).await.unwrap().unwrap().is_empty());
+    }
+
+    /// **A fold carries every line at the instant it was written, and says where it went.**
+    #[tokio::test]
+    async fn a_fold_merges_by_when_and_closes_the_folded_row() {
+        let dir = tempfile::tempdir().unwrap();
+        // After the opens, which the store stamps with the real clock.
+        let base = Utc::now();
+        let t = |h| base + chrono::Duration::hours(h);
+        open(dir.path(), opening("shoes")).await.unwrap().unwrap();
+        open(dir.path(), opening("shoes-again")).await.unwrap().unwrap();
+        note(dir.path(), "shoes", Note::Update, "survivor at 10", t(1)).await.unwrap();
+        note(dir.path(), "shoes-again", Note::Update, "folded at 11", t(2)).await.unwrap();
+        note(dir.path(), "shoes", Note::Update, "survivor at 12", t(3)).await.unwrap();
+
+        fold(dir.path(), "shoes-again", "shoes", t(4)).await.unwrap().unwrap().unwrap();
+
+        let survivor = read_task(dir.path(), "shoes").await.unwrap().unwrap();
+        let texts: Vec<_> = survivor
+            .timeline
+            .iter()
+            .filter(|e| e.kind == TimelineKind::Update)
+            .map(|e| e.text.as_str())
+            .collect();
+        assert_eq!(texts[1..], ["survivor at 10", "folded at 11", "survivor at 12"]);
+        assert_eq!(survivor.timeline.iter().filter(|e| e.kind == TimelineKind::Created).count(), 1);
+
+        let folded = read_task(dir.path(), "shoes-again").await.unwrap().unwrap();
+        assert_eq!(folded.status, TaskStatus::Cancelled);
+        assert_eq!(folded.timeline.last().unwrap().text, "folded into `shoes`");
+    }
+
+    /// **Two writers on one row both land.** Each verb reads, changes and writes the record
+    /// whole, so without one lock the second write would be a copy missing the first line.
+    #[tokio::test]
+    async fn two_notes_at_once_both_land() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("resume")).await.unwrap().unwrap();
+        let at = Utc::now();
+        let notes = (0..8).map(|n| {
+            let path = dir.path().to_path_buf();
+            tokio::spawn(async move { note(&path, "resume", Note::Update, &format!("第 {n} 件"), at).await })
+        });
+        for handle in notes.collect::<Vec<_>>() {
+            handle.await.unwrap().unwrap();
+        }
+        let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
+        assert_eq!(task.timeline.iter().filter(|e| e.kind == TimelineKind::Update).count(), 8);
     }
 }

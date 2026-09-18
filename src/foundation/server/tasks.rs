@@ -672,6 +672,9 @@ pub async fn patch_task(
     if subject.is_empty() {
         return not_found("no such task");
     }
+    // The same lock the verbs take, so the person's click and a worker's line cannot each
+    // write back a copy missing the other.
+    let _held = tasks::write_lock().lock().await;
     let mut task = match tasks::read_task(&state.data_dir, &subject).await {
         Ok(Some(task)) => task,
         Ok(None) => return not_found("no such task"),

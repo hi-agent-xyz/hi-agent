@@ -465,6 +465,102 @@ fn share_view_tool() -> Value {
     )
 }
 
+/// **A task's record is written through these three and nothing else**
+/// (`docs/arch/legibility.md` § L). The record is something a person reads, and a surface
+/// with no verb is one no check can sit on: every writer used to reach `facet.md` with
+/// `apply_patch`, and 41 of the 41 records opened in the four days before 2026-09-18 carried
+/// project vocabulary and machine timestamps against rules written out in three prompts.
+///
+/// Prose goes through [`task_open_tool`] and [`task_note_tool`]; the machinery through
+/// [`task_set_tool`], which is validated rather than judged because none of it is read as
+/// sentences. The store writes every instant and every kind word itself.
+fn task_open_tool() -> Value {
+    tool(
+        "hi_task_open",
+        "Open a row on the ledger — the only way a task comes to exist, and the moment its \
+         `created` line is written, once. `subject` is the row's durable name (a slug; its \
+         working folder is `memory/facets/tasks/<subject>/`). `title` is a name, the way you \
+         would refer to it out loud, in the person's language — not a report. `wanted` is the \
+         `created` line: what they actually want to end up with, in their words, plus any \
+         reading you had to take because they did not say. `account` is optional opening \
+         prose for *Where it stands*. A `serving` duty says how its machinery is checked \
+         (`verify`, a result, never an existence), brought back (`restart`), whose it is \
+         (`owner`) and the name it and the row share (`start_key`). `due_at` only when they \
+         set one. Refused, naming the row, when the subject is already open.",
+        json!({
+            "type": "object",
+            "properties": {
+                "subject": { "type": "string", "description": "Durable slug for the row, e.g. `resume-import-20260918`." },
+                "title": { "type": "string", "description": "A short name for it, in the person's language." },
+                "status": { "type": "string", "enum": ["todo", "doing", "serving"], "description": "Where it starts." },
+                "wanted": { "type": "string", "description": "One line: what they want to end up with, in their words, and any reading you took." },
+                "account": { "type": "string", "description": "Optional opening prose, when there is more to say than the line." },
+                "due_at": { "type": "string", "description": "Only when they set a date or time: RFC3339 or YYYY-MM-DD." },
+                "verify": { "type": "string" },
+                "restart": { "type": "string" },
+                "owner": { "type": "string" },
+                "start_key": { "type": "string" },
+            },
+            "required": ["subject", "title", "status", "wanted"],
+        }),
+    )
+}
+
+fn task_note_tool() -> Value {
+    tool(
+        "hi_task_note",
+        "Write on a task's record — the one the person reads on their board, where the card \
+         shows your newest line and the panel shows the rest. `kind`: `update` (something \
+         happened — work done, a finding, a check and what it came back with), `delivered` \
+         (they have something now, or it went out), `waiting` (a person must do what only \
+         they can: say who, what, and where, pasting the link or path), or `stands` (where it \
+         stands now — prose that goes on top of the account, the previous reading moving \
+         down beneath it), or `title` (the row's name, corrected — a task manager cutting a \
+         title that grew into a report back to what the thing is called). `text` is what you \
+         are saying, to them and in their language. The \
+         store writes the time and the kind, so put neither in the text. A line is one line, \
+         one thing that happened; a paragraph belongs in `stands`. `subject` defaults to the \
+         task you serve.",
+        json!({
+            "type": "object",
+            "properties": {
+                "kind": { "type": "string", "enum": ["update", "delivered", "waiting", "stands", "title"] },
+                "text": { "type": "string" },
+                "subject": { "type": "string", "description": "The row. Omit for the task you serve." },
+            },
+            "required": ["kind", "text"],
+        }),
+    )
+}
+
+fn task_set_tool() -> Value {
+    tool(
+        "hi_task_set",
+        "Change a row's machinery: its `status` (a task manager's to change), `due_at`, and a \
+         duty's `verify` / `restart` / `owner` / `start_key`. `fold_into` folds this row into \
+         the one it duplicates: its account and every line, at the instant each was written, \
+         carried into that row, and this one closed as cancelled saying where it went. \
+         `checked: true` records that the \
+         duty's `verify` was just run and came back alive — the store stamps when. An empty \
+         string clears a field; a field left out is left as it is. What happened goes in \
+         hi_task_note, not here. `subject` defaults to the task you serve.",
+        json!({
+            "type": "object",
+            "properties": {
+                "subject": { "type": "string", "description": "The row. Omit for the task you serve." },
+                "status": { "type": "string", "enum": ["todo", "doing", "serving", "done", "cancelled"] },
+                "due_at": { "type": "string", "description": "RFC3339 or YYYY-MM-DD; empty clears it." },
+                "checked": { "type": "boolean" },
+                "verify": { "type": "string" },
+                "restart": { "type": "string" },
+                "owner": { "type": "string" },
+                "start_key": { "type": "string" },
+                "fold_into": { "type": "string", "description": "The surviving row's subject, when this row is the same promise." },
+            },
+        }),
+    )
+}
+
 /// Brokered HTTP: the model chooses an operation and a drive-file reference; the
 /// trusted host resolves and injects the value at the destination boundary.
 fn http_request_tool() -> Value {
@@ -520,6 +616,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
     match role {
         Some("worker") => vec![
             send_message_tool(),
+            task_note_tool(),
+            task_set_tool(),
             review_view_tool(),
             share_view_tool(),
             http_request_tool(),
@@ -743,12 +841,12 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             image_text_to_text_tool(),
         ],
         // The shared brain. It delegates rather than does, so its surface is the
-        // switchboard and nothing else: hand work out, ask after it, read what came back.
+        // switchboard plus the one write it owns: opening a row. Changing a row is a task
+        // manager's, so it has `hi_task_open` and neither of the other two.
         //
-        // The ledger it owns needs no tool — a task is a plain facet on disk, and it has
-        // the adapter's own Read/Write. That is why "sole writer of the ledger" is a
-        // matter of which rung is *told* to write it, and why that instruction moving out
-        // in `cognition.md` is what makes it true.
+        // This read "the ledger it owns needs no tool — a task is a plain facet on disk" until
+        // 2026-09-18. A record is something a person reads, and a surface written with the
+        // adapter's own Read/Write is one no check can sit on (`docs/arch/legibility.md`).
         //
         // That reasoning is why `hi_set_home_groups` is **not** here. Arranging the home
         // surface is a judgment over every open row at once, which is the errand the
@@ -767,6 +865,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // sequencer to express through.
         Some("cognition") => vec![
             send_message_tool(),
+            task_open_tool(),
             create_worker_tool(),
             cancel_worker_tool(),
             close_worker_tool(),
@@ -1304,6 +1403,21 @@ async fn dispatch_tool(
             role.unwrap_or("<none>")
         ));
     }
+    // Opening a row is what Cognition witnessed; changing one is not its to do
+    // (`docs/arch/data.md` § *Tasks*). The surfaces already say so; this is where a call
+    // that crossed anyway hears it.
+    if name == "hi_task_open" && role != Some("cognition") {
+        return tool_error(&format!(
+            "`{name}` is cognition's — it opens rows; role `{}` writes on one with hi_task_note",
+            role.unwrap_or("<none>")
+        ));
+    }
+    if matches!(name, "hi_task_note" | "hi_task_set") && role != Some("worker") {
+        return tool_error(&format!(
+            "`{name}` is a worker's; role `{}` opens rows and does not change them",
+            role.unwrap_or("<none>")
+        ));
+    }
 
     // Reflection tools are pure derived-memory IO over `data_dir`; they don't touch
     // a loop sink, so handle them before the sink lookup.
@@ -1338,6 +1452,19 @@ async fn dispatch_tool(
             return do_review_view(data_dir, subject.as_deref(), args).await;
         }
         "hi_share_view" => return do_share_view(data_dir, args).await,
+        "hi_task_open" => return do_task_open(data_dir, args).await,
+        "hi_task_note" | "hi_task_set" => {
+            // The row the caller serves, when it names none: the registry's `subject`, as for
+            // `hi_review_view` — never a reading of the session's title.
+            let served = slug
+                .as_ref()
+                .and_then(|id| registry::global().status(id))
+                .and_then(|status| status.subject);
+            return match name {
+                "hi_task_note" => do_task_note(data_dir, served.as_deref(), args).await,
+                _ => do_task_set(data_dir, served.as_deref(), args).await,
+            };
+        }
         "hi_http_request" => {
             return match crate::foundation::privacy::broker::http_request(privacy, args).await {
                 Ok(response) => match serde_json::to_string_pretty(&response) {
@@ -2307,6 +2434,145 @@ async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
 
 /// `KNQ (1: Site (2), Research (0: Notes (1)))` — a group's own member count, then what is
 /// inside it, so the writer reads back the depth it wrote as well as the counts.
+/// The row a task verb acts on: the one it names, else the one the caller serves.
+fn task_subject(served: Option<&str>, args: &Value) -> Option<String> {
+    args.get("subject")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(served)
+        .map(str::to_owned)
+}
+
+/// What a task verb says when the row it was pointed at is not there — with the rows that
+/// are, because the likeliest cause is a near miss on the name.
+async fn no_such_row(data_dir: &Path, subject: &str) -> Value {
+    let open = match crate::mind::memory::tasks::named(data_dir, subject).await {
+        Ok(crate::mind::memory::tasks::Named::Missing { open }) => open,
+        _ => String::new(),
+    };
+    let ledger = match open.trim().is_empty() {
+        true => "Nothing is open on the ledger right now.".to_string(),
+        false => format!("Open right now:\n{}", open.trim_end()),
+    };
+    tool_error(&format!("no task is filed under `{subject}`, so nothing was written. {ledger}"))
+}
+
+fn arg_text<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+    args.get(key).and_then(Value::as_str)
+}
+
+/// `hi_task_open` — Cognition opening a row, title and `created` line in one call.
+async fn do_task_open(data_dir: &Path, args: &Value) -> Value {
+    use crate::mind::memory::tasks::{self, Liveness, Opening, TaskStatus};
+
+    let status = match arg_text(args, "status").map(str::trim) {
+        Some("todo") => TaskStatus::Todo,
+        Some("doing") => TaskStatus::Doing,
+        Some("serving") => TaskStatus::Serving,
+        _ => return tool_error("`status` must be todo, doing or serving"),
+    };
+    let due_at = match arg_text(args, "due_at").map(tasks::timestamp) {
+        None => None,
+        Some(Some(due_at)) => due_at,
+        Some(None) => return tool_error("`due_at` must be RFC3339 or YYYY-MM-DD"),
+    };
+    let field = |key: &str| {
+        arg_text(args, key).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
+    };
+    let opening = Opening {
+        subject: arg_text(args, "subject").unwrap_or_default().to_owned(),
+        title: arg_text(args, "title").unwrap_or_default().to_owned(),
+        status,
+        wanted: arg_text(args, "wanted").unwrap_or_default().to_owned(),
+        account: field("account"),
+        due_at,
+        liveness: Liveness {
+            verify: field("verify"),
+            restart: field("restart"),
+            owner: field("owner"),
+            start_key: field("start_key"),
+        },
+    };
+    match tasks::open(data_dir, opening).await {
+        Ok(Ok(subject)) => tool_ok(&format!("opened `{subject}`")),
+        Ok(Err(refused)) => tool_error(&refused.to_string()),
+        Err(error) => tool_error(&format!("could not write the row: {error}")),
+    }
+}
+
+/// `hi_task_note` — one thing said on a row, the store writing when and what kind.
+async fn do_task_note(data_dir: &Path, served: Option<&str>, args: &Value) -> Value {
+    use crate::mind::memory::tasks::{self, Note};
+
+    let Some(note) = arg_text(args, "kind").and_then(Note::parse) else {
+        return tool_error("`kind` must be update, delivered, waiting, stands or title");
+    };
+    let Some(subject) = task_subject(served, args) else {
+        return tool_error("name the row — `subject` — since this session serves no task");
+    };
+    let text = arg_text(args, "text").unwrap_or_default();
+    match tasks::note(data_dir, &subject, note, text, Utc::now()).await {
+        Ok(Some(Ok(()))) => tool_ok(match note {
+            Note::Stands => "on top of the account; the previous reading is beneath it",
+            Note::Title => "renamed",
+            _ => "recorded",
+        }),
+        Ok(Some(Err(refused))) => tool_error(&format!("not recorded — {refused}")),
+        Ok(None) => no_such_row(data_dir, &subject).await,
+        Err(error) => tool_error(&format!("could not write the row: {error}")),
+    }
+}
+
+/// `hi_task_set` — a row's machinery, validated rather than judged.
+async fn do_task_set(data_dir: &Path, served: Option<&str>, args: &Value) -> Value {
+    use crate::mind::memory::tasks::{self, Setting, TaskStatus};
+
+    let Some(subject) = task_subject(served, args) else {
+        return tool_error("name the row — `subject` — since this session serves no task");
+    };
+    if let Some(into) = arg_text(args, "fold_into").map(str::trim).filter(|s| !s.is_empty()) {
+        return match tasks::fold(data_dir, &subject, into, Utc::now()).await {
+            Ok(Some(Ok(()))) => tool_ok(&format!("folded `{subject}` into `{into}`")),
+            Ok(Some(Err(refused))) => tool_error(&refused.to_string()),
+            Ok(None) => tool_error(&format!(
+                "`{subject}` and `{into}` must both be rows to fold one into the other"
+            )),
+            Err(error) => tool_error(&format!("could not write the rows: {error}")),
+        };
+    }
+    let status = match arg_text(args, "status").map(str::trim) {
+        None => None,
+        Some("todo") => Some(TaskStatus::Todo),
+        Some("doing") => Some(TaskStatus::Doing),
+        Some("serving") => Some(TaskStatus::Serving),
+        Some("done") => Some(TaskStatus::Done),
+        Some("cancelled") => Some(TaskStatus::Cancelled),
+        Some(_) => return tool_error("`status` must be todo, doing, serving, done or cancelled"),
+    };
+    let due_at = match arg_text(args, "due_at").map(tasks::timestamp) {
+        None => None,
+        Some(Some(due_at)) => Some(due_at),
+        Some(None) => return tool_error("`due_at` must be RFC3339 or YYYY-MM-DD, or empty to clear it"),
+    };
+    let field = |key: &str| arg_text(args, key).map(|v| Some(v.to_owned()));
+    let setting = Setting {
+        status,
+        due_at,
+        checked: args.get("checked").and_then(Value::as_bool).unwrap_or(false),
+        verify: field("verify"),
+        restart: field("restart"),
+        owner: field("owner"),
+        start_key: field("start_key"),
+    };
+    match tasks::set(data_dir, &subject, setting, Utc::now()).await {
+        Ok(Some(changed)) if changed.is_empty() => tool_ok("nothing changed — the row already says that"),
+        Ok(Some(changed)) => tool_ok(&format!("set {}", changed.join(", "))),
+        Ok(None) => no_such_row(data_dir, &subject).await,
+        Err(error) => tool_error(&format!("could not write the row: {error}")),
+    }
+}
+
 fn group_shape(groups: &[crate::foundation::server::home::Group]) -> String {
     groups
         .iter()
@@ -3467,13 +3733,15 @@ mod surface_tests {
     /// the lifetime — something else does, on a timer, with no idea whether the errand was
     /// done. All three or none.
     ///
-    /// **Nothing that writes belongs here, and `hi_set_home_groups` is the case that tested
-    /// it.** Arranging the home surface is a judgment over every open row, so it went where
-    /// the judgment already lives — the `task-manager` — and Cognition does with it what it
-    /// does with everything: hands it out. A verb is not owed to this rung merely because
-    /// this rung is the one holding the context when the person asks.
+    /// **One write belongs here, and it is the one this rung witnessed: opening a row.**
+    /// `hi_task_open` is not owed to Cognition for holding the context — `hi_set_home_groups`
+    /// tested that and went to the `task-manager`, because arranging the home surface is a
+    /// judgment over every open row. Opening is different in kind: the person asked in the
+    /// conversation Cognition was in, and a promise that waits on a worker to be written down
+    /// is one a restart eats (`docs/arch/data.md` § *Tasks*). It always wrote that row; it used
+    /// to do it with the adapter's own Read/Write, where no check could see it.
     #[test]
-    fn cognition_holds_the_switchboard_and_nothing_else() {
+    fn cognition_holds_the_switchboard_and_opening_a_row() {
         let mut got = names(Some("cognition"));
         got.sort();
         assert_eq!(
@@ -3485,9 +3753,27 @@ mod surface_tests {
                 "hi_send_message".to_string(),
                 "hi_session_messages".to_string(),
                 "hi_session_status".to_string(),
+                "hi_task_open".to_string(),
             ],
             "it delegates rather than does, and it has no mouth"
         );
+    }
+
+    /// **A record is written through a verb by exactly the rungs whose part it is.** Cognition
+    /// opens; workers write on a row and set its machinery; nobody else holds any of the
+    /// three (`docs/arch/legibility.md` § L).
+    #[test]
+    fn each_part_of_a_record_has_one_kind_of_writer() {
+        let task_verbs = |role| {
+            let mut got: Vec<String> =
+                names(role).into_iter().filter(|n| n.starts_with("hi_task_")).collect();
+            got.sort();
+            got
+        };
+        assert_eq!(task_verbs(Some("cognition")), vec!["hi_task_open"]);
+        assert_eq!(task_verbs(Some("worker")), vec!["hi_task_note", "hi_task_set"]);
+        assert!(task_verbs(Some("reaction")).is_empty());
+        assert!(task_verbs(Some("reflection")).is_empty());
     }
 
     #[test]

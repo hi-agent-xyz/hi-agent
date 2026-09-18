@@ -340,14 +340,27 @@ prose under *Where it stands*, then the whole timeline. Home draws the title aga
 a line and a paragraph are three reads with three different budgets, so the seam has to be
 able to tell them apart.
 
-### L. The seam — two verbs, and the host owns the file
+### L. The seam — three verbs, and the host owns the file
 
 Cognition opens a row and every worker appends to it with `apply_patch` on `facet.md`
 ([`general.md`](../../src/identity/workers/general.md)), which is why nothing in § D–G can
-see any of it. Two verbs replace that, and `## Timeline` stops being hand-patched:
+see any of it. Three verbs replace that, and `## Timeline` stops being hand-patched:
 
-    hi_task_open(subject, title, wanted)
-    hi_task_note(subject, kind: update | delivered | waiting | stands, text)
+    hi_task_open(subject, title, status, wanted, …)            Cognition
+    hi_task_note(kind: update | delivered | waiting | stands | title, text, subject?)   workers
+    hi_task_set(status?, due_at?, checked?, verify?, …, subject?)            workers
+
+**Prose is judged; machinery is validated.** The first two carry sentences a person reads
+— a title correction included, since the title is on every card — and are where § M sits. The third carries the row's machinery — the status word, a due
+date, a duty's `verify` / `restart` / `owner` / `start_key`, the stamp that its check came
+back alive — which is read as values, not sentences, and which `reconcile` could always
+repair from the bytes. It is a verb anyway because without one a worker keeping a duty's
+`checked_at` has to open the record to do it, and the file open under its cursor is the one
+it patches the timeline in by habit. `subject` defaults to the task the calling worker
+serves. **Folding** a duplicate row into the one it duplicates is `hi_task_set(fold_into)`:
+the store carries the folded row's account and every line into the survivor, merged by the
+instant each was written — which a mind re-typing them through `hi_task_note` would have
+re-stamped as now — and closes the folded row saying where the promise went.
 
 - **The host writes the instant and the kind**; a caller passes prose and nothing else. That
   removes the corpus's most common failure by construction rather than by rule — 2,959
@@ -471,6 +484,7 @@ any other message.
 | **One record for every surface, carrying which surface it was** | A correction about how the person is told things is a fact about the person. Kept per surface, "以后简要汇报" teaches speech and leaves their task lines alone |
 | **The standard is carried whole, never linked** | Four rungs were handed the path and each restated the parts it thought applied. One of those restatements quotes the measurement of the failure its own records then repeated 41 times |
 | **The host writes a record's instant and kind; a caller passes prose** | 2,959 machine timestamps across 144 records were written into prose because hand-writing the whole line is what the format asked for. Removing the ask removes the class |
+| **Prose is judged; machinery is validated** | The status word, a due date and a duty's liveness fields are values `reconcile` could always repair from the bytes; a sentence is not. `hi_task_set` exists anyway, because a worker that must open the record to stamp `checked_at` is a worker with the timeline under its cursor |
 | **A refused record line lands on the second attempt; a refused message does not** | Speech that is dropped is silence, which the floor already answers for. A fact that is not recorded is gone, and a gate able to lose facts is a worse failure than the one it fixes |
 | **Gate the line, judge the body after it lands** | A gate is worth a wait only where the writer can still act on it and something is waiting on the text. Nothing waits on *Where it stands*, and a builder must not queue behind a judge |
 | **The hand-patched path is deleted, not deprecated** | Two ways to write a record is a door beside the check, and the compatibility path kept until the prompts catch up is the one that stays |
