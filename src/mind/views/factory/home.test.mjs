@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, hands, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, hands, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -148,44 +148,46 @@ test("an ended session is not this surface's subject at all", () => {
   assert.deepEqual(titles(model, "activity"), ["Work live"]);
 });
 
-test("conversation and coordination make the core; a session on a drawn task is a line on it", () => {
+test("conversation and coordination make the core; two hands on a task are cards, one is not", () => {
   const model = project({ tasks: [task("a")], workers: [worker("r", "reaction"), worker("c", "cognition"),
     worker("f", "reflection"), worker("w1", "worker", { subject: "a" }), worker("w2", "worker", { subject: "a" })] });
   assert.deepEqual(list(model.nodes[0].data.sessions.map((s) => s.role)).sort(), ["cognition", "reaction"]);
-  // Reflection is the only card: the two working the task are that task card's own state.
-  assert.deepEqual(titles(model, "activity"), ["Review"]);
   const drawn = ofKind(model, "task")[0];
   assert.deepEqual(list(drawn.data.sessions.map((s) => s.slug)).sort(), ["w1", "w2"]);
-  assert.deepEqual(list(childIndex(model).get("task:a")), [], "and it hangs nothing below the card");
+  // Two hands on the row, so both are cards on its branch — each keeping its own errand's title.
+  assert.deepEqual(titles(model, "activity"), ["Review", "Work w1", "Work w2"]);
+  assert.deepEqual(list(childIndex(model).get("task:a").map((n) => n.id)),
+    ["session:0123456789ab:w1", "session:0123456789ab:w2"]);
+  assert.ok(model.edges.some((e) => e.from === "task:a" && e.to === "session:0123456789ab:w1" && e.relation === "works-on"));
   assert.ok(drawn.sourceRefs.some((r) => r.kind === "session"), "the sessions stay source references");
   assertConnected(model);
+  // One hand draws nothing: its title is the task's said back and its state is what the row's
+  // word already implied, so the card would be a restatement costing a node.
+  const alone = project({ tasks: [task("a")], workers: [worker("w1", "worker", { subject: "a" })] });
+  assert.deepEqual(titles(alone, "activity"), []);
+  assert.deepEqual(list(childIndex(alone).get("task:a")), []);
+  assert.deepEqual(list(ofKind(alone, "task")[0].data.sessions.map((s) => s.slug)), ["w1"], "it is still the row's own state");
+  assert.equal(stateOf(ofKind(alone, "task")[0]), "doing", "and the row stays the ledger's");
 });
 
-test("one word for a task, and a mark for each hand on it", () => {
+test("a task's word and clock are the ledger's, whatever the hands on it are doing", () => {
   // The grid the two-line card promised mostly does not exist: nothing is being worked on while
   // it is still to do, and a closed row is closed whatever is still warm beside it.
-  const of = (status, workers) => ofKind(project({ tasks: [task("a", status)], workers }), "task")[0];
+  const of = (status, workers, hours = 1) => ofKind(project({ tasks: [task("a", status, hours)], workers }), "task")[0];
   const on = (state, extra = {}) => worker(`w${state}`, "worker", { subject: "a", state, ...extra });
   assert.equal(stateOf(of("todo", [])), "todo");
-  assert.equal(stateOf(of("doing", [on("running")])), "doing", "the word stays the ledger's");
+  assert.equal(stateOf(of("doing", [on("running")])), "doing");
   assert.equal(stateOf(of("serving", [on("idle")])), "serving");
   assert.equal(stateOf(of("done", [on("idle")])), "done");
-  // The one thing a session says that the ledger cannot: its last turn was cut off.
+  // Not even a cut turn: that is one hand's state, and that hand has a card to wear it on.
   const cut = of("doing", [on("idle", { last_turn: { outcome: "failed" } })]);
-  assert.equal(stateOf(cut), "failed");
-  assert.equal(TONE[stateOf(cut)], "var(--danger)");
-  // Not while something else on the same row is still running — that row is progressing.
-  assert.equal(stateOf(of("doing", [on("idle", { last_turn: { outcome: "failed" } }), on("running")])), "doing");
-  // A closed row is closed: a stale failure under it is not the card's word.
-  assert.equal(stateOf(of("cancelled", [on("idle", { last_turn: { outcome: "interrupted" } })])), "cancelled");
-  // Running first, then the newest; three marks at most and the rest is a number.
-  const many = of("doing", [on("idle"), on("running"), worker("w3", "worker", { subject: "a", state: "waiting" }),
-    worker("w4", "worker", { subject: "a", state: "idle" })]);
-  const { shown, more, title } = hands(many);
-  assert.equal(shown[0].state, "running");
-  assert.equal(shown.length, 3);
-  assert.equal(more, 1);
-  assert.match(title, /Work wrunning · Working/, "every hand is named in the hover text");
+  assert.equal(stateOf(cut), "doing");
+  const cards = ofKind(project({ tasks: [task("a")], workers: [on("idle", { last_turn: { outcome: "failed" } }), on("running")] }), "activity");
+  assert.equal(stateOf(cards.find((n) => n.data.session.state === "idle")), "failed");
+  assert.equal(TONE.failed, "var(--danger)");
+  // And the clock stays the ledger's with it: how long the row has held its status, not how
+  // long some session has been idle.
+  assert.equal(nodeTime(of("serving", [on("running", { state_since: hoursAgo(1) })], 360)), hoursAgo(360));
 });
 
 test("the agent's own upkeep is a group code draws: Reflection and every session with no subject", () => {
@@ -332,8 +334,9 @@ test("a live session follows its task into the group, and a task claimed twice s
   const children = childIndex(model);
   assert.deepEqual(list(children.get("group:KTV").map((n) => n.id)), ["task:kt8-046"]);
   assert.equal(children.get("core").some((n) => n.id === "group:别的"), false, "the second claim is not a group");
-  assert.deepEqual(list(ofKind(model, "task")[0].data.sessions.map((s) => s.slug)), ["w1"], "the session is a line on the card in the group");
-  assert.deepEqual(list(children.get("task:kt8-046")), [], "and not a card of its own beside it");
+  assert.deepEqual(list(ofKind(model, "task")[0].data.sessions.map((s) => s.slug)), ["w1"],
+    "the lone session is the card's own state, and never a peer of it on the core");
+  assert.deepEqual(list(children.get("task:kt8-046")), []);
   assertConnected(model);
 });
 

@@ -147,30 +147,39 @@ session, filled while it runs — and a task wears none of its own; where each s
 says the rest. Status tone, which was a coloured left edge, is carried by the status word. The
 core has the same plain 1px border as a card.
 
-**A session working on a task is a line on that task's card, and one line, because the two
-states are not independent.** It used to be a card of its own beside the task, and between them
-the two cards carried one fact: a session's title is the errand as it was handed out, which is
-mostly the task's title said again — *VICTOR 球拍智联传感器能统计哪些信息* next to *把 VICTOR
-VI-01 能统计什么做成一页* — and what the session adds is whether anybody is on it now. A whole
-column of the chart for that. Stacking the two states as two rows on one card was no better: it
-spends a card's height on a grid that mostly does not exist, since nothing is being worked on
-while it is still to do, and a closed row is closed whatever is still warm beside it.
+**A task with more than one live session draws them as cards one rank below it, joined by
+`works-on`. A task with one draws nothing, and the task's status line is the ledger's either
+way.**
 
-So the card keeps the one status line it had, and the sessions are marks in it:
+The sessions were marks in that status line: a dot each, filled while running, three at most
+and a `+1` past that. **A mark is a poor way to say a thing a word can say.** The row read *On
+duty* with two hollow marks in front of it, and a reader had to have been told what a hollow
+mark was before the card said anything at all; the sessions' own titles were hover text, which
+on a touch screen is nothing.
 
-- **The word is the ledger's** — to do, in progress, on duty, completed, cancelled — and so is
-  the time beside it. The card is the task; how long *this session* has been idle is
-  `factory/workers`'.
-- **Each live session on the row is one dot**, the same dot a session card wears, filled while
-  that session is running. Three at most: a glance asks whether anybody is on it, and past
-  three the rest of the answer is a number, so a fourth becomes `+1`. Their titles and states
-  are the line's hover text.
-- **Nothing on it means nobody is on it.** A row in progress with no dot is the ledger's
-  *nobody on it*, in the one place a reader is already looking.
-- **A last turn that failed or was cut off replaces the word**, in the danger tone, because
-  that is the one thing a session knows that the ledger cannot: the row says in progress and
-  nothing is progressing. Only while nothing else on the same row is running, and never on a
-  closed row, where a stale failure underneath is not the news.
+**But the lone session is the one that really had nothing to add, and that is why it is drawn
+nowhere.** A session's title is the errand as it was handed out, and when it is the only errand
+on the task it is the task's own title said back — *做每周总结页第一版* under *每周五自动出一页
+总结 view*, *VICTOR 球拍智联传感器能统计哪些信息* under *把 VICTOR VI-01 能统计什么做成一页* —
+while its state is what *In progress* already implied. A card for it costs a node to restate the
+row above it, which is what a reader feels as clutter without being able to name it. That is the
+same objection that took session cards off the chart as peers of their tasks; it survives the
+move onto the branch, because it was never about where the card sat.
+
+Two or more is a different fact, and not a bigger version of the same one: *which* hands, how
+many, and that one of them has stalled while another runs are things no word on the row can say.
+
+- **The task's word is the ledger's** — to do, in progress, on duty, completed, cancelled — and
+  so is the time beside it: how long *the row* has held its status. However many hands are on
+  it and whatever they are each doing.
+- **Past two, nothing is capped and nothing collapses into a number**: four hands draw four
+  cards, and the length of that branch IS the news.
+- **Each card says its own state**: *Working*, *Work queued*, *Idle*, or that its last turn
+  failed or was cut off, in the danger tone. That last one used to replace the task's word,
+  since it was the one thing a session knew that the ledger could not. It no longer does, which
+  leaves a **known gap**: a task with a single stalled hand reads *In progress* on Home with
+  nothing to contradict it. `factory/tasks` and `factory/workers` both show it; this surface
+  waits for a second hand before it says anything about hands at all.
 
 **A task waiting on the person says *Needs you*, in the danger tone, in place of its status.**
 The test is the board's: the task is open and the newest line a mind wrote on it is a
@@ -204,8 +213,9 @@ on a row that is waiting on them says the opposite of what is true.
 - **A task's pictures are image nodes one rank below it, and its other results are not on
   Home.** Drawn as sibling cards, results were 60.2% of the canvas on a real instance — 125 of
   them, 106 nothing but a filename. So a task hangs its pictures below itself as `result`
-  tiles: image only, no title, no status. That rank is the task's pictures and nothing else —
-  the sessions working on it are a line on its own card, above.
+  tiles: image only, no title, no status. **Where a task has session cards too, that rank holds
+  the hands before the pictures**: a session card is the live half of what hangs off a task and
+  a picture the finished half, and running work reads before its leftovers.
   - **One kind of record has one appearance.** The card used to wear the first picture inside
     itself, beside its text, and hang only the rest as tiles — so the same kind of thing was a
     strip in a bordered card here and a bare tile there, and which one it got turned on nothing
@@ -247,9 +257,9 @@ on a row that is waiting on them says the opposite of what is true.
 `running`, `waiting` and `idle` are registry states of a live session. In particular,
 `waiting` means queued work, not a request for the person to answer. Last-turn outcome
 and session termination are separate facts. A retained tool action describes current
-activity only while its session is running. On a task's card only two of these distinctions
-survive — running or not, and a last turn that failed — because that is what the row's own
-word cannot already say; the rest is `factory/workers`'.
+activity only while its session is running. Each of these states is a word on that session's
+own card, where it has one — the task's row carries none of them. What stays `factory/workers`' is everything
+underneath a state: the tail, the retained action, the turn count, the window.
 
 ## Grouping
 

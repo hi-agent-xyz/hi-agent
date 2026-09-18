@@ -183,9 +183,10 @@ function groupIcon(ref) {
  *    means QUEUED WORK, not waiting for the user; idle is still a LIVE session. Only live
  *    sessions are here at all — a session that has ended is `factory/workers`' subject.
  * 3. Reaction/Cognition sessions compose the one core. A session working on a drawn task is
- *    that task's `data.sessions` — one line on its card, never a card of its own. The rest are
- *    activity cards: Reflection and every session with no subject in the built-in upkeep
- *    group, and a session whose task is not drawn on the core.
+ *    that task's `data.sessions`, and is drawn only where there is more than one of them: a
+ *    card on the task's branch (`works-on`). The rest are activity cards: Reflection and every
+ *    session with no subject in the built-in upkeep group, and a session whose task is not
+ *    drawn on the core.
  * 4. subject is the authoritative session -> task join. owner is a technical session
  *    relationship only; it must not pretend that two independent tasks are one piece of work.
  * 5. Overview uses useMessages()'s USER-VISIBLE transcript and factual task transitions.
@@ -451,10 +452,8 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
   }
   for (const session of activities) {
     const taskId = session.subject && byId.has(taskKey(session.subject)) ? taskKey(session.subject) : null;
-    // **A session working on a drawn task is that card's own state, not a card beside it.** The
-    // two cards carried one fact between them: the session's title is the errand as it was handed
-    // out, which is mostly the task's title said again, and the session's own contribution is
-    // whether anybody is on it right now. A whole column for that.
+    // A session working on a drawn task belongs to that task. Whether it is a word on the row
+    // or a card below it is decided once the count is known — see the pass after this loop.
     if (taskId) {
       const task = byId.get(taskId);
       task.data.sessions.push(session);
@@ -472,6 +471,31 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
       sourceRefs: [ref("session", session.id)],
       data: { session, taskId: null, ownerSessionId: session.ownerSessionId, currentAction: session.currentAction } });
     link(upkeep ? UPKEEP : "core", session.id, "contains");
+  }
+  // **More than one hand on a task draws them; one hand draws nothing.** They were dots on the
+  // task's status line, filled while running — three at most and a `+1` past that — and the dot
+  // was the only thing that said anybody was on it. A mark is a poor way to say a thing a word
+  // can say: the row read `On duty` with two hollow marks in front of it, and a reader had to
+  // have been told what a hollow mark was before the card said anything at all; the sessions'
+  // own titles were hover text, which on a touch screen is nothing. So they are cards on the
+  // `works-on` branch the model has always carried, each with its own title, word and time.
+  //
+  // **The lone session is the one that earns no card**, and this is not a special case bolted
+  // on: it is the same reason session cards came off the chart as peers in the first place. A
+  // session's title is the errand as it was handed out, which when it is the only one is the
+  // task's title said back — `做每周总结页第一版` under `每周五自动出一页总结 view` — and its
+  // state is what `In progress` already implied. A card for it is a restatement wearing the
+  // cost of a node. Two of them are not: which hands, how many, and that one has stalled while
+  // another runs are all things the row cannot say. So nothing is capped past that and nothing
+  // collapses into a number — four hands draw four, and a long branch IS the news.
+  for (const node of nodes.filter((n) => n.kind === "task" && n.data.sessions.length > 1)) {
+    for (const session of node.data.sessions) {
+      add({ id: session.id, kind: "activity", title: session.title,
+        sourceRefs: [ref("session", session.id)],
+        data: { session, taskId: node.id, ownerSessionId: session.ownerSessionId,
+          currentAction: session.currentAction } });
+      link(node.id, session.id, "works-on");
+    }
   }
   const publicMessages = messages.filter((m) => (m.role === "user" || m.role === "agent") && plain(m.text));
   const lastUser = [...publicMessages].reverse().find((m) => m.role === "user");
@@ -511,7 +535,12 @@ function childIndex(model) {
   // their tasks happened to be drawn first. The core's branches are ordered by `arrange`.
   const inner = (n) => (n.kind === "group" ? 1 : 0);
   for (const [id, list] of children) {
-    if (nodes.get(id)?.kind !== "group") continue;
+    const kind = nodes.get(id)?.kind;
+    // **Under a task: who is on it, then what it made.** A session is the live half of the
+    // rank and a picture the finished half, and the two arrive in the order the projection
+    // builds them, which is results first. Running work reads before its leftovers.
+    if (kind === "task") { list.sort((a, b) => (a.kind === "activity" ? 0 : 1) - (b.kind === "activity" ? 0 : 1)); continue; }
+    if (kind !== "group") continue;
     list.sort((a, b) => inner(a) - inner(b) || (inner(a) ? a.data.index - b.data.index : 0));
   }
   return children;
@@ -533,42 +562,27 @@ function waitsOnPerson(task) {
 }
 
 /**
- * **One word, because the two states are not independent.** A card used to be able to carry a
- * ledger status and a session state at once — `To do` above `Working`, `Completed` above `Idle` —
- * and most of that grid does not exist: nothing is being worked on while it is still to do, and
- * a closed row is closed whatever is still warm. What the session actually adds to a row that is
- * open is whether anybody is on it *now*, which is a mark beside the word, not a word of its own.
+ * **One word, and on a task it is the ledger's.** A card used to be able to carry a ledger
+ * status and a session state at once — `To do` above `Working`, `Completed` above `Idle` — and
+ * most of that grid does not exist: nothing is being worked on while it is still to do, and a
+ * closed row is closed whatever is still warm. The row is the task, so the word is the task's,
+ * however many hands are on it and whatever they are each doing.
  *
- * The one thing a session says that the ledger cannot is that **its last turn failed or was cut
- * off**: the row reads in progress and nothing is progressing. That replaces the word, and only
- * while nothing else is running on the same row.
+ * **No session state reaches this row at all any more.** A last turn that failed used to
+ * replace the word, in the danger tone, because it was the one thing a session knew that the
+ * ledger could not and the row had nowhere else to say it. It has somewhere else now: every
+ * session on a task is a card below it, wearing its own word in its own tone. A cut turn is
+ * that card's word, not the task's, and the row is spared a state that belongs to one hand.
+ *
+ * A row waiting on the person is `needsYou` over everything — and that is a ledger fact too,
+ * read from `latest`, not a session's.
  */
 function stateOf(node) {
-  if (node.kind === "task") {
-    if (waitsOnPerson(node.data.task)) return "needsYou";
-    const sessions = node.data.sessions || [];
-    if (!OPEN.has(node.data.status) || sessions.some((s) => s.state === "running")) return node.data.status;
-    const cut = sessions.find((s) => ["failed", "interrupted"].includes(s.lastTurn?.outcome));
-    return cut ? cut.lastTurn.outcome : node.data.status;
-  }
+  if (node.kind === "task") return waitsOnPerson(node.data.task) ? "needsYou" : node.data.status;
   if (node.kind !== "activity") return node.kind;
   const s = node.data.session;
   if (s.state !== "running" && ["failed", "interrupted"].includes(s.lastTurn?.outcome)) return s.lastTurn.outcome;
   return s.state;
-}
-
-/**
- * The live sessions on a task, running first: one dot each, filled while it runs. **Three at
- * most**, because the question a glance asks is whether anybody is on it, and the count is the
- * rest of the answer; past three the rest is a number. Their titles and states are the line's
- * hover text, and `factory/workers` has all of it.
- */
-const HANDS = 3;
-function hands(node) {
-  const sessions = [...(node.data.sessions || [])].sort((a, b) =>
-    (b.state === "running") - (a.state === "running") || String(b.stateSince).localeCompare(String(a.stateSince)));
-  return { shown: sessions.slice(0, HANDS), more: Math.max(0, sessions.length - HANDS),
-    title: sessions.map((s) => `${s.title} · ${L.status[s.state] || s.state}`).join("\n") };
 }
 
 function age(value, now) {
@@ -1194,13 +1208,10 @@ function Node({ node, now, children, openRef, tones, centreOn, root = false, up 
       <span>{node.title}</span>
     </button>
   </article>;
-  const onIt = node.kind === "task" ? hands(node) : null;
   const body = <>
     <span className="hi-work__node-title" title={node.title}>{node.title}</span>
-    <div className="hi-work__node-foot"><span className="hi-work__node-state" title={onIt?.title || undefined}>
+    <div className="hi-work__node-foot"><span className="hi-work__node-state">
       {node.kind === "activity" && <i className="hi-work__live" data-live={node.data.session.state === "running"} />}
-      {onIt?.shown.map((s) => <i key={s.id} className="hi-work__live" data-live={s.state === "running"} />)}
-      {onIt?.more > 0 && <small className="hi-work__more">+{onIt.more}</small>}
       {L.status[state] || ""}</span>
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
   </>;
@@ -1310,9 +1321,6 @@ const CSS = `
 }
 .hi-work__node-foot time { white-space:nowrap; }
 .hi-work__node-state { display:flex; align-items:center; gap:6px; color:var(--node-tone); }
-/* The hands on a task sit in its one status line: a dot each, filled while one runs. */
-.hi-work__node-state .hi-work__live + .hi-work__live { margin-left:-3px; }
-.hi-work__more { color:var(--fg-mute); font-size:11px; margin-right:2px; }
 .hi-work__flow { max-width:720px; margin:0 auto; padding:20px 16px 80px; }
 .hi-work__viewport[data-focused] .hi-work__flow { padding-top:64px; }
 .hi-work__flow > .hi-work__group { height:auto; min-height:64px; }
