@@ -80,6 +80,31 @@ export function viewHearsKey(origin: KeyOrigin, hostClaimed: boolean): boolean {
   return origin !== "cover" && !hostClaimed;
 }
 
+/**
+ * Whether an input method owns this keydown — the person is mid-composition and
+ * the key is being spoken to the IME, not to the app. **Enter confirms a 拼音
+ * candidate and Escape throws the composition away**, so a handler that answers
+ * either one itself sends the half-typed letters as a message and wipes the
+ * composition off the screen mid-word.
+ *
+ * Three tests because no single one holds everywhere:
+ *   - `isComposing` is the standard flag, set on every keydown between
+ *     `compositionstart` and `compositionend` — including the committing Enter.
+ *   - `keyCode === 229` is the pre-standard way a browser says "this key went to
+ *     the IME", still what WebKit reports where it leaves `isComposing` unset.
+ *   - `composing` is the caller's own record of `compositionstart`/`end`, for the
+ *     ordering where WebKit delivers the committing Enter's keydown *after*
+ *     `compositionend` and both flags above have already gone false. A caller
+ *     that keeps the flag one task past the end covers that case; one that has no
+ *     record of its own passes `false`.
+ */
+export function inputMethodHasKey(
+  event: { isComposing?: boolean; keyCode?: number },
+  composing: boolean,
+): boolean {
+  return composing || event.isComposing === true || event.keyCode === 229;
+}
+
 const KEY_EVENTS = ["keydown", "keyup", "keypress"] as const;
 
 /**

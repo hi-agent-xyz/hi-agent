@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { hostHearsKey, keyOrigin, viewHearsKey, type KeyOrigin } from "./keyboard";
+import {
+  hostHearsKey,
+  inputMethodHasKey,
+  keyOrigin,
+  viewHearsKey,
+  type KeyOrigin,
+} from "./keyboard";
 
 /** A target that answers `closest` for the plane it is in, like a real element. */
 function inPlane(plane: string | null): EventTarget {
@@ -59,5 +65,26 @@ describe("the keyboard follows the planes", () => {
     for (const origin of origins) {
       expect(hostHearsKey(origin)).toBe(origin !== "view");
     }
+  });
+});
+
+describe("a key the input method is speaking to", () => {
+  // The bug this exists for: 拼音 half-typed in the line, Enter pressed to take
+  // the candidate under the cursor — and the raw letters went out as a message
+  // while the candidate window and the composition vanished. Every browser says
+  // "the IME has this key", and no two say it the same way.
+  it("leaves the committing Enter to the IME, however the browser reports it", () => {
+    // The standard flag, which is what Chrome sets on that keydown.
+    expect(inputMethodHasKey({ isComposing: true, keyCode: 229 }, true)).toBe(true);
+    // Pre-standard, and still all some engines give.
+    expect(inputMethodHasKey({ keyCode: 229 }, false)).toBe(true);
+    // And the ordering where `compositionend` has already fired, so both of the
+    // event's own flags read as a plain Enter. Only the caller's record is left.
+    expect(inputMethodHasKey({ isComposing: false, keyCode: 13 }, true)).toBe(true);
+  });
+
+  it("still lets an Enter the person meant send the line", () => {
+    expect(inputMethodHasKey({ isComposing: false, keyCode: 13 }, false)).toBe(false);
+    expect(inputMethodHasKey({}, false)).toBe(false);
   });
 });

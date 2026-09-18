@@ -3,7 +3,7 @@ import { ArrowUpIcon, LoaderCircleIcon, PlusIcon } from "lucide-react";
 
 import { TYPING_PING_INTERVAL_MS, postInTextTyping } from "../channels/in/text";
 import { isEditableTarget } from "../lib/handoff";
-import { onHostKey } from "../lib/keyboard";
+import { inputMethodHasKey, onHostKey } from "../lib/keyboard";
 import {
   InputGroup,
   InputGroupAddon,
@@ -48,6 +48,10 @@ interface ComposerProps {
  * which the single-line `<input>` this replaced could not offer at all. Sending
  * leaves it open: it is a channel, not a one-shot.
  *
+ * **Enter belongs to the input method first.** Half of what is written here is
+ * written through one, where Enter confirms the candidate under the cursor and
+ * Escape throws the composition away — see the composition pair below.
+ *
  * **The picker at its head is the only way to hand over a file that is not a
  * gesture.** A drop and a paste both reach `hooks/useHandoff`, and both are
  * things only a mouse and a keyboard can do — a touch device had no way to hand
@@ -86,6 +90,11 @@ export function Composer({
   // does nothing. Nothing else sets it: a conversation that simply comes up
   // arrives with no caret in it.
   const wantsCaretRef = useRef(false);
+  // Whether an input method is mid-composition in the line. Read alongside the
+  // event's own flags, and — because it is cleared a task late — it is what
+  // catches the committing Enter on a browser that reports the keydown after the
+  // composition has already ended. See `lib/keyboard`'s `inputMethodHasKey`.
+  const composingRef = useRef(false);
 
   // Report that a line is being written, so the agent waits for the thought
   // rather than answering the part of it that already landed. Throttled rather
@@ -233,7 +242,25 @@ export function Composer({
             // hand the floor straight back rather than hold it for the full window.
             if (e.target.value.trim()) noteTyping();
           }}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            // A task late, not here. The Enter that commits a composition can
+            // arrive as a `keydown` *after* `compositionend`, and clearing the
+            // flag inline would hand that keydown straight to `submit` — the bug
+            // this pair exists to stop. Nothing a person types lands inside the
+            // same task, so no Enter they actually meant is swallowed.
+            setTimeout(() => {
+              composingRef.current = false;
+            }, 0);
+          }}
           onKeyDown={(e) => {
+            // The input method's key, not the line's: it is confirming a
+            // candidate or throwing the composition away. Answering it here sent
+            // the letters typed so far as a message and wiped the composition off
+            // the screen mid-word.
+            if (inputMethodHasKey(e.nativeEvent, composingRef.current)) return;
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               submit();
