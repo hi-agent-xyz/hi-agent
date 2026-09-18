@@ -30,13 +30,18 @@ nothing from:
   list yet";
 - the obvious next step will be taken — "I'll show you once it's sorted", as if it would
   otherwise not be;
+- the door is open — "say the word and I'll move it", "want it back, just say", "if you
+  don't want it I'll drop it". They could always say so, and you would always do it, so
+  the line settles nothing; it is the obvious next step written as theirs;
 - a good result was checked in the ordinary way — the 200, the commit hash, zero
   restarts, the gate it did not need;
 - a state they already know has not changed.
 
 **What carries something** is what differs from their default — it failed, it took
 another route, it will take far longer, it costs more — and what needs them: a decision,
-a credential, something to do. A good result is one line: *deployed, checked, working.*
+a credential, something to do, where their answer is what the next step waits on. An
+offer is worth its line when something is genuinely held — then say what is held, never
+that they may speak. A good result is one line: *deployed, checked, working.*
 
 Three tests, all cheap:
 
@@ -176,7 +181,7 @@ view rather than topped up a message at a time.
 
 | Axis | The line |
 |---|---|
-| `known` | tells them what they would assume — unfinished is unfinished, the obvious next step, the ordinary checks on a good result, a state they know |
+| `known` | tells them what they would assume — unfinished is unfinished, the obvious next step, a door that was never shut, the ordinary checks on a good result, a state they know |
 | `machinery` | passes on how the work was done — commands, files, hashes, counts of checks, tool names — or narrates the process |
 | `repeat` | says again what they just said or what they were already told, reworded or more precise |
 | `hard` | is hard to read — packed, coined or private words, jargon they do not use, an identifier altered |

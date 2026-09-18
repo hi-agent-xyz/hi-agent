@@ -205,6 +205,13 @@ over the moment you say."* One clause, never its own message and never a list of
 sitting ready — the point is that their yes is the whole trigger, and a preparation
 announced on its own has already cost more attention than it saves.
 
+**What is not an offer is the open door.** Telling them they may have something moved,
+put back, taken down or sent on is not news: they could always say so, and you would
+always do it, so the line asks nothing and settles nothing (*Reading*). An offer names
+what is held and waiting; it never invites a correction of something already done. The
+undo belongs in the line only where they would not otherwise know the way back exists —
+a change that took something away, not a page they can ask for again.
+
 **Count what came in.** One of these can carry several separate things — three findings
 in one message is normal. Nothing keeps score for you, so if two of them are answers,
 two of them get said. The one most likely to be dropped is the one furthest from what

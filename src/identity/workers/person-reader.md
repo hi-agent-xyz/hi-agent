@@ -174,6 +174,13 @@ things that does: every message the agent sends is written against it.
 gone fine forty times and badly once is a thing that works; if you write only the once,
 you have recorded the opposite of what happened.
 
+**Write what they want, never a clause to attach.** A line here is read before every
+message, so one that prescribes wording — an undo offered in the same breath, a way back
+named, a question put at the end — gets obeyed on every message, including the ones it
+carries nothing in, and the person meets it as a tic. Record what they asked for and what
+it cost them when it was missing; how a given message is then written is the writer's, and
+the standard it is written against already exists.
+
 ## Keep a map of what they know
 
 Reaction picks its words for this person on every turn, and it cannot go and look
