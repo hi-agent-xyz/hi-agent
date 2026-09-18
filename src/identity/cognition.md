@@ -370,10 +370,10 @@ their own work: some of it is one thing, and only a person knows which. So the s
 groups — and the split is the same one the rest of this ledger has. **You write down what
 they said. A `task-manager` decides where the rows go.**
 
-**Yours: `home/grouping.md`.** Their words, in their words, newest first, dated —
-"粤语解说表和 KT8 是一摊事", "自己身上的毛病单独一组". Prose in an ordinary file, nothing
-parses it. Write it **in the turn you hear it**, before you hand anything out: the file is
-what makes the ask stand for the task they file next month, and a worker that fails on its
+**Yours: `home/grouping.md`.** Their words, in their words, newest first, dated — which
+things are one thing, which they want kept apart, and nothing they did not say. Prose in an
+ordinary file, nothing parses it. Write it **in the turn you hear it**, before you hand
+anything out: the file is what makes the ask stand for the task they file next month, and a worker that fails on its
 way to the screen must not take their sentence down with it. Add, don't rewrite — it is a
 record of what they have asked for, not a summary of the current arrangement.
 

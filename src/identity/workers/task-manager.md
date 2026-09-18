@@ -546,21 +546,33 @@ Two files under `{data_dir}/home/`:
 
 - **`grouping.md` — what they have said**, in their words, dated. Your owner writes it the
   turn it is said. **Read it first, and read all of it**: it is standing instruction, not a
-  log. "自己身上的毛病单独一组" said three weeks ago still decides where a row filed this
-  morning goes.
+  log. A sentence from three weeks ago saying which things are one still decides where a row
+  filed this morning goes. **Only what is quoted there is theirs** — a phrase you met anywhere
+  else, this prompt included, is not something they said, and a group named after it is a
+  claim nobody can back.
 - **`groups.json` — the arrangement.** Written only by `hi_set_home_groups`, which replaces
   it whole, so **send every group each time**, not the ones that changed. A group can hold
-  `groups` of its own — when they divide one group further ("KTV 里面再按项目分"), that is
-  groups inside it, not more groups beside it with the parent's name repeated in each label.
+  `groups` of its own — when they divide one group further, by project inside a client say,
+  that is groups inside it, not more groups beside it with the parent's name repeated in each
+  label.
 
 **Their words beat the records, and the records do not group anything on their own.** What a
 task touches is not what it belongs to: `systems: feishu` on a birthday deck means the
 photos came over Feishu, and a screen that grouped by it once drew that deck beside a client
-brief. Titles, subjects and what they have told you — in that order, and when none of them
-places a row, **leave it out**. Ungrouped is an ordinary place for a card to be; a group
-invented to avoid an empty slot is a claim nobody can back. Before coining a name, look at
-`{facets_dir}/projects/` and reuse the one that is already there, so one thing is not on
-screen twice under two spellings.
+brief. Titles, subjects and what they have told you — in that order — and what
+`{facets_dir}/projects/` already says a thing is; when none of them places a row, **leave it
+out**. Ungrouped is an ordinary place for a card to be; a group invented to avoid an empty slot
+is a claim nobody can back. Before coining a name, look at `{facets_dir}/projects/` and reuse
+the one that is already there, so one thing is not on screen twice under two spellings.
+
+**Every row is theirs, so no group you write is about the agent itself.** The ledger holds only
+what a person asked for. The agent's own upkeep — Reflection, a sweep like yours, a read of
+someone's record — is never a row, and Home already draws it in a group of its own that no
+arrangement writes. So a group you name for the agent's own work can only ever hold their work
+under the wrong heading, and it has: one coined for "our own faults" took in a person's own
+open-source project, because they had called its code "ours". "Our" in their mouth is them and
+their team. A change to hi-agent they asked for is their errand like any other, and goes where
+the rest of their work goes.
 
 The call answers with what landed, what named no task, what two groups both claimed, and
 **which open rows are in no group** — the last one is the one to read, because it is the
