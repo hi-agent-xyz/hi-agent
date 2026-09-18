@@ -154,13 +154,6 @@ pub fn facets_dir(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("facets")
 }
 
-/// `<memory>/reflexes` — taught quick-action reflexes (one `<id>.json` each). The
-/// deepest stage of the memory gradient: a grooved action the fast-path fires
-/// without the mind. Written by the `record_reflex` tool, read by the invoke path.
-pub fn reflexes_dir(data_dir: &Path) -> PathBuf {
-    memory_dir(data_dir).join("reflexes")
-}
-
 /// `<memory>/raw/sessions/<run>/<session>.jsonl` — **one agent session's stream,
 /// verbatim**.
 ///

@@ -19,6 +19,7 @@ thinking layers are slow, confused, or dead.
 | One mouth, one floor | Many sub-minds may think; the person hears one voice, one utterance at a time |
 | A vendor outage is decided process-wide, not per turn | One upstream, decided once — never rediscovered or apologized for twice |
 | The reflex path never reaches a model | Stopping when someone starts talking cannot wait a generation |
+| A grooved action is a script the agent wrote, not a rung in the core | Recognizing a field and replaying a click is one implementation per windowing system and zero per idea; the idea is the same everywhere, so it belongs in a note and a tool. See [`mechanisms.md`](mechanisms.md#computer-use-does-not-cross-this-seam) |
 | The log is written *before* anything reacts | Durability must not depend on a session surviving |
 | The host opens the agent's eyes; the agent owns its own timers — inside this process tree | A duty that outlives the engine is a duty nobody supervises. When hi-agent is down its machinery is down, and that is the intended behaviour, not a gap |
 | Sessions are host-owned and **replaceable** | No session is a source of truth — continuity lives in `data/`. Replaceable is not the same as short-lived: every thinking rung keeps **one long-lived session**, so it can remember what it was doing — while nothing downstream depends on it surviving. It is replaced when it breaks, not when it grows; growth is the underlying agent's to compact |
@@ -220,14 +221,24 @@ durability, accepted consequences — is fixed in
 The sub-second path that **short-circuits every agent** — the bottom rung of the
 [tempo ladder](arch.md#the-tempo-ladder), and the only one with no model in the loop.
 
-Two kinds of thing live here. **Barge-in and the attention gesture**: when someone starts
-speaking, sound stops mid-syllable and the unspoken tail is discarded. And **taught
-quick-actions**: a small repeated thing the person showed the agent once, recognized and
-replayed directly, because asking a model to re-derive it every time costs a generation to
-reach an answer that never changes.
+**Barge-in and the attention gesture** live here: when someone starts speaking, sound stops
+mid-syllable and the unspoken tail is discarded. A generation is far too slow for that, which
+is the whole justification for a rung that cannot think.
 
-A generation is far too slow for either, which is the whole justification for a rung that
-cannot think.
+**Taught quick-actions used to be the rung's other occupant, and are deleted.** The idea was
+a small repeated thing the person showed the agent once — recognized against the
+accessibility tree and replayed with synthesized input, no model asked. Two things killed it
+together. Its machinery needed four OS-backed capabilities in the core, and *those* are gone
+because driving a machine is a note over that machine's own tools
+(`mechanisms.md` § *Computer use does not cross this seam*). And it never worked: the
+authoring tool was advertised to no role, so the store was permanently empty, the recognizer
+permanently abstained, and it fired exactly zero times in its life.
+
+**When it comes back it is expected to live mostly outside this repo** — a learned script or
+a tool the agent writes for the machine in front of it and leaves beside the note
+(`tools.md`, `equipping-a-tool.md`) — rather than a recognizer rebuilt in Rust. The rung
+itself is not in question; what is in question is whether a *grooved action* needs core
+machinery, and the answer so far is no.
 
 The barge-in *follow-up* is the opposite: what to do about the interruption is a judgment, handled by
 Reaction on the next turn with an estimate of how far it got. The same event is therefore
@@ -731,9 +742,6 @@ where fix-forward genuinely does not apply.
   the backend hook is dead: `Floor::mark_flush` ([`floor.rs`](../../src/body/reaction/floor.rs))
   has no caller outside its own tests. Wire it or delete it; leaving it is the third option that
   keeps being taken.
-- **`record_reflex` is declared to no role.** The recognizer and `POST /api/reflex/invoke` are
-  live, so a reflex can be *fired* but never *written* — the authoring end is reachable by name
-  only. Give it a live role or delete the module.
 
 
 ## See also

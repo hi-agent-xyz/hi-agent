@@ -64,7 +64,7 @@ rung is partitioned — see [One conversation](host.md#one-conversation).
 
 | | Time | Job |
 |---|---|---|
-| **Reflex** | sub-second | taught quick-actions and barge-in — **no model in the loop** |
+| **Reflex** | sub-second | barge-in and the attention gesture — **no model in the loop** |
 | **Reaction** | one generation | speaks, holds the floor, manages the interaction |
 | **Cognition** | seconds to minutes+ | the outward brain: reads what arrived and works out what was actually asked, owns Tasks, dispatches everything heavy, stays idle and responsive |
 | **Reflection** | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |

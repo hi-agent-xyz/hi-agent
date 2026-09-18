@@ -3,7 +3,7 @@
 //! Each handler subscribes to the
 //! [`InputEcho`](crate::foundation::server::InputEcho) observer broadcast, keeps
 //! only this channel, and streams the matches as newline-delimited JSON for as
-//! long as the connection is held. This is an inspection/reflex tap; the user
+//! long as the connection is held. This is an inspection tap; the user
 //! facing text appearance has its own authoritative state.
 //!
 //! This is *presence*, not history: the broadcast is lossy with no replay (see

@@ -3,12 +3,10 @@
 //!
 //! Factory-sealed code, peer to the agent-grown `identity`/`mind` and the engine
 //! `foundation`. Holds:
-//! - `capabilities` — the senses and actions (STT/TTS, vision, input, screen, …),
+//! - `capabilities` — the senses and actions (STT/TTS, vision, audio, …),
 //!   over the vendor adapters in `crate::foundation::vendors`.
 //! - `reaction` — the per-reaction loops: turn-taking, the glance-up and reflection
 //!   clocks, the loader/assembler, the output sequencer, and delegated workers.
-//! - `reflex` — taught teach-and-fire quick actions that run with no model in the
-//!   loop (the cerebellum fast-path).
 //! - `attachments` — which out-channels have a live subscriber right now.
 //! - `gesture` — the desktop attention gestures (come-and-see, press-and-hold-⌘).
 //!
@@ -19,4 +17,3 @@ pub mod capabilities;
 pub mod gesture;
 pub mod attachments;
 pub mod reaction;
-pub mod reflex;

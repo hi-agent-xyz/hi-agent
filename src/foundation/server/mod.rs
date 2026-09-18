@@ -39,7 +39,6 @@ pub mod mcp;
 pub mod mechanisms;
 pub mod observe;
 pub mod people;
-pub mod reflex;
 pub mod sessions;
 pub mod settings;
 pub mod skills;
@@ -189,7 +188,7 @@ pub struct PartialMinute {
 
 /// One recognized input on the live observer tap `GET /api/in/<channel>`.
 ///
-/// This broadcast feeds reflexes and the channel inspector. It is deliberately
+/// This broadcast feeds the channel inspector. It is deliberately
 /// lossy presence, not UI state and not a log. The conversation the person reads
 /// is owned separately by [`Transcript`].
 #[derive(Debug, Clone, serde::Serialize)]
@@ -332,8 +331,8 @@ pub struct AppState {
     /// [`PartialMinute`].
     pub video_in_partial: Mutex<Option<PartialMinute>>,
 
-    /// Inbound observer broadcast. Reflexes and GET /api/in/<channel> inspectors
-    /// receive recognized inputs from this live, lossy tap.
+    /// Inbound observer broadcast. `GET /api/in/<channel>` inspectors receive
+    /// recognized inputs from this live, lossy tap.
     pub input_echo: broadcast::Sender<InputEcho>,
 
     /// Outbound text echo broadcast — the live inspector mirror of the agent's
@@ -700,10 +699,6 @@ pub fn build(
         // the X-HI-Role header the attach carries.
         .route("/mcp", post(mcp::post_mcp).get(mcp::get_mcp))
         .route("/mcp/external", post(external_sessions::post_mcp))
-        // Fire a taught quick-action reflex — recognize the current field via the
-        // accessibility tree and type the stored value, no model in the loop. The
-        // v1 trigger (a later hotkey/gesture would call the same path).
-        .route("/api/reflex/invoke", post(reflex::post_invoke))
         // The "认识的人" review surface: list stored people + their clips, serve one
         // crop/clip, and correct identity — name/merge, eject a clip, auto-regroup.
         .route("/api/people", get(people::get_people))

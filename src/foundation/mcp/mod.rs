@@ -788,13 +788,10 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // long after no live role mapped to it, and read as a live surface in every
         // review.
         //
-        // One tool lost its only declaration with this and was already unreachable:
-        // `hi_record_reflex`, which still has **no live role** — the recognizer and the
-        // invoke route are real, so the reflex store can be read and fired but never
-        // written. That is an open decision, not an oversight: it needs a rung or it
-        // needs deleting, and it is now visibly nobody's rather than sitting in an arm
-        // that looked live. (`alarm` was the other, and it is gone outright — the host
-        // fires at no named time; see `docs/arch/host.md#glancing-up`.)
+        // Two tools that arm was keeping alive are now gone outright rather than
+        // merely unadvertised: `hi_record_reflex` (the whole taught-quick-action rung
+        // is deleted — see `docs/arch/host.md#reflex`) and `alarm` (the host fires at
+        // no named time; see `docs/arch/host.md#glancing-up`).
         _ => vec![],
     }
 }
@@ -1320,12 +1317,6 @@ async fn dispatch_tool(
         "hi_keep_and_fade" => return reflection_keep_and_fade(data_dir, args).await,
         // Cognition's one structured write: how `factory/home` arranges what is in hand.
         "hi_set_home_groups" => return set_home_groups(data_dir, args).await,
-        // Reachable by name only — `hi_record_reflex` is advertised to no role, because
-        // the reflex rung is **deferred** (see `body::reflex`). Kept dispatchable rather
-        // than deleted so the authoring half is one arm entry away when it gets a rung,
-        // and so a session that somehow names it gets the real behaviour instead of
-        // "unknown tool". Do not re-advertise it without taking that decision.
-        "hi_record_reflex" => return reflex_record(data_dir, args).await,
         "hi_image_text_to_text" => return do_image_text_to_text(data_dir, args).await,
         "hi_video_text_to_text" => {
             return do_video_text_to_text(data_dir, video_partial, args).await;
@@ -2325,50 +2316,6 @@ fn group_shape(groups: &[crate::foundation::server::home::Group]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// `hi_record_reflex`: teach a quick-action reflex (see [`crate::body::reflex`]). Stores the
-/// fill value and how to find its field so a later invoke types it with no model in
-/// the loop. The value itself is never echoed back in the ack.
-async fn reflex_record(data_dir: &std::path::Path, args: &Value) -> Value {
-    let name = args.get("name").and_then(Value::as_str).unwrap_or_default();
-    let value = args.get("value").and_then(Value::as_str).unwrap_or_default();
-    let label_contains = args.get("label_contains").and_then(Value::as_str).unwrap_or_default();
-    if name.trim().is_empty() {
-        return tool_error("hi_record_reflex requires a non-empty `name`");
-    }
-    if value.trim().is_empty() {
-        return tool_error("hi_record_reflex requires a non-empty `value`");
-    }
-    if label_contains.trim().is_empty() {
-        return tool_error("hi_record_reflex requires a non-empty `label_contains`");
-    }
-    let opt = |k: &str| {
-        args.get(k)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-    };
-    let id = crate::body::reflex::id_for(name);
-    if id.is_empty() {
-        return tool_error("hi_record_reflex `name` must contain a usable character");
-    }
-    let reflex = crate::body::reflex::Reflex {
-        id,
-        name: name.to_string(),
-        trigger: crate::body::reflex::Trigger {
-            app: opt("app"),
-            title_contains: opt("title_contains"),
-            role: opt("role"),
-            label_contains: label_contains.to_string(),
-        },
-        value: value.to_string(),
-    };
-    match crate::body::reflex::save(data_dir, &reflex).await {
-        Ok(id) => tool_ok(&format!("learned reflex '{name}' ({id})")),
-        Err(err) => tool_error(&err.to_string()),
-    }
 }
 
 /// `hi_name_person`: rename a person's cluster (face or voice) from its `id` (or

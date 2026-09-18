@@ -324,7 +324,7 @@ fn glance(state: &Arc<AppState>) {
     crate::body::capabilities::tray::flash();
     let state = state.clone();
     tokio::spawn(async move {
-        match crate::body::capabilities::screencast::grab_screen_png().await {
+        match crate::foundation::vendors::macos_screencast::grab_screen_png().await {
             Ok(png) => {
                 if let Err(e) = crate::foundation::server::files::receive_screenshot(&state, &png).await {
                     tracing::warn!(error = %e, "gesture: handing screenshot to the agent failed");

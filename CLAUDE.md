@@ -116,7 +116,7 @@ This is not a new mode: the headless engine is *exactly the shape the app alread
 
 ### The three parts, by what each *is*
 
-1. **Headless engine (Rust).** All state + logic: config, credentials/mode, energy, memory, and *all cognition* — vision model calls, STT/diarization, the reflex recognizer, and the biometric pipeline (face `buffalo_l`, voiceprint `CAM++`, clustering, `hi_name_person`/`hi_merge_people`). **Pure Rust: no objc2, no Apple frameworks.** ("Pure" = no platform-GUI code; it still links portable native deps — ONNX Runtime, ffmpeg — and spawns the codex runtime. Those build the same on every OS.) Runs **out-of-process as a sidecar** the shell spawns and supervises.
+1. **Headless engine (Rust).** All state + logic: config, credentials/mode, energy, memory, and *all cognition* — vision model calls, STT/diarization, and the biometric pipeline (face `buffalo_l`, voiceprint `CAM++`, clustering, `hi_name_person`/`hi_merge_people`). **Pure Rust: no objc2, no Apple frameworks.** ("Pure" = no platform-GUI code; it still links portable native deps — ONNX Runtime, ffmpeg — and spawns the codex runtime. Those build the same on every OS.) Runs **out-of-process as a sidecar** the shell spawns and supervises.
 2. **Web face (webview in the shell).** The main content-heavy, fast-moving UI. Talks to the engine over the local API. Write-once cross-platform. (Precedent: the popover face is a `WKWebView`; native and web chat were both tried and rejected in its favor.)
 3. **Native shell (per platform).** Owns the process and everything needing the OS session, in two roles:
    - **App-shell primitives** — run loop, tray, global hotkey tap, native windows, popover. Move to the shell.
@@ -129,11 +129,14 @@ Every OS-integration *capability* splits: the raw OS touch (**mechanism**) lives
 | Capability | Mechanism → **shell** | Policy → **engine** |
 |---|---|---|
 | Vision | grab frames | Doubao vision call, when-to-see |
-| Screen-control / reflex | screen pixels, post keystroke, read AX tree | reflex recognizer, fire policy |
 | Face / voice ID | camera / mic bytes | `buffalo_l` / `CAM++` ONNX, clustering, recognition |
-| desktop_context | focused app / window query | how context feeds cognition |
+| Tray / hotkey | the status item, the key tap | what a gesture means, what the tray should say |
 
-The biometric/ML layer is **already correctly engine-resident and cross-platform** — it does not move. Camera/mic bytes for it may even arrive via the **browser web face** (`getUserMedia` → POST), so that capture is cross-platform too. Only capabilities needing the **window-server** (screen capture, input synthesis, AX, desktop_context) *must* live in the shell.
+The biometric/ML layer is **already correctly engine-resident and cross-platform** — it does not move. Camera/mic bytes for it may even arrive via the **browser web face** (`getUserMedia` → POST), so that capture is cross-platform too.
+
+**Computer use is not on this table, and that is the decision, not an omission.** Screen capture, input synthesis, the accessibility tree and the frontmost-app read were the rows that most obviously needed the window server — and they are **deleted** rather than re-homed. Driving a machine is a note over the tools that machine already has (`src/mind/skills/driving-a-desktop.md`), the same shape `browser` and `phone` take. The test that settled it: a mechanism kept in the engine has to be written again for X11, Wayland, Windows and Android, while the judgment that reads a screen and decides where to click is identical on all of them. The taught quick-action **reflex** rung went with them — it was their only consumer, and nothing could teach one. See [docs/arch/mechanisms.md](docs/arch/mechanisms.md) § *Decisions* and [docs/arch/host.md](docs/arch/host.md#reflex).
+
+The one screen grab that survives is not a capability and not the agent looking: the ⌘ glance is the *person* handing over a screenshot, and it lands on `POST /api/in/file` like any other handed file.
 
 ### The engine's new interface
 
@@ -159,7 +162,7 @@ This paragraph previously called it a bidirectional *streaming* protocol — "fr
 
 **On Windows the shell already owns the process**, because there was nothing to flip: `app/windows` starts `hi-agent.exe` as a child, passes it `--port` and `--data-dir`, and holds it in a job object so it cannot outlive the shell. It has no capability mechanisms — those wait on the same seam macOS does — so what it demonstrates is the ownership arrangement, not the mechanism calls. It does have the *other* half of the shell's job: `Views/SettingsWindow.xaml` is the native-presentational surface in WinUI, a client of the same loopback config API, with macOS's four panes and none of its own. It is also unbuilt in the strongest sense: never compiled, no Windows host exists.
 
-**Phase 2 on macOS — flipping process ownership to Swift — is not started.** The seam it needs is now designed ([docs/arch/mechanisms.md](docs/arch/mechanisms.md)) and nothing implements it; that doc's § *Open* carries the questions deliberately left unresolved. **Latency is not among them** — a loopback round trip measured 0.012 ms for a call and 0.29 ms for a 2 MB screen grab on an M4, three to four orders of magnitude under the mechanisms themselves, so the process boundary is never the thing to optimize on this seam. Keep `TCP_NODELAY` on; it is the one detail that turns those microseconds into tens of milliseconds.
+**Phase 2 on macOS — flipping process ownership to Swift — is not started, but it got smaller.** The seam it needs is built — `WS /api/mechanisms` ([foundation/server/mechanisms.rs](src/foundation/server/mechanisms.rs)) carries calls *outward* — and **nothing dials it or calls it**: no shell serves mechanisms, and the perceive/act capabilities it was drawn for are deleted, so what is left to cross is the tray pushes and the hotkey edges. That doc's § *Open* carries the questions deliberately left unresolved. **Latency is not among them** — a loopback round trip measured 0.012 ms for a call and 0.29 ms for a 2 MB screen grab on an M4, three to four orders of magnitude under the mechanisms themselves, so the process boundary is never the thing to optimize on this seam. Keep `TCP_NODELAY` on; it is the one detail that turns those microseconds into tens of milliseconds.
 
 ## Testing user journeys live (Mac mini)
 

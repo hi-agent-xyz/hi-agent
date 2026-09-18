@@ -67,7 +67,7 @@ Two things follow, and both are load-bearing:
 ## The ladder
 
 Below the bottom of this ladder sits one more tempo that is *not* an agent: **reflex**, the
-sub-second path with no model in the loop — barge-in and taught quick-actions. It lives in
+sub-second path with no model in it — barge-in and the attention gesture. It lives in
 the host, in [`host.md`](host.md#reflex), which is why it has no section here.
 
 **One rule runs the length of the ladder: a gap in the request is work, not a question.**

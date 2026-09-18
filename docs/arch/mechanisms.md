@@ -2,7 +2,7 @@
 
 ## Goal
 
-Let the core use eyes and hands it does not have — on whichever machine the person is
+Let the core reach an OS touch it does not hold — on whichever machine the person is
 actually at — without the core learning a platform API, and without inventing a second
 protocol beside the one an app already speaks.
 
@@ -10,6 +10,12 @@ protocol beside the one an app already speaks.
 **mechanism** and belongs to whoever holds the OS session, the cross-platform judgment is
 **policy** and belongs to the core. [`topology.md`](topology.md#app) already assigns the
 mechanisms to the app. What has never existed is the call that crosses between them.
+
+**This document used to be about eyes and hands, and it is not any more.** Screen capture,
+input synthesis, the accessibility tree and the frontmost-app read were the whole reason to
+want core-originated calls; all four are deleted, and § *Computer use does not cross this
+seam* is why. What is left needing initiative is small and dull — the tray, and the hotkey
+edges — and the seam is kept for it and for Phase 2, not for perception.
 
 ## Decisions
 
@@ -20,7 +26,8 @@ mechanisms to the app. What has never existed is the call that crosses between t
 | **Perception stays pulled** | [`surfaces.md`](surfaces.md#why-a-ref-and-not-the-bytes): a photo arriving does not mean the agent looked. Screen pixels are the same — the core asks for a frame when a turn warrants one. A continuous encode is a *cast*, which is different work with a different consumer |
 | **Audio is the only thing that streams, and it already does** | `WS /api/in/audio/stream` exists and the browser mic uses it today. A shell streaming PCM is that endpoint with a different client, not a new design |
 | **Pixels ride binary frames** | A PNG is bytes. Base64 inside a JSON frame costs a third again and a copy, on the one payload big enough for either to matter |
-| **What an app can do is what it declared when it dialed** | `available()` stops being a compile-time `cfg` and becomes a fact about who is attached — and one that changes while running, when a laptop sleeps |
+| **Computer use does not cross this seam — it does not exist in the core at all** | The rows this table was built for are gone. Driving a machine is a note over that machine's own tools, like `browser` and `phone`; the test that settled it is that a mechanism here must be rewritten for X11, Wayland, Windows and Android, while the judgment that reads a screen and picks a target is the same everywhere. Full reasoning below |
+| **What an app can do is what it declared when it dialed** | `available()` is a fact about who is attached, not a compile-time `cfg` — and one that changes while running, when a laptop sleeps |
 | **The hop costs nothing worth designing around** | Measured, below. The mechanism is thousands of times more expensive than the call that asks for it, so the boundary is never the thing to optimize |
 
 ## Why this is smaller than it looked
@@ -47,23 +54,15 @@ That is the design object: not a streaming protocol, one inversion on an existin
 
 Read off the capabilities that must move, not from a guess at what a shell might want.
 
-**Core → app — calls, each with a reply:**
+**Core → app — calls, each with a reply: none today.**
 
-| Call | Reply | Replaces |
-|---|---|---|
-| `screen.windows(app?)` | window refs | `screencast::list_windows` |
-| `screen.grab(window?)` | PNG, binary frame | `screencast::grab_window_png` / `grab_screen_png` |
-| `screen.size()` | points | `input::main_display_point_size` |
-| `input.perform(action)` | ok / error | `input::perform` |
-| `ax.inspect()` | elements | `accessibility::inspect` |
-| `desktop.context()` | focused app + window | `desktop_context::capture` |
-
-**Four of those six exist for the reflex path and nothing else** — `screen.size`,
-`input.perform`, `ax.inspect`, `desktop.context`. A reflex has no model in its loop, so it is
-the one thing that cannot be told how to drive a machine in a note, which is what every other
-way of doing it now is (`tools.md`, `driving-a-desktop.md`). So this is not a general
-perceive/act surface and must not grow into one: an agent driving an app reaches for what that
-machine already has, and only the grooved, model-less move comes back through here.
+This table used to list six — `screen.windows`, `screen.grab`, `screen.size`,
+`input.perform`, `ax.inspect`, `desktop.context`. Every one of them named a capability that
+has since been deleted from the core, so none of them has an originator and none is
+specified here any more. The call machinery stays (`POST /api/mechanisms/call` exercises it),
+because the direction is what Phase 2 needs and because the next mechanism that wants asking
+should not have to re-derive the wire. What it must not become is a general perceive/act
+surface re-entering by the back door: see § *Computer use does not cross this seam*.
 
 **Core → app — state, no reply:** the tray's `flash`, `set_listening`, `set_text`,
 `open_chat`. These are pushes, not questions; nothing waits on them and a dropped one is
@@ -90,15 +89,49 @@ the app holding the screen in question. It arrives as a file with a note, on the
 already exists, and the core is told rather than asked. Nothing about it needs this
 connection, and it works today.
 
-**`screen.grab` is for the other thing: the agent driving a machine** — the look→act loop
-that captures pixels, decides, and synthesizes a click. That one the core originates,
-because nobody else can.
+**There is no longer an "other thing" to confuse it with.** `screen.grab` used to be the
+agent driving a machine — the look→act loop that captures pixels, decides, and synthesizes a
+click — and that is now a note, not a call. So every screenshot the core sees is one a person
+handed it, and the targeting question this subsection existed to settle ("whose screen?")
+answers itself: a handed screen names its own device by arriving from it.
 
-The distinction settles targeting, which is otherwise the obvious worry when two apps are
-attached. A handed screen names its own device by arriving from it. A core-initiated grab
-names its device as an argument, chosen from the attachments the core already knows — and in
-practice the choice is nearly always made for it, because a phone cannot capture another
-app's window or synthesize input at all and will never declare either mechanism.
+The macOS side of the gesture is the one screen grab left in the tree, and it is deliberately
+*not* a capability: [`crate::body::gesture`] shells out to `screencapture` directly. One
+caller, one platform, no vendor to select, nothing to delegate — the gesture happens on the
+machine whose key was tapped.
+
+## Computer use does not cross this seam
+
+The core had four OS-backed capabilities for driving a desktop — `screencast`, `input`,
+`accessibility`, `desktop_context` — plus the taught quick-action **reflex** rung that was
+their only consumer. All of it is deleted. Not moved to the shell, not deferred: deleted.
+
+**The test is whether the code grows with the platform count.** An accessibility tree is AX
+on macOS, UI Automation on Windows, AT-SPI on Linux; input synthesis is CGEvent, SendInput,
+uinput/libei; capture is `screencapture`, DXGI, a portal. Each is a separate implementation
+with a separate permission model, and re-homing them in the shell only changes *which*
+per-platform file has to be written — it does not make them fewer. What does not multiply is
+the part that matters: reading a screen and deciding where to click is one piece of judgment,
+identical everywhere, and a model already has it.
+
+So the general path is the one `browser` and `phone` take — **a note over the tools the target
+machine already has** (`driving-a-desktop.md`, and `tools.md` § on why a tool is a note). The
+note tells the agent what to find out and what goes wrong; it does not hand it a command,
+because there is no one command to hand.
+
+**Why the reflex rung went with them.** A reflex runs *because* no model is in its loop, so it
+is the one path that cannot read a note — that was the whole argument for keeping the
+capabilities. It does not survive the second fact: nothing could ever teach a reflex.
+`hi_record_reflex` was advertised to no role, so the store was permanently empty, the
+recognizer permanently abstained, and `fire` never ran once. Keeping four per-platform
+mechanisms alive for a consumer that could not be fed is the shape this repo calls
+described-and-absent.
+
+**What replaces it is expected to be mostly outside this repo:** a learned script or a tool
+the agent writes for the machine in front of it and leaves beside the note
+(`equipping-a-tool.md`), not a rung rebuilt in Rust. If a grooved model-less move turns out to
+need core support after all, that is a new design with a live consumer behind it — and this
+seam is still here to carry it.
 
 ## The connection
 
@@ -108,8 +141,7 @@ same gate the config API uses, not a mechanism of its own.
 
 Text frames carry calls, replies and events as JSON. Binary frames carry payloads, correlated
 to a call by its id. The app may have several calls outstanding; replies are matched by id
-and never by order, because a screen grab and an AX read have nothing to do with each other's
-timing.
+and never by order, because two calls have nothing to do with each other's timing.
 
 **The connection is the liveness signal**, exactly as it is for the tunnel: an app with no
 live connection has no hands, and that is a state to degrade into rather than an error to
@@ -134,24 +166,25 @@ useful, rather than a capability erroring into a turn.
 
 ## The hop is not the cost
 
-The obvious worry about putting a process boundary under a capability is latency, and the
-sharpest version of it is the bottom of the tempo ladder: the reflex rung runs *because* a
-generation is too slow, so anything added to its path is spent from a budget that has a
-person's patience at the end of it.
+The obvious worry about putting a process boundary under a capability is latency. The
+numbers below were taken when this seam was still expected to carry perception and
+actuation — the sharpest case there was, since a model-less fast path spends from a budget
+with a person's patience at the end of it. That case is gone with the capabilities, so the
+measurement now proves something easier than it was taken to prove. It is kept because it
+**closes the question for whatever crosses next**: nobody should re-open "is a process hop
+too slow for this" without these numbers in hand.
 
 **Measured on an M4, loopback, warm connection, payload round-tripped:**
 
 | Frame | Median | p99 |
 |---|---|---|
-| 64 B — a call like `input.perform` | 0.012 ms | 0.053 ms |
-| 4 KB — an accessibility tree | 0.013 ms | 0.018 ms |
-| 2 MB — a screen grab | 0.288 ms | 0.580 ms |
+| 64 B — a small call, e.g. a tray push | 0.012 ms | 0.053 ms |
+| 4 KB — a structured reply | 0.013 ms | 0.018 ms |
+| 2 MB — a payload the size of a screen grab | 0.288 ms | 0.580 ms |
 
-A reflex is *recognize the field, click it, type the value* — one `ax.inspect` and a handful
-of `input.perform`s, so roughly a dozen round trips, or **under a fifth of a millisecond of
-transport**. The mechanisms themselves are three to four orders of magnitude more expensive:
-a window capture is tens of milliseconds before anything is sent anywhere. The boundary is
-noise against its own payload.
+A dozen round trips is **under a fifth of a millisecond of transport**. Any real mechanism is
+three to four orders of magnitude more expensive — a window capture is tens of milliseconds
+before anything is sent anywhere. The boundary is noise against its own payload.
 
 Two things that measurement does *not* say, because they are the ways it could still go
 wrong in practice:
@@ -175,7 +208,7 @@ no hop that path does not already take.
 ## What this does not change
 
 The biometric and ML layer stays in the core and is untouched — `buffalo_l`, `CAM++`,
-clustering, the reflex recognizer, every model call. Camera and mic bytes may still arrive
+clustering, every model call. Camera and mic bytes may still arrive
 from the web face rather than a native shell, which is exactly why that layer is
 cross-platform and stays put.
 

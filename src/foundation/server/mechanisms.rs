@@ -26,14 +26,17 @@
 //! ## What is built here, and what is not
 //!
 //! This module is the seam and nothing else: the registry of attached apps, the call
-//! plumbing, and the socket. **No capability is wired to it yet** —
-//! [`crate::body::capabilities`] still reaches macOS through `cfg`-gated in-process
-//! calls. That wiring is the next step and is deliberately separate, so the seam can
-//! be tested against a fake app before any working capability is re-pointed at it.
+//! plumbing, and the socket. **No capability calls it**, and the perceive/act ones it
+//! was drawn for do not exist any more — screen capture, input synthesis, the
+//! accessibility tree and the frontmost-app read were deleted rather than moved, and
+//! driving a machine is now a note over that machine's own tools. See
+//! `docs/arch/mechanisms.md` § *What crosses*, which is down to the tray pushes and
+//! the hotkey edges that Phase 2 needs.
 //!
 //! So the only caller of [`Mechanisms::call`] in the tree is this module's own
 //! `POST /api/mechanisms/call`, which exists to exercise the seam and to give a
-//! shell author something to develop against. Real and not yet load-bearing, which
+//! shell author something to develop against; the only thing that has ever answered
+//! one is a fake app in this module's tests. Real and not yet load-bearing, which
 //! is a state this repo allows; what it is not is described-and-absent.
 
 use std::collections::{HashMap, HashSet};

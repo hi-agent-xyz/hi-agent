@@ -15,15 +15,12 @@ pub mod ffmpeg;
 pub mod ffmpeg_frame;
 pub mod insightface_face;
 #[cfg(target_os = "macos")]
-pub mod macos_accessibility;
 #[cfg(target_os = "macos")]
 pub mod macos_audio_capture;
 #[cfg(target_os = "macos")]
-pub mod macos_desktop_context;
 #[cfg(target_os = "macos")]
 pub mod macos_hotkey;
 #[cfg(target_os = "macos")]
-pub mod macos_input;
 #[cfg(target_os = "macos")]
 pub mod macos_popover;
 #[cfg(target_os = "macos")]

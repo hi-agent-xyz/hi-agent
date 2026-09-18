@@ -22,10 +22,17 @@ stay in `scripts/` because they are how the app is built, not what it is.
 ## What is still in the engine
 
 Everything needing the OS session: the tray, the popover, the face window, the
-global hotkey tap, input synthesis, screencast, `desktop_context`, accessibility,
-audio capture, and the press-hold gesture machine — `src/foundation/vendors/macos_*.rs`
-and `src/body/gesture.rs`. AppKit owns the main thread through `run_with_tray`
-(`src/lib.rs`), with the server on a background thread.
+global hotkey tap, audio capture, the ⌘-glance screen grab, and the press-hold gesture
+machine — `src/foundation/vendors/macos_*.rs` and `src/body/gesture.rs`. AppKit owns the
+main thread through `run_with_tray` (`src/lib.rs`), with the server on a background thread.
+
+**The list used to be longer, and shrank by deletion rather than by migration.** Input
+synthesis, the accessibility tree and `desktop_context` are gone — driving a machine is a
+note over that machine's own tools, so there is nothing left to re-home
+([`../arch/mechanisms.md`](../arch/mechanisms.md#computer-use-does-not-cross-this-seam)).
+The one capture that remains is not the agent looking: the person double-taps ⌘ and hands
+over a screenshot, and `screencapture` is called straight from the gesture rather than
+through a capability. Phase 2 is that much smaller.
 
 That is the arrangement `CLAUDE.md` § *UI architecture* is committed to undoing.
 

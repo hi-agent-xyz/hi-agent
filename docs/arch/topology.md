@@ -445,10 +445,12 @@ Push tokens travel this way too: the app hands its token to the **core**, which 
 post when it wants to notify. The app never registers anything with the community.
 
 **One direction on this wire runs the other way round.** The app owns the platform's
-capability mechanisms, so a core that wants a screen frame, a synthesized click or the
-accessibility tree has to *ask the app* — the only case in the system where the core is the
-one asking. It stays on this wire and the app still dials, because a core that had to dial an
-app could not reach one behind NAT. See [`mechanisms.md`](mechanisms.md).
+capability mechanisms, so a core that wants one — the tray updated, today — has to *ask the
+app*, the only case in the system where the core is the one asking. It stays on this wire and
+the app still dials, because a core that had to dial an app could not reach one behind NAT.
+The perceive/act mechanisms that used to motivate this direction (a screen frame, a
+synthesized click, the accessibility tree) are **deleted from the core**, not waiting to move.
+See [`mechanisms.md`](mechanisms.md).
 
 ### core ↔ community — the tunnel
 

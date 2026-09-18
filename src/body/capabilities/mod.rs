@@ -20,25 +20,33 @@
 //! auto-provisions on first run (see [`crate::foundation::models`]), so they have no provider
 //! toggle and nothing for the operator to set.
 //!
-//! [`accessibility`], [`audio_capture`], [`desktop_context`], [`hotkey`],
-//! [`input`], [`screencast`], and [`tray`] are the exceptions to the env-config
+//! [`audio_capture`], [`hotkey`] and [`tray`] are the exceptions to the env-config
 //! pattern: their vendor is the operating system, selected at compile time, so they
 //! have no `init` and do not appear in the composition root. [`view_render`] is the
 //! same shape with a provisioned rather than compile-time vendor: its browser is
 //! resolved lazily on first render (system, else a pinned managed build), so it
 //! too has no `init` and nothing for the operator to set.
+//!
+//! **There is no computer-use capability here, and that is the decision.** Reading a
+//! screen, reading an accessibility tree, and synthesizing clicks and keystrokes were
+//! `accessibility`, `desktop_context`, `input` and `screencast`; all four are deleted.
+//! Driving a machine is a note over the tools that machine already has
+//! ([`crate::mind::skills`]'s `driving-a-desktop.md`) — the same shape as `browser`
+//! and `phone`. A mechanism kept here had to be written again for X11, Wayland,
+//! Windows and Android, while the judgment that reads a screen is the same code
+//! everywhere. See `docs/arch/mechanisms.md` § *Decisions*.
+//!
+//! The one grab that survives is not a capability: the ⌘ glance hands the agent a
+//! screenshot the *person* took, and [`crate::body::gesture`] calls
+//! [`crate::foundation::vendors::macos_screencast`] directly for it.
 
 use crate::foundation::models;
 
-pub mod accessibility;
 pub mod audio_capture;
 pub mod bundle;
-pub mod desktop_context;
 pub mod face;
 pub mod hotkey;
 pub mod image_gen;
-pub mod input;
-pub mod screencast;
 pub mod stt;
 pub mod tray;
 pub mod tts;

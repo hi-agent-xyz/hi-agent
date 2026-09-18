@@ -561,6 +561,13 @@ failed, but because finishing them meant writing the same mechanism again for X1
 Windows and Android while the part that reads the picture stayed identical across all of them.
 See the Decisions row above; the note is `driving-a-desktop.md`.
 
+The capabilities themselves outlived the tools by a while, kept alive by one consumer that
+was not a model: the taught quick-action **reflex**, which could not read a note. They are
+gone too, and so is it — see [`host.md`](host.md#reflex) and
+[`mechanisms.md`](mechanisms.md#computer-use-does-not-cross-this-seam). **Nothing in the core
+can now see or touch a desktop**, which is the state this section has been describing as the
+goal for some time.
+
 ## Open
 
 - **The rung that registers a server cannot exercise it.** A thread's tools are fixed when it
