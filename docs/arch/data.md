@@ -515,10 +515,27 @@ mechanisms:
 | deadline | a date and what to do at it |
 | staged | a multi-stage job suspended for approval |
 
-**A task is a facet.** It lives as one more open-ended dimension — `memory/facets/tasks/` —
-because the dimension list was always meant to be open, so this uses the design rather than
-bending it: no new store, no new file format, and no new tools, since the agent already reads
-and writes facets. What is special is the guidance attached, not the machinery.
+**A task's working folder is a facet; its record is not.** The folder stays one more
+open-ended dimension — `memory/facets/tasks/<subject>/` — holding the deliverable and the
+working notes, because the dimension list was always meant to be open and the folder is what
+a worker legitimately writes in. **The record itself is at `memory/tasks/<subject>.md`, and
+only the host writes it.**
+
+This overturns "a task is a facet, no new store and no new tools", which held until
+2026-09-18. Two things broke it. A task record is **not** what every other facet is — a
+projection Reflection re-derives, where a racing write costs nothing — it is an append-only
+ledger four rungs write and a person reads, and the paragraph above about `facet.md` being
+the disposable file in the folder was never true of this one. And the record is something a
+person reads, so it needs a seam the host can see
+([`legibility.md`](legibility.md#task-records-end-to-end)); a file sitting in the folder a
+worker edits all day is reached with `apply_patch` by habit, which is how 41 of 41 records
+opened in four days came to break rules written in three prompts. Cognition and workers run
+unsandboxed, so moving the file is not a wall — it is the difference between a worker having
+to go out of its way and having it under the cursor. The new tools are the point, not a cost:
+`hi_task_open` and `hi_task_note`, with the host writing the instant and the kind.
+
+What survives unchanged: one ledger, the open dimension for the folder, and the guidance
+being what is special rather than the machinery.
 
 **One ledger.** Nothing else records a duty: there is no second, friendlier list of what is
 owed, because two ledgers means one of them is wrong and no way to tell which.

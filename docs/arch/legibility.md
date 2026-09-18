@@ -374,9 +374,11 @@ Cognition and workers run `danger-full-access`
 reaching `facet.md` with `apply_patch`; a sandbox that could is a separate decision with its
 own cost. Two things carry it instead:
 
-- **The record moves out of the folder the worker writes in.** The task folder keeps the
-  deliverable and the working notes; the record does not sit in the middle of them, so the
-  file a worker is editing is never the one the host owns.
+- **The record moves out of the folder the worker writes in**, to `memory/tasks/<subject>.md`.
+  The task folder (`memory/facets/tasks/<subject>/`) keeps the deliverable and the working
+  notes; the record is no longer sitting among the files a worker edits all day. That
+  overturns *a task is a facet* and is stated where it was decided
+  ([`data.md`](data.md#tasks)).
 - **The store holds what it last wrote.** A record that changed by any other route is a
   finding in `memory/quality/` under the same surface, counted in § I.
 
