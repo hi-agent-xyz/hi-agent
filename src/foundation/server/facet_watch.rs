@@ -1,11 +1,11 @@
-//! Watch the facets tree, so a board stops asking whether the ledger changed.
+//! Watch the facets tree and the task ledger, so a board stops asking whether either changed.
 //!
 //! **The filesystem is where the change happens**, which is the same reason
-//! [`view_watch`](super::view_watch) hangs off it rather than off a tool call. A task record
-//! is a `facet.md`, and the agent keeps it with a shell: the long dated accounts under
-//! `## 当前接管状态` are appended by whoever is holding the duty, never through
-//! [`write_task`](crate::mind::memory::tasks::write_task). There is no call to notice, so
-//! noticing means watching the file.
+//! [`view_watch`](super::view_watch) hangs off it rather than off a tool call. Facets are kept
+//! with a shell. Task records are written through the host's verbs now
+//! ([`crate::mind::memory::tasks`]), but those run in the MCP handler, which holds no
+//! [`StoreVersions`] — and a record changed by any other route has to reach the board too.
+//! So both are watched, and the ledger is one flat directory: one watch, however many rows.
 //!
 //! One dimension, one counter. `memory/facets/<dimension>/<subject>/facet.md` says which
 //! store a write belongs to in its own path, so a projects write does not wake the task board
@@ -59,7 +59,7 @@ enum Seen {
     Maybe(PathBuf),
 }
 
-/// Start watching `<data_dir>/memory/facets` for record writes.
+/// Start watching `<data_dir>/memory/facets` and the task ledger for record writes.
 ///
 /// Best-effort, like the views watcher. If no watcher can be had, the review reads that park
 /// on a version only ever hear about **this process's own writes** — [`patch_task`] bumps
@@ -75,8 +75,14 @@ pub fn spawn(versions: Arc<StoreVersions>, data_dir: PathBuf) {
         return;
     }
 
+    let ledger = layout::task_records_dir(&data_dir);
+    if let Err(error) = std::fs::create_dir_all(&ledger) {
+        tracing::warn!(dir = %ledger.display(), %error, "cannot watch the task ledger");
+    }
+
     let (tx, mut rx) = mpsc::unbounded_channel::<Seen>();
     let watch_root = root.clone();
+    let watch_ledger = ledger.clone();
     let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else { return };
         // A removal counts, unlike in the views watcher: a record that left the tree is a row
@@ -89,6 +95,16 @@ pub fn spawn(versions: Arc<StoreVersions>, data_dir: PathBuf) {
             return;
         }
         for path in event.paths {
+            if is_record(&watch_ledger, &path) {
+                let _ = tx.send(Seen::Record(TASKS.to_owned()));
+                continue;
+            }
+            // A task's folder holds its work, not its record, so nothing under it is watched.
+            if dimension_under(&watch_root, &path).as_deref() == Some(TASKS)
+                || dimension_of(&watch_root, &path).as_deref() == Some(TASKS)
+            {
+                continue;
+            }
             match depth_in(&watch_root, &path) {
                 Some(3) if path.file_name() == Some(FACET_FILE.as_ref()) => {
                     if let Some(dimension) = dimension_of(&watch_root, &path) {
@@ -123,6 +139,7 @@ pub fn spawn(versions: Arc<StoreVersions>, data_dir: PathBuf) {
     for dir in record_dirs(&root) {
         subscribe(&mut watcher, &mut watched, &dir);
     }
+    subscribe(&mut watcher, &mut watched, &ledger);
     tracing::info!(
         dirs = watched.len(),
         root = %root.display(),
@@ -209,7 +226,7 @@ fn record_dirs(root: &Path) -> Vec<PathBuf> {
     };
     for dimension in dimensions.flatten() {
         let dimension = dimension.path();
-        if !dimension.is_dir() {
+        if !dimension.is_dir() || dimension.file_name() == Some(TASKS.as_ref()) {
             continue;
         }
         if let Ok(subjects) = std::fs::read_dir(&dimension) {
@@ -223,6 +240,17 @@ fn record_dirs(root: &Path) -> Vec<PathBuf> {
         out.push(dimension);
     }
     out
+}
+
+/// The ledger's name as a store, and the facet dimension its working folders sit under.
+const TASKS: &str = crate::mind::memory::tasks::DIMENSION;
+
+/// Whether `path` is a record in the ledger: `<ledger>/<subject>.md`, and not a temp sibling
+/// or anything under `.history/`.
+fn is_record(ledger: &Path, path: &Path) -> bool {
+    path.parent() == Some(ledger)
+        && path.extension().is_some_and(|e| e == "md")
+        && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| !n.starts_with('.'))
 }
 
 /// How many components below `root` a path sits, or `None` if it is not under it at all.
@@ -281,8 +309,9 @@ mod tests {
         assert_eq!(depth_in(root, Path::new("/d/memory/facets/tasks/x/repo/a.rs")), Some(4));
     }
 
-    /// Only the two levels that can hold a record, so the watch count follows how many
-    /// records there are and not what a worker cloned into one of them.
+    /// Only the two levels that can hold a facet, so the watch count follows how many facets
+    /// there are and not what a worker cloned into one of them — and none of a task's
+    /// folders, which hold its work and not its record.
     #[test]
     fn only_the_levels_that_can_hold_a_record_are_listed() {
         let dir = tempfile::tempdir().unwrap();
@@ -299,9 +328,25 @@ mod tests {
         found.sort();
         assert_eq!(
             found,
-            vec!["projects", "projects/knq", "tasks", "tasks/other-one", "tasks/ship-it"],
-            "the repo under ship-it is not watched"
+            vec!["projects", "projects/knq"],
+            "task folders hold work, not records; the repo under ship-it is not watched"
         );
+    }
+
+    /// The ledger is one flat directory: a record is `<subject>.md` directly in it, and a
+    /// temp sibling mid-rename or a kept version under `.history/` is not a change to it.
+    #[test]
+    fn a_ledger_record_is_a_markdown_file_directly_in_it() {
+        let ledger = Path::new("/d/memory/tasks");
+        assert!(is_record(ledger, Path::new("/d/memory/tasks/ship-it.md")));
+        for path in [
+            "/d/memory/tasks/.ship-it.tmp-0190",
+            "/d/memory/tasks/.history/abc-ship-it.md",
+            "/d/memory/tasks/notes.txt",
+            "/d/memory/facets/tasks/ship-it/facet.md",
+        ] {
+            assert!(!is_record(ledger, Path::new(path)), "{path}");
+        }
     }
 
     #[test]

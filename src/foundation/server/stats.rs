@@ -624,13 +624,18 @@ async fn build_stats(state: &AppState, range: Range, now: DateTime<Utc>) -> Stat
         }
     }
 
-    let facet_index = match facets::facet_subject_index(&state.data_dir).await {
+    let mut facet_index = match facets::facet_subject_index(&state.data_dir).await {
         Ok(index) => index,
         Err(error) => {
             tracing::warn!(error = %error, "stats could not read the facet index");
             Vec::new()
         }
     };
+    // The ledger left the facet tree (`docs/arch/data.md` § *Tasks*); it is still counted
+    // beside the dimensions it used to be one of, under the same name.
+    facet_index.extend(
+        tasks::subjects(&state.data_dir).await.into_iter().map(|s| format!("{}/{s}", tasks::DIMENSION)),
+    );
     apply_facets(&facet_index, &mut breakdowns, &mut summary.tasks);
     apply_tasks(
         &state.data_dir,

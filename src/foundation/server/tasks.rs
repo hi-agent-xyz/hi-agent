@@ -542,7 +542,7 @@ fn is_malformed(raw: &str, task: &Task) -> bool {
 /// malformed is a task nobody will ever go and fix.
 async fn read_row(dir: &FsPath, subject: &str) -> (Task, bool) {
     let parsed = tasks::read_task(dir, subject).await;
-    let raw = facets::read_facet(dir, tasks::DIMENSION, subject).await;
+    let raw = tasks::read_record(dir, subject).await;
     match (parsed, raw) {
         (Ok(Some(task)), Ok(Some(raw))) => {
             let malformed = is_malformed(&raw, &task);
@@ -598,20 +598,13 @@ pub async fn get_tasks(
         }
     };
     let dir = &state.data_dir;
-    let index = match facets::facet_subject_index(dir).await {
-        Ok(index) => index,
-        Err(error) => return err(&error.to_string()),
-    };
-    let prefix = format!("{}/", tasks::DIMENSION);
+    let index = tasks::subjects(dir).await;
     // Read once for the whole list, not once per task: which views exist is a fact about the
     // tree, and the rows only ask it to say which of the names they spell is really one.
     let views = super::view::existing_refs(dir).await;
 
     let mut rows: Vec<(SortKey, RowDto)> = Vec::new();
-    for facet_ref in index {
-        let Some(subject) = facet_ref.strip_prefix(prefix.as_str()) else {
-            continue;
-        };
+    for subject in &index {
         let (task, malformed) = read_row(dir, subject).await;
         rows.push((sort_key(&task), row(&task, malformed, &views)));
     }
@@ -636,7 +629,7 @@ pub async fn get_task(State(state): State<Arc<AppState>>, Path(subject): Path<St
     // `unreadable` stand-in for a file it cannot parse, which is right for a list — the row
     // has to appear, marked — and wrong here, where it would answer a direct read with a
     // fabricated task the store has no such file for.
-    match facets::read_facet(dir, tasks::DIMENSION, &subject).await {
+    match tasks::read_record(dir, &subject).await {
         Ok(Some(_)) => {}
         Ok(None) => return not_found("no such task"),
         Err(error) => return err(&error.to_string()),
@@ -1045,10 +1038,7 @@ mod tests {
     #[tokio::test]
     async fn schema_keys_are_not_repeated_as_foreign_fields() {
         let dir = tempfile::tempdir().unwrap();
-        facets::update_facet(
-            dir.path(),
-            tasks::DIMENSION,
-            "kut",
+        tasks::write_raw(dir.path(), "kut",
             "---\nstatus: doing\ntitle: \"Deploy KUT\"\nsystems: KUT, gz\n---\n",
         )
         .await
@@ -1082,6 +1072,7 @@ mod tests {
         tasks::write_task(dir.path(), &task).await.unwrap();
 
         let folder = facets::subject_dir(dir.path(), tasks::DIMENSION, &task.subject);
+        tokio::fs::create_dir_all(&folder).await.unwrap();
         tokio::fs::write(folder.join("inspection-report.md"), "# report")
             .await
             .unwrap();
@@ -1156,16 +1147,13 @@ mod tests {
     #[tokio::test]
     async fn a_duty_predating_serving_is_corrected_not_flagged() {
         let dir = tempfile::tempdir().unwrap();
-        facets::update_facet(
-            dir.path(),
-            tasks::DIMENSION,
-            "watch-the-ops-group",
+        tasks::write_raw(dir.path(), "watch-the-ops-group",
             "---\nstatus: doing\ntitle: \"Watch the ops group\"\nverify: \"a row landed today\"\n\
              restart: \"launchctl kickstart the label\"\n---\n",
         )
         .await
         .unwrap();
-        let raw = facets::read_facet(dir.path(), tasks::DIMENSION, "watch-the-ops-group")
+        let raw = tasks::read_record(dir.path(), "watch-the-ops-group")
             .await
             .unwrap()
             .unwrap();
@@ -1180,15 +1168,12 @@ mod tests {
     #[tokio::test]
     async fn malformed_current_and_legacy_records_are_flagged() {
         let dir = tempfile::tempdir().unwrap();
-        facets::update_facet(
-            dir.path(),
-            tasks::DIMENSION,
-            "bad-current",
+        tasks::write_raw(dir.path(), "bad-current",
             "---\nstatus: Doing\ncreated_at: yesterday\n---\n",
         )
         .await
         .unwrap();
-        let raw = facets::read_facet(dir.path(), tasks::DIMENSION, "bad-current")
+        let raw = tasks::read_record(dir.path(), "bad-current")
             .await
             .unwrap()
             .unwrap();
@@ -1198,15 +1183,12 @@ mod tests {
             .unwrap();
         assert!(is_malformed(&raw, &task));
 
-        facets::update_facet(
-            dir.path(),
-            tasks::DIMENSION,
-            "bad-legacy",
+        tasks::write_raw(dir.path(), "bad-legacy",
             "---\nkind: watching\nstate: Open\n---\n",
         )
         .await
         .unwrap();
-        let raw = facets::read_facet(dir.path(), tasks::DIMENSION, "bad-legacy")
+        let raw = tasks::read_record(dir.path(), "bad-legacy")
             .await
             .unwrap()
             .unwrap();

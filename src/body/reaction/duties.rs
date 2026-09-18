@@ -410,7 +410,7 @@ fn brief_for(task: &Task, arrived: &str) -> String {
         brief.push_str(&clip(
             account,
             BRIEF_ACCOUNT_CHARS,
-            "older readings are in this duty's own `facet.md`",
+            "older readings are in this duty's own record",
         ));
         brief.push('\n');
     }

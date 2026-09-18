@@ -3,7 +3,7 @@
 //! ## What this is for
 //!
 //! A task's folder is shared. `general.md` tells a worker to build the deliverable *in* it
-//! and to leave its working notes beside the `facet.md` its owner keeps there, and
+//! and to leave its working notes there, and
 //! `cognition.md` asks for one worker per task but cannot promise it: a restart leaves a
 //! `doing` row with nobody on it, a worker started without a `subject` is invisible on the
 //! list that would have said otherwise, and a working session may fan out sub-agents that

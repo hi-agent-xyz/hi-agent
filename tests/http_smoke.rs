@@ -543,10 +543,12 @@ async fn a_task_serves_the_files_its_own_record_names() {
     hi_agent::mind::memory::tasks::write_task(dir.path(), &task)
         .await
         .expect("write task");
+    // The folder the work was done in; the record itself is kept apart, in the ledger.
     let folder = dir
         .path()
         .join("memory/facets/tasks")
         .join(&task.subject);
+    std::fs::create_dir_all(&folder).expect("task folder");
     std::fs::write(folder.join("inspection-report.md"), "# /data at 90%\n").expect("write report");
     // The one thing on disk that the record does not name stays where it is: the panel
     // shows the account's own references, not a listing of the working folder.

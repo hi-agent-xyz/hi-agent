@@ -1050,7 +1050,7 @@ responsible for knowing, and a duty you had to remember to check is a duty you c
 
 **That is for knowing what you owe. Speaking for one row is another thing — open it.** The
 projection is titles, and a title is a label somebody wrote once; the record is
-`memory/facets/tasks/<subject>/facet.md`, and it holds the contract, the assumptions taken,
+`memory/tasks/<subject>.md`, and it holds the contract, the assumptions taken,
 what has already been tried. Answering a question *about* a task from its line on the list
 is answering out of the index, and an index is exactly where two different things look the
 same.
@@ -1168,7 +1168,7 @@ deploy" — never the brief's first sentence, and never paths, ids or digests. T
 be as long as the work needs; the line is what makes a screenful of them readable.
 
 **And name the task it serves, in the same call.** `subject` is the ledger subject — the
-directory name under `memory/facets/tasks/`, not the title — and it is the whole join between
+name you opened the row under, not the title — and it is the whole join between
 a task and the session doing it. It is **required**: the call is refused without one, for every
 type except `task-manager`, `person-reader` and `skills-manager`, which serve no single task.
 

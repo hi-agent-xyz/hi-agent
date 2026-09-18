@@ -551,7 +551,7 @@ impl Task {
                 at: None,
                 kind: TimelineKind::Note,
                 text: format!(
-                    "[\u{2026} {dropped} earlier lines are in this task's own `facet.md`]"
+                    "[\u{2026} {dropped} earlier lines are in this task's own record]"
                 ),
             });
         }
@@ -614,12 +614,101 @@ impl Task {
     }
 }
 
+/// Where the record for `subject` lives: `<memory>/tasks/<subject>.md`, apart from the folder
+/// its work is done in ([`layout::task_records_dir`]).
+pub fn record_path(data_dir: &Path, subject: &str) -> PathBuf {
+    layout::task_records_dir(data_dir).join(format!("{}.md", facets::slug(subject)))
+}
+
+/// The record's text as it sits on disk, or `None` when there is no row.
+pub async fn read_record(data_dir: &Path, subject: &str) -> anyhow::Result<Option<String>> {
+    if facets::slug(subject).is_empty() {
+        return Ok(None);
+    }
+    match tokio::fs::read_to_string(record_path(data_dir, subject)).await {
+        Ok(content) => Ok(Some(content)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Every subject with a record, sorted. Names only — nothing is parsed.
+pub async fn subjects(data_dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(mut rd) = tokio::fs::read_dir(layout::task_records_dir(data_dir)).await else {
+        return out;
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let Ok(name) = entry.file_name().into_string() else { continue };
+        if let Some(subject) = name.strip_suffix(".md").filter(|s| !s.is_empty() && !s.starts_with('.')) {
+            out.push(subject.to_owned());
+        }
+    }
+    out.sort();
+    out
+}
+
 pub async fn read_task(data_dir: &Path, subject: &str) -> anyhow::Result<Option<Task>> {
     let subject = facets::slug(subject);
-    match facets::read_facet(data_dir, DIMENSION, &subject).await? {
-        Some(content) => Ok(Some(parse(&subject, &content))),
-        None => Ok(None),
+    Ok(read_record(data_dir, &subject).await?.map(|content| parse(&subject, &content)))
+}
+
+/// Move every record out of its task's folder into [`layout::task_records_dir`], once.
+///
+/// Runs at [`super::Memory::open`], before anything reads the ledger. Idempotent, and **never
+/// overwrites**: a subject that already has a record there keeps it and its old `facet.md`
+/// stays where it was, logged, because choosing between two records is a judgment and this is
+/// a rename. Everything else in the folder — the work, `.history/` — stays put.
+pub async fn adopt_task_records(data_dir: &Path) -> anyhow::Result<usize> {
+    let folders = layout::facets_dir(data_dir).join(DIMENSION);
+    let mut rd = match tokio::fs::read_dir(&folders).await {
+        Ok(rd) => rd,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err.into()),
+    };
+    let records = layout::task_records_dir(data_dir);
+    tokio::fs::create_dir_all(&records).await?;
+    let mut moved = 0;
+    while let Some(entry) = rd.next_entry().await? {
+        let Ok(subject) = entry.file_name().into_string() else { continue };
+        if subject.starts_with('.') || facets::slug(&subject) != subject {
+            continue;
+        }
+        let old = entry.path().join(facets::FACET_FILE);
+        if !tokio::fs::try_exists(&old).await.unwrap_or(false) {
+            continue;
+        }
+        let new = record_path(data_dir, &subject);
+        if tokio::fs::try_exists(&new).await.unwrap_or(false) {
+            tracing::warn!(task = %subject, "a record exists in both places; leaving the folder's copy where it is");
+            continue;
+        }
+        tokio::fs::rename(&old, &new).await?;
+        moved += 1;
     }
+    if moved > 0 {
+        tracing::info!(moved, "moved task records out of their folders");
+    }
+    Ok(moved)
+}
+
+/// A record's text written as given, for tests that need a row in a shape the verbs would not
+/// produce — legacy spellings, a malformed file, a hand edit.
+#[cfg(test)]
+pub(crate) async fn write_raw(data_dir: &Path, subject: &str, content: &str) -> anyhow::Result<()> {
+    write_record(data_dir, subject, content).await
+}
+
+/// Write a record's text in place. Atomic: a temp sibling renamed over it, so a board polling
+/// every few seconds reads the old record or the new one, never half of one.
+async fn write_record(data_dir: &Path, subject: &str, content: &str) -> anyhow::Result<()> {
+    let dir = layout::task_records_dir(data_dir);
+    tokio::fs::create_dir_all(&dir).await?;
+    let path = record_path(data_dir, subject);
+    let tmp = dir.join(format!(".{}.tmp-{}", facets::slug(subject), uuid::Uuid::now_v7().simple()));
+    tokio::fs::write(&tmp, content).await?;
+    tokio::fs::rename(&tmp, &path).await?;
+    Ok(())
 }
 
 /// Write a record, and tell [`reconcile`] this status is now the one on disk.
@@ -632,7 +721,11 @@ pub async fn read_task(data_dir: &Path, subject: &str) -> anyhow::Result<Option<
 /// and the pass, which finds out — are kept from both claiming the same one.
 pub async fn write_task(data_dir: &Path, task: &Task) -> anyhow::Result<String> {
     let content = render(task);
-    let written = facets::update_facet(data_dir, DIMENSION, &task.subject, &content).await?;
+    if facets::slug(&task.subject).is_empty() {
+        anyhow::bail!("a task's subject must contain a usable character");
+    }
+    write_record(data_dir, &task.subject, &content).await?;
+    let written = task.facet_ref();
     if let Ok(mut seen) = last_seen().lock() {
         let key = facets::subject_dir(data_dir, DIMENSION, &task.subject);
         seen.entry(key).or_default().status = Some(task.status);
@@ -882,6 +975,8 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
     set_systems(&mut task.extra, &opening.systems);
     task.timeline.push(TimelineEntry::new(TimelineKind::Created, now, wanted));
     write_task(data_dir, &task).await?;
+    // The folder its work goes in, so "the task's own folder" exists the moment the row does.
+    tokio::fs::create_dir_all(facets::subject_dir(data_dir, DIMENSION, &subject)).await?;
     Ok(Ok(subject))
 }
 
@@ -1079,8 +1174,12 @@ pub async fn fresh_subject(data_dir: &Path, title: &str) -> anyhow::Result<Strin
     }
     let mut candidate = base.clone();
     for n in 2..1000 {
+        // Taken if either half exists: a folder with work in it and no record is still a
+        // name somebody used.
         let dir = facets::subject_dir(data_dir, DIMENSION, &candidate);
-        if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
+        let taken = tokio::fs::try_exists(&dir).await.unwrap_or(false)
+            || tokio::fs::try_exists(record_path(data_dir, &candidate)).await.unwrap_or(false);
+        if !taken {
             return Ok(candidate);
         }
         candidate = format!("{base}-{n}");
@@ -1214,6 +1313,20 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
     // between the two would be erased by a copy read before it.
     let _held = write_lock().lock().await;
     let mut rewritten = 0;
+
+    // The records' own prior versions, kept the way a task folder's files are — by the pass
+    // that already reads them, before it can rewrite any. A record left its folder, so the
+    // folder's `.history/` no longer covers it; this is where it is covered now.
+    let records = layout::task_records_dir(data_dir);
+    let mut kept = match last_seen().lock() {
+        Ok(mut seen) => std::mem::take(&mut seen.entry(records.clone()).or_default().files),
+        Err(_) => task_history::DirState::default(),
+    };
+    task_history::keep(&records, &mut kept, Utc::now()).await;
+    if let Ok(mut seen) = last_seen().lock() {
+        seen.entry(records).or_default().files = kept;
+    }
+
     for mut task in scan(data_dir).await? {
         let subject = task.subject.clone();
         let key = facets::subject_dir(data_dir, DIMENSION, &subject);
@@ -1258,9 +1371,9 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         // and the only honest question is whether the canonical form of this record is
         // already on disk.
         let wanted = render(&task);
-        let stored = facets::read_facet(data_dir, DIMENSION, &subject).await?;
+        let stored = read_record(data_dir, &subject).await?;
         if stored.as_deref() != Some(wanted.as_str()) {
-            facets::update_facet(data_dir, DIMENSION, &subject, &wanted).await?;
+            write_record(data_dir, &subject, &wanted).await?;
             rewritten += 1;
         }
 
@@ -1425,7 +1538,7 @@ fn render_projection(
 
     let shown = ordered.len().min(PROJECTED_TASKS);
     let mut out = String::from(
-        "# Active tasks\n\n_What you owe right now. Full records: memory/facets/tasks/<subject>/facet.md_\n\n",
+        "# Active tasks\n\n_What you owe right now. Full records: memory/tasks/<subject>.md_\n\n",
     );
     for task in &ordered[..shown] {
         out.push_str(&clip(&line(task, now), PROJECTED_LINE_CHARS));
@@ -1733,7 +1846,7 @@ fn order_key(task: &Task, now: DateTime<Utc>) -> OrderKey<'_> {
 }
 
 async fn scan(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
-    let root = tasks_dir(data_dir);
+    let root = layout::task_records_dir(data_dir);
     let mut rd = match tokio::fs::read_dir(&root).await {
         Ok(rd) => rd,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1741,28 +1854,24 @@ async fn scan(data_dir: &Path) -> anyhow::Result<Vec<Task>> {
     };
     let mut out = Vec::new();
     while let Some(entry) = rd.next_entry().await? {
-        if !entry.file_type().await?.is_dir() {
+        if !entry.file_type().await?.is_file() {
             continue;
         }
-        let Ok(subject) = entry.file_name().into_string() else {
+        let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if subject.is_empty() || subject.starts_with('.') {
-            continue;
-        }
-        let Ok(content) =
-            tokio::fs::read_to_string(entry.path().join(facets::FACET_FILE)).await
+        // `.history/`, a temp sibling mid-rename, anything an editor left.
+        let Some(subject) = name.strip_suffix(".md").filter(|s| !s.is_empty() && !s.starts_with('.'))
         else {
             continue;
         };
-        out.push(parse(&subject, &content));
+        let Ok(content) = tokio::fs::read_to_string(entry.path()).await else {
+            continue;
+        };
+        out.push(parse(subject, &content));
     }
     out.sort_by(|a, b| a.subject.cmp(&b.subject));
     Ok(out)
-}
-
-fn tasks_dir(data_dir: &Path) -> PathBuf {
-    layout::facets_dir(data_dir).join(DIMENSION)
 }
 
 fn parse(subject: &str, content: &str) -> Task {
@@ -2159,15 +2268,11 @@ mod tests {
     /// because a record produced by `write_task` is already canonical and would prove
     /// nothing.
     async fn hand_write(dir: &Path, subject: &str, frontmatter: &str, body: &str) {
-        let d = facets::subject_dir(dir, DIMENSION, subject);
-        tokio::fs::create_dir_all(&d).await.unwrap();
-        tokio::fs::write(d.join(facets::FACET_FILE), format!("---\n{frontmatter}---\n\n{body}\n"))
-            .await
-            .unwrap();
+        write_raw(dir, subject, &format!("---\n{frontmatter}---\n\n{body}\n")).await.unwrap();
     }
 
     async fn stored(dir: &Path, subject: &str) -> String {
-        facets::read_facet(dir, DIMENSION, subject).await.unwrap().unwrap()
+        read_record(dir, subject).await.unwrap().unwrap()
     }
 
     /// **The property the pass lives or dies on.** It runs on every window build, so if it
@@ -2818,7 +2923,7 @@ mod tests {
         task.body = "Boss asked for a daily digest of the ops group.".into();
 
         write_task(dir.path(), &task).await.unwrap();
-        let raw = facets::read_facet(dir.path(), DIMENSION, "file-the-feishu-digest")
+        let raw = read_record(dir.path(), "file-the-feishu-digest")
             .await
             .unwrap()
             .unwrap();
@@ -2844,10 +2949,7 @@ mod tests {
     #[tokio::test]
     async fn a_status_change_keeps_the_notes_it_does_not_understand() {
         let dir = tempfile::tempdir().unwrap();
-        facets::update_facet(
-            dir.path(),
-            DIMENSION,
-            "google-login",
+        write_raw(dir.path(), "google-login",
             "---\n\
              kind: wip\n\
              state: open\n\
@@ -2869,7 +2971,7 @@ mod tests {
         task.set_status(TaskStatus::Done, at(11, 10), Hand::Board);
         write_task(dir.path(), &task).await.unwrap();
 
-        let raw = facets::read_facet(dir.path(), DIMENSION, "google-login")
+        let raw = read_record(dir.path(), "google-login")
             .await
             .unwrap()
             .unwrap();
@@ -2901,10 +3003,7 @@ mod tests {
             ("done", "kind: serving\nstate: done", TaskStatus::Done),
             ("dropped", "kind: wip\nstate: dropped", TaskStatus::Cancelled),
         ] {
-            facets::update_facet(
-                dir.path(),
-                DIMENSION,
-                subject,
+            write_raw(dir.path(), subject,
                 &format!("---\n{frontmatter}\ntitle: {subject}\n---\n"),
             )
             .await
@@ -2926,10 +3025,7 @@ mod tests {
     #[tokio::test]
     async fn a_duty_written_before_serving_existed_reads_back_as_one() {
         let dir = tempfile::tempdir().unwrap();
-        facets::update_facet(
-            dir.path(),
-            DIMENSION,
-            "watch-the-ops-group",
+        write_raw(dir.path(), "watch-the-ops-group",
             "---\nstatus: doing\ntitle: \"Watch the ops group\"\n\
              checked_at: \"2026-07-28T10:00:00Z\"\nverify: \"latest row is under 30m old\"\n\
              start_key: watch-the-ops-group\n---\n",
@@ -2945,7 +3041,7 @@ mod tests {
 
         // And the correction persists the moment anything writes the task back.
         write_task(dir.path(), &got).await.unwrap();
-        let raw = facets::read_facet(dir.path(), DIMENSION, "watch-the-ops-group")
+        let raw = read_record(dir.path(), "watch-the-ops-group")
             .await
             .unwrap()
             .unwrap();
@@ -3054,10 +3150,7 @@ mod tests {
         let got = read_task(dir.path(), "ship-google-login").await.unwrap().unwrap();
         assert_eq!(got.status_since, Some(now()));
 
-        facets::update_facet(
-            dir.path(),
-            DIMENSION,
-            "older-than-the-field",
+        write_raw(dir.path(), "older-than-the-field",
             "---\nstatus: doing\ntitle: \"Older than the field\"\n\
              created_at: \"2026-07-01T09:00:00Z\"\n---\n",
         )
@@ -3551,6 +3644,32 @@ mod verb_tests {
         let folded = read_task(dir.path(), "shoes-again").await.unwrap().unwrap();
         assert_eq!(folded.status, TaskStatus::Cancelled);
         assert_eq!(folded.timeline.last().unwrap().text, "folded into `shoes`");
+    }
+
+    /// **Every record leaves its folder once, and nothing is overwritten on the way.** The
+    /// work stays in the folder; a subject that already has a record in the ledger keeps it,
+    /// and its folder copy is left where it was rather than chosen between.
+    #[tokio::test]
+    async fn records_move_out_of_their_folders_once_and_never_over_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = |s: &str| facets::subject_dir(dir.path(), DIMENSION, s);
+        for subject in ["moved", "clash"] {
+            tokio::fs::create_dir_all(folder(subject)).await.unwrap();
+            tokio::fs::write(folder(subject).join(facets::FACET_FILE), format!("---\nstatus: doing\ntitle: {subject}\n---\n"))
+                .await
+                .unwrap();
+            tokio::fs::write(folder(subject).join("report.md"), "work").await.unwrap();
+        }
+        write_raw(dir.path(), "clash", "---\nstatus: todo\ntitle: already here\n---\n").await.unwrap();
+
+        assert_eq!(adopt_task_records(dir.path()).await.unwrap(), 1);
+        assert_eq!(read_task(dir.path(), "moved").await.unwrap().unwrap().title, "moved");
+        assert!(!folder("moved").join(facets::FACET_FILE).exists());
+        assert!(folder("moved").join("report.md").exists(), "the work stays");
+        assert_eq!(read_task(dir.path(), "clash").await.unwrap().unwrap().title, "already here");
+        assert!(folder("clash").join(facets::FACET_FILE).exists(), "never chosen between");
+
+        assert_eq!(adopt_task_records(dir.path()).await.unwrap(), 0, "idempotent");
     }
 
     /// **Two writers on one row both land.** Each verb reads, changes and writes the record

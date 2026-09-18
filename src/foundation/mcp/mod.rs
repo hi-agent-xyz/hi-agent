@@ -203,8 +203,8 @@ fn create_worker_tool() -> Value {
                 },
                 "subject": {
                     "type": "string",
-                    "description": "The ledger task this errand serves — the directory name \
-                                    under `memory/facets/tasks/`, not the title. **Required for \
+                    "description": "The ledger task this errand serves — the subject its row \
+                                    was opened under, not the title. **Required for \
                                     every type except `task-manager`, `person-reader` and \
                                     `skills-manager`**, which serve no single task, and \
                                     **refused on every worker Reflection starts**, whose errands \
@@ -644,8 +644,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                 "hi_set_home_groups",
                 "Arrange what is in hand into groups on the home screen — replacing the whole \
                  arrangement, not patching it, so send every group each time. A group is a \
-                 `label`, the task `members` in it (subject directory names under \
-                 `memory/facets/tasks/`, in the order they should read), and an optional one-line \
+                 `label`, the task `members` in it (task subjects, in the order they should \
+                 read), and an optional one-line \
                  `note` saying what the grouping was based on, which the person sees on the label. \
                  A group can also hold `groups` of its own, the same shape at any depth, when the \
                  person divides one group further — drawn under it, after its own members. Labels \
@@ -1827,8 +1827,8 @@ async fn dispatch_tool(
             if asked.is_empty() && kind.expects_a_subject() && !from_reflection {
                 return tool_error(&format!(
                     "hi_create_worker requires a `subject` for a `{}` worker — the ledger task \
-                     this errand serves, spelled as the directory name under \
-                     `memory/facets/tasks/`. It has to name a row that exists; call it again \
+                     this errand serves, spelled as the subject its row was opened under. It \
+                     has to name a row that exists; call it again \
                      with your best guess and the refusal will list what is open. \
                      (`task-manager`, `person-reader` and `skills-manager` serve no single task, \
                      so they take none.)",
@@ -2318,6 +2318,15 @@ async fn reflection_read_facet(data_dir: &std::path::Path, args: &Value) -> Valu
     if dim.trim().is_empty() || subject.trim().is_empty() {
         return tool_error("hi_read_facet requires `dimension` and `subject`");
     }
+    // A task's record is not in the facet tree any more; reading one by its old name still
+    // finds it, because what is being asked for is the record.
+    if crate::mind::memory::facets::slug(dim) == crate::mind::memory::tasks::DIMENSION {
+        return match crate::mind::memory::tasks::read_record(data_dir, subject).await {
+            Ok(Some(content)) => tool_ok(&content),
+            Ok(None) => tool_ok(&format!("no task is filed under `{subject}`")),
+            Err(err) => tool_error(&err.to_string()),
+        };
+    }
     match crate::mind::memory::facets::read_facet(data_dir, dim, subject).await {
         Ok(Some(content)) => tool_ok(&content),
         // A miss hands back the subjects that *are* filed, near-name matches first. Saying
@@ -2340,18 +2349,19 @@ async fn reflection_update_facet(data_dir: &std::path::Path, args: &Value) -> Va
     if content.trim().is_empty() {
         return tool_error("hi_update_facet requires non-empty `content`");
     }
-    // Whether this write opens a subject or rewrites one, established before the write that
-    // erases the difference. A first write to `tasks/` opens a ledger row — a promise the
-    // list now says is owed — and a result reading "updated facet" is how one gets opened
-    // without the writer ever seeing that it did.
+    // **A task's record is not a facet**, and a facet written under `tasks/` would be a file in
+    // a task's working folder that no list reads. Rows are opened by Cognition, which was in
+    // the conversation, through `hi_task_open` (`docs/arch/data.md` § *Tasks*).
+    if crate::mind::memory::facets::slug(dim) == crate::mind::memory::tasks::DIMENSION {
+        return tool_error(
+            "a task's record is not a facet — the ledger is opened by Cognition with \
+             hi_task_open and written on by workers with hi_task_note. If something here is \
+             owed to the person, say so in your report.",
+        );
+    }
     let existed = crate::mind::memory::facets::facet_exists(data_dir, dim, subject).await;
     match crate::mind::memory::facets::update_facet(data_dir, dim, subject, content).await {
         Ok(refname) if existed => tool_ok(&format!("updated facet {refname}")),
-        Ok(refname) if refname.starts_with("tasks/") => tool_ok(&format!(
-            "opened a NEW ledger row {refname} — the list now says this is owed. If it \
-             duplicates a row already filed, the fold is a task manager's: carry this into \
-             the survivor and close this one `cancelled`.",
-        )),
         Ok(refname) => tool_ok(&format!("created facet {refname} (no facet existed under that name)")),
         Err(err) => tool_error(&err.to_string()),
     }
@@ -3461,10 +3471,7 @@ mod surface_tests {
     async fn the_answer_names_the_groups_on_the_default_icon_and_a_ref_that_reads() {
         use crate::foundation::server::home;
         let dir = tempfile::tempdir().unwrap();
-        crate::mind::memory::facets::update_facet(
-            dir.path(),
-            crate::mind::memory::tasks::DIMENSION,
-            "vocabulary-book",
+        crate::mind::memory::tasks::write_raw(dir.path(), "vocabulary-book",
             "---\nstatus: doing\ntitle: t\n---\n\nbody\n",
         )
         .await
@@ -3489,10 +3496,7 @@ mod surface_tests {
     async fn a_nested_arrangement_lands_and_its_receipt_shows_the_depth() {
         let dir = tempfile::tempdir().unwrap();
         for subject in ["rollup", "site-survey"] {
-            crate::mind::memory::facets::update_facet(
-                dir.path(),
-                crate::mind::memory::tasks::DIMENSION,
-                subject,
+            crate::mind::memory::tasks::write_raw(dir.path(), subject,
                 "---\nstatus: doing\ntitle: t\n---\n\nbody\n",
             )
             .await
@@ -3565,7 +3569,7 @@ mod surface_tests {
 
         assert!(refusal(&got).contains("requires a `subject`"), "{got}");
         assert!(
-            !dir.path().join("memory/facets/tasks").exists(),
+            !dir.path().join("memory/tasks").exists(),
             "a refused call must not have opened a row"
         );
     }
@@ -3596,7 +3600,7 @@ mod surface_tests {
         assert!(said.contains("no task is filed under `review-the-flash-cards`"), "{got}");
         assert!(said.contains("`ship-the-flash-cards` [doing] Ship the flash cards"), "{got}");
         assert!(
-            !dir.path().join("memory/facets/tasks/review-the-flash-cards").exists(),
+            !dir.path().join("memory/tasks/review-the-flash-cards.md").exists(),
             "the refusal must not have opened the row it refused"
         );
     }
@@ -3645,7 +3649,7 @@ mod surface_tests {
             .await;
             assert!(refusal(&got).contains("takes no `subject`"), "{kind}: {got}");
         }
-        assert!(!dir.path().join("memory/facets/tasks").exists(), "no row either way");
+        assert!(!dir.path().join("memory/tasks").exists(), "no row either way");
     }
 
     /// The other half of the exemption: those same kinds get **past** the fence with no
@@ -3707,7 +3711,7 @@ mod surface_tests {
         let said = refusal(&got);
         assert!(said.contains("the owning loop is not up"), "{got}");
         assert!(!said.contains("subject"), "it must not be asked for one: {got}");
-        assert!(!dir.path().join("memory/facets/tasks").exists(), "and no row opened for it");
+        assert!(!dir.path().join("memory/tasks").exists(), "and no row opened for it");
     }
 
     #[test]

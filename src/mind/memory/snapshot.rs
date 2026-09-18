@@ -510,8 +510,7 @@ const SYSTEMS_KEY: &str = "systems";
 /// two candidates is not an answer.
 pub async fn work_record(data_dir: &Path, subject: &str) -> String {
     let facets = layout::facets_dir(data_dir);
-    let task_path = facets.join(tasks::DIMENSION).join(subject).join("facet.md");
-    let task = tokio::fs::read_to_string(&task_path).await.unwrap_or_default();
+    let task = tasks::read_record(data_dir, subject).await.ok().flatten().unwrap_or_default();
 
     let named = named_systems(&task);
     // One scan, and only when the task named something — this runs per worker spawned,
@@ -1168,6 +1167,9 @@ mod window_tests {
     }
 
     async fn write_facet(dir: &Path, dimension: &str, subject: &str, body: &str) {
+        if dimension == tasks::DIMENSION {
+            return tasks::write_raw(dir, subject, body).await.unwrap();
+        }
         let path = layout::facets_dir(dir).join(dimension).join(subject);
         tokio::fs::create_dir_all(&path).await.unwrap();
         tokio::fs::write(path.join("facet.md"), body).await.unwrap();

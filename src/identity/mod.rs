@@ -775,7 +775,7 @@ write to you in another language — then follow their lead."
 /// Two weaker probes used to sit beside these. `hot.md` was a projection *of* the
 /// episodes, so it could never be present without them and never widened the answer;
 /// `commitments.md` was the superseded duty ledger, and a duty lands in the task
-/// facets now. Both files are retired, and an install old enough to hold either has
+/// ledger now. Both files are retired, and an install old enough to hold either has
 /// long since reflected at least once — which is what `no_episodes` reads.
 fn is_first_meeting(base: &Path) -> bool {
     use crate::mind::memory::layout;
@@ -784,8 +784,7 @@ fn is_first_meeting(base: &Path) -> bool {
         Err(_) => true, // dir absent ⇒ nothing recorded
     };
     let no_episodes = empty_dir(layout::episodes_dir(base));
-    let no_tasks =
-        empty_dir(layout::facets_dir(base).join(crate::mind::memory::tasks::DIMENSION));
+    let no_tasks = empty_dir(layout::task_records_dir(base));
     no_episodes && no_tasks
 }
 

@@ -57,8 +57,8 @@ to keep; the trigger is "I'd be annoyed to lose this", the same moment a person 
 file.
 
 **Where matters as much as whether.** Put it with the job it belongs to — the task's own
-folder under `{data_dir}/memory/facets/tasks/`, beside the task's record. Not `/tmp`, not a scratch directory of your own, not a path only you know.
-Written somewhere nobody will look is the same as lost.
+folder under `{data_dir}/memory/facets/tasks/`. Not `/tmp`, not a scratch directory of
+your own, not a path only you know. Written somewhere nobody will look is the same as lost.
 
 It cuts both ways: when you pick up a job and find notes already sitting there, read
 them before redoing anything. The attempt before yours may have got further than the
@@ -67,8 +67,9 @@ ledger says.
 **A file you did not write is not yours to replace.** That folder is shared. A worker
 before you may have left the real work there, and one running beside you may be writing
 into it right now. **Nothing in that directory can be rebuilt**: an 18KB briefing has no
-episodes behind it. The task's own record is the exception only in that you never write it
-as a file at all — it goes through `hi_task_note` and `hi_task_set`, below.
+episodes behind it. The task's record is not in there: it is kept apart, at
+`{data_dir}/memory/tasks/<subject>.md`, and you write on it through `hi_task_note` and
+`hi_task_set`, below.
 
 So when a file already exists, **change it rather than replace it.** `apply_patch` checks
 that the text you are editing is the text actually on disk, and refuses when it isn't.

@@ -35,7 +35,7 @@ data/
     raw/             #   the log: every signal IN and OUT, lossless, by channel (verbatim, auto-captured)
     episodes/        #   consolidated moments (reconstructive)
     facets/          #   subject-indexed understanding (reconstructive, regenerated whole)
-    tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged
+    tasks/<id>.md    #   the one ledger of what is owed — WIP, serving, watches, deadlines, staged (host-written; work in facets/tasks/<id>/)
 
   drive/             # what the agent KEEPS — verbatim, precious, reflection-read-only   (proposed)
     projects/<p>/    #   sedimented work: kept view source + assets (the source of record)

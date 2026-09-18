@@ -59,6 +59,17 @@ pub fn memory_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("memory")
 }
 
+/// `<memory>/tasks` — the ledger: one `<subject>.md` per task, written only by the host.
+///
+/// **Beside the facet tree, not in it.** A task's *folder* is still a facet dimension
+/// (`<facets>/tasks/<subject>/`), holding the deliverable and the working notes a worker
+/// writes all day. Its *record* is not a facet — nothing re-derives it — and it is something a
+/// person reads, so it is written through verbs the host can see and kept out of the folder
+/// those workers edit (`docs/arch/data.md` § *Tasks*).
+pub fn task_records_dir(data_dir: &Path) -> PathBuf {
+    memory_dir(data_dir).join("tasks")
+}
+
 /// `<memory>/raw` — the root of the lossless store.
 pub fn raw_root(data_dir: &Path) -> PathBuf {
     memory_dir(data_dir).join("raw")

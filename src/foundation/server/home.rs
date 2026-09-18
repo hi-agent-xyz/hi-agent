@@ -42,7 +42,7 @@ use uuid::Uuid;
 
 use crate::foundation::server::AppState;
 use crate::mind::memory::media::{self, DRIVE_PREFIX};
-use crate::mind::memory::{facets, tasks};
+use crate::mind::memory::tasks;
 
 /// The icon a group wears until one is drawn for it, and the picture every drawn one is an
 /// edit of. Bundled, so a fresh install has both before anything has been generated.
@@ -162,7 +162,7 @@ pub struct Written {
 
 /// Replace the arrangement whole, or refuse and change nothing.
 ///
-/// Whole-record writes for the same reason [`facets::update_facet`] takes a whole facet: a
+/// Whole-record writes for the same reason [`crate::mind::memory::facets::update_facet`] takes a whole facet: a
 /// dozen rows fit in one call, and patch operations over a list are a grammar to get wrong.
 ///
 /// Normalising, in order: labels and members are trimmed; a member that names no task
@@ -177,7 +177,7 @@ pub struct Written {
 /// cannot be used is refused on its own — the arrangement still lands, and the label keeps
 /// what it had.
 pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Written> {
-    let known = facets::subjects_in(data_dir, tasks::DIMENSION).await;
+    let known = tasks::subjects(data_dir).await;
     let previous: std::collections::HashMap<String, String> = every_group(&read(data_dir).await.groups)
         .into_iter()
         .filter_map(|g| Some((g.label.clone(), g.icon.clone()?)))
@@ -407,7 +407,7 @@ mod tests {
     use super::*;
 
     async fn task(dir: &Path, subject: &str) {
-        facets::update_facet(dir, tasks::DIMENSION, subject, "---\nstatus: doing\ntitle: t\n---\n\nbody\n")
+        tasks::write_raw(dir, subject, "---\nstatus: doing\ntitle: t\n---\n\nbody\n")
             .await
             .unwrap();
     }

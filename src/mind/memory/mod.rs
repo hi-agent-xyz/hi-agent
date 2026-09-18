@@ -38,6 +38,11 @@ impl Memory {
         if let Err(err) = facets::adopt_flat_facets(data_dir).await {
             tracing::warn!(error = %format!("{err:#}"), "flat-facet adoption failed; leaving them as they are");
         }
+        // Task records out of their folders, once, before the ledger is read. Same terms:
+        // best-effort, idempotent, never overwrites.
+        if let Err(err) = tasks::adopt_task_records(data_dir).await {
+            tracing::warn!(error = %format!("{err:#}"), "moving task records out of their folders failed; the next boot tries again");
+        }
         Ok(Self { journal })
     }
 
