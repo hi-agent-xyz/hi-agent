@@ -137,6 +137,9 @@ pub mod judges {
     pub const RECEPTION: &str = include_str!("judges/reception.md");
     /// Whether one line goes onto a task's record as written.
     pub const RECORD: &str = include_str!("judges/record.md");
+    /// The read of a task's record after it lands: a new *Where it stands*, or the whole record
+    /// as it closes.
+    pub const RECORD_AUDIT: &str = include_str!("judges/record_audit.md");
 }
 
 /// A judge's whole instructions: its rubric, then the reading standard it judges against.

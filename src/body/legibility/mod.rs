@@ -17,6 +17,7 @@ use crate::mind::memory::quality::{self, Outcome};
 
 pub mod judge;
 pub mod record;
+pub mod record_audit;
 
 use judge::json_object;
 
@@ -93,4 +94,49 @@ pub(crate) fn read_verdict(
         outcome
     };
     (outcome, axis, note)
+}
+
+#[derive(Deserialize)]
+struct AuditAnswer {
+    #[serde(default)]
+    messages: Vec<AuditedAnswer>,
+    #[serde(default)]
+    unsaid: Vec<String>,
+    #[serde(default)]
+    wrong: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct AuditedAnswer {
+    #[serde(default)]
+    n: Option<usize>,
+    #[serde(default)]
+    axis: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// An audit's answer, read against the numbered `items` it was asked about: one entry per
+/// item whatever the judge numbered — an entry naming an item that was not asked about is
+/// dropped, and an item it skipped has no finding — then what is owed and left unsaid, and
+/// what is wrong. `None` when the answer is not in the shape asked for.
+pub(crate) fn read_audit(
+    answer: &str,
+    items: &[String],
+) -> Option<(Vec<quality::Audited>, Vec<String>, Vec<String>)> {
+    let answer = json_object::<AuditAnswer>(answer)?;
+    let mut out: Vec<quality::Audited> = items
+        .iter()
+        .map(|text| quality::Audited { text: text.clone(), axis: None, note: None })
+        .collect();
+    for (i, a) in answer.messages.into_iter().enumerate() {
+        let at = a.n.map(|n| n.saturating_sub(1)).unwrap_or(i);
+        let Some(slot) = out.get_mut(at) else { continue };
+        slot.axis = quality::axis(a.axis.as_deref());
+        slot.note = slot.axis.as_ref().and(a.note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()));
+    }
+    let clean = |items: Vec<String>| -> Vec<String> {
+        items.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    };
+    Some((out, clean(answer.unsaid), clean(answer.wrong)))
 }

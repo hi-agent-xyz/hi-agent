@@ -31,26 +31,6 @@ pub fn enabled() -> bool {
     !matches!(tunables::get(MODE_KEY).as_deref().map(str::trim), Some("off"))
 }
 
-#[derive(Deserialize)]
-struct AuditAnswer {
-    #[serde(default)]
-    messages: Vec<AuditedAnswer>,
-    #[serde(default)]
-    unsaid: Vec<String>,
-    #[serde(default)]
-    wrong: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct AuditedAnswer {
-    #[serde(default)]
-    n: Option<usize>,
-    #[serde(default)]
-    axis: Option<String>,
-    #[serde(default)]
-    note: Option<String>,
-}
-
 /// The case an audit reads: the turn's brief, then its messages numbered.
 pub(crate) fn audit_case(brief: &Brief, sent: &[String], shown: &[String]) -> String {
     use std::fmt::Write as _;
@@ -77,7 +57,7 @@ pub(crate) async fn audit(
             return None;
         }
     };
-    let Some(answer) = json_object::<AuditAnswer>(&answer) else {
+    let Some((messages, unsaid, wrong)) = crate::body::legibility::read_audit(&answer, sent) else {
         tracing::warn!("speech audit answered in a shape it could not be read in");
         return None;
     };
@@ -86,33 +66,10 @@ pub(crate) async fn audit(
         surface: quality::Surface::Speech,
         turn: key.to_string(),
         model: judge.model().to_string(),
-        messages: fold_answers(sent, answer.messages),
-        unsaid: clean(answer.unsaid),
-        wrong: clean(answer.wrong),
+        messages,
+        unsaid,
+        wrong,
     })
-}
-
-/// One entry per message sent, whatever the judge numbered: an entry that names a message
-/// that was not sent is dropped, and a message it skipped has no finding.
-fn fold_answers(sent: &[String], answers: Vec<AuditedAnswer>) -> Vec<quality::Audited> {
-    let mut out: Vec<quality::Audited> = sent
-        .iter()
-        .map(|text| quality::Audited { text: text.clone(), axis: None, note: None })
-        .collect();
-    for (i, a) in answers.into_iter().enumerate() {
-        let at = a.n.map(|n| n.saturating_sub(1)).unwrap_or(i);
-        let Some(slot) = out.get_mut(at) else { continue };
-        slot.axis = quality::axis(a.axis.as_deref());
-        slot.note = slot
-            .axis
-            .as_ref()
-            .and(a.note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()));
-    }
-    out
-}
-
-fn clean(items: Vec<String>) -> Vec<String> {
-    items.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
 }
 
 /// Audit a turn that has just ended, on its own task. Nothing to read in a silent turn.
@@ -233,12 +190,12 @@ mod tests {
     #[test]
     fn every_message_sent_gets_one_entry_whatever_the_judge_numbered() {
         let sent = vec!["好".to_string(), "部署了，公网 200，重启 0".to_string()];
-        let answers = vec![
-            AuditedAnswer { n: Some(2), axis: Some("known".into()), note: Some("「公网 200」".into()) },
-            AuditedAnswer { n: Some(9), axis: Some("repeat".into()), note: None },
-            AuditedAnswer { n: Some(1), axis: Some("made-up".into()), note: Some("x".into()) },
-        ];
-        let folded = fold_answers(&sent, answers);
+        let answer = r#"{"messages": [
+            {"n": 2, "axis": "known", "note": "「公网 200」"},
+            {"n": 9, "axis": "repeat"},
+            {"n": 1, "axis": "made-up", "note": "x"}
+        ]}"#;
+        let (folded, _, _) = crate::body::legibility::read_audit(answer, &sent).unwrap();
         assert_eq!(folded.len(), 2);
         assert_eq!(folded[0].axis, None, "a coined axis is no finding");
         assert_eq!(folded[0].note, None, "and carries no note");

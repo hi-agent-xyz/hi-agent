@@ -158,6 +158,56 @@ pub fn read_record(to: &SessionSlug, count: u32) -> Record {
     }
 }
 
+/// What the sessions that served the task `subject` sent, oldest first — their own account of
+/// the work, which is what a task's record is read against when it closes
+/// (`docs/arch/legibility.md` § N).
+///
+/// **Joined by the session index, never by the text.** A report does not name its task; the
+/// session that sent it was opened against one, and [`super::index`] recorded which on the way
+/// in. Sessions are keyed by `(run, session)` because slugs repeat every boot. Kept to the newest
+/// `budget` characters: the reader wants how it ended more than how it began.
+pub async fn sent_by_sessions_serving(
+    data_dir: &Path,
+    subject: &str,
+    budget: usize,
+) -> Vec<(DateTime<Utc>, String)> {
+    let index = tokio::fs::read_to_string(super::index::index_path(data_dir)).await.unwrap_or_default();
+    let serving: std::collections::HashSet<(String, SessionSlug)> = index
+        .lines()
+        .filter(|l| l.contains(subject))
+        .filter_map(|l| serde_json::from_str::<super::index::Record>(l).ok())
+        .filter_map(|r| match r {
+            super::index::Record::Opened { run, session, subject: Some(s), .. } if s == subject => {
+                Some((run, session))
+            }
+            _ => None,
+        })
+        .collect();
+    if serving.is_empty() {
+        return Vec::new();
+    }
+    let log = tokio::fs::read_to_string(mail_path(data_dir)).await.unwrap_or_default();
+    let mut sent: Vec<(DateTime<Utc>, String)> = log
+        .lines()
+        .filter(|l| l.contains("\"sent\""))
+        .filter_map(|l| serde_json::from_str::<Record>(l).ok())
+        .filter_map(|r| match r {
+            Record::Sent { run, at, from: Some(from), text, .. } => {
+                serving.contains(&(run, from)).then_some((at, text))
+            }
+            _ => None,
+        })
+        .collect();
+    sent.sort_by_key(|(at, _)| *at);
+    let mut kept = 0usize;
+    let mut from = sent.len();
+    while from > 0 && kept + sent[from - 1].1.chars().count() <= budget {
+        from -= 1;
+        kept += sent[from].1.chars().count();
+    }
+    sent.split_off(from)
+}
+
 /// What a boot recovers from the log: the exchange to draw, and the mail still owed.
 pub struct Seeded {
     /// Every agent-to-agent message the tail holds, oldest first, capped at [`KEPT`].
@@ -340,5 +390,46 @@ mod tests {
     fn a_truncated_first_line_is_skipped() {
         let text = format!("{{\"event\":\"se\n{}", line(&sent("run-prev", Some(1), 2, "kept")));
         assert_eq!(fold(&text, "run-now").undelivered.get(&SessionSlug::from(2)).map(Vec::len), Some(1));
+    }
+
+    /// **A task's reports are its sessions' by `(run, session)`, never by slug alone.** Slugs
+    /// repeat every boot, so the same name in another run served another task.
+    #[tokio::test]
+    async fn a_tasks_reports_are_joined_by_the_run_and_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = layout::raw_root(dir.path()).join(layout::SESSIONS_DIR);
+        tokio::fs::create_dir_all(&sessions).await.unwrap();
+        let opened = |run: &str, subject: &str| {
+            format!(
+                r#"{{"event":"opened","run":"{run}","session":"general-x","subject":"{subject}","at":"2026-09-18T00:00:00Z","role":"worker"}}"#
+            )
+        };
+        tokio::fs::write(sessions.join("index.jsonl"), format!("{}\n{}\n", opened("r1", "resume"), opened("r2", "shoes")))
+            .await
+            .unwrap();
+        let sent = |run: &str, at: &str, text: &str| {
+            format!(
+                r#"{{"event":"sent","run":"{run}","at":"{at}","from":"general-x","to":"cognition","text":"{text}"}}"#
+            )
+        };
+        tokio::fs::write(
+            mail_path(dir.path()),
+            [
+                sent("r1", "2026-09-18T01:00:00Z", "简历导进来了"),
+                sent("r2", "2026-09-18T02:00:00Z", "鞋的对比做好了"),
+                sent("r1", "2026-09-18T03:00:00Z", "两页扫描件没法编辑"),
+            ]
+            .join("\n"),
+        )
+        .await
+        .unwrap();
+
+        let got = sent_by_sessions_serving(dir.path(), "resume", 10_000).await;
+        let texts: Vec<&str> = got.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(texts, vec!["简历导进来了", "两页扫描件没法编辑"]);
+
+        let newest = sent_by_sessions_serving(dir.path(), "resume", 9).await;
+        assert_eq!(newest.len(), 1, "a budget keeps the newest");
+        assert!(sent_by_sessions_serving(dir.path(), "nothing", 10_000).await.is_empty());
     }
 }

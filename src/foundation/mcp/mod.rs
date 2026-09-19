@@ -2560,7 +2560,15 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
     }
     match tasks::note(data_dir, &subject, note, text, Utc::now()).await {
         Ok(Some(Ok(()))) => tool_ok(match note {
-            Note::Stands => "on top of the account; the previous reading is beneath it",
+            // Judged after it lands rather than before (`docs/arch/legibility.md` § N).
+            Note::Stands => {
+                crate::body::legibility::record_audit::after_stands(
+                    data_dir.to_path_buf(),
+                    subject.clone(),
+                    text.to_string(),
+                );
+                "on top of the account; the previous reading is beneath it"
+            }
             Note::Title => "renamed",
             _ => "recorded",
         }),
@@ -2612,9 +2620,17 @@ async fn do_task_set(data_dir: &Path, served: Option<&str>, args: &Value) -> Val
         start_key: field("start_key"),
         systems: string_list(args, "systems"),
     };
+    let closing = matches!(setting.status, Some(TaskStatus::Done | TaskStatus::Cancelled));
     match tasks::set(data_dir, &subject, setting, Utc::now()).await {
         Ok(Some(changed)) if changed.is_empty() => tool_ok("nothing changed — the row already says that"),
-        Ok(Some(changed)) => tool_ok(&format!("set {}", changed.join(", "))),
+        Ok(Some(changed)) => {
+            // The whole record, read as it closes against what its sessions reported
+            // (`docs/arch/legibility.md` § N).
+            if closing && changed.contains(&"status") {
+                crate::body::legibility::record_audit::at_close(data_dir.to_path_buf(), subject.clone());
+            }
+            tool_ok(&format!("set {}", changed.join(", ")))
+        }
         Ok(None) => no_such_row(data_dir, &subject).await,
         Err(error) => tool_error(&format!("could not write the row: {error}")),
     }
