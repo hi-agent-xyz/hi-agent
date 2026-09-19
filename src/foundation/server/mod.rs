@@ -35,6 +35,7 @@ pub mod generated;
 pub mod handle;
 pub mod headers;
 pub mod home;
+pub mod listening;
 pub mod mcp;
 pub mod mechanisms;
 pub mod observe;
@@ -383,6 +384,13 @@ pub struct AppState {
     /// "they stopped" endpoint, because neither would be a thing a client knows.
     pub floor: Floor,
 
+    /// Whether the agent's ear is open right now — true only while somebody holds the
+    /// attention key past the hold threshold ([`crate::body::gesture`]). Read by
+    /// `GET /api/listening`, which is how a tray in *another process* draws its
+    /// listening state; see [`listening`] for why that is a state to read rather than
+    /// a push over the app seam.
+    pub listening: listening::ListeningState,
+
     /// Live-subscriber counts, shared with the reaction. Out-channel handlers hold
     /// a [`crate::body::attachments::Guard`] per connection. One question is asked
     /// of it — is a speaker attached, so speech is worth synthesizing — and nothing
@@ -557,6 +565,7 @@ pub fn build(
         video_in_partial: Mutex::new(None),
         input_echo: input_echo_tx.clone(),
         output_echo: output_echo_tx.clone(),
+        listening: listening::ListeningState::new(),
         memory,
         observatory,
         wire_tap,
@@ -628,6 +637,10 @@ pub fn build(
         // unsent draft. It reaches the floor and stops there.
         .route("/api/in/text/typing", post(text::post_text_typing))
         .route("/api/out/text", get(text::get_out_text))
+        // Not `/api/out/*`: those are the agent's articulation on a channel, and this
+        // is a fact about the person's hand on a key. A shell subscribes to it for its
+        // tray; nothing warms the reaction by asking.
+        .route("/api/listening", get(listening::get_listening))
         .route("/api/messages", get(text::get_messages))
         .route("/api/media/{*ref}", get(files::get_media))
         .route("/api/in/audio", post(audio::post_audio).get(audio::get_in_audio))

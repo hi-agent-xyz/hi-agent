@@ -94,6 +94,23 @@ WebView. The existing web face owns the channel protocol and sends
 
 The long-lived credential must never be passed to the WebView.
 
+## Whether the agent's ear is open
+
+`GET /api/listening` is a server-sent-event stream: the current value on connect,
+then every change. One field, `{"listening": true}`, and it is true only while
+somebody is holding the attention key and the microphone it opened is being
+processed.
+
+A shell with a tray subscribes to this to draw its listening state. It is a
+subscription rather than a poll because a hold lasts a second or two, and it is
+read off the core rather than pushed at one app because a menu bar, a
+notification area and a browser face all ask the same question — see
+[`../arch/mechanisms.md`](../arch/mechanisms.md) Open 2.
+
+**Ask the core that can hear the key.** Only the engine on the machine the
+keyboard belongs to sees the press; a remote core will answer, truthfully, that
+nothing is holding *its* key.
+
 ## Handing something over
 
 Both clients are system share targets, and both use the same two doors the web face

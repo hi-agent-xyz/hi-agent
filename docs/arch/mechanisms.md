@@ -6,16 +6,22 @@ Let the core reach an OS touch it does not hold — on whichever machine the per
 actually at — without the core learning a platform API, and without inventing a second
 protocol beside the one an app already speaks.
 
-[`foundation.md`](foundation.md) already splits every OS capability: the raw touch is
-**mechanism** and belongs to whoever holds the OS session, the cross-platform judgment is
-**policy** and belongs to the core. [`topology.md`](topology.md#app) already assigns the
-mechanisms to the app. What has never existed is the call that crosses between them.
+The split is already decided, in [`../../CLAUDE.md`](../../CLAUDE.md) § *Mechanism vs
+policy*: the raw touch is **mechanism** and belongs to whoever holds the OS session, the
+cross-platform judgment is **policy** and belongs to the core.
+[`topology.md`](topology.md#app) already assigns the mechanisms to the app. What has never
+existed is the call that crosses between them.
 
 **This document used to be about eyes and hands, and it is not any more.** Screen capture,
 input synthesis, the accessibility tree and the frontmost-app read were the whole reason to
 want core-originated calls; all four are deleted, and § *Computer use does not cross this
-seam* is why. What is left needing initiative is small and dull — the tray, and the hotkey
-edges — and the seam is kept for it and for Phase 2, not for perception.
+seam* is why. What is left needing initiative is small and dull — raising a window, a line
+of tray text, a handed screenshot — and the seam is kept for it and for Phase 2, not for
+perception. Smaller still than it reads: two things once counted here turned out not to
+need it at all. Whether the ear is open is *state several surfaces read*, so it is
+`GET /api/listening` (Open 2). And the key edges only cross when the tap is the shell's,
+which is a question rather than a given on an OS that gates the tap behind nothing
+(Open 4).
 
 ## Decisions
 
@@ -27,6 +33,7 @@ edges — and the seam is kept for it and for Phase 2, not for perception.
 | **Audio is the only thing that streams, and it already does** | `WS /api/in/audio/stream` exists and the browser mic uses it today. A shell streaming PCM is that endpoint with a different client, not a new design |
 | **Pixels ride binary frames** | A PNG is bytes. Base64 inside a JSON frame costs a third again and a copy, on the one payload big enough for either to matter |
 | **Computer use does not cross this seam — it does not exist in the core at all** | The rows this table was built for are gone. Driving a machine is a note over that machine's own tools, like `browser` and `phone`; the test that settled it is that a mechanism here must be rewritten for X11, Wayland, Windows and Android, while the judgment that reads a screen and picks a target is the same everywhere. Full reasoning below |
+| **The mic moves to the shell only where a per-app grant makes it move** | `CLAUDE.md` § *Permission model* tips mic capture out of the core to keep it free of TCC. That reasoning is macOS's, and it is the whole of the reasoning — cpal is one portable dependency with no per-OS branch in it, the same shape as ffmpeg and ONNX Runtime, which the core links without anyone calling it impure. Where the OS has no per-app microphone grant to hold, nothing tips, and the core opens the mic itself |
 | **What an app can do is what it declared when it dialed** | `available()` is a fact about who is attached, not a compile-time `cfg` — and one that changes while running, when a laptop sleeps |
 | **The hop costs nothing worth designing around** | Measured, below. The mechanism is thousands of times more expensive than the call that asks for it, so the boundary is never the thing to optimize |
 
@@ -64,15 +71,26 @@ because the direction is what Phase 2 needs and because the next mechanism that 
 should not have to re-derive the wire. What it must not become is a general perceive/act
 surface re-entering by the back door: see § *Computer use does not cross this seam*.
 
-**Core → app — state, no reply:** the tray's `flash`, `set_listening`, `set_text`,
-`open_chat`. These are pushes, not questions; nothing waits on them and a dropped one is
-survivable.
+**Core → app — state, no reply:** the tray's `flash` and `set_text`, and `open_chat`.
+These are pushes, not questions; nothing waits on them and a dropped one is survivable.
 
-**App → core — events, no reply:** the attention gesture's key edges. The *tap* is
-mechanism and moves to the shell; the machine that tells a double-tap from a press-and-hold
-is policy and stays in the core, so the edges have to arrive as events. This is why the
-connection carries both directions rather than the app simply POSTing: an edge is not one
-of the five inbound channels and has no business inventing a sixth.
+`set_listening` was on that list and is **not a push at all** — see Open 2, now answered.
+Whether the ear is open is a fact several things draw (a menu bar, a notification area, a
+phone, a browser face), so it is state on the core that anyone may read:
+`GET /api/listening`. The general form is worth keeping: **a fact more than one surface
+renders does not belong in a call addressed to one of them.** A push that only ever had one
+possible recipient — raising *this* app's window — is the shape that stays here.
+
+**App → core — events, no reply:** the attention gesture's key edges, *where the tap is
+the shell's*. The machine that tells a double-tap from a press-and-hold is policy and stays
+in the core either way, so when the tap is across the wire the edges have to arrive as
+events. This is why the connection carries both directions rather than the app simply
+POSTing: an edge is not one of the five inbound channels and has no business inventing a
+sixth.
+
+Whether the tap is the shell's on every platform is Open 4 — on an OS that gates the tap
+behind a per-app grant it plainly is, and on one that gates nothing the question is open and
+the code currently answers it the other way.
 
 **App → core — perception, over the endpoints that already exist and are unchanged:** mic
 PCM on `WS /api/in/audio/stream`, camera on `WS /api/in/vision/stream`, a handed screenshot
@@ -224,10 +242,13 @@ resolves; nothing about them needs the app's hands.
    (This entry previously claimed *"look at my screen"* was ambiguous. It is not — see
    *"Come and see this" is not a mechanism call* above.)
 
-2. **Whether tray state belongs on this connection at all.** `set_listening` and `set_text`
-   are push-shaped: the app wants the current value, including the value from before it
-   attached. That is a subscription, and modelling it as a fire-and-forget call gives an app
-   that reconnects a stale tray until the next change.
+2. ~~**Whether tray state belongs on this connection at all.**~~ **Answered: no.** The
+   objection was right and it generalises — an app wants the current value, including the
+   value from before it attached, and a fire-and-forget call leaves a reconnecting app with
+   a stale tray until the next change. So the ear is state on the core, read at
+   `GET /api/listening`, and every surface that draws it reads the same thing. What stays on
+   this connection is the pushes with exactly one possible recipient: `flash`, `set_text`,
+   and raising a window.
 
 3. **Where the attention gesture's discrimination lives.** The key tap is mechanism and the
    double-tap-versus-hold machine is policy, which puts the two on opposite sides of the
@@ -235,6 +256,26 @@ resolves; nothing about them needs the app's hands.
    means timing it from arrival stamps rather than from the events themselves. Latency is
    not the problem (it is microseconds, above); a shell that is briefly busy and delivers
    two edges late but adjacent is, because that reads as a double-tap.
+
+4. **Whether a mechanism with no grant behind it still belongs in the shell.** The rule in
+   `foundation.md` puts every OS touch in the shell, and its stated reason is that the shell
+   is "the one holding the session + grants". A global key tap on macOS needs Input
+   Monitoring, so the reason bites. On Windows a low-level keyboard hook needs nothing: any
+   process in the interactive session may install one, and the engine is in that session.
+
+   Two answers, and neither is obviously wrong. **Shell anyway**, because the engine is meant
+   to link no platform GUI API and `SetWindowsHookExW` is one, because a rule that holds
+   everywhere is worth more than a rule with a carve-out, and because the shell already has a
+   message pump while the engine has to start a thread for one. **Engine**, because the rule's
+   own reason does not apply, because the round trip adds a hop to the one path where two
+   edges arriving adjacent get misread as a double-tap (Open 3), and because a tap in the
+   engine is testable on a machine with no shell.
+
+   **The code answers "engine" today, and that is a named loan, not a settled answer**:
+   `src/foundation/vendors/windows_hotkey.rs` is Win32 inside the engine because no Windows
+   shell dials this connection yet, and moving it is a file to delete and a `hello` line to
+   extend. The microphone beside it is *not* a loan — see the Decisions row above, which
+   turns on a per-app grant existing rather than on who dialed.
 
 ## See also
 

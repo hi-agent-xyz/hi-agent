@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""Derive the grey Windows tray icon from the colour one — no deps.
+"""Derive the Windows tray's other two icon states from the brand mark — no deps.
 
-The Windows shell shows the brand mark in colour while the agent is answering
-and drained of colour while it is not (`app/windows/HiAgentWindows/Ui/
-TrayIcon.cs`). That is one mark in two states, not two icons, so the grey one is
-*derived* rather than drawn: change the logo and re-run this, and the pair cannot
-end up showing different marks.
+The notification-area icon has three states, and `app/windows/HiAgentWindows/Ui/
+TrayIcon.cs` is where each is chosen:
+
+  HiAgent.ico            the mark, in colour       the agent is here
+  HiAgentGrey.ico        drained of colour         it is not answering
+  HiAgentListening.ico   knocked out of coral      it has its ear open
+
+**That is one mark in three states, not three icons.** Both derived files are
+computed from the first, so changing the logo and re-running this cannot leave
+the states showing different marks — which is the failure a hand-drawn set
+reaches about a year in, when nobody remembers there were three.
+
+Neither derivation invents artwork. Grey is the mark desaturated and lifted;
+listening is the *same silhouette* knocked out of the brand coral — a filled tile
+where the other two are white. That is the one difference that survives 16px,
+where a badge or an outline does not, and it is the shape a pressed toggle has
+everywhere else on the platform.
 
 An .ico built by `make-ico.py` is a directory header followed by verbatim PNGs,
-so this reads those back out, desaturates each, and re-packs — every size and
+so this reads those back out, transforms each, and re-packs — every size and
 the alpha the rounded corners need, preserved by construction.
 
-Usage: make-grey-ico.py [<in.ico> [<out.ico>]]
-Defaults to the Windows shell's pair.
+Usage: make-tray-icos.py [<in.ico>]
+Defaults to the Windows shell's mark, writing both states beside it.
 """
 import struct
 import sys
@@ -25,6 +37,16 @@ import zlib
 DESATURATE = 1.0
 LIFT_TO = 150
 LIFT = 0.35
+
+# The coral the "h" is drawn in, read back off the mark rather than typed from a
+# brand doc — so a re-coloured logo carries its own new tile with it.
+CORAL = (253, 96, 94)
+
+# Saturation at which a pixel counts as fully "glyph" for the knockout. The mark's
+# two inks sit at 0.63 and 0.78 by this measure; normalising at 0.6 makes both come
+# out solid white rather than one pink and one nearly so, while anti-aliased edges
+# below it still ramp smoothly.
+GLYPH_AT = 0.6
 
 CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}  # PNG colour type -> samples per pixel
 
@@ -144,12 +166,25 @@ def desaturate(rgba: bytearray) -> bytearray:
     return out
 
 
-def main() -> None:
-    src = sys.argv[1] if len(sys.argv) > 1 else "app/windows/HiAgentWindows/Assets/HiAgent.ico"
-    dst = sys.argv[2] if len(sys.argv) > 2 else "app/windows/HiAgentWindows/Assets/HiAgentGrey.ico"
+def knockout(rgba: bytearray) -> bytearray:
+    """The mark's silhouette in white on a filled coral tile.
 
-    with open(src, "rb") as f:
-        ico = f.read()
+    Coverage is how far a pixel is from white, so it reads the glyph without
+    needing to know which ink drew it — the "h" and the "i" are different colours
+    and both come out solid. Alpha is untouched for the same reason as above: the
+    rounded corners are the silhouette, and this state must be the same shape.
+    """
+    out = bytearray(rgba)
+    for i in range(len(rgba) // 4):
+        r, g, b = rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]
+        coverage = min(1.0, (1.0 - min(r, g, b) / 255.0) / GLYPH_AT)
+        for c, background in enumerate(CORAL):
+            out[i * 4 + c] = int(background + (255 - background) * coverage)
+    return out
+
+
+def derive(ico: bytes, transform, src: str) -> bytes:
+    """Re-pack one .ico with `transform` applied to every size it carries."""
     reserved, kind, count = struct.unpack("<HHH", ico[:6])
     if reserved or kind != 1 or count == 0:
         sys.exit(f"{src}: not an icon file")
@@ -162,7 +197,7 @@ def main() -> None:
         if blob[:8] != b"\x89PNG\r\n\x1a\n":
             sys.exit(f"{src}: entry {i} is a BMP; only the PNG form make-ico.py writes is handled")
         width, height, rgba, colour = read_png(blob)
-        entries.append((w, h, palette, planes, bpp, write_png(width, height, desaturate(rgba), colour)))
+        entries.append((w, h, palette, planes, bpp, write_png(width, height, transform(rgba), colour)))
 
     header = struct.pack("<HHH", 0, 1, len(entries))
     offset = 6 + 16 * len(entries)
@@ -173,10 +208,25 @@ def main() -> None:
         )
         blobs += blob
         offset += len(blob)
+    return header + directory + blobs
 
-    with open(dst, "wb") as f:
-        f.write(header + directory + blobs)
-    print(f"wrote {dst}: {len(entries)} sizes {[w or 256 for w, *_ in entries]}")
+
+# Each derived state, and the file it is written to beside the mark.
+STATES = (("Grey", desaturate), ("Listening", knockout))
+
+
+def main() -> None:
+    src = sys.argv[1] if len(sys.argv) > 1 else "app/windows/HiAgentWindows/Assets/HiAgent.ico"
+    stem = src[: -len(".ico")] if src.endswith(".ico") else src
+
+    with open(src, "rb") as f:
+        ico = f.read()
+
+    for suffix, transform in STATES:
+        dst = f"{stem}{suffix}.ico"
+        with open(dst, "wb") as f:
+            f.write(derive(ico, transform, src))
+        print(f"wrote {dst}")
 
 
 if __name__ == "__main__":

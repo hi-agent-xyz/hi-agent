@@ -1,5 +1,8 @@
-//! macOS microphone capture vendor (cpal) — the OS-side half of
-//! [`crate::body::capabilities::audio_capture`].
+//! Microphone capture vendor (cpal) — the OS-side half of
+//! [`crate::body::capabilities::audio_capture`], and the one vendor here that is named
+//! for a library rather than an operating system, because that is what it is: cpal is
+//! CoreAudio on macOS and WASAPI on Windows behind one call, and this file has no
+//! per-OS branch in it.
 //!
 //! Opens the default input device and yields raw **16 kHz mono signed 16-bit
 //! little-endian PCM** — the exact format the audio pipeline expects, so the frames
@@ -10,8 +13,15 @@
 //! cpal's `Stream` is `!Send` and must live where it was built, so it stays on a
 //! dedicated capture thread that parks until the [`Capture`] handle is dropped; that
 //! drop stops the mic and ends the frame channel, letting a downstream ingest
-//! finalize. Capturing needs the **Microphone** TCC grant; without it stream setup
-//! errors (surfaced from [`start`]) or simply yields silence.
+//! finalize.
+//!
+//! **What a denied microphone looks like differs, and neither case is fatal.** macOS
+//! gates it per app through TCC: without the grant, stream setup errors (surfaced from
+//! [`start`]) or yields silence. Windows has no per-app grant to hold — the privacy
+//! setting is one system-wide switch the person owns — so a denial arrives as a failed
+//! or silent capture rather than as something to check for first. That asymmetry is why
+//! the engine may open the mic itself on Windows while macOS keeps
+//! [that question open](../../../docs/arch/mechanisms.md).
 
 use anyhow::Context;
 use bytes::Bytes;

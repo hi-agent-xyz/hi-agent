@@ -63,9 +63,20 @@ separate grants, so ask for both at once rather than discovering the second one 
 
 There are also signed helpers that expose a whole desktop — tree, capture and input — over
 MCP, some of which can drive an app *in the background* without taking the pointer. One of
-those would remove the boundary in the section above rather than asking you to be careful
-around it. You have no way to reach one today: nothing in this agent speaks MCP outward.
-Say so plainly if a job wants one, rather than reaching for a workaround that looks like it.
+those removes the boundary in the section above rather than asking you to be careful around
+it, so on a machine that has one it is worth the install before any of the above.
+
+**Reaching one is `equipping-a-tool.md` § 4b**: the server is registered by writing a skill
+whose front matter carries its `mcp:` object, and it is attached to an errand by the rung
+that dispatches it naming the server. So it is not something you switch on mid-job — a
+thread's tools are fixed when it opens. Register it, say in your report that it is
+registered and untested and what you would have run first, and the errand after this one is
+where the first real call happens.
+
+One property that matters here more than anywhere else: **the server is attached for the
+life of the errand, so a tree read and the click that uses its element ids are the same
+session.** That is what makes clicking by id work at all. Those ids die with the errand —
+don't carry one across into a later job, and don't write one down.
 
 ## Check your own work
 

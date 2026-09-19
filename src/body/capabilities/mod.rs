@@ -21,8 +21,12 @@
 //! toggle and nothing for the operator to set.
 //!
 //! [`audio_capture`], [`hotkey`] and [`tray`] are the exceptions to the env-config
-//! pattern: their vendor is the operating system, selected at compile time, so they
-//! have no `init` and do not appear in the composition root. [`view_render`] is the
+//! pattern: their vendor is selected at compile time rather than configured, so they
+//! have no `init` and do not appear in the composition root. For [`hotkey`] and
+//! [`tray`] that vendor is the operating system; for [`audio_capture`] it is cpal,
+//! which is CoreAudio and WASAPI behind one call — so "which platforms have a mic"
+//! is a question about which ones we build it for, not about how many
+//! implementations there are. [`view_render`] is the
 //! same shape with a provisioned rather than compile-time vendor: its browser is
 //! resolved lazily on first render (system, else a pinned managed build), so it
 //! too has no `init` and nothing for the operator to set.

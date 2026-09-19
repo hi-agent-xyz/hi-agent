@@ -191,10 +191,25 @@ objc2-web-kit = { version = "0.3", features = [
 ] }
 block2 = "0.6"
 
-# Native microphone capture for the press-and-hold-⌘ attention gesture
-# (`crate::vendors::macos_audio_capture`): opens the default input device and yields
+# Windows desktop integration. Only the keyboard half so far
+# (`crate::vendors::windows_hotkey`): `WH_KEYBOARD_LL` is what sees both edges of the
+# right-Control attention key and distinguishes it from the left one, which
+# `RegisterHotKey` and `WM_KEYDOWN` respectively cannot do. windows-sys rather than
+# `windows` because this needs raw Win32 calls and no COM/WinRT projection.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Native microphone capture for the press-and-hold attention gesture
+# (`crate::vendors::cpal_audio_capture`): opens the default input device and yields
 # the 16 kHz mono 16-bit PCM the audio pipeline expects, so the gesture can listen
-# with no browser page open. Target-gated like the other desktop capabilities.
+# with no browser page open. cpal is CoreAudio here and WASAPI there behind one call,
+# so this is one dependency and one file for both — scoped to the two platforms that
+# have the gesture rather than pulled into the Docker image, which has no mic to open.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = "0.18"
 
 [dev-dependencies]

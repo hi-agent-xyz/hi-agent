@@ -65,15 +65,18 @@
 
   <ItemGroup>
     <!--
-      The mark, and the same mark with the colour taken out of it: the tray
-      shows the first while the agent answers and the second while it does not.
-      `scripts/make-grey-ico.py` derives the second from the first rather than
-      drawing it twice.
+      The mark and its two derived states: the tray shows the first while the
+      agent answers, the second while it does not, and the third while it has
+      its ear open. `scripts/make-tray-icos.py` derives both from the first
+      rather than drawing the mark three times.
     -->
     <Content Include="Assets\HiAgent.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\HiAgentGrey.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\HiAgentListening.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

@@ -2,12 +2,17 @@
 //! offers a small menu (open the web UI, quit). The visible affordance of the
 //! macOS desktop install shape.
 //!
-//! Like [`super::desktop_context`], [`super::hotkey`], [`super::input`], and
-//! [`super::screencast`], the vendor is the operating system, selected at compile
+//! Like [`super::hotkey`], the vendor is the operating system, selected at compile
 //! time ([`crate::foundation::vendors::macos_tray`]) — there is nothing for the operator to
-//! configure. Unlike those, this isn't a *sense*: it's an articulation/lifecycle
+//! configure. Unlike it, this isn't a *sense*: it's an articulation/lifecycle
 //! surface, so it has no place in a perception loop. It's driven once from the
 //! macOS entry point ([`crate::run_with_tray`]).
+//!
+//! **This is the macOS tray and only that.** Windows and Linux have trays too, but
+//! they belong to shells in other processes, which draw themselves from what they can
+//! read off the core — `GET /api/listening` for the state [`set_listening`] sets here.
+//! So every function below is a no-op off macOS on purpose, and the thing to add when
+//! a shell needs to be told something is a fact it can read, not a call added here.
 //!
 //! A status item is AppKit, which **must run on the process main thread** and own
 //! the AppKit event loop — so [`run`] blocks the caller for the process lifetime.
@@ -54,8 +59,10 @@ pub fn flash() {
 }
 
 /// Enter (`true`) / leave (`false`) the sustained "listening" tray state — the
-/// menu-bar icon holds at its full colour while the user holds ⌘ for the
-/// press-hold attention gesture ([`crate::body::gesture`]), then settles back.
+/// menu-bar icon holds at its full colour while the user holds the attention key
+/// ([`crate::body::gesture`]), then settles back. Note that it settles back *later*
+/// than the ear closes, because the icon holds while the reply is still being read
+/// beside it; `GET /api/listening` is the microphone's own clock.
 /// Best-effort: a no-op off macOS or before the status item is up.
 pub fn set_listening(on: bool) {
     #[cfg(target_os = "macos")]

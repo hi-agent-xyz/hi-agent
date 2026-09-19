@@ -140,14 +140,34 @@ macOS puts text beside the menu-bar icon when the engine will not come up —
 `⚠ needs setup`, `⚠ startup failed` ([`../../src/lib.rs`](../../src/lib.rs)). A
 notification-area icon has no text beside it, so the same fact arrives three
 ways: the tooltip (`Hi Agent — starting the agent…`), the first line of the menu,
-and the icon itself — the mark in colour while the agent answers, and drained of
-colour while it does not. Hovering is a choice; the colour is the part that is
-not.
+and the icon itself. Hovering is a choice; the colour is the part that is not.
 
-The grey mark is **derived from the colour one** by
-[`../../scripts/make-grey-ico.py`](../../scripts/make-grey-ico.py), at every size
-the icon carries, so changing the logo cannot leave the two states showing
-different marks.
+**Three states, the menu bar's three:** the mark in colour while the agent
+answers, drained of colour while it does not, and knocked out of coral while it
+has its ear open — somebody is holding the attention key, which on this platform
+is the right Ctrl. The third wins over the other two, because an agent that is
+hearing you is plainly there, and while you are holding a key the only question
+you have is whether it is listening.
+
+All three are **one mark**, the other two derived from the first by
+[`../../scripts/make-tray-icos.py`](../../scripts/make-tray-icos.py) at every size
+the icon carries, so changing the logo cannot leave the states showing different
+marks. Neither derivation draws anything: grey is the mark desaturated and
+lifted, listening is the same silhouette knocked out of the brand coral — a
+filled tile where the other two are white, which is the one difference that
+survives 16px, where a badge or an outline does not.
+
+**Where listening comes from is `GET /api/listening`**, held open by
+`Core/ListeningWatch.cs` against the engine *on this machine* — the key is on this
+keyboard and no remote agent can hear it. It is a subscription rather than a poll
+because a hold lasts a second or two, and it is a fact read off the core rather
+than a push at this app because a menu bar, a notification area and a browser face
+are all asking the same question
+([`../arch/mechanisms.md`](../arch/mechanisms.md) Open 2, now answered).
+
+Listening is the only state that is not also in the menu, and deliberately: a hold
+cannot be held while opening a menu, so a header for it would be a line nobody
+could ever see. It is in the icon and the tooltip.
 
 The sentence is the one the window would show, which is where it comes from:
 `AppModel.StageDetail` when the model has one — it is already written for a
@@ -189,18 +209,31 @@ host and port, and denied otherwise.
 
 ## What is deliberately not here
 
-**The mechanisms.** Screen capture, input synthesis, the accessibility tree,
-`desktop_context`, the global hotkey and the press-hold gesture are all absent,
-on purpose: they have nothing to talk back through until
-[`../arch/mechanisms.md`](../arch/mechanisms.md) is built. That is one connection
-— `WS /api/mechanisms`, dialed by the app — and when it exists this shell is the
-natural first client, because it already owns the process that would answer.
-Adding a Windows twin of each capability *before* the seam exists would mean
-building them where they cannot be reached.
+**The mechanisms.** Screen capture, input synthesis, the accessibility tree and
+`desktop_context` are absent from this shell because they are absent from the
+core: all four were deleted rather than re-homed, and driving a machine is now a
+note over the tools that machine already has
+([`../arch/mechanisms.md`](../arch/mechanisms.md) § *Computer use does not cross
+this seam*). So a Windows install has no hands, which is a normal state rather
+than a broken one.
 
-Until then a Windows install has no hands, which is a normal state rather than a
-broken one: `available()` becomes a fact about who is attached, and a core with
-no hands says it cannot see the screen right now.
+**The attention gesture is not on that list any more, and only two thirds of it
+works.** The key tap and the microphone are in the engine — `WH_KEYBOARD_LL` on
+the right Ctrl, cpal on WASAPI — so **press-and-hold listens on Windows today**,
+and the tray says so. What does not work is the other two gestures, because both
+end in something only this shell holds:
+
+| Gesture | On Windows | Waiting on |
+|---|---|---|
+| press-and-hold → listen | works | — |
+| single tap → open the chat | recognized, lands on nothing | raising a window is the shell's |
+| double tap → hand over a screenshot | recognized, logged, lands on nothing | a screen grab is the shell's |
+
+Both are one connection away — `WS /api/mechanisms`, dialed by the app — and when
+it exists this shell is the natural first client, because it already owns the
+process, the window and the window server. The key tap moving here with them is a
+question rather than a plan: it needs no grant on Windows, which is the whole
+reason the rule puts a mechanism in the shell (`mechanisms.md` Open 4).
 
 **Notifications, a start-at-login entry, and Authenticode signing.** None are
 built. Signing is the external gate — the Windows analog of the Developer ID
@@ -281,20 +314,33 @@ engine child is adopted and dies with its parent. `make exe` and `make
 installer` are verified to *build* on the Mac mini and have never been run on
 Windows either.
 
-**Settings and the tray's state, added 2026-09-18, have not met even that
-much** — they were written after run 3 and no run has happened since. Three
-things about them are worth knowing before the next one:
+**Settings, the tray's state, and the listening state added after them have not
+met even that much** — all were written after run 3 and no run has happened since.
+Four things about them are worth knowing before the next one:
 
 - `TaskbarIcon.IconSource` is now load-bearing rather than cosmetic: it is
   assigned on every state change, not once at startup. If that property turns
   out to be the wrong shape, what breaks is the state signal and not just the
   picture.
-- `ms-appx:///Assets/…` is resolved twice now, for two icons. It has never been
-  resolved once — the app is unpackaged (`WindowsPackageType=None`), where WinUI
-  maps those URIs to the install directory, and nothing has confirmed that.
+- `ms-appx:///Assets/…` is resolved three times now, for three icons. It has never
+  been resolved once — the app is unpackaged (`WindowsPackageType=None`), where
+  WinUI maps those URIs to the install directory, and nothing has confirmed that.
 - The Settings window's controls are filled from the engine's own snapshot, so
   the first real question it can answer is whether `GET /api/settings` reaches a
   Windows client at all — one call, before any of the writes matter.
+- `ListeningWatch` is the first thing here that holds a connection open rather
+  than making a request, and it keeps its own `HttpClient` to do it, because
+  `CoreClient.Http`'s 20-second timeout would abort the subscription on a clock.
+  Nothing has confirmed that `HttpClient` streams SSE the way this assumes, or
+  that `ReadLineAsync` sees a line before the buffer it is reading from fills.
+
+**The engine half is a different story and is verified further.** `make exe`
+cross-compiles and *links* a real `x86_64-pc-windows-msvc` binary on the Mac mini,
+and as of 2026-09-18 that binary contains the keyboard hook, cpal's WASAPI capture
+and `GET /api/listening`. So the Rust side is known to compile, link and typecheck
+its own Windows-only tests; what is unknown is everything that happens when it
+runs — whether the hook receives an edge, whether WASAPI opens the default input,
+and whether a person holding the right Ctrl is heard.
 
 ## See also
 

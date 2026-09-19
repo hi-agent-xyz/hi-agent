@@ -8,6 +8,8 @@
 
 pub mod campplus;
 pub mod chrome_headless;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub mod cpal_audio_capture;
 pub mod doubao_image_gen;
 pub mod doubao_video_gen;
 pub mod doubao_vision;
@@ -15,12 +17,7 @@ pub mod ffmpeg;
 pub mod ffmpeg_frame;
 pub mod insightface_face;
 #[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
-pub mod macos_audio_capture;
-#[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
 pub mod macos_hotkey;
-#[cfg(target_os = "macos")]
 #[cfg(target_os = "macos")]
 pub mod macos_popover;
 #[cfg(target_os = "macos")]
@@ -34,4 +31,6 @@ pub mod macos_window;
 pub mod openai_image_gen;
 pub mod volcengine_stt;
 pub mod volcengine_tts;
+#[cfg(target_os = "windows")]
+pub mod windows_hotkey;
 

@@ -154,6 +154,12 @@ android-tv-apk: check-version ## build the unsigned Android TV release APK for s
 # set by the OS itself, not by a shell), which is why the branch reads that rather
 # than shelling out to `uname` — under a Git Bash `make` the latter says MINGW64
 # and under a cmd-hosted one it says nothing at all.
+#
+# `--tests` on the cross branch, and it is not tidiness: Windows-only code carries
+# Windows-only tests (`vendors/windows_hotkey.rs`), and nothing on a Mac or a Linux
+# box can run them. Typechecking them costs ~20s and is the difference between a
+# test that is merely unrun and one that has silently stopped compiling. Running
+# them still needs a Windows host — see docs/platforms/windows.md § Verification.
 exe: check-version ## build the Windows engine .exe (native on Windows, cross-compiled elsewhere)
 	@test -d src/appearance/web/dist || (cd src/appearance/web && npm ci && npm run build)
 ifeq ($(OS),Windows_NT)
@@ -161,6 +167,8 @@ ifeq ($(OS),Windows_NT)
 else
 	@mkdir -p $(WIN_SHIM)
 	PATH="$(WIN_LLVM_BIN):$$PATH" llvm-lib /llvmlibempty "/out:$(WIN_SHIM)/c++.lib"
+	PATH="$(WIN_LLVM_BIN):$$PATH" RUSTFLAGS="-Lnative=$(WIN_SHIM)" XWIN_ACCEPT_LICENSE=1 \
+		cargo xwin check --release --target $(WIN_TARGET) --lib --tests
 	PATH="$(WIN_LLVM_BIN):$$PATH" RUSTFLAGS="-Lnative=$(WIN_SHIM)" XWIN_ACCEPT_LICENSE=1 \
 		cargo xwin build --release --target $(WIN_TARGET)
 endif

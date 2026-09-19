@@ -1,33 +1,41 @@
-//! Hotkey-gesture capability — recognize Command-key gestures from a stream of key
-//! events. Two gestures share the one key:
+//! Hotkey-gesture capability — recognize gestures on **the attention key** from a
+//! stream of key events. Three gestures share the one key:
+//! - a **single tap** opens the chat surface ([`SingleTap`]);
 //! - a **double-tap** ("come and see this") hands the agent a screenshot
 //!   ([`DoubleTap`]); and
 //! - a **press-and-hold** opens continuous attention — the agent listens for as long
-//!   as Command is held, then stops on release ([`Hold`]).
+//!   as the key is held, then stops on release ([`Hold`]).
 //!
-//! The pure recognizers live here so they are unit-testable off-macOS; the OS event
-//! tap that feeds them real key presses is the vendor
-//! ([`crate::foundation::vendors::macos_hotkey`]), selected at compile time like the other
-//! desktop capabilities ([`super::input`], [`super::screencast`]). The vendor only
-//! translates raw key events into [`Edge`]s; the recognizers — and the hold's
-//! threshold timer — are driven from [`crate::body::gesture`] against one monotonic clock.
-//! Observing global key events needs the **Accessibility / Input Monitoring** grant;
-//! without it the tap can't be created and the gestures are simply inert — never fatal.
+//! **Which key that is, is the vendor's business, not this module's.** It is the
+//! right Command on macOS and the right Control on Windows, chosen on the same
+//! ground each time: the *other* one of that pair is the everyday shortcut modifier
+//! there, so a hold detector bound to it would fire on ordinary typing. [`key_label`]
+//! is the one place the name leaks out, for the sentence the person reads.
+//!
+//! The pure recognizers live here so they are unit-testable on any host; the OS tap
+//! that feeds them real key presses is the vendor, selected at compile time
+//! ([`crate::foundation::vendors::macos_hotkey`],
+//! [`crate::foundation::vendors::windows_hotkey`]). A vendor only translates raw key
+//! events into [`Edge`]s; the recognizers — and the hold's threshold timer — are
+//! driven from [`crate::body::gesture`] against one monotonic clock. Observing global
+//! key events needs the **Accessibility / Input Monitoring** grant on macOS (Windows
+//! asks for nothing); without it the tap can't be created and the gestures are simply
+//! inert — never fatal.
 
 use std::time::Duration;
 
-/// Default maximum gap between the two Command presses to count as a double-tap.
+/// Default maximum gap between the two presses to count as a double-tap.
 /// Tuned like a double-click: snappy enough not to fire on two deliberate, spaced
 /// presses, loose enough for a natural double-tap.
 pub const DEFAULT_WINDOW: Duration = Duration::from_millis(400);
 
-/// Recognizes a double-tap of Command from a sequence of Command *presses* (rising
-/// edges) and other-key events. Pure and time-injected (milliseconds on a
+/// Recognizes a double-tap of the attention key from a sequence of its *presses*
+/// (rising edges) and other-key events. Pure and time-injected (milliseconds on a
 /// monotonic clock) so it needs neither a real keyboard nor a real clock to test.
 #[derive(Debug)]
 pub struct DoubleTap {
     window_ms: u64,
-    /// When the first, still-pairable Command press happened, if one is pending.
+    /// When the first, still-pairable press happened, if one is pending.
     pending: Option<u64>,
 }
 
@@ -36,10 +44,10 @@ impl DoubleTap {
         Self { window_ms: window.as_millis() as u64, pending: None }
     }
 
-    /// Feed a Command-key **press** (a rising edge) at `t_ms`. Returns `true` when
-    /// it completes a double-tap — a prior press within the window — and arms for
+    /// Feed a **press** of the attention key (a rising edge) at `t_ms`. Returns `true`
+    /// when it completes a double-tap — a prior press within the window — and arms for
     /// the next one. A lone press (or one too late) becomes the new pending press.
-    pub fn on_command_down(&mut self, t_ms: u64) -> bool {
+    pub fn on_down(&mut self, t_ms: u64) -> bool {
         match self.pending.take() {
             Some(prev) if t_ms.saturating_sub(prev) <= self.window_ms => true,
             _ => {
@@ -50,37 +58,39 @@ impl DoubleTap {
     }
 
     /// Feed any other key press. It breaks an in-progress double-tap, so chords
-    /// like ⌘C — Command held, then C — never masquerade as the gesture.
+    /// like ⌘C or Ctrl+C — the key held, then a letter — never masquerade as the
+    /// gesture.
     pub fn on_other_input(&mut self) {
         self.pending = None;
     }
 }
 
-/// Default time Command must be held before a press becomes a *hold* (continuous
+/// Default time the key must be held before a press becomes a *hold* (continuous
 /// attention) rather than a tap. Longer than [`DEFAULT_WINDOW`] so a deliberate hold
 /// is unambiguous and a normal tap or double-tap never trips it.
 pub const DEFAULT_HOLD: Duration = Duration::from_millis(450);
 
-/// Default time Command must be held before the mic *opens* (and begins buffering a
+/// Default time the key must be held before the mic *opens* (and begins buffering a
 /// pre-roll) — the earlier of the hold's two thresholds. Short so almost no leading
-/// speech is lost once a hold is confirmed, yet long enough that ⌘-key shortcuts and
+/// speech is lost once a hold is confirmed, yet long enough that modifier chords and
 /// quick taps (which complete well under this) never open the mic. The buffered audio
 /// is only *processed* once the press also crosses [`DEFAULT_HOLD`]; release before
 /// then discards it, so opening the mic here is not yet a commitment to listen.
 pub const DEFAULT_CAPTURE: Duration = Duration::from_millis(150);
 
-/// One raw Command-key edge from the OS tap. The vendor emits these (it does no
-/// timing); [`crate::body::gesture`] stamps each on arrival against its own clock and
-/// drives the recognizers — so host and recognizer share one clock and the vendor
+/// One raw edge of the attention key from the OS tap. The vendor emits these (it does
+/// no timing); [`crate::body::gesture`] stamps each on arrival against its own clock
+/// and drives the recognizers — so host and recognizer share one clock and the vendor
 /// stays a dumb translator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
-    /// Command went down (a rising modifier edge).
-    CmdDown,
-    /// Command came up (a falling modifier edge).
-    CmdUp,
+    /// The attention key went down (a rising modifier edge). A vendor emits this on
+    /// the *rising* edge only — a held modifier that auto-repeats is still one press.
+    Down,
+    /// The attention key came up (a falling modifier edge).
+    Up,
     /// Some other key went down — breaks a pending tap and disarms a pending hold,
-    /// so chords like ⌘C are neither a glance nor an attention hold.
+    /// so chords like ⌘C or Ctrl+C are neither a glance nor an attention hold.
     Other,
 }
 
@@ -89,23 +99,23 @@ pub enum Edge {
 pub enum GestureEvent {
     /// Double-tap completed — hand over a screenshot.
     Glance,
-    /// Command has been held past the short capture threshold — open the mic and
+    /// The key has been held past the short capture threshold — open the mic and
     /// start buffering a pre-roll. Not yet a commitment to listen: processing only
     /// begins at [`HoldStart`](GestureEvent::HoldStart), and a release before then
     /// discards the pre-roll.
     CaptureStart,
-    /// Command has been held past the full threshold — commit: promote the buffered
+    /// The key has been held past the full threshold — commit: promote the buffered
     /// pre-roll to live processing (continuous attention).
     HoldStart,
-    /// The held Command was released — close continuous attention.
+    /// The held key was released — close continuous attention.
     HoldEnd,
 }
 
-/// Recognizes a **press-and-hold** of Command in two staged thresholds: a press still
-/// down past the short capture threshold is a `CaptureStart` (open the mic, buffer a
-/// pre-roll); the same press still down past the full hold threshold is a `HoldStart`
-/// (commit to processing); and its release is a `HoldEnd`. Pure and time-injected — it
-/// can't see the clock itself, so the host calls [`Hold::poll`] (using
+/// Recognizes a **press-and-hold** of the attention key in two staged thresholds: a
+/// press still down past the short capture threshold is a `CaptureStart` (open the mic,
+/// buffer a pre-roll); the same press still down past the full hold threshold is a
+/// `HoldStart` (commit to processing); and its release is a `HoldEnd`. Pure and
+/// time-injected — it can't see the clock itself, so the host calls [`Hold::poll`] (using
 /// [`Hold::next_deadline`] to know when) to let a still-down press cross each
 /// threshold. Runs alongside [`DoubleTap`]; the host disarms one when the other fires
 /// (a completed double-tap, or another key) via [`Hold::cancel`].
@@ -136,15 +146,15 @@ impl Hold {
         }
     }
 
-    /// Command went down at `t_ms`: a fresh press, armed to cross its thresholds.
-    pub fn on_command_down(&mut self, t_ms: u64) {
+    /// The key went down at `t_ms`: a fresh press, armed to cross its thresholds.
+    pub fn on_down(&mut self, t_ms: u64) {
         self.press = Some(Press { down_at: t_ms, armed: true, captured: false, holding: false });
     }
 
-    /// Command came up. Returns `HoldEnd` only if this press had become a hold;
+    /// The key came up. Returns `HoldEnd` only if this press had become a hold;
     /// a quick tap, or one released after capture but before the hold threshold,
     /// returns `None` (the host discards any buffered pre-roll).
-    pub fn on_command_up(&mut self, _t_ms: u64) -> Option<GestureEvent> {
+    pub fn on_up(&mut self, _t_ms: u64) -> Option<GestureEvent> {
         match self.press.take() {
             Some(p) if p.holding => Some(GestureEvent::HoldEnd),
             _ => None,
@@ -263,20 +273,46 @@ impl SingleTap {
 /// Compile-time, not a permission check — a macOS build still needs the
 /// Accessibility / Input Monitoring grant for the tap to actually receive events.
 pub fn available() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(target_os = "macos", target_os = "windows"))
 }
 
-/// Listen for raw Command-key edges, calling `on_edge` for each. **Blocks** for the
-/// lifetime of the process (it drives an OS run loop), so call it from a dedicated
-/// thread. Recognition (double-tap, hold) is the caller's — it stamps edges against
-/// its own clock and drives the recognizers. Errors if the platform has no impl or
-/// the OS won't grant the event tap — the caller logs and leaves the gestures inert.
+/// What to call the attention key when telling a person — or the agent — which key is
+/// being held. The only place the key's identity leaves the vendor: everything else
+/// here is about edges and thresholds and does not care which key produced them.
+pub fn key_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "right ⌘"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "right Ctrl"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // No vendor, so nothing ever produces an edge and no sentence naming this is
+        // ever written. Answering at all keeps the signature free of a `cfg` for
+        // callers that only format it.
+        "the attention key"
+    }
+}
+
+/// Listen for raw attention-key edges, calling `on_edge` for each. **Blocks** for the
+/// lifetime of the process (it drives an OS run loop or message pump), so call it from
+/// a dedicated thread. Recognition (tap, double-tap, hold) is the caller's — it stamps
+/// edges against its own clock and drives the recognizers. Errors if the platform has
+/// no impl or the OS won't grant the tap — the caller logs and leaves the gestures
+/// inert.
 pub fn listen(on_edge: impl Fn(Edge) + Send + 'static) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
         crate::foundation::vendors::macos_hotkey::run(on_edge)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        crate::foundation::vendors::windows_hotkey::run(on_edge)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = on_edge;
         anyhow::bail!("hotkey gesture is not supported on this platform")
@@ -294,36 +330,36 @@ mod tests {
     #[test]
     fn two_presses_within_window_fire() {
         let mut d = det();
-        assert!(!d.on_command_down(1_000), "first press only arms");
-        assert!(d.on_command_down(1_300), "second within 400ms fires");
+        assert!(!d.on_down(1_000), "first press only arms");
+        assert!(d.on_down(1_300), "second within 400ms fires");
     }
 
     #[test]
     fn second_press_too_late_does_not_fire_but_re_arms() {
         let mut d = det();
-        assert!(!d.on_command_down(1_000));
-        assert!(!d.on_command_down(1_500), "500ms > window: no fire, becomes new pending");
-        assert!(d.on_command_down(1_700), "now a pair within window fires");
+        assert!(!d.on_down(1_000));
+        assert!(!d.on_down(1_500), "500ms > window: no fire, becomes new pending");
+        assert!(d.on_down(1_700), "now a pair within window fires");
     }
 
     #[test]
     fn other_key_between_presses_cancels() {
         let mut d = det();
-        assert!(!d.on_command_down(1_000));
+        assert!(!d.on_down(1_000));
         d.on_other_input(); // e.g. the C in ⌘C
-        assert!(!d.on_command_down(1_200), "the chord broke the pending tap");
+        assert!(!d.on_down(1_200), "the chord broke the pending tap");
     }
 
     #[test]
     fn boundary_gap_equal_to_window_fires() {
         let mut d = det();
-        assert!(!d.on_command_down(1_000));
-        assert!(d.on_command_down(1_400), "exactly at the window is inclusive");
+        assert!(!d.on_down(1_000));
+        assert!(d.on_down(1_400), "exactly at the window is inclusive");
     }
 
     #[test]
     fn available_matches_platform() {
-        assert_eq!(available(), cfg!(target_os = "macos"));
+        assert_eq!(available(), cfg!(any(target_os = "macos", target_os = "windows")));
     }
 
     fn hold() -> Hold {
@@ -333,7 +369,7 @@ mod tests {
     #[test]
     fn press_crosses_capture_then_hold_then_release() {
         let mut h = hold();
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         assert_eq!(h.poll(1_100), None, "before the capture threshold");
         assert_eq!(
             h.poll(1_150),
@@ -347,15 +383,15 @@ mod tests {
             "at the hold threshold it commits"
         );
         assert_eq!(h.poll(1_600), None, "both events are one-shot");
-        assert_eq!(h.on_command_up(2_000), Some(GestureEvent::HoldEnd));
+        assert_eq!(h.on_up(2_000), Some(GestureEvent::HoldEnd));
     }
 
     #[test]
     fn quick_tap_opens_nothing_and_is_not_a_hold() {
         let mut h = hold();
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         assert_eq!(
-            h.on_command_up(1_100),
+            h.on_up(1_100),
             None,
             "released before the capture threshold: no hold, mic never opened"
         );
@@ -365,10 +401,10 @@ mod tests {
     #[test]
     fn released_after_capture_before_hold_is_not_a_hold() {
         let mut h = hold();
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         assert_eq!(h.poll(1_150), Some(GestureEvent::CaptureStart), "mic opened");
         assert_eq!(
-            h.on_command_up(1_300),
+            h.on_up(1_300),
             None,
             "released after capture but before the hold threshold: no HoldEnd, pre-roll discarded"
         );
@@ -378,38 +414,38 @@ mod tests {
     #[test]
     fn cancel_prevents_capture_and_hold() {
         let mut h = hold();
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         h.cancel(); // e.g. a chord, or this down completed a double-tap
         assert_eq!(h.poll(1_150), None, "canceled: the mic never opens");
         assert_eq!(h.poll(2_000), None);
-        assert_eq!(h.on_command_up(2_100), None);
+        assert_eq!(h.on_up(2_100), None);
     }
 
     #[test]
     fn cancel_after_capture_before_hold_prevents_hold() {
         let mut h = hold();
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         assert_eq!(h.poll(1_150), Some(GestureEvent::CaptureStart));
         h.cancel(); // e.g. a chord during the pre-roll — discard, never commit
         assert_eq!(h.poll(1_500), None, "canceled mid-pre-roll: never holds");
-        assert_eq!(h.on_command_up(2_000), None);
+        assert_eq!(h.on_up(2_000), None);
     }
 
     #[test]
     fn cancel_after_holding_still_ends_on_release() {
         let mut h = hold();
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         assert_eq!(h.poll(1_150), Some(GestureEvent::CaptureStart));
         assert_eq!(h.poll(1_500), Some(GestureEvent::HoldStart));
         h.cancel(); // a key pressed *during* attention must not drop it
-        assert_eq!(h.on_command_up(2_000), Some(GestureEvent::HoldEnd));
+        assert_eq!(h.on_up(2_000), Some(GestureEvent::HoldEnd));
     }
 
     #[test]
     fn next_deadline_tracks_capture_then_hold() {
         let mut h = hold();
         assert_eq!(h.next_deadline(), None, "nothing pending");
-        h.on_command_down(1_000);
+        h.on_down(1_000);
         assert_eq!(h.next_deadline(), Some(1_150), "the capture threshold comes first");
         h.poll(1_150);
         assert_eq!(h.next_deadline(), Some(1_450), "then the hold threshold");

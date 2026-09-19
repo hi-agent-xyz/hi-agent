@@ -440,17 +440,20 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // [`body::reaction::reopen_interrupted`].
     tokio::spawn(body::reaction::reopen_interrupted(tool_registry));
 
-    // Arm the "come and see this" gesture: a double-tap of Command hands the agent
-    // a screenshot of the current screen as a file (macOS only, best-effort — needs
-    // the Accessibility + Screen Recording grants, else it stays inert). It joins
-    // the conversation like any other signal — the same one the browser is talking
-    // in, which is the whole point: showing the agent your screen and then asking
-    // about it out loud is one exchange.
+    // Arm the attention gestures on the one key the platform's vendor binds — right ⌘
+    // on macOS, right Ctrl on Windows. A press-and-hold opens the mic with no page
+    // open; a double-tap hands over a screenshot where there is one to grab. Either
+    // way it joins the conversation like any other signal — the same one the browser
+    // is talking in, which is the whole point: showing the agent your screen and then
+    // asking about it out loud is one exchange.
     //
-    // Off unless the user has opted in (the tray's "Attention gestures" item): the
-    // global key event tap forces the macOS "Input Monitoring" grant the moment it's
-    // created, and we don't want that prompt out of the box. Enabling the setting and
-    // restarting arms it — and that's when the grant is requested.
+    // Off unless the user has opted in (Settings → "Attention gestures"). The reason
+    // is macOS's: the global key event tap forces the "Input Monitoring" grant the
+    // moment it is created, and we don't want that prompt out of the box. Windows
+    // asks for nothing and so would not need the gate — but one setting that means
+    // the same thing everywhere beats a per-OS default nobody can predict, and a
+    // keyboard hook is worth opting into on its own merits. Enabling it and
+    // restarting arms it; on macOS that is when the grant is requested.
     if foundation::config::flag_on(foundation::config::tunables::get(
         foundation::config::KEY_GESTURES,
     )) {

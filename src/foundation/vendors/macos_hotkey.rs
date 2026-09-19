@@ -1,6 +1,8 @@
 //! macOS hotkey vendor — a listen-only Quartz event tap that turns raw **right**-Command
-//! events into [`Edge`]s and drives a `CFRunLoop`. The OS trigger behind the
-//! Command-key gestures ([`crate::body::gesture`]).
+//! events into [`Edge`]s and drives a `CFRunLoop`. The OS trigger behind the attention
+//! gestures on this platform ([`crate::body::gesture`]); its twin is
+//! [`crate::foundation::vendors::windows_hotkey`], which binds the right Control for the
+//! same reason and reads it through a low-level keyboard hook.
 //!
 //! A `CGEventTap` observes `FlagsChanged` (modifier transitions, to see the right
 //! Command's press *and* release edges) and `KeyDown` (an `Other` edge, to break a
@@ -69,9 +71,9 @@ pub fn run(on_edge: impl Fn(Edge) + 'static) -> anyhow::Result<()> {
                     let was = cmd_held.replace(cmd_now);
                     // Emit the right-Command edge; other modifiers changing produce neither.
                     if cmd_now && !was {
-                        on_edge(Edge::CmdDown);
+                        on_edge(Edge::Down);
                     } else if !cmd_now && was {
-                        on_edge(Edge::CmdUp);
+                        on_edge(Edge::Up);
                     }
                 }
                 CGEventType::KeyDown => on_edge(Edge::Other),

@@ -26,6 +26,14 @@ global hotkey tap, audio capture, the ⌘-glance screen grab, and the press-hold
 machine — `src/foundation/vendors/macos_*.rs` and `src/body/gesture.rs`. AppKit owns the
 main thread through `run_with_tray` (`src/lib.rs`), with the server on a background thread.
 
+**Two of those are no longer Mac-shaped, and reading them as such is now a mistake.**
+`src/body/gesture.rs` is the cross-platform gesture machine — Windows binds the right Ctrl
+to the same three gestures — and audio capture is cpal
+(`vendors/cpal_audio_capture.rs`), one portable dependency rather than a `macos_*` file.
+What stays Mac-specific about them is the tap (`macos_hotkey.rs`) and the Microphone TCC
+grant, which is the reason the mic is on Phase 2's list here and on nobody's list on
+Windows.
+
 **The list used to be longer, and shrank by deletion rather than by migration.** Input
 synthesis, the accessibility tree and `desktop_context` are gone — driving a machine is a
 note over that machine's own tools, so there is nothing left to re-home

@@ -17,8 +17,22 @@ namespace HiAgent.Windows.Ui;
 /// menu-bar icon when the engine will not start (`⚠ needs setup`,
 /// `⚠ startup failed` in `lib.rs`); a notification-area icon has no text beside
 /// it, so the same fact arrives here as the tooltip, the first line of the menu,
-/// and the icon itself — colour when the agent is answering and grey when it is
-/// not. Hovering is a choice, so the colour is the part that does not need one.
+/// and the icon itself. Hovering is a choice, so the colour is the part that
+/// does not need one.
+///
+/// Three states, matching the menu bar's: the mark in colour while the agent is
+/// answering, drained of colour while it is not, and knocked out of coral while
+/// it has its ear open — somebody is holding the attention key
+/// (<see cref="AppModel.IsListening"/>). The third is the transient one and it
+/// wins over the other two, because an agent that is hearing you is plainly
+/// there and the question you have while holding a key is only ever whether it
+/// is listening.
+///
+/// It also ends the moment the key comes up, which is *sooner* than the macOS
+/// menu bar settles: there the icon holds its colour while the reply is still
+/// being read in the text beside it, and there is no text beside this one to
+/// wait for. Both are reading the same fact — see
+/// `src/foundation/server/listening.rs`.
 ///
 /// Built in code rather than declared in XAML because the window it would be
 /// declared in is not shown at launch, and an icon in an unshown window's tree
@@ -27,14 +41,21 @@ namespace HiAgent.Windows.Ui;
 internal sealed class TrayIcon : IDisposable
 {
     /// <summary>
-    /// The mark in colour, and the same mark drained of it. Both are the brand
-    /// icon at 16/32/192 — `scripts/make-grey-ico.py` derives the second from the
-    /// first, so a change to the mark cannot leave the two showing different
-    /// logos.
+    /// The mark in colour, and the same mark drained of it. All three states are
+    /// the brand icon at 16/32/192 — `scripts/make-tray-icos.py` derives the
+    /// other two from this one, so a change to the mark cannot leave them
+    /// showing different logos.
     /// </summary>
     private const string LiveIcon = "ms-appx:///Assets/HiAgent.ico";
 
     private const string QuietIcon = "ms-appx:///Assets/HiAgentGrey.ico";
+
+    /// <summary>
+    /// The same mark again, white on a filled coral tile — the one difference
+    /// that still reads at 16px, where a badge or an outline does not.
+    /// `scripts/make-tray-icos.py` derives this and the grey one together.
+    /// </summary>
+    private const string ListeningIcon = "ms-appx:///Assets/HiAgentListening.ico";
 
     /// <summary>
     /// What `NOTIFYICONDATA.szTip` holds (Vista and later). Longer than this is
@@ -77,18 +98,23 @@ internal sealed class TrayIcon : IDisposable
         // has to be right. <see cref="AppModel.AgentIsHere"/> is where that
         // difference is decided.
         var here = _model.AgentIsHere;
+        var listening = _model.IsListening;
         var stage = _model.Stage;
 
-        ShowIcon(here ? LiveIcon : QuietIcon);
+        ShowIcon(listening ? ListeningIcon : here ? LiveIcon : QuietIcon);
 
         // Always "Hi Agent — what is going on", so the tooltip is worth reading
         // rather than a label that repeats the icon. When all is well, what is
         // going on is which agent this is attached to.
-        var sentence = here ? null : Sentence(stage);
+        //
+        // Listening is not in the menu, only here and in the icon: a hold lasts a
+        // second or two and cannot be held while opening a menu, so a header for
+        // it would be a line nobody can ever see.
+        var sentence = listening ? "Listening" : here ? null : Sentence(stage);
         _icon.ToolTipText = Clamp(
             $"Hi Agent — {sentence ?? _model.Attached?.Label ?? "running"}");
 
-        Rebuild(sentence);
+        Rebuild(listening ? null : sentence);
     }
 
     /// <summary>

@@ -16,6 +16,7 @@ internal sealed class AppModel : IDisposable
 
     private readonly RosterStore _roster = new();
     private readonly LocalCore _local = new();
+    private readonly ListeningWatch _listening = new();
     private readonly SemaphoreSlim _attaching = new(1, 1);
     private readonly CancellationTokenSource _stopping = new();
 
@@ -59,6 +60,17 @@ internal sealed class AppModel : IDisposable
     /// </summary>
     internal Uri? LocalCoreUrl => _local.BaseUrl;
 
+    /// <summary>
+    /// Whether the agent on this machine has its ear open — somebody is holding the
+    /// attention key right now. The tray's third state, and the only one of the three
+    /// that is about what the person is doing rather than what the engine is.
+    ///
+    /// Deliberately not folded into <see cref="AgentIsHere"/>: that answers "is there
+    /// an agent", this answers "is it hearing me", and a tray that collapsed them
+    /// would have no way to say the second.
+    /// </summary>
+    internal bool IsListening => _listening.IsListening;
+
     internal IReadOnlyList<RosterEntry> Roster => _roster.Entries;
 
     internal RosterEntry? Attached => _roster.Attached();
@@ -74,6 +86,12 @@ internal sealed class AppModel : IDisposable
         var baseUrl = await _local.StartAsync().ConfigureAwait(false);
         if (baseUrl is not null)
         {
+            // The ear belongs to the engine on this machine, so this starts with that
+            // address and never follows the attached core: a remote agent cannot hear
+            // this keyboard. It holds through the engine's own restarts on its own.
+            _listening.Changed += _ => StateChanged?.Invoke();
+            _listening.Start(baseUrl);
+
             // The local entry is written every start rather than once: the port
             // can differ between runs when 12358 was taken, and a roster holding
             // yesterday's port would point the face at nothing.
@@ -432,6 +450,7 @@ internal sealed class AppModel : IDisposable
     {
         _stopping.Cancel();
         _local.Changed -= OnLocalChanged;
+        _listening.Dispose();
         _local.Dispose();
         _stopping.Dispose();
         _attaching.Dispose();
