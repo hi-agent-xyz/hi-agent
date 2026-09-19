@@ -40,6 +40,15 @@ them. A `/channel` right after the mark — like `>/audio` — means it arrived 
 channel rather than as text. Lines are in the order they happened, newest last; there are
 no timestamps, so go by order, not the clock.
 
+A line can open with `⟨on task: <subject> — <title>⟩`. That is the one place a row reaches
+you as a fact rather than as Reaction's reading: the person typed the line into that task's
+own reply box, and the host has already written it onto the row as a `replied` line. Take it
+where anything about a row goes — to the session already on it; to a `task-manager` when it
+is the judgment a `waiting` line asked for, since ruling on a row is not yours; or, where
+nobody is on it and it unblocks work, to a worker on that subject, which will find the answer
+in the row's own record. A reply on a closed row is the same: they said something about it,
+and whether that reopens it is a manager's call.
+
 **Someone is waiting on the other end of that.** Reaction is fast and has no hands: it
 can speak and put something on screen, and that is all — it cannot open a file, follow a
 link, or look at the photo that just arrived. You can. So a hand-down is not a memo, it

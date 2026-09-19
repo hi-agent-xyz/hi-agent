@@ -193,6 +193,17 @@ pub enum TimelineKind {
     /// `research-two-pairs`" made a shoe report the result of a KTV task. See
     /// [`Task::record_made`] and `docs/arch/home.md`.
     Made,
+    /// What a person typed into this task's own reply box, in their words. **Written by the
+    /// store, never by a mind**, at the boundary that received it — the one moment anything
+    /// knows which row a sentence was said on, because it came in through that row's door.
+    /// The line's time is the message's, so it names the conversation line it copies.
+    ///
+    /// **It supersedes a wait, where [`Self::Moved`] does not.** A transition is bookkeeping
+    /// the store merely witnessed; this is the person acting on the row, and after it the next
+    /// step is ours. A row that still needs them writes a new [`Self::Waiting`] under it.
+    ///
+    /// See [`record_reply`], which says why a credential never reaches this line.
+    Replied,
     /// A line this schema does not recognise, kept exactly as it was written and
     /// re-emitted without a kind word. The frontmatter rule one level down: a writer that
     /// does not understand a line is not thereby entitled to drop it. To a reader it is an
@@ -209,6 +220,7 @@ impl TimelineKind {
             Self::Waiting => "waiting",
             Self::Moved => "moved",
             Self::Made => "made",
+            Self::Replied => "replied",
             Self::Note => "note",
         }
     }
@@ -232,6 +244,7 @@ impl TimelineKind {
             "waiting" | "blocked" => Some(Self::Waiting),
             "moved" => Some(Self::Moved),
             "made" => Some(Self::Made),
+            "replied" => Some(Self::Replied),
             "note" => Some(Self::Note),
             _ => None,
         }
@@ -585,6 +598,17 @@ impl Task {
         true
     }
 
+    /// Write down what a person said on this row. `false` for words with nothing in them —
+    /// a blank line would supersede a wait while answering nothing.
+    pub fn record_reply(&mut self, at: DateTime<Utc>, said: &str) -> bool {
+        let said = said.trim();
+        if said.is_empty() {
+            return false;
+        }
+        self.timeline.push(TimelineEntry::new(TimelineKind::Replied, at, said));
+        true
+    }
+
     fn is_overdue(&self, now: DateTime<Utc>) -> bool {
         self.due_at.is_some_and(|due| due <= now)
     }
@@ -775,6 +799,26 @@ pub async fn record_made(data_dir: &Path, subject: &str, view_ref: &str) -> anyh
     Ok(added.unwrap_or(false))
 }
 
+/// [`Task::record_reply`] on the record at `subject`: a `replied` line, dated `at`.
+/// `false` for a subject with no record or words with nothing in them.
+///
+/// **`said` must already be masked.** Credentials a person types are kept out of every
+/// prompt at [`crate::foundation::codex`]'s one seam, and the record is below it — every
+/// session that serves the row can read it with a shell. The ingress passes the words through
+/// [`crate::foundation::privacy::SecretStore::mask_known`] first, so the record holds the
+/// `⟨secret: …⟩` path and the conversation keeps what they actually typed.
+///
+/// Through [`edit`], so a verb landing on the same row in the same moment keeps its line too.
+pub async fn record_reply(
+    data_dir: &Path,
+    subject: &str,
+    at: DateTime<Utc>,
+    said: &str,
+) -> anyhow::Result<bool> {
+    let added = edit(data_dir, subject, |task| task.record_reply(at, said)).await?;
+    Ok(added.unwrap_or(false))
+}
+
 /// The one lock over every read-modify-write the host does to a record.
 ///
 /// A verb reads a record, changes it and writes it back whole. Two workers noting one row at
@@ -828,7 +872,8 @@ impl<T, E> Changed for Result<T, E> {
 
 /// What a mind may write on a row, and the only kinds of line that are prose
 /// (`docs/arch/legibility.md` § L). `created` is [`open`]'s; `moved` and `made` are the
-/// store's own.
+/// store's own, and so is `replied` — prose, but the person's, typed into the row's reply box
+/// ([`record_reply`]), so not a mind's to write and not a line the record gate judges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
     Update,
@@ -2781,6 +2826,26 @@ mod tests {
         assert!(render(&back).contains("made \u{2014} `shoes/report`"), "{}", render(&back));
     }
 
+    /// What they typed on a row reads back as theirs, at the message's own instant, every line
+    /// of it — and a blank one is not an answer to anything, so it is not written.
+    #[tokio::test]
+    async fn a_reply_on_the_row_is_recorded_as_theirs_and_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = task("try the new voice", TaskStatus::Doing);
+        write_task(dir.path(), &record).await.unwrap();
+
+        assert!(record_reply(dir.path(), &record.subject, at(2, 9), "ACCEPT\nthe second take").await.unwrap());
+        assert!(!record_reply(dir.path(), &record.subject, at(2, 10), "  \n ").await.unwrap());
+        assert!(!record_reply(dir.path(), "nobody-filed-this", at(2, 9), "ACCEPT").await.unwrap());
+
+        let back = read_task(dir.path(), &record.subject).await.unwrap().unwrap();
+        let last = back.timeline.last().unwrap();
+        assert_eq!(last.kind, TimelineKind::Replied);
+        assert_eq!(last.at, Some(at(2, 9)));
+        assert_eq!(last.text, "ACCEPT\nthe second take");
+        assert!(render(&back).contains("replied \u{2014} ACCEPT\n  the second take"), "{}", render(&back));
+    }
+
     #[test]
     fn the_board_signs_its_own_transition_and_a_witnessed_one_claims_nobody() {
         let mut from_the_board = task("kt8-111", TaskStatus::Doing);
@@ -3747,6 +3812,32 @@ mod verb_tests {
             })
             .collect();
         assert_eq!(bypasses, vec!["hand-edited"], "once, and not for the verb's own writes");
+    }
+
+    /// **A reply is the host's own write**: it is not counted as a record written around the
+    /// verbs, and a note landing on the row in the same moment keeps its line beside it.
+    #[tokio::test]
+    async fn a_reply_is_the_hosts_write_and_lands_beside_a_note() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("answered")).await.unwrap().unwrap();
+        reconcile(dir.path()).await.unwrap();
+
+        let at = Utc::now();
+        let (path_a, path_b) = (dir.path().to_path_buf(), dir.path().to_path_buf());
+        let reply = tokio::spawn(async move { record_reply(&path_a, "answered", at, "ACCEPT").await });
+        let noted = tokio::spawn(async move { note(&path_b, "answered", Note::Update, "listening again", at).await });
+        assert!(reply.await.unwrap().unwrap());
+        noted.await.unwrap().unwrap().unwrap().unwrap();
+        reconcile(dir.path()).await.unwrap();
+
+        let back = read_task(dir.path(), "answered").await.unwrap().unwrap();
+        let kinds: Vec<_> = back.timeline.iter().map(|entry| entry.kind).collect();
+        assert!(kinds.contains(&TimelineKind::Replied) && kinds.contains(&TimelineKind::Update), "{kinds:?}");
+        let records = super::super::quality::read_since(dir.path(), Utc::now() - chrono::Duration::hours(1)).await;
+        assert!(
+            !records.iter().any(|r| matches!(r, super::super::quality::Record::Bypass(_))),
+            "a reply the host wrote is not a bypass"
+        );
     }
 
     /// **Two writers on one row both land.** Each verb reads, changes and writes the record

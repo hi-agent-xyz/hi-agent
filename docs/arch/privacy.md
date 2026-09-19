@@ -25,7 +25,8 @@ invite more. `reaction.md` carries that rule, because Reaction is the rung in th
 
 ## The two seams
 
-Exactly two, and nothing else in the codebase participates.
+Exactly two. Nothing else detects anything, and the one other caller of the substitution is
+named below the table.
 
 | | Where | What it does |
 |---|---|---|
@@ -40,6 +41,14 @@ turn two. Masking is a property of the text, not of the moment it arrived.
 `AgentSession::prompt` is the only door into a model session, so every rung is covered by
 construction — the live message, the snapshot, a worker brief quoting the person, and
 whatever gets added next.
+
+**One copy of the person's words does not go through that door, and it borrows the mask.**
+A reply typed into a task's own box is also written onto the row as a `replied` line
+([data.md](data.md#tasks)) — by the host, into `memory/tasks/<subject>.md`, which any session
+serving the row can read with a shell. A wait is often for a key, so the answer to one often is one. So the host
+writes that line through the same exact-match substitution, once, and the record holds the
+path. It is not a third seam: nothing is detected there, and it applies the second seam to the
+one file the host itself fills with what somebody typed.
 
 ## What is deliberately untouched
 

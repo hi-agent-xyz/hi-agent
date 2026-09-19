@@ -14,6 +14,11 @@
 //! `PATCH /api/tasks/{subject}` changes `status` or `title`. Status transitions stamp
 //! `completed_at` and `cancelled_at` automatically and clear them when reopened.
 //! `GET /api/tasks/{subject}/files/{*path}` serves one file out of a task's own folder.
+//!
+//! **A reply typed on a row is not one of these routes.** It is something a person said, so it
+//! arrives where everything they say arrives — `POST /api/in/text?task=<subject>` — and this
+//! module supplies only the two halves that are about the row: which row it names
+//! ([`said_on`]), and the `replied` line the row keeps ([`record_said_on`]).
 
 use std::path::Path as FsPath;
 use std::sync::Arc;
@@ -32,6 +37,7 @@ use crate::foundation::server::{AppState, stores};
 use crate::mind::memory::facets;
 use crate::mind::memory::media::{content_type, ext_of, resolve_in_root, safe_rel_path};
 use crate::mind::memory::tasks::{self, Task, TaskStatus, TimelineEntry, TimelineKind};
+use crate::types::{Content, Message, TaskRef};
 
 /// One task, whole — what `GET /api/tasks/{subject}` answers with.
 ///
@@ -107,8 +113,8 @@ struct RowDto {
     completed_at: Option<String>,
     cancelled_at: Option<String>,
     liveness: Option<LivenessDto>,
-    /// The newest moment a *mind* wrote — see [`latest_moment`]. This is the one line a card
-    /// prints and the only thing that answers whether a person is being waited on.
+    /// The newest line anybody *said* on the row — see [`latest_moment`]. This is the one line
+    /// a card prints and the only thing that answers whether a person is being waited on.
     latest: Option<MomentDto>,
     /// The views this task made, newest first — its `made` lines, never names its prose
     /// spells. See [`view_refs`].
@@ -146,12 +152,17 @@ fn moment(entry: &TimelineEntry) -> MomentDto {
     }
 }
 
-/// The newest thing a *mind* wrote — the one line a card prints under the title.
+/// The newest thing anybody said on the row — a mind's line, or the person's own through
+/// the row's reply box — and the one line a card prints under the title.
 ///
 /// `moved` and `made` are excluded because the store writes them about things it merely
 /// witnessed: a status change is the consequence of a decision, not a statement about one,
 /// and a builder rendering its page is not anybody saying anything. Neither can raise a wait
-/// nor answer it. A row whose only entries are the store's has said nothing and gets no line.
+/// nor answer it. A row whose only entries are those has said nothing and gets no line.
+///
+/// **`replied` is the store's too and is not excluded**, because what it witnessed is somebody
+/// speaking: the words are the person's, typed into this row. It is what answers a wait —
+/// after it the next step is ours, and a row that still needs them says so again under it.
 fn latest_moment(task: &Task) -> Option<MomentDto> {
     task.timeline
         .iter()
@@ -740,6 +751,58 @@ pub async fn get_task_file(
     resp
 }
 
+/// The row a reply box names, as the message said on it will carry it — or `None` when
+/// nothing is filed under that subject.
+///
+/// The title is read here, from the ledger, and never taken from the window: it is what the
+/// face draws over the bubble and what the prompt writes beside the subject, and both should
+/// say what the row was called, not what a client said it was called.
+pub(crate) async fn said_on(data_dir: &FsPath, subject: &str) -> anyhow::Result<Option<TaskRef>> {
+    let subject = facets::slug(subject);
+    if subject.is_empty() {
+        return Ok(None);
+    }
+    let Some(task) = tasks::read_task(data_dir, &subject).await? else {
+        return Ok(None);
+    };
+    let title = if task.title.trim().is_empty() { task.subject.clone() } else { task.title };
+    Ok(Some(TaskRef { subject: task.subject, title }))
+}
+
+/// Write a message said on a row into that row's record as a `replied` line. Nothing for a
+/// message typed anywhere else.
+///
+/// **Masked, because the record can be read with a shell.** A wait is often for a key, so the
+/// answer to one is often a key — and the one seam that keeps a typed credential out of a
+/// model is the prompt, which a worker reading the record file never crosses. The ingress has
+/// already filed any credential it found; this writes the path in its place. The conversation
+/// and the journal keep what was typed.
+///
+/// A failure is logged and goes no further. The message is already journalled and on its way
+/// to Reaction, and refusing it now would cost them the words to save a line about them.
+pub(crate) async fn record_said_on(state: &AppState, message: &Message) {
+    let Some(task) = &message.task else {
+        return;
+    };
+    let said = match &message.content {
+        Content::Text(text) | Content::Speech { text, .. } => {
+            state.privacy.store().mask_known(text).into_owned()
+        }
+        Content::File(file) => format!("handed over {}", file.name),
+    };
+    match tasks::record_reply(&state.data_dir, &task.subject, message.ts, &said).await {
+        // Said directly for the reason `patch_task` says it: the watcher would see this write
+        // a settle later, and the reply box is waiting on it now.
+        Ok(true) => state.stores.bump(tasks::DIMENSION).await,
+        Ok(false) => {}
+        Err(error) => tracing::error!(
+            subject = %task.subject,
+            error = %format!("{error:#}"),
+            "a reply said on a task did not reach its record; the message went on"
+        ),
+    }
+}
+
 fn err(message: &str) -> Response {
     (
         StatusCode::BAD_REQUEST,
@@ -793,10 +856,10 @@ mod tests {
     }
 
     /// `moved` and `made` are the store's own lines, so neither can raise a wait nor answer one.
-    /// A row whose only entries are the store's has said nothing, and gets no line rather than the
+    /// A row whose only entries are those has said nothing, and gets no line rather than the
     /// transition spelled for a machine.
     #[test]
-    fn latest_is_the_newest_line_a_mind_wrote() {
+    fn latest_is_the_newest_line_anybody_said() {
         let mut task = Task::new("Ship the deck", TaskStatus::Doing);
         let entry = |kind, text: &str| TimelineEntry {
             at: Some(at(1, 9)),
@@ -823,6 +886,27 @@ mod tests {
         ];
         let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
         assert!(value["latest"].is_null(), "a row with only the store's lines has said nothing: {value}");
+    }
+
+    /// **Their reply through the row answers the wait above it**, though the store wrote the
+    /// line: what it witnessed was them speaking. A transition after it changes nothing, and a
+    /// row that still needs them says so again underneath.
+    #[test]
+    fn a_reply_on_the_row_answers_the_wait_above_it() {
+        let mut task = Task::new("Try the new voice", TaskStatus::Doing);
+        let entry = |kind, text: &str| TimelineEntry { at: Some(at(1, 9)), kind, text: text.to_owned() };
+        task.timeline = vec![
+            entry(TimelineKind::Waiting, "press Run at http://127.0.0.1:7788, listen, reply ACCEPT or REJECT"),
+            entry(TimelineKind::Replied, "ACCEPT"),
+            entry(TimelineKind::Moved, "doing \u{2192} done"),
+        ];
+        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        assert_eq!(value["latest"]["kind"], "replied");
+        assert_eq!(value["latest"]["text"], "ACCEPT");
+
+        task.timeline.push(entry(TimelineKind::Waiting, "which of the two takes?"));
+        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        assert_eq!(value["latest"]["kind"], "waiting");
     }
 
     fn views(refs: &[&str]) -> std::collections::HashSet<String> {

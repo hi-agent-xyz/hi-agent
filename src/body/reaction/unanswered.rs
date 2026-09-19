@@ -97,6 +97,7 @@ mod tests {
                 ts: chrono::Utc::now(),
                 from,
                 content: Content::Text("x".into()),
+                task: None,
             },
         }
     }

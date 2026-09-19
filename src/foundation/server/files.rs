@@ -53,7 +53,7 @@ use uuid::Uuid;
 use crate::mind::memory::layout::MediaSlot;
 use crate::mind::memory::media;
 use crate::foundation::server::AppState;
-use crate::types::{Author, Channel, Content, FileRef, Inbound, JournalEntry, Message, Sender};
+use crate::types::{Author, Channel, Content, FileRef, Inbound, JournalEntry, Message, Sender, TaskRef};
 
 /// How long a minted phone-upload token stays valid. Long enough to pick up your
 /// phone and scan; short enough that a leaked QR doesn't linger.
@@ -223,6 +223,7 @@ async fn ingest_field(
         },
         note,
         sender,
+        None,
     )
     .await
     .map_err(IngestError::Store)
@@ -251,12 +252,16 @@ enum IngestError {
 /// [`crate::foundation::server::text::post_text`]). By the time either has a
 /// [`FileRef`] the remaining work is identical, and a second copy of it is how the two
 /// paths would drift into journalling the same thing two ways.
+///
+/// `task` is the row the arrival was handed over on, when it came through a task's own
+/// reply box; every message of the arrival carries it, and the row keeps each one.
 pub(crate) async fn deliver_artifact(
     state: &AppState,
     ts: DateTime<Utc>,
     file: FileRef,
     note: Option<String>,
     sender: Sender,
+    task: Option<TaskRef>,
 ) -> Result<(), String> {
     // Addressed, like text: a file is *handed over*, and who handed it is decided at
     // the boundary it arrived on — see the caller. `Channel::File`'s own definition
@@ -274,6 +279,7 @@ pub(crate) async fn deliver_artifact(
             ts,
             from: Author::Person(sender.clone()),
             content: Content::Text(note),
+            task: task.clone(),
         });
     }
     messages.push(Message {
@@ -281,6 +287,7 @@ pub(crate) async fn deliver_artifact(
         ts,
         from: Author::Person(sender),
         content: Content::File(file),
+        task,
     });
 
     // Journaled first, all of them, so durability precedes reaction — and then
@@ -291,6 +298,7 @@ pub(crate) async fn deliver_artifact(
         if let Err(err) = state.memory.journal.append(entry).await {
             tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting file anyway");
         }
+        super::tasks::record_said_on(state, message).await;
     }
     for message in messages {
         state.note_message(Channel::File, message.clone());
@@ -401,6 +409,7 @@ pub(crate) async fn receive_screenshot(
         },
         Some("Here's my screen right now.".to_string()),
         sender,
+        None,
     )
     .await
 }

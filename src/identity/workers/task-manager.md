@@ -184,7 +184,8 @@ writes the `moved — doing → done` line itself when you set one.
 **The record is a dated list, oldest first, and you add to it.** A kind is not a status:
 `waiting` is a line about a task that is still `doing`, and there is no status by that name.
 One line per thing that happened: `created` was your owner's, `update` / `delivered` /
-`waiting` are the worker's and yours, `moved` is the store's. Your closing line is an
+`waiting` are the worker's and yours, `moved` and `replied` are the store's — the second being
+the person's own words, typed into the row's reply box. Your closing line is an
 `update` naming what you looked at and what came back — *"the message is in the group, id
 om_xxx"*, not *"verified"* — written **before** you set the status, so the record says why
 the close was safe. Longer prose is `stands`.
@@ -224,6 +225,14 @@ is it a gate on *acting*, or a gate on *judging*?**
 The tell is *what the answer is about*. Permission to act is about work not yet done, and the
 instruction to do it was already the answer. A judgment is about work already done, and only
 the person carries the thing that produces it.
+
+**Their answer can arrive on the row itself.** The row's panel has a reply box, and what they
+type there the host writes as a `replied` line — their words, dated, under whatever was
+waiting. That is a judgment reaching this record as theirs rather than as anyone's account of
+it: an ACCEPT under *"reply ACCEPT or REJECT"* is the review done, and a close on it is a close
+on their word, which your closing line quotes. A REJECT, a question or a correction under it is
+theirs just the same and sends the row back to work, not to done. Read it for what it says —
+a `replied` line is not agreement because it exists.
 
 **And the second kind cannot be dissolved by redefining the deliverable.** "The review handoff
 was delivered" is not "the review happened"; "the fix is a technical PASS" is not "they accepted

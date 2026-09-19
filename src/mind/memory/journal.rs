@@ -361,11 +361,17 @@ impl LegacyEntry {
                 match channel {
                     Channel::Text => JournalEntry::Message {
                         channel,
-                        message: Message { id, ts, from, content: Content::Text(strip_markers(&body)) },
+                        message: Message { id, ts, from, content: Content::Text(strip_markers(&body)), task: None },
                     },
                     Channel::Audio => JournalEntry::Message {
                         channel,
-                        message: Message { id, ts, from, content: Content::Speech { text: strip_markers(&body), audio: media } },
+                        message: Message {
+                            id,
+                            ts,
+                            from,
+                            content: Content::Speech { text: strip_markers(&body), audio: media },
+                            task: None,
+                        },
                     },
                     // A file line without media is a framing with nothing behind it —
                     // it was never renderable and is not a message now.
@@ -390,6 +396,7 @@ impl LegacyEntry {
                                         bytes: None,
                                         peek: None,
                                     }),
+                                    task: None,
                                 },
                             }
                         }
@@ -417,6 +424,7 @@ impl LegacyEntry {
                         ts,
                         from: Author::Agent,
                         content: Content::Text(body),
+                        task: None,
                     },
                 },
                 Channel::View => JournalEntry::Presentation { id, ts, body },

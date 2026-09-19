@@ -108,11 +108,15 @@ pub struct Wire {
     /// recognized has one that names nobody. Neither is a gap to fill in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Sender>,
+    /// The task this was typed on, when it came through that row's own reply box — drawn
+    /// over the bubble, so the conversation says where it was said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::types::TaskRef>,
 }
 
 impl std::convert::From<crate::types::Message> for Wire {
     fn from(m: crate::types::Message) -> Self {
-        let crate::types::Message { id, ts, from, content } = m;
+        let crate::types::Message { id, ts, from, content, task } = m;
         let role = if from.is_agent() { Role::Agent } else { Role::User };
         let sender = from.sender().cloned();
         // A file's name *is* its text here: it is what a person calls the thing in
@@ -126,7 +130,7 @@ impl std::convert::From<crate::types::Message> for Wire {
                 Some(Attachment { reff: f.reff, mime: f.mime }),
             ),
         };
-        Wire { id, ts, role, text, attachment, sender }
+        Wire { id, ts, role, text, attachment, sender, task }
     }
 }
 
@@ -395,6 +399,7 @@ mod tests {
             text: text.to_owned(),
             attachment: None,
             sender: None,
+            task: None,
         }
     }
 

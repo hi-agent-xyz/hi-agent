@@ -23,7 +23,7 @@ Exactly three things become messages, and nothing else does:
 
 | Message | Source |
 |---|---|
-| Something the person typed or said | `POST /api/in/text` (typed, or settled recognition) |
+| Something the person typed or said | `POST /api/in/text` (typed, or settled recognition) — a task's own reply box included, with `?task=<subject>` |
 | A file the person handed over | `POST /api/in/file`, `POST /api/up/{token}` |
 | One thing the agent said | one `hi_say` call |
 
@@ -117,7 +117,7 @@ nothing was missed: the messages are still there.
 | Frame | Meaning |
 |---|---|
 | `{"reset": {"messages": [...], "interim": null, "condition"?: "..."}}` | The current window, whole, plus both pieces of current state. Always the first frame; sent again only if the list is rebuilt. |
-| `{"append": {"id", "ts", "role", "text", "media"?, "sender"?}}` | One new message at the end. |
+| `{"append": {"id", "ts", "role", "text", "media"?, "sender"?, "task"?}}` | One new message at the end. |
 | `{"interim": "..."}` or `{"interim": null}` | The line being recognized, or none. |
 | `{"condition": "unreachable"｜"out_of_energy"｜"rejected"}` or `{"condition": null}` | What is wrong with the upstream model, or nothing. |
 
@@ -126,6 +126,13 @@ absent on the agent's own messages, and present-with-no-subject when somebody sp
 nobody could say who. A window that does not recognize a basis drops the sender rather
 than showing the name: a name whose grounding cannot be read is the ungrounded name
 [`signal-attribution.md`](signal-attribution.md) exists to keep out of the record.
+
+`task` is `{"subject", "title"}`, present only on a line typed into that task's own reply
+box ([`message.md`](message.md#where-it-was-said)). **A reply on a task is in this list**,
+because it is something the person said and there is one list of those; the window draws the
+row's title over the bubble, the way a messenger marks a quoted reply, and pressing it opens
+the task board. The agent's answer to it, if there is one, is said here like any other — a
+task carries no destination ([`data.md`](data.md#tasks)).
 
 The `interim` carries no sender. Recognition has not settled, so there is nobody to name
 yet, and it is a preview rather than a message.

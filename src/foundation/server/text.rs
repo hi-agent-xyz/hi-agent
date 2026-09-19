@@ -33,6 +33,7 @@ use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -40,7 +41,7 @@ use crate::foundation::server::headers::{AuthBearer, StreamHeader};
 use crate::foundation::server::{AppState, observe, transcript};
 use crate::mind::memory::journal;
 use crate::mind::memory::layout::MediaSlot;
-use crate::types::{Author, Channel, Content, Inbound, JournalEntry, Message, Sender};
+use crate::types::{Author, Channel, Content, Inbound, JournalEntry, Message, Sender, TaskRef};
 use futures::stream::unfold;
 
 /// The largest typed body that goes into the prompt **as words**.
@@ -84,11 +85,20 @@ const SCAN_MAX: u64 = 4 * 1024 * 1024;
 /// `Content::File` carrying a ref, a size and a peek. The mind gets an opening it can
 /// judge and a path it can open, instead of a megabyte it must carry every turn.
 /// See `docs/arch/message.md`.
+///
+/// **`?task=<subject>` says it was typed into that task's own reply box**, and the message
+/// carries the row ([`crate::types::Message::task`]). Nothing else about the arrival
+/// changes — it is still something they said, so it is scanned, attributed, journalled,
+/// put in the conversation and handed to Reaction like any line — except that the row
+/// also keeps it, as a `replied` line. A subject nothing is filed under is refused before
+/// a byte is read: a message claiming a row that does not exist would reach every rung
+/// naming it. See `docs/arch/data.md` § *Tasks*.
 pub async fn post_text(
     State(state): State<Arc<AppState>>,
     StreamHeader(stream): StreamHeader,
     AuthBearer(auth): AuthBearer,
     surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
+    Query(query): Query<InText>,
     body: Body,
 ) -> Response {
     let ts = Utc::now();
@@ -96,12 +106,29 @@ pub async fn post_text(
     // here rather than riding along on a message that has no use for it.
     let _ = stream;
 
+    let task = match query.task.as_deref() {
+        None => None,
+        Some(subject) => match super::tasks::said_on(&state.data_dir, subject).await {
+            Ok(Some(task)) => Some(task),
+            Ok(None) => return (StatusCode::NOT_FOUND, "no such task").into_response(),
+            Err(err) => {
+                tracing::error!(error = %format!("{err:#}"), subject, "reading the task a reply names failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "cannot read that task").into_response();
+            }
+        },
+    };
+
     let received = match receive_body(&state, ts, body).await {
         Ok(received) => received,
         Err(response) => return response,
     };
 
-    tracing::info!(auth = ?auth, len = received.total, "POST /api/in/text");
+    tracing::info!(
+        auth = ?auth,
+        len = received.total,
+        task = task.as_ref().map(|t| t.subject.as_str()),
+        "POST /api/in/text"
+    );
 
     // Addressed: somebody typed this *to* the agent. Whose device it came in on
     // answers who, when that device is registered to a person; otherwise it falls to
@@ -114,11 +141,18 @@ pub async fn post_text(
     );
 
     match received.kind {
-        Received::Words(text) => post_words(&state, ts, text, sender).await,
+        Received::Words(text) => post_words(&state, ts, text, sender, task).await,
         Received::Artifact { rel, peek } => {
-            post_artifact(&state, ts, rel, peek, received.total, sender).await
+            post_artifact(&state, ts, rel, peek, received.total, sender, task).await
         }
     }
+}
+
+/// What the URL of a typed line may say about it.
+#[derive(Deserialize)]
+pub struct InText {
+    /// The subject of the task whose reply box this was typed into.
+    task: Option<String>,
 }
 
 /// Read the body, spilling to a blob once it crosses [`INLINE_MAX`].
@@ -254,6 +288,7 @@ async fn post_words(
     ts: DateTime<Utc>,
     body_str: String,
     sender: Sender,
+    task: Option<TaskRef>,
 ) -> Response {
     // The one place credentials are looked for. A key somebody typed without
     // thinking is written to `drive/accounts/secrets/`, and every model prompt
@@ -289,11 +324,15 @@ async fn post_words(
         ts,
         from: Author::Person(sender),
         content: Content::Text(body_str),
+        task,
     };
     let entry = JournalEntry::Message { channel: Channel::Text, message: message.clone() };
     if let Err(err) = state.memory.journal.append(entry).await {
         tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
     }
+    // The row keeps it before anyone is told, so whichever rung goes to read the row after
+    // this line reaches it finds the answer already there.
+    super::tasks::record_said_on(state, &message).await;
 
     state.floor.note_sent().await;
 
@@ -322,6 +361,7 @@ async fn post_artifact(
     peek: String,
     total: u64,
     sender: Sender,
+    task: Option<TaskRef>,
 ) -> Response {
     let reff = crate::mind::memory::media::signal_ref(Channel::File, ts, &rel);
     let name = format!("pasted-{}.txt", ts.format("%Y%m%d-%H%M%S"));
@@ -338,7 +378,7 @@ async fn post_artifact(
         bytes: Some(total),
         peek: Some(peek),
     };
-    match crate::foundation::server::files::deliver_artifact(state, ts, file, None, sender).await {
+    match crate::foundation::server::files::deliver_artifact(state, ts, file, None, sender, task).await {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
         Err(err) => {
             tracing::error!(error = %err, "delivering the pasted artifact failed");

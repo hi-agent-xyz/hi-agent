@@ -24,6 +24,12 @@
 //! Tool results, agent-to-agent mail, the system prompt, and codex's own shell
 //! are all untouched. The journal and the conversation keep exactly what was
 //! typed.
+//!
+//! One copy of typed words never reaches a prompt through that function and so
+//! borrows the mask directly: a reply typed on a task is also written onto the
+//! row's record, a file sessions read with a shell, and
+//! [`crate::foundation::server::tasks`] writes it through
+//! [`SecretStore::mask_known`] first.
 
 mod filter;
 mod store;

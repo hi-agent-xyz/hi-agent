@@ -617,6 +617,10 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   board rather than its own row on it and the person finds the row themselves. Giving
   the view-open a target means changing the wire, the server and the view contract
   together. That work takes this loan back; until it lands the handoff is imprecise.
+  **The panel's reply box makes the loan cost more**: a *Needs you* row can now be answered
+  in the panel it opens, and pressing its card still lands on the board, where the person has
+  to find the row before they can answer it. The conversation's mark on a reply typed on a task waits on the
+  same work, and opens the board too.
 - **`direction` and `decision` have never existed.** This document used to list public
   direction and decisions-needed among what the core presents, and the copy table
   carried strings for both, but `buildHome` has only ever produced `context` and

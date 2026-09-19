@@ -290,7 +290,7 @@ pub struct Media {
 /// same value to the journal, to Reaction, and to the conversation, so the live
 /// list and the one a restart replays cannot disagree.
 ///
-/// Four fields, and the ones that used to be here and are not are the point.
+/// Five fields, and the ones that used to be here and are not are the point.
 /// `channel` moved to the journal envelope ([`JournalEntry::Message`]) because its
 /// only remaining jobs were storage routing and per-sense fading; `role` collapsed
 /// into [`Author`]; relevance is an [`Appraisal`] *about* a message rather than a
@@ -303,6 +303,28 @@ pub struct Message {
     pub ts: DateTime<Utc>,
     pub from: Author,
     pub content: Content,
+    /// The task this was typed on, when it was typed into one's own reply box.
+    ///
+    /// **Where it was said, not what it is about.** A line in the conversation that
+    /// names a task does not get this: the boundary does not know which row it means,
+    /// and nothing here reads prose to find out. It is on the message rather than
+    /// judged about it later because the boundary knows it at minting and it never
+    /// changes. Absent on every journal line written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskRef>,
+}
+
+/// A task a message was said on: the key, and what the row was called when it was.
+///
+/// **The title is carried for the reason [`FileRef::name`] is**: both consumers need it —
+/// the face draws it over the bubble, the prompt builder writes it beside the subject —
+/// and it is read from the ledger at the boundary, never taken from the client. A row
+/// retitled later keeps the name it had when somebody answered it, which is what they
+/// were looking at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskRef {
+    pub subject: String,
+    pub title: String,
 }
 
 /// Which end of the conversation a message came from.

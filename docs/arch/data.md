@@ -672,8 +672,10 @@ distinctions.** `created` — why this row exists, in the person's words, writte
 open by the rung that was in the conversation. `update` — anything that happened: work,
 a finding, a check and what it came back with. `delivered` — the person has something
 now, or it went out; **not a closing**, since a standing watch delivers its first digest
-and keeps running. `waiting` — **a human must act before this row can move**. And
-`moved`, the status transition, which is the store's. Anything a mind wants to say that is
+and keeps running. `waiting` — **a human must act before this row can move**. And three the
+store writes: `moved`, the status transition; `made`, a view a session serving the row
+rendered ([`home.md`](home.md)); and `replied`, what the person typed into the row's own
+reply box (below). Anything a mind wants to say that is
 none of those goes in the prose above, which is not read line by line. A line this schema
 cannot classify is kept verbatim as a note; the frontmatter rule, one level down.
 
@@ -859,10 +861,13 @@ itself, it is an `update`.** A dead end is an `update`; a handoff between two of
 rungs is not a timeline line at all.
 
 **A wait is ended by being superseded, not by being cleared.** The record only appends, so
-there is no closing kind and nothing to unset: a `waiting` line is current exactly while no
-mind has written under it, and the moment an `update` or a `delivered` lands below it, it is
-history. `moved` does not count — the store writes it on a transition it merely witnessed, so
-a status change can neither raise a wait nor answer one. This is deliberate in the direction
+there is no closing kind and nothing to unset: a `waiting` line is current exactly while
+nothing has been said under it, and the moment an `update`, a `delivered` or their `replied`
+lands below it, it is history. `moved` does not count — the store writes it on a transition it
+merely witnessed, so a status change can neither raise a wait nor answer one. `replied` is the
+store's too and does count, because what it witnessed is the person speaking on the row: after
+it the next step is ours, and a row that still needs them says so again in a new `waiting`
+line. This is deliberate in the direction
 this document keeps choosing: a flag somebody must remember to clear is *silently* wrong when
 they forget, and reads exactly like a row nobody is waiting on. A wait that decays by being
 overtaken cannot be left set.
@@ -897,6 +902,46 @@ text on a surface with no address bar is one the reader must retype from a scree
 timeline and the notes autolink `http(s)` — *autolink only*, never a markdown label with a
 separate href, so the visible text is always the destination and text a session wrote cannot
 lie about where it sends someone.
+
+**And the row can be answered where it is read.** Most of what a wait asks for is words — a
+judgment on something built, a choice, a code that went to their phone — and the door for
+those was the conversation, where the person had to name the row again before saying the
+answer, and a rung had to work out which row they meant. The task panel carries a reply box,
+on every row, and what is typed in it is two things at once:
+
+- **A message in the one conversation** — `POST /api/in/text?task=<subject>`, carrying the row
+  as the boundary's fact ([`message.md`](message.md#where-it-was-said)). It is scanned,
+  attributed, journalled and handed to Reaction like any line; the automatic hand-down carries
+  `⟨on task: <subject> — <title>⟩` to Cognition, which routes it as it routes anything about a
+  row: to the session on it, to a manager where it is the judgment a wait asked for, or to a new
+  worker on the row.
+- **A `replied` line on the row, written by the store** at the boundary, dated with the
+  message's own instant. It is what takes *Needs you* down the moment the person answers, and
+  what makes the answer **durable on the row**: a real wait usually has nobody on it, so an
+  answer that lived only in mail is one a restart eats — the same failure as a promise that
+  lives only in a report, pointed the other way. Whoever picks the row up next reads it: a
+  fresh worker in its opening record, a manager judging the wait, Cognition after a boot.
+
+**Two things this is not.** It is not a thread per task: the agent speaks in the conversation
+and nowhere else, so its answer to a reply is said there, and the *work's* answer lands in this
+record as the lines its sessions write — which is what makes the record read as an exchange,
+`waiting` → `replied` → `update`, without being a second conversation. And it is not a route
+around the ladder: the host does not post a reply straight to the session on the row, because
+the main case has no session on it, because an answer to a judgment is a transition and
+transitions are a manager's, and because a second path from the person to a worker is a second
+dispatcher.
+
+**The words on the row are masked; the words in the conversation are not.** A wait is often for
+a key, so the answer to one is often a key, and the record can be read with a shell — below the
+one seam that keeps a typed credential out of a model. The line is written through the secret store's
+mask, so it holds the `⟨secret: …⟩` path the ingress just filed, while the journal and the
+conversation keep what was typed ([`privacy.md`](privacy.md)).
+
+**And it is not a line the record gate reads.** Every line a mind writes goes through a verb,
+and the gate judges its prose ([`legibility.md`](legibility.md) § M); this one is the person's
+words, and a standard for how the agent writes to them has nothing to say about how they write
+back. It takes the store's one lock like every verb, so a note landing on the same row in the
+same moment keeps both lines.
 
 **And the cadence must not exclude it, because the cadence is the only pressure there is.**
 There are no gates on this ledger, so past the idle boundary the sentence a `doing` line

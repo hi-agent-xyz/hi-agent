@@ -143,7 +143,10 @@ lines:
   **where they do it** — the URL, the path, the message — pasted, not described.
   *"the ordinary URL was handed to him"* is a description of a URL and not one, and a row
   that names someone as the bottleneck without handing them the door is a row they can
-  read and cannot act on.
+  read and cannot act on. Where the answer is words — a judgment, a choice, a code off their
+  phone — the row is where they give it: its panel has a reply box, and what they type comes
+  back to this record as a `replied` line. What they must look at or listen to first still
+  needs its address.
 
 **`waiting` is only ever about a human doing what only they can do, and that is the whole
 test.** A credential, a login wall, a captcha, a code that went to their phone — **and their
@@ -163,7 +166,8 @@ theirs. A handoff to another of our own rungs is not a timeline line at all.
 
 **Nothing closes a wait, and you do not need to close one.** The record only appends. A
 `waiting` line counts as current exactly while nothing has been written under it, so the
-next `update` or `delivered` you write ends it by standing after it. There is no line that
+next `update` or `delivered` you write ends it by standing after it — and so does their
+`replied` line, which is them answering it. There is no line that
 says "no longer waiting" and you must never invent one.
 
 **Three things that read like lines and are not.** A record is what happened, and none of
@@ -193,7 +197,8 @@ that is underway and stuck. Say it in a line.
 **created** is your owner's, written once when the task was opened, from what the person
 actually asked for. If it is thin, or the job turned out to be a different job than that
 line describes, add an `update` saying so. **moved** is written by the host on every status
-change.
+change. **replied** is the person's own words, typed into the row's reply box and written by
+the host: read it as their answer before asking anything again.
 
 **A line is one line** — the store refuses one with a line break in it. Anything longer — the
 working account, the reasoning, where it stands — is `kind: stands`, below.

@@ -25,6 +25,14 @@ struct Message {
     text: String,
     #[serde(default)]
     attachment: Option<Attachment>,
+    #[serde(default)]
+    task: Option<SaidOn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct SaidOn {
+    subject: String,
+    title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -174,6 +182,7 @@ async fn agent_says(seams: &ServerSeams, memory: &Memory, text: &str) {
                 ts,
                 from: hi_agent::types::Author::Agent,
                 content: hi_agent::types::Content::Text(text.to_owned()),
+                task: None,
             },
         })
         .await
@@ -451,4 +460,71 @@ async fn an_interim_is_not_a_message() {
     post_text(&base, "what day is it?").await;
     assert_eq!(feed.next().await, Frame::Interim(None));
     assert_eq!(feed.next().await.appended().text, "what day is it?");
+}
+
+/// A reply typed into a task's own box is a message like any other — in the conversation, in
+/// the one list — carrying the row it was said on. The row keeps it too, as the line that
+/// answers the wait above it, with a typed key in it written as the path it was filed to.
+#[tokio::test]
+async fn a_reply_typed_on_a_task_carries_the_row_and_the_row_keeps_it() {
+    use hi_agent::mind::memory::tasks::{self, Task, TaskStatus, TimelineEntry, TimelineKind};
+
+    let (base, dir, _seams, _memory) = spawn_server().await;
+    let mut task = Task::new("try the new voice", TaskStatus::Doing);
+    task.timeline.push(TimelineEntry::new(
+        TimelineKind::Waiting,
+        Utc::now(),
+        "press Run at http://127.0.0.1:7788, listen, reply ACCEPT or REJECT",
+    ));
+    tasks::write_task(dir.path(), &task).await.expect("file the task");
+
+    let mut feed = Feed::open(&base).await;
+    assert!(feed.next().await.reset().is_empty());
+
+    let key = ["sk-proj-", "abcdefghij_klmnopqrst-uvwxyz0123456789ABCDEFGHIJ"].concat();
+    let typed = format!("ACCEPT, and the key is {key}");
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/in/text?task={}", task.subject))
+        .body(typed.clone())
+        .send()
+        .await
+        .expect("reply on the task");
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+
+    // The conversation keeps what they typed, and says where they typed it.
+    let m = feed.next().await.appended();
+    assert_eq!(m.text, typed);
+    assert_eq!(m.role, "user");
+    assert_eq!(
+        m.task,
+        Some(SaidOn { subject: task.subject.clone(), title: "try the new voice".into() })
+    );
+
+    // The row keeps it as theirs, masked, and it is now the row's newest line.
+    let back = tasks::read_task(dir.path(), &task.subject).await.unwrap().unwrap();
+    let last = back.timeline.last().unwrap();
+    assert_eq!(last.kind, TimelineKind::Replied);
+    assert!(!last.text.contains(&key), "a key reached the record: {}", last.text);
+    assert!(last.text.starts_with("ACCEPT, and the key is ⟨secret: "), "{}", last.text);
+    let board: serde_json::Value = reqwest::Client::new()
+        .get(format!("{base}/api/tasks"))
+        .send()
+        .await
+        .expect("read the board")
+        .json()
+        .await
+        .expect("board json");
+    assert_eq!(board["tasks"][0]["latest"]["kind"], "replied", "{board}");
+
+    // A row nothing is filed under is refused, and nothing is said.
+    let response = reqwest::Client::new()
+        .post(format!("{base}/api/in/text?task=nobody-filed-this"))
+        .body("ACCEPT")
+        .send()
+        .await
+        .expect("reply on nothing");
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut again = Feed::open(&base).await;
+    assert_eq!(again.next().await.reset().len(), 1);
 }

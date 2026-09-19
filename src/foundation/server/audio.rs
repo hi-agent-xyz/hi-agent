@@ -992,6 +992,7 @@ async fn deliver_transcript(
         ts,
         from: Author::Person(sender),
         content: Content::Speech { text: text.to_owned(), audio: media },
+        task: None,
     };
     let entry = JournalEntry::Message { channel: Channel::Audio, message: message.clone() };
     if let Err(err) = state.memory.journal.append(entry).await {

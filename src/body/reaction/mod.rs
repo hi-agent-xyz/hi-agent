@@ -2224,6 +2224,13 @@ fn render_message_line(m: &crate::types::Message) -> String {
         Some(who) => format!("⟨voice: {who}⟩ {said}"),
         None => said,
     };
+    // Typed into a task's own reply box. The subject is the boundary's, not a reading of the
+    // words — and this line is also what goes down to Cognition, so it arrives there as the
+    // fact it is rather than as Reaction's belief about which row was meant.
+    let said = match &m.task {
+        Some(task) => format!("⟨on task: {} — {}⟩ {said}", task.subject, task.title),
+        None => said,
+    };
     transcript_line(Speaker::Them, kind, &said)
 }
 
@@ -3437,6 +3444,7 @@ async fn emit_message(reaction: &Reaction, text: String) {
         ts: Utc::now(),
         from: crate::types::Author::Agent,
         content: crate::types::Content::Text(text),
+        task: None,
     };
     let entry = JournalEntry::Message { channel: Channel::Text, message: message.clone() };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
@@ -3994,3 +4002,37 @@ mod duration_tests {
     }
 }
 
+
+#[cfg(test)]
+mod task_line_tests {
+    use super::{LoopInput, render_human_from_batch};
+    use crate::types::{Author, Content, Message, Sender, SenderBasis, TaskRef};
+
+    fn said(text: &str, task: Option<TaskRef>) -> LoopInput {
+        LoopInput::Message(Message {
+            id: "m".into(),
+            ts: chrono::Utc::now(),
+            from: Author::Person(Sender { subject: Some("赵力".into()), basis: SenderBasis::Owner }),
+            content: Content::Text(text.into()),
+            task,
+        })
+    }
+
+    /// What goes down to Cognition is this rendering, so the row has to be in it as the
+    /// boundary's fact — the one thing Reaction could otherwise only relay as a belief.
+    #[test]
+    fn a_line_typed_on_a_task_goes_down_naming_the_row() {
+        let task = TaskRef { subject: "tts-playground".into(), title: "试听 TTS 新音色".into() };
+        let down = render_human_from_batch(&[said("ACCEPT", Some(task))]);
+        assert!(
+            down.contains("⟨on task: tts-playground — 试听 TTS 新音色⟩ ⟨voice: 赵力⟩ ACCEPT"),
+            "{down}"
+        );
+    }
+
+    #[test]
+    fn a_line_typed_in_the_conversation_names_no_row() {
+        let down = render_human_from_batch(&[said("tts 那个可以了", None)]);
+        assert!(!down.contains("on task"), "{down}");
+    }
+}

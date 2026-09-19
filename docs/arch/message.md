@@ -14,10 +14,11 @@ pub struct Message {
     pub ts: DateTime<Utc>,
     pub from: From,
     pub content: Content,
+    pub task: Option<TaskRef>,   // TaskRef { subject, title }
 }
 ```
 
-Four fields. The ingress mints it, hands the same value to the journal, to Reaction, and to
+Five fields. The ingress mints it, hands the same value to the journal, to Reaction, and to
 the conversation, and nothing downstream reconstructs it from parts.
 
 ## What this replaces
@@ -116,6 +117,34 @@ than write a zero, and a photo has no opening a reader could use.
 A peek is **not** the content. The artifact holds what was handed over; the peek is a
 fixed-size look at its head that the prompt can afford to carry every turn. Whoever wants the
 rest joins `{raw_dir}` to the ref and reads it.
+
+## Where it was said
+
+**`task` is the row a message was typed on, when it came through that task's own reply box.**
+`POST /api/in/text?task=<subject>` sets it; nothing else does. It is a fact the boundary
+holds at minting and it never changes, which is what puts it on the message rather than in
+an [`Appraisal`](#what-is-not-a-message) beside it.
+
+**It says where, never what about.** A line in the conversation that names a task carries
+none: the boundary does not know which row it means, and reading the words to find one is
+the inference this system refuses everywhere else — a name in the person's words crosses the
+ladder as *their* words, with any reading of it marked as a belief
+([agents.md](agents.md#the-hand-down)). The reply box is the one place the boundary is told.
+
+**The title rides with the subject** for the reason `FileRef` carries a name: both consumers
+need it — the face draws it over the bubble, the prompt writes it beside the subject — and
+it is read from the ledger at the boundary, never taken from the client. A row retitled later
+keeps, on this message, what it was called when somebody answered it.
+
+**A subject nothing is filed under is refused before the body is read.** A message claiming
+a row that does not exist would reach every rung naming it.
+
+**It is still a message in the one conversation**, not a second channel beside it: scanned,
+attributed, journalled, appended to the list, and handed to Reaction like any line. What it
+adds downstream is two renderings and one record: the mind reads `⟨on task: <subject> —
+<title>⟩` in front of the words (so the hand-down to Cognition carries the row as the
+boundary's fact), the face draws the title over the bubble, and the row keeps the words as a
+`replied` line ([data.md](data.md#tasks)).
 
 ## What somebody says, and what they hand over
 

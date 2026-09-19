@@ -333,7 +333,7 @@ per turn. Model and context length are levers of this design, not background.
 ## Task records, end to end
 
 What a person reads of a record is not the file: [`tasks.jsx`](../../src/mind/views/factory/tasks.jsx) draws the title and **the newest
-mind-written line, clamped to one line**, on the card, and behind it a panel that pins the
+line said on the row — a mind's, or the person's own reply — clamped to one line**, on the card, and behind it a panel that pins the
 `created` line under *What they asked for*, a `waiting` line as *Needs you*, the body's top
 prose under *Where it stands*, then the whole timeline. Home draws the title again. A title,
 a line and a paragraph are three reads with three different budgets, so the seam has to be
@@ -372,7 +372,10 @@ re-stamped as now — and closes the folded row saying where the promise went.
   title are one call by the rung that was in the conversation. A second `created` is refused.
   Nothing enforces the "once" today and nothing reports its absence: of 106 rows in one
   store, three had one.
-- **`moved` is not in the enum.** The store writes it, as it does now.
+- **`moved`, `made` and `replied` are not in the enum.** The store writes them: the first two
+  about things it witnessed, the third the person's own words from the row's reply box
+  ([`data.md`](data.md#tasks)). § M does not read that one — its standard is for how the agent
+  writes to them, not how they write back.
 - **Nothing else writes the frontmatter or `## Timeline`.** A worker's own working files in
   the task folder are unchanged; the record is the host's.
 
