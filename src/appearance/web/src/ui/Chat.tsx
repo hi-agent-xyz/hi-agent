@@ -22,7 +22,9 @@ import type {
   ConditionKind,
   Message as ChatMessage,
 } from "../channels/out/text";
+import { ReplyIcon } from "lucide-react";
 import { splitSpeechLinks } from "../lib/links";
+import { useViews } from "../core/views";
 import { SenderAvatar } from "./Avatar";
 
 /**
@@ -178,6 +180,30 @@ function Body({ text }: { text: string }) {
         ),
       )}
     </span>
+  );
+}
+
+/**
+ * Where a line was said, when it was typed into a task's own reply box rather than
+ * here. It is in this list because it is something they said — one conversation —
+ * and this says which row they said it on, the way a quoted reply would.
+ *
+ * **Named loan:** pressing it opens the task board, not the row. A view-open carries
+ * a view ref and nothing else, the same gap Home's cards wait on; the item that takes
+ * it back is a targeted view-open (`docs/arch/home.md` § Open).
+ */
+function SaidOnTask({ task }: { task: NonNullable<ChatMessage["task"]> }) {
+  const { openRef } = useViews();
+  return (
+    <button
+      type="button"
+      className="mb-1 flex max-w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      onClick={() => openRef("factory/tasks")}
+      title={task.title}
+    >
+      <ReplyIcon className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">{task.title}</span>
+    </button>
   );
 }
 
@@ -457,6 +483,7 @@ const MessageGroups = memo(function MessageGroups({ groups }: { groups: Group[] 
                     className="w-full max-w-full"
                   >
                     <BubbleContent className="max-w-[80%]">
+                      {message.task && <SaidOnTask task={message.task} />}
                       {message.attachment && (
                         <AttachmentView attachment={message.attachment} />
                       )}

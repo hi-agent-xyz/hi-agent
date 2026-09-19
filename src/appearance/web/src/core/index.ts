@@ -18,3 +18,7 @@ export { useLive, TEMPO, type LiveOptions } from "./live";
 // that instead of asking again. See `core/live.ts` § watching, without a clock.
 export { useWatched, type WatchOptions } from "./live";
 
+// Whether an input method owns a keydown. A view with a line of its own — the task panel's
+// reply box — answers Enter and Escape the way the conversation's line does, which means
+// leaving both to the IME mid-composition. See `lib/keyboard.ts`.
+export { inputMethodHasKey } from "../lib/keyboard";

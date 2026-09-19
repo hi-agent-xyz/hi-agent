@@ -52,6 +52,17 @@ export type ConditionKind = "unreachable" | "out_of_energy" | "rejected";
 
 const CONDITIONS: ConditionKind[] = ["unreachable", "out_of_energy", "rejected"];
 
+/**
+ * The task a message was typed on, when it came through that row's own reply box —
+ * where it was said, decided at the boundary. A line that merely mentions a task
+ * carries none; nothing here reads the words to find one.
+ */
+export interface SaidOn {
+  subject: string;
+  /** What the row was called when it was answered, read from the ledger. */
+  title: string;
+}
+
 export interface Message {
   /** The journal's uuidv7 — time-sortable, and the same key the backend logged. */
   id: string;
@@ -60,6 +71,7 @@ export interface Message {
   text: string;
   attachment?: Attachment;
   sender?: Sender;
+  task?: SaidOn;
 }
 
 /** What the conversation looks like right now. */
@@ -88,6 +100,14 @@ function parseAttachment(value: unknown): Attachment | undefined {
   return { ref: raw.ref, mime: raw.mime };
 }
 
+function parseSaidOn(value: unknown): SaidOn | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.subject !== "string" || !raw.subject) return undefined;
+  const title = typeof raw.title === "string" && raw.title ? raw.title : raw.subject;
+  return { subject: raw.subject, title };
+}
+
 const BASES: SenderBasis[] = ["owner", "cluster", "stated", "unknown"];
 
 /**
@@ -114,6 +134,7 @@ export function parseMessage(value: unknown): Message | null {
   if (typeof raw.text !== "string") return null;
   const attachment = parseAttachment(raw.attachment);
   const sender = parseSender(raw.sender);
+  const task = parseSaidOn(raw.task);
   return {
     id: raw.id,
     ts: raw.ts,
@@ -121,6 +142,7 @@ export function parseMessage(value: unknown): Message | null {
     text: raw.text,
     ...(attachment ? { attachment } : {}),
     ...(sender ? { sender } : {}),
+    ...(task ? { task } : {}),
   };
 }
 

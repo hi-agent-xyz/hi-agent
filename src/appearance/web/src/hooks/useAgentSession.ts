@@ -131,8 +131,11 @@ export interface AgentSession {
   toggleVideo: () => void;
   /** Flip the agent's voice (audio output) on/off; text output is unaffected. */
   toggleAudioOutput: () => void;
-  /** Rejects if the line did not reach the server, so a caller can say so. */
-  sendText: (text: string) => Promise<void>;
+  /**
+   * Rejects if the line did not reach the server, so a caller can say so. `task` is
+   * the subject of the task whose reply box it was typed into, when it was.
+   */
+  sendText: (text: string, opts?: { task?: string }) => Promise<void>;
 }
 
 /**
@@ -807,12 +810,12 @@ export function useAgentSession(): AgentSession {
   // successful one. Nothing here shows the failure itself; it hands the rejection
   // back so the caller that still holds the draft can.
   const sendText = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, opts?: { task?: string }): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed) return;
       // The server appends the accepted line to the conversation and it arrives
       // back on the stream, so this window keeps no private optimistic copy.
-      await postInText({ body: trimmed });
+      await postInText({ body: trimmed, task: opts?.task });
     },
     [],
   );

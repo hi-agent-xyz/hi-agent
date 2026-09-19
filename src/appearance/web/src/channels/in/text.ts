@@ -12,12 +12,18 @@
 /**
  * Send a text signal to the agent.
  * Returns when the server has accepted the body (202).
+ *
+ * `task` is the subject of the task whose reply box this was typed into. The line is
+ * still a message in the one conversation; the row is where it was said, and the row
+ * keeps it too. A subject nothing is filed under is refused (404).
  */
 export async function postInText(opts: {
   body: string;
+  task?: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  const res = await fetch("/api/in/text", {
+  const at = opts.task ? `?task=${encodeURIComponent(opts.task)}` : "";
+  const res = await fetch(`/api/in/text${at}`, {
     method: "POST",
     headers: {
       "Content-Type": "text/plain; charset=utf-8",

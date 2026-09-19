@@ -28,7 +28,7 @@
 // cannot be driven from a keyboard, so the primary verb stays on the card and every
 // remaining transition is in the panel, which opens by click, tap and Enter alike.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { useLive, useWatched, TEMPO } from "@hi/core";
+import { useLive, useWatched, TEMPO, useSendText, inputMethodHasKey } from "@hi/core";
 
 const J = { "Content-Type": "application/json" };
 const api = {
@@ -134,6 +134,7 @@ const T = {
       waiting: "waiting",
       moved: "moved",
       made: "made",
+      replied: "you replied",
       note: "update",
       // Not kinds the store writes — the switchboard's line, built by `liveMoment`. The
       // word is deliberately not a past-tense one: everything else on this list happened,
@@ -153,6 +154,8 @@ const T = {
       cancelled: "cancelled",
     },
     byHand: "by you",
+    reply: "Reply on this task",
+    send: "Send",
     monitoring: "Liveness",
     verify: "Check",
     restart: "If it stops",
@@ -227,6 +230,7 @@ const T = {
       waiting: "等人",
       moved: "状态",
       made: "做出",
+      replied: "你的回复",
       note: "进展",
       live: "此刻",
       failed: "上一轮失败",
@@ -240,6 +244,8 @@ const T = {
       cancelled: "取消",
     },
     byHand: "你改的",
+    reply: "回复这个任务",
+    send: "发送",
     monitoring: "运行检查",
     verify: "检查方式",
     restart: "停止后",
@@ -299,6 +305,9 @@ const MOMENT_TONE = {
   update: "var(--fg-dim)",
   moved: "var(--fg-mute)",
   made: "var(--fg-mute)",
+  // Theirs, so it wears the colour the board uses for their hand rather than a record's grey:
+  // it is the line that answered whatever was waiting above it.
+  replied: "var(--accent)",
   note: "var(--fg-mute)",
   // The switchboard's two, which are the status colours and not record colours: `live` is
   // the same `--accent` the word `Doing` is drawn in, because that is what it qualifies.
@@ -514,6 +523,7 @@ export default function Tasks() {
           busy={busy === open.subject}
           onStatus={setTaskStatus}
           onClose={() => setOpenSubject(null)}
+          onReplied={loadRecord}
         />
       )}
     </div>
@@ -756,7 +766,7 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
   );
 }
 
-function Detail({ task, busy, onStatus, onClose }) {
+function Detail({ task, busy, onStatus, onClose, onReplied }) {
   const panel = useRef(null);
 
   useEffect(() => {
@@ -994,9 +1004,112 @@ function Detail({ task, busy, onStatus, onClose }) {
           <div className="hi-tasks__subject">{task.subject}</div>
         </div>
 
+        <Reply task={task} onSent={onReplied} />
         <Actions task={task} busy={busy} onStatus={onStatus} />
       </div>
     </div>
+  );
+}
+
+// **A reply typed here is something they said, so it goes where everything they say goes**:
+// one message in the one conversation, sent through the same `useSendText` the conversation's
+// own line uses, naming this row as where it was said. The server puts it in the conversation,
+// hands it to Reaction like any line — which is how it reaches whoever is on the row — and
+// writes it on the row as a `replied` line, which is what takes *Needs you* down. So this box
+// keeps no copy and draws no bubble: the record re-reads and shows the line the store wrote.
+//
+// **On every row, open or closed.** "That is not what I asked for" on a finished row is a
+// reply too; whether it reopens anything is a manager's call, not this box's.
+//
+// The agent's answer, when there is one, is said in the conversation — the one place anything
+// is said — and the work's answer lands in this record as the lines its sessions write.
+//
+// Enter sends and Shift+Enter breaks the line, as in the conversation, and both give way to an
+// input method mid-composition: Enter there is the 拼音 candidate, Escape the composition. An
+// Escape the box does take clears a draft before it closes anything; on an empty box it goes
+// through to the panel.
+function Reply({ task, onSent }) {
+  const send = useSendText();
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const box = useRef(null);
+  // Cleared a task late, for the reason the conversation's line gives: the Enter that commits
+  // a composition can arrive after `compositionend`.
+  const composing = useRef(false);
+
+  // A line that grows with what is written, up to the cap the stylesheet sets.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
+
+  const submit = async () => {
+    const said = text.trim();
+    if (!said || sending) return;
+    setSending(true);
+    try {
+      await send(said, { task: task.subject });
+      setText("");
+      onSent?.();
+    } catch {
+      // The words stay in the box, which is the whole of what a failure owes the person here:
+      // nothing was sent, and they still have what they wrote. Why is the server's to log.
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <form
+      className="hi-tasks__reply"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <textarea
+        ref={box}
+        className="hi-tasks__reply-line"
+        rows={1}
+        value={text}
+        placeholder={L.reply}
+        aria-label={L.reply}
+        onChange={(event) => setText(event.target.value)}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          setTimeout(() => {
+            composing.current = false;
+          }, 0);
+        }}
+        onKeyDown={(event) => {
+          // The panel closes on an Escape heard at the document; a key the input method owns
+          // must not get that far.
+          if (inputMethodHasKey(event.nativeEvent, composing.current)) {
+            event.stopPropagation();
+            return;
+          }
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            submit();
+          } else if (event.key === "Escape" && text) {
+            event.preventDefault();
+            event.stopPropagation();
+            setText("");
+          }
+        }}
+      />
+      <button
+        type="submit"
+        className="hi-tasks__button hi-tasks__button--primary"
+        disabled={!text.trim() || sending}
+      >
+        {L.send}
+      </button>
+    </form>
   );
 }
 
@@ -2567,6 +2680,46 @@ const CSS = `
     padding: 0 13px;
     font-size: 13px;
     font-weight: 750;
+  }
+
+  .hi-tasks__reply {
+    flex: none;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 12px 16px 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .hi-tasks__reply + .hi-tasks__actions {
+    border-top: 0;
+  }
+
+  .hi-tasks__reply-line {
+    flex: 1;
+    min-width: 0;
+    min-height: 38px;
+    max-height: 160px;
+    padding: 8px 11px;
+    resize: none;
+    overflow-y: auto;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--bg-0);
+    color: var(--fg);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .hi-tasks__reply-line::placeholder {
+    color: var(--fg-mute);
+  }
+
+  .hi-tasks__reply-line:focus-visible {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: 0;
+    border-color: var(--accent-line);
   }
 
   .hi-tasks__loading {

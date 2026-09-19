@@ -19,6 +19,18 @@ describe("message parsing", () => {
     ).toEqual({ ...msg, attachment: { ref: "file/2026-08-11/09/31-04.png", mime: "image/png" } });
   });
 
+  it("carries the task it was typed on, and drops one that names no row", () => {
+    const task = { subject: "try-the-new-voice", title: "试听新音色" };
+    expect(parseMessage({ ...msg, task })).toEqual({ ...msg, task });
+    expect(parseMessage({ ...msg, task: { title: "no subject" } })).toEqual(msg);
+    // A title is what the row was called; a missing one reads as its subject rather than
+    // a blank chip.
+    expect(parseMessage({ ...msg, task: { subject: "try-the-new-voice" } })).toEqual({
+      ...msg,
+      task: { subject: "try-the-new-voice", title: "try-the-new-voice" },
+    });
+  });
+
   it("rejects a role the conversation has no end for", () => {
     expect(parseMessage({ ...msg, role: "system" })).toBeNull();
   });
