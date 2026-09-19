@@ -1,24 +1,28 @@
-//! Static `ffmpeg` binary provisioning for the bundled macOS app.
+//! Static `ffmpeg` binary provisioning for a packaged install.
 //!
 //! Unlike the recognition models, `ffmpeg` has never been *managed*: the still-
 //! frame/clip helpers ([`super::ffmpeg_frame`]) shell out to whatever `ffmpeg` is
 //! on `PATH` (or `FFMPEG_BIN`). That is fine on a dev box or in Docker (apt has
-//! it), but a shipped `.app` cannot assume the user installed ffmpeg. So for the
-//! hermetic bundle we ship a pinned static `ffmpeg` under
-//! `Contents/Resources/ffmpeg/ffmpeg`, provisioned at package time and resolved
-//! first at runtime ([`bundled_bin`]).
+//! it), but a shipped app cannot assume the user installed ffmpeg. So for the
+//! hermetic bundle we ship a pinned static `ffmpeg` under `<resources>/ffmpeg/`,
+//! provisioned at package time and resolved first at runtime ([`bundled_bin`]).
 //!
-//! The pin is a single static macOS-arm64 binary from `eugeneware/ffmpeg-static`
-//! (immutable per-tag GitHub release asset), verified by SHA-256 + size exactly
-//! like a [`super::super::models::ModelSpec`]. We only ever *decode* (H.264 / HEVC /
-//! VP8 / VP9 are native ffmpeg decoders) and encode `mjpeg` stills + `pcm_s16le`
-//! clips — all built in — so the stock build covers our use.
+//! A pin is one immutable per-tag release asset from `eugeneware/ffmpeg-static`,
+//! verified by SHA-256 + size exactly like a
+//! [`super::super::models::ModelSpec`]. Two hosts have one — the macOS `.app` and
+//! the Windows install; every other target keeps using `PATH`. We only ever
+//! *decode* (H.264 / HEVC / VP8 / VP9 are native ffmpeg decoders) and encode
+//! `mjpeg` stills + `pcm_s16le` clips — all built in — so the stock build covers
+//! our use.
 //!
 //! **Licensing:** these are GPL builds. hi-agent invokes `ffmpeg` as a *separate
 //! process* (no linking), so the GPL does not reach our Rust code; to honor the
 //! source-availability obligation when *distributing* the binary we carry its
 //! upstream `LICENSE` next to it (fetched best-effort by [`provision_into`]) and
-//! pin the exact upstream tag below.
+//! pin the exact upstream tag below. The two assets carry different license
+//! texts — ffmpeg's own `LICENSE` for the Apple build, the GPLv3 text for the
+//! Windows one — because two different builders produced them; both are carried
+//! verbatim.
 
 use std::path::{Path, PathBuf};
 
@@ -42,30 +46,53 @@ struct FfmpegPin {
 /// re-verify the SHA below.
 const RELEASE_TAG: &str = "b6.1.1";
 
-/// The pin for the current host, or `None` on a target we don't ship a static
-/// build for. Only **macOS arm64** is wired up today — that is the only shape the
-/// `.app` targets; every other target keeps using `PATH`/`FFMPEG_BIN` ffmpeg.
-fn pin() -> Option<FfmpegPin> {
+/// The macOS `.app`'s build.
+const MACOS_ARM64: FfmpegPin = FfmpegPin {
+    url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64",
+    sha256: "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
+    size: 45_568_216,
+    license_url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/darwin-arm64.LICENSE",
+};
+
+/// The Windows install's build. `win32-x64` is upstream's spelling and the asset
+/// is a bare binary, so there is no `.exe` in the URL to match — the name it
+/// takes in the bundle is [`bundled_name`]'s business, not the pin's.
+const WINDOWS_X64: FfmpegPin = FfmpegPin {
+    url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-win32-x64",
+    sha256: "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00",
+    size: 82_797_568,
+    license_url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/win32-x64.LICENSE",
+};
+
+/// The pin for the current host, or `None` on a target we ship no static build
+/// for — Linux, and Windows on arm64, where upstream publishes no asset at all.
+/// Those keep using `PATH`/`FFMPEG_BIN` ffmpeg.
+fn pin() -> Option<&'static FfmpegPin> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => Some(FfmpegPin {
-            url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64",
-            sha256: "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
-            size: 45_568_216,
-            license_url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/darwin-arm64.LICENSE",
-        }),
+        ("macos", "aarch64") => Some(&MACOS_ARM64),
+        ("windows", "x86_64") => Some(&WINDOWS_X64),
         _ => None,
     }
 }
 
-/// The bundled static ffmpeg inside a packaged `.app`, or `None` when not running
-/// from a bundle or it isn't present. `Contents/Resources/ffmpeg/ffmpeg`.
+/// What the static binary is called once provisioned. Upstream ships bare
+/// binaries with no extension, so the suffix is ours to add: a Windows install's
+/// copy is `ffmpeg.exe` like every other executable on that machine. Read and
+/// written through this one function so the provisioner and [`bundled_bin`]
+/// cannot disagree about the name.
+fn bundled_name() -> &'static str {
+    if cfg!(target_os = "windows") { "ffmpeg.exe" } else { "ffmpeg" }
+}
+
+/// The bundled static ffmpeg inside a packaged install, or `None` when not
+/// running from one or it isn't present. `<resources>/ffmpeg/<bundled_name>`.
 pub fn bundled_bin() -> Option<PathBuf> {
-    let p = crate::bundle::resources_dir()?.join("ffmpeg").join("ffmpeg");
+    let p = crate::bundle::resources_dir()?.join("ffmpeg").join(bundled_name());
     p.is_file().then_some(p)
 }
 
-/// Provision the pinned static ffmpeg into `<dir>/ffmpeg` (made executable) plus
-/// its `LICENSE`, for a packaged `.app`'s `Contents/Resources/ffmpeg`. The binary
+/// Provision the pinned static ffmpeg into `<dir>/ffmpeg/` (made executable)
+/// plus its `LICENSE`, for a packaged install's resources directory. The binary
 /// is resolved through a content-addressed cache (keyed by tag + SHA-256), so a
 /// repeat `make dmg` reuses it and downloads nothing; the bundle gets a *copy*, so
 /// codesigning it in place never touches the shared cache. Verifies size + SHA-256
@@ -74,18 +101,19 @@ pub fn bundled_bin() -> Option<PathBuf> {
 pub async fn provision_into(dir: &Path) -> anyhow::Result<()> {
     let pin = pin().ok_or_else(|| {
         anyhow!(
-            "no pinned static ffmpeg for {}-{} (tag {RELEASE_TAG}); only macOS arm64 is wired up",
+            "no pinned static ffmpeg for {}-{} (tag {RELEASE_TAG}); macOS arm64 and windows x86_64 \
+             are the targets wired up",
             std::env::consts::OS,
             std::env::consts::ARCH,
         )
     })?;
 
-    let cached = ensure_cached(&pin).await?;
+    let cached = ensure_cached(pin).await?;
 
     tokio::fs::create_dir_all(dir)
         .await
         .with_context(|| format!("creating {}", dir.display()))?;
-    let bin = dir.join("ffmpeg");
+    let bin = dir.join(bundled_name());
     tokio::fs::copy(&cached.bin, &bin)
         .await
         .with_context(|| format!("copying ffmpeg into {}", bin.display()))?;
@@ -233,13 +261,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pin_is_well_formed_when_present() {
-        if let Some(p) = pin() {
-            assert_eq!(p.sha256.len(), 64);
-            assert!(p.sha256.chars().all(|c| c.is_ascii_hexdigit()));
-            assert!(p.url.starts_with("https://"));
-            assert!(p.url.contains(RELEASE_TAG));
-            assert!(p.size > 0);
+    fn every_pin_is_well_formed() {
+        // Every row, not just the one this host resolves. A pin only a host
+        // nobody builds on can reach would otherwise never be checked, and a typo
+        // in it surfaces as a broken bundle on whichever machine tries first.
+        for p in [&MACOS_ARM64, &WINDOWS_X64] {
+            assert_eq!(p.sha256.len(), 64, "{}", p.url);
+            assert!(p.sha256.chars().all(|c| c.is_ascii_hexdigit()), "{}", p.url);
+            assert!(p.url.starts_with("https://"), "{}", p.url);
+            assert!(p.url.contains(RELEASE_TAG), "{}", p.url);
+            assert!(p.license_url.starts_with("https://"), "{}", p.license_url);
+            assert!(p.size > 0, "{}", p.url);
         }
     }
 }
