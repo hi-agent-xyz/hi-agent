@@ -57,6 +57,24 @@ pub enum Surface {
     Speech,
     /// A task's record: a line, a title, where it stands.
     Record,
+    /// A view put on the person's screen, as its reviewer judged it.
+    View,
+    /// A group's label or note on the home screen.
+    Home,
+}
+
+impl Surface {
+    pub const ALL: [Surface; 4] = [Surface::Speech, Surface::Record, Surface::View, Surface::Home];
+
+    /// What one of the things judged on this surface is called, plural, for a reader.
+    pub fn things(self) -> &'static str {
+        match self {
+            Surface::Speech => "spoken messages",
+            Surface::Record => "task-record lines",
+            Surface::View => "views",
+            Surface::Home => "home labels",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -245,10 +263,17 @@ pub async fn read_since(data_dir: &Path, since: DateTime<Utc>) -> Vec<Record> {
 pub struct Legibility {
     pub speech: Numbers,
     pub record: Numbers,
+    pub view: Numbers,
+    pub home: Numbers,
 }
 
 pub fn legibility(records: &[Record]) -> Legibility {
-    Legibility { speech: numbers(records, Surface::Speech), record: numbers(records, Surface::Record) }
+    Legibility {
+        speech: numbers(records, Surface::Speech),
+        record: numbers(records, Surface::Record),
+        view: numbers(records, Surface::View),
+        home: numbers(records, Surface::Home),
+    }
 }
 
 /// The numbers for one surface.
@@ -312,7 +337,7 @@ fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
 
 /// Whether a record is about `surface`. A reception reads the person's reply to what was
 /// *said*, so it belongs to speech.
-fn on(record: &Record, surface: Surface) -> bool {
+pub fn on(record: &Record, surface: Surface) -> bool {
     match record {
         Record::Check(c) => c.surface == surface,
         Record::Audit(a) => a.surface == surface,

@@ -344,8 +344,14 @@ pub(crate) const READING_HEADING: &str = "## How your words read this stretch";
 /// findings never crowds out what the person actually said.
 const READING_CHARS: usize = 3_000;
 
-/// The person's corrections, then the audit's findings by axis with a couple of its notes
-/// each — or `""` when the stretch has neither, which is most stretches.
+/// The person's corrections, then — surface by surface, each named — the findings by axis with
+/// a couple of their notes, or `""` when the stretch has neither, which is most stretches.
+///
+/// **Labelled by surface** (`docs/arch/legibility.md` § H). A lesson about how the person wants
+/// to be told things is not speech's alone, and a task line reported as a spoken message would
+/// teach the wrong thing about both. A surface's findings are its audits' and, where a check
+/// is the only per-line read — every surface but speech, whose audit reads the same messages
+/// its check did — the check's send-backs too.
 fn render_reading(records: &[quality::Record]) -> String {
     use std::fmt::Write as _;
     let corrections: Vec<&quality::Reception> = records
@@ -355,20 +361,54 @@ fn render_reading(records: &[quality::Record]) -> String {
             _ => None,
         })
         .collect();
-    let mut read = 0usize;
-    let mut unsaid: Vec<&str> = Vec::new();
-    let mut by_axis: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
-    for r in records {
-        let quality::Record::Audit(a) = r else { continue };
-        read += a.messages.len();
-        for m in &a.messages {
-            if let Some(axis) = &m.axis {
-                by_axis.entry(axis).or_default().push(m.note.as_deref().unwrap_or(""));
+    let mut sections = String::new();
+    for surface in quality::Surface::ALL {
+        let mut read = 0usize;
+        let mut unsaid: Vec<&str> = Vec::new();
+        let mut by_axis: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+        for r in records.iter().filter(|r| quality::on(r, surface)) {
+            match r {
+                quality::Record::Audit(a) => {
+                    read += a.messages.len();
+                    for m in &a.messages {
+                        if let Some(axis) = &m.axis {
+                            by_axis.entry(axis).or_default().push(m.note.as_deref().unwrap_or(""));
+                        }
+                    }
+                    unsaid.extend(a.unsaid.iter().map(String::as_str));
+                }
+                quality::Record::Check(c) if surface != quality::Surface::Speech => {
+                    read += 1;
+                    if c.outcome == quality::Outcome::Revise
+                        && let Some(axis) = &c.axis
+                    {
+                        by_axis.entry(axis).or_default().push(c.note.as_deref().unwrap_or(""));
+                    }
+                }
+                _ => {}
             }
         }
-        unsaid.extend(a.unsaid.iter().map(String::as_str));
+        if by_axis.is_empty() && unsaid.is_empty() {
+            continue;
+        }
+        let _ = writeln!(sections, "What an independent read of {read} {} found:", surface.things());
+        let mut axes: Vec<(&str, Vec<&str>)> = by_axis.into_iter().collect();
+        axes.sort_by_key(|(_, notes)| std::cmp::Reverse(notes.len()));
+        for (axis, notes) in axes {
+            let examples: Vec<&str> =
+                notes.iter().copied().filter(|n| !n.is_empty()).take(2).collect();
+            let _ = writeln!(sections, "- {axis} ×{} — {}", notes.len(), examples.join(" / "));
+        }
+        if !unsaid.is_empty() {
+            let _ = writeln!(
+                sections,
+                "- unsaid ×{} — {}",
+                unsaid.len(),
+                unsaid.iter().take(2).copied().collect::<Vec<_>>().join(" / ")
+            );
+        }
     }
-    if corrections.is_empty() && by_axis.is_empty() && unsaid.is_empty() {
+    if corrections.is_empty() && sections.is_empty() {
         return String::new();
     }
     let mut s = format!("{READING_HEADING}\n");
@@ -384,19 +424,7 @@ fn render_reading(records: &[quality::Record]) -> String {
             );
         }
     }
-    if !by_axis.is_empty() || !unsaid.is_empty() {
-        let _ = writeln!(s, "What an independent read of {read} spoken messages found:");
-        let mut axes: Vec<(&str, Vec<&str>)> = by_axis.into_iter().collect();
-        axes.sort_by_key(|(_, notes)| std::cmp::Reverse(notes.len()));
-        for (axis, notes) in axes {
-            let examples: Vec<&str> =
-                notes.iter().copied().filter(|n| !n.is_empty()).take(2).collect();
-            let _ = writeln!(s, "- {axis} ×{} — {}", notes.len(), examples.join(" / "));
-        }
-        if !unsaid.is_empty() {
-            let _ = writeln!(s, "- unsaid ×{} — {}", unsaid.len(), unsaid.iter().take(2).copied().collect::<Vec<_>>().join(" / "));
-        }
-    }
+    s.push_str(&sections);
     if s.chars().count() > READING_CHARS {
         s = s.chars().take(READING_CHARS).collect();
         s.push_str("\n[Cut here by the host; the rest is in memory/quality/.]\n");
@@ -849,6 +877,26 @@ mod frontier_tests {
         let pos = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing: {text}"));
         assert!(pos("不用说这么细") < pos("independent read of 3"));
         assert!(pos("machinery ×2") < pos("known ×1"), "the most frequent axis leads");
+        assert!(text.contains("3 spoken messages"));
+
+        // A task line's finding is named as one, never counted as speech.
+        let mut with_record = records.clone();
+        with_record.push(quality::Record::Check(quality::Check {
+            ts: at,
+            surface: quality::Surface::Record,
+            turn: "resume".into(),
+            message: "update: …".into(),
+            scope: quality::Scope::Long,
+            mode: "shadow".into(),
+            outcome: quality::Outcome::Revise,
+            axis: Some("machinery".into()),
+            note: Some("「写手」「挂屏」是我们的词".into()),
+            latency_ms: 900,
+            model: "m".into(),
+        }));
+        let both = render_reading(&with_record);
+        assert!(both.contains("3 spoken messages") && both.contains("1 task-record lines"), "{both}");
+        assert!(both.contains("「写手」「挂屏」是我们的词"));
 
         let prompt = build_consolidation_prompt(
             &Frontier { tail: vec![], prior: vec![], face_ids: HashMap::new(), voice_ids: HashMap::new(), pressure: vec![] },
