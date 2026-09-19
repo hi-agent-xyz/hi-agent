@@ -48,7 +48,7 @@ pub fn axis(raw: Option<&str>) -> Option<String> {
 /// *The surfaces*). **One file for all of them**, because a correction about how the person is
 /// told things is a fact about the person, and a store split by surface could not carry it
 /// from one to the next.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
     /// A spoken message. Every record written before surfaces existed is one, which is what

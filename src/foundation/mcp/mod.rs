@@ -1510,7 +1510,10 @@ async fn dispatch_tool(
         "hi_merge_people" => return reflection_merge_people(data_dir, args).await,
         "hi_keep_and_fade" => return reflection_keep_and_fade(data_dir, args).await,
         // Cognition's one structured write: how `factory/home` arranges what is in hand.
-        "hi_set_home_groups" => return set_home_groups(data_dir, args).await,
+        "hi_set_home_groups" => {
+            let writer = slug.as_ref().map_or_else(|| "task-manager".to_owned(), |s| s.to_string());
+            return set_home_groups(data_dir, &writer, args).await;
+        }
         "hi_image_text_to_text" => return do_image_text_to_text(data_dir, args).await,
         "hi_video_text_to_text" => {
             return do_video_text_to_text(data_dir, video_partial, args).await;
@@ -2479,7 +2482,7 @@ async fn reflection_update_proactivity(data_dir: &std::path::Path, args: &Value)
 /// The answer is a receipt, not an ack: what landed, what was dropped for naming no task,
 /// what two groups both claimed, and which open work is in no group at all. A subject
 /// mistyped here is caught in the turn that typed it.
-async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
+async fn set_home_groups(data_dir: &std::path::Path, writer: &str, args: &Value) -> Value {
     use crate::foundation::server::home;
 
     // Absent `groups` is a malformed call, not "clear the arrangement" — clearing is real
@@ -2491,6 +2494,14 @@ async fn set_home_groups(data_dir: &std::path::Path, args: &Value) -> Value {
         Ok(grouping) => grouping,
         Err(err) => return tool_error(&format!("`groups` is not the shape it should be: {err}")),
     };
+    // The names on the person's screen are read before they land (`docs/arch/legibility.md`
+    // § *Home*): whatever is new or reads differently since the standing arrangement.
+    let standing = home::read(data_dir).await;
+    if let crate::body::legibility::Review::SendBack(note) =
+        crate::body::legibility::home::review(data_dir, writer, &standing, &proposed).await
+    {
+        return tool_error(&format!("not arranged — {note}"));
+    }
     let written = match home::write(data_dir, proposed).await {
         Ok(written) => written,
         Err(err) => return tool_error(&err.to_string()),
@@ -2587,7 +2598,7 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
     let (title, wanted) =
         (arg_text(args, "title").unwrap_or_default(), arg_text(args, "wanted").unwrap_or_default());
     let writing = crate::body::legibility::record::Writing::Open { title, wanted };
-    if let crate::body::legibility::record::Review::SendBack(note) =
+    if let crate::body::legibility::Review::SendBack(note) =
         crate::body::legibility::record::review(data_dir, writer, subject, None, writing).await
     {
         return tool_error(&format!("not opened — {note}"));
@@ -2634,7 +2645,7 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
     };
     let writing = crate::body::legibility::record::Writing::Note { note, text: text.trim() };
     if !text.trim().is_empty()
-        && let crate::body::legibility::record::Review::SendBack(verdict) =
+        && let crate::body::legibility::Review::SendBack(verdict) =
             crate::body::legibility::record::review(data_dir, writer, &subject, Some(&task), writing).await
     {
         return tool_error(&format!("not recorded — {verdict}"));
@@ -3603,6 +3614,7 @@ mod surface_tests {
         .unwrap();
         let got = set_home_groups(
             dir.path(),
+            "task-manager-1",
             &json!({ "groups": [{ "label": "学习类", "members": ["vocabulary-book"] }] }),
         )
         .await;
@@ -3629,6 +3641,7 @@ mod surface_tests {
         }
         let got = set_home_groups(
             dir.path(),
+            "task-manager-1",
             &json!({ "groups": [{ "label": "Client work", "members": ["rollup"],
                 "groups": [{ "label": "Site", "members": ["site-survey"] }] }] }),
         )

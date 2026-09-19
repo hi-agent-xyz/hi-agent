@@ -140,6 +140,8 @@ pub mod judges {
     /// The read of a task's record after it lands: a new *Where it stands*, or the whole record
     /// as it closes.
     pub const RECORD_AUDIT: &str = include_str!("judges/record_audit.md");
+    /// Whether the labels and notes about to go on the home screen go up as written.
+    pub const HOME: &str = include_str!("judges/home.md");
 }
 
 /// A judge's whole instructions: its rubric, then the reading standard it judges against.
