@@ -14,7 +14,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version check-workflows build dev run test test-live test-views eval-speech docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
+.PHONY: help check-version check-workflows build dev run test test-live test-views eval-speech eval-records docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -99,6 +99,9 @@ measure: ## report reply latency and reply shape from a data dir's wire log (DAT
 # See docs/arch/legibility.md § J and § K.
 eval-speech: ## replay past Reaction turns under this build's prompt and score them (DATA=./data PROMPT= MODEL= LIMIT=40)
 	cargo run --quiet -- --data-dir $(if $(DATA),$(DATA),data) --eval-speech --eval-limit $(if $(LIMIT),$(LIMIT),40) $(if $(PROMPT),--eval-prompt $(PROMPT)) $(if $(MODEL),--eval-model $(MODEL))
+
+eval-records: ## replay past task-record lines under this build's worker prompt and score them (DATA=./data PROMPT= MODEL= LIMIT=40)
+	cargo run --quiet -- --data-dir $(if $(DATA),$(DATA),data) --eval-records --eval-limit $(if $(LIMIT),$(LIMIT),40) $(if $(PROMPT),--eval-prompt $(PROMPT)) $(if $(MODEL),--eval-model $(MODEL))
 
 docker: ## build the docker image
 	docker build -t hi-agent:dev .

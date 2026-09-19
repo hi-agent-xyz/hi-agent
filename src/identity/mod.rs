@@ -548,6 +548,18 @@ pub async fn role_prompt(data_dir: &Path, role: Role) -> String {
     installed_prompt(data_dir, role.prompt_name(), role.base()).await
 }
 
+/// A worker's whole prompt as **this build** carries it, whatever an older build left installed
+/// on disk — what record replay runs a candidate change against (`docs/arch/legibility.md`
+/// § J), the way [`reaction_prompt_as_built`] is for speech.
+pub async fn worker_prompt_as_built(data_dir: &Path, kind: WorkerType) -> String {
+    let base = interpolate(data_dir, Role::Worker(kind).base().to_string()).await;
+    if kind.writes_for_a_person() {
+        format!("{}\n\n{}", base.trim(), READING.trim())
+    } else {
+        base
+    }
+}
+
 /// A worker's whole system prompt: its role's, closed by the reading standard when its type
 /// writes something a person reads (`docs/arch/legibility.md` § A).
 ///
@@ -607,6 +619,13 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
         Ok(s) if !s.trim().is_empty() => s,
         _ => fallback.to_string(),
     };
+    interpolate(data_dir, text).await
+}
+
+/// A prompt's per-install placeholders filled in for `data_dir`: its directories as absolute
+/// paths, the inventory of notes in hand, and the language line.
+async fn interpolate(data_dir: &Path, text: String) -> String {
+    let base = abs(data_dir);
     // What this install actually reached for lately, for ranking the inventory below.
     // Cached with a short TTL inside `recent_usage`: sessions open far more often than
     // usage meaningfully changes, and the alternative is scanning every frame log each

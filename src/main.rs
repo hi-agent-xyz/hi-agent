@@ -92,15 +92,24 @@ struct Cli {
     #[arg(long, hide = true)]
     eval_speech: bool,
 
-    /// With `--eval-speech`: a whole system prompt to replay under instead of this build's.
+    /// Replay past `hi_task_note` calls out of the data dir's frame logs under this build's
+    /// worker prompt, score both lines with the record audit, print the comparison, and exit.
+    ///
+    /// Hidden: driven by `make eval-records` (`docs/arch/legibility.md` § J).
+    #[arg(long, hide = true)]
+    eval_records: bool,
+
+    /// With `--eval-speech` or `--eval-records`: a whole system prompt to replay under instead
+    /// of this build's.
     #[arg(long, hide = true, value_name = "FILE")]
     eval_prompt: Option<PathBuf>,
 
-    /// With `--eval-speech`: the model to replay on instead of the one the agent runs.
+    /// With `--eval-speech` or `--eval-records`: the model to replay on instead of the one the
+    /// agent runs.
     #[arg(long, hide = true, value_name = "MODEL")]
     eval_model: Option<String>,
 
-    /// With `--eval-speech`: how many turns to replay.
+    /// With `--eval-speech` or `--eval-records`: how many turns, or lines, to replay.
     #[arg(long, hide = true, default_value_t = 40)]
     eval_limit: usize,
 
@@ -392,6 +401,18 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         });
+    }
+
+    if cli.eval_records {
+        let options = hi_agent::body::legibility::record_replay::Options {
+            data_dir: data_dir.clone(),
+            prompt: cli.eval_prompt,
+            model: cli.eval_model,
+            limit: cli.eval_limit,
+        };
+        hi_agent::foundation::config::tunables::init(&data_dir);
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        return rt.block_on(hi_agent::body::legibility::record_replay::run(options));
     }
 
     if cli.eval_speech {

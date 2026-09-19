@@ -25,6 +25,7 @@ pub mod home;
 pub mod judge;
 pub mod record;
 pub mod record_audit;
+pub mod record_replay;
 
 use judge::json_object;
 

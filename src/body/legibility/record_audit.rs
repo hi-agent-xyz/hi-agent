@@ -51,7 +51,7 @@ pub fn after_stands(data_dir: PathBuf, subject: String, text: String) {
     tokio::spawn(async move {
         let Ok(Some(task)) = tasks::read_task(&data_dir, &subject).await else { return };
         let items = vec![text.trim().to_string()];
-        let case = stands_case(&reader(&data_dir).await, &task, &items[0]);
+        let case = written_case(&reader(&data_dir).await, &task, STANDS, &items[0]);
         read_and_keep(&data_dir, &subject, &case, &items).await;
     });
 }
@@ -122,8 +122,40 @@ fn the_task(s: &mut String, task: &Task) {
     section(s, "The task", &format!("Title: {}\nWhat they asked for: {asked}", task.title));
 }
 
-/// A read of one new *Where it stands*: the reader, the row, and the prose numbered as item 1.
-fn stands_case(reader: &str, task: &Task, text: &str) -> String {
+const STANDS: &str = "Just written under Where it stands — item 1";
+const LINE: &str = "Just written on the record — item 1";
+
+/// Read one line as the record audit reads it, without keeping the answer — what record replay
+/// scores both sides of a comparison with (`docs/arch/legibility.md` § J). The row is read as
+/// it stands now; a row that is gone is read as its subject alone.
+pub(crate) async fn read_line(
+    judge: &Judge,
+    instructions: &str,
+    data_dir: &Path,
+    subject: &str,
+    line: &str,
+) -> Option<quality::Audit> {
+    let task = match tasks::read_task(data_dir, subject).await {
+        Ok(Some(task)) => task,
+        _ => Task::new(subject, tasks::TaskStatus::Doing),
+    };
+    let items = vec![line.trim().to_string()];
+    let case = written_case(&reader(data_dir).await, &task, LINE, &items[0]);
+    let answer = judge.ask(instructions, &case, AUDIT_LIMIT).await.ok()?;
+    let (messages, unsaid, wrong) = super::read_audit(&answer, &items)?;
+    Some(quality::Audit {
+        ts: Utc::now(),
+        surface: quality::Surface::Record,
+        turn: subject.to_string(),
+        model: judge.model().to_string(),
+        messages,
+        unsaid,
+        wrong,
+    })
+}
+
+/// A read of one thing just written: the reader, the row, and the text numbered as item 1.
+fn written_case(reader: &str, task: &Task, heading: &str, text: &str) -> String {
     let mut s = String::new();
     section(&mut s, "Who is reading, and how they want to be told", reader);
     the_task(&mut s, task);
@@ -134,7 +166,7 @@ fn stands_case(reader: &str, task: &Task, text: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     section(&mut s, "Its newest lines, oldest first", &lines);
-    section(&mut s, "Just written under Where it stands — item 1", &format!("1. {}", text.replace('\n', "\n   ")));
+    section(&mut s, heading, &format!("1. {}", text.replace('\n', "\n   ")));
     s
 }
 
@@ -206,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_stands_read_numbers_the_new_prose_as_its_one_item() {
-        let case = stands_case("以后简要汇报", &task(), "交付了，等你看。\n第二段。");
+        let case = written_case("以后简要汇报", &task(), STANDS, "交付了，等你看。\n第二段。");
         assert!(case.trim_end().ends_with("1. 交付了，等你看。\n   第二段。"));
         assert!(case.contains("要能直接改"));
     }
