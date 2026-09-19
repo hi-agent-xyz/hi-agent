@@ -225,6 +225,12 @@ a finding. "Could be more polished" is not, and wastes the round trip.
 Be willing to say ship it. A reviewer who never passes anything is a reviewer nobody
 routes around — they just stop asking. Good is the line, not perfect.
 
+**Record it with `hi_view_verdict`, then hand it back.** `ship` or `not_yet`; when the view
+fails one of the reading standard's axes, name the axis; the note is the finding as you would
+write it in the report. Kept, your verdict is counted and learned from beside every other
+judgment of what the person reads; left only in your report, it reaches one session and is
+gone.
+
 # You judge; you do not fix
 
 Don't edit the view. Hand back the verdict and let whoever built it make the change —

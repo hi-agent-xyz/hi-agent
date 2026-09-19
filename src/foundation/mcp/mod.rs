@@ -564,6 +564,67 @@ fn task_set_tool() -> Value {
     )
 }
 
+/// **A view's judge is its reviewer, and this is where its verdict is kept**
+/// (`docs/arch/legibility.md` § *Views*). A verdict that only lives in a report is one nothing
+/// counts and nothing learns from; recorded here it is a check on the view surface — `ship` a
+/// pass, `not_yet` a send-back — beside every other judgment of what the person reads.
+fn view_verdict_tool() -> Value {
+    tool(
+        "hi_view_verdict",
+        "Record your verdict on a view you reviewed, so it is counted and learned from like \
+         every other judgment of what the person reads — then hand the same verdict back in \
+         your report. `ref` is the view's ref. `verdict` is `ship` or `not_yet`. When it fails \
+         one of the reading standard's axes (`known`, `machinery`, `repeat`, `hard`, \
+         `defensive`, `shape`, `unsupported`, `buried`, `unsaid`), name it as `axis`; a finding \
+         about craft has none. `note` is the finding, precise enough to act on.",
+        json!({
+            "type": "object",
+            "properties": {
+                "ref": { "type": "string", "description": "The view's ref, e.g. `project/name`." },
+                "verdict": { "type": "string", "enum": ["ship", "not_yet"] },
+                "axis": { "type": "string", "description": "The reading axis it fails, if it fails one." },
+                "note": { "type": "string", "description": "What to change — the element, what is wrong, what would make it right. Empty for a clean ship." },
+            },
+            "required": ["ref", "verdict"],
+        }),
+    )
+}
+
+/// `hi_view_verdict` — a view reviewer's verdict, kept as a check on the view surface.
+async fn do_view_verdict(data_dir: &Path, reviewer: &str, args: &Value) -> Value {
+    use crate::mind::memory::quality;
+    let view_ref = arg_text(args, "ref").map(str::trim).unwrap_or_default();
+    if view_ref.is_empty() {
+        return tool_error("`ref` names the view you reviewed");
+    }
+    let outcome = match arg_text(args, "verdict").map(str::trim) {
+        Some("ship") => quality::Outcome::Pass,
+        Some("not_yet") => quality::Outcome::Revise,
+        _ => return tool_error("`verdict` is `ship` or `not_yet`"),
+    };
+    let note = arg_text(args, "note").map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned);
+    if outcome == quality::Outcome::Revise && note.is_none() {
+        return tool_error("a `not_yet` needs its `note` — what to change, precisely enough to act on");
+    }
+    let record = quality::Record::Check(quality::Check {
+        ts: Utc::now(),
+        surface: quality::Surface::View,
+        turn: view_ref.to_owned(),
+        message: view_ref.to_owned(),
+        scope: quality::Scope::Review,
+        mode: "on".into(),
+        outcome,
+        axis: quality::axis(arg_text(args, "axis")),
+        note,
+        latency_ms: 0,
+        model: reviewer.to_owned(),
+    });
+    match quality::append(data_dir, &record).await {
+        Ok(()) => tool_ok("kept"),
+        Err(error) => tool_error(&format!("could not keep the verdict: {error}")),
+    }
+}
+
 /// Brokered HTTP: the model chooses an operation and a drive-file reference; the
 /// trusted host resolves and injects the value at the destination boundary.
 fn http_request_tool() -> Value {
@@ -621,6 +682,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             send_message_tool(),
             task_note_tool(),
             task_set_tool(),
+            view_verdict_tool(),
             review_view_tool(),
             share_view_tool(),
             http_request_tool(),
@@ -1400,6 +1462,21 @@ async fn dispatch_tool(
             ));
         }
     }
+    // **A view's verdict is its reviewer's.** A builder recording its own view as shipped is
+    // the check marking its own homework; the type is read from the registry, as for the
+    // home surface, never from anything the caller says.
+    if name == "hi_view_verdict" {
+        let kind = slug
+            .as_ref()
+            .and_then(|id| crate::foundation::registry::global().status(id))
+            .and_then(|status| status.role.worker_type());
+        if kind != Some(crate::identity::WorkerType::ViewReviewer) {
+            return tool_error(&format!(
+                "`{name}` is the view reviewer's; role `{}` does not judge views",
+                role.unwrap_or("<none>")
+            ));
+        }
+    }
     if name == "hi_http_request" && role != Some("worker") {
         return tool_error(&format!(
             "`{name}` is worker-only; role `{}` may not spend a stored credential",
@@ -1455,6 +1532,10 @@ async fn dispatch_tool(
             return do_review_view(data_dir, subject.as_deref(), args).await;
         }
         "hi_share_view" => return do_share_view(data_dir, args).await,
+        "hi_view_verdict" => {
+            let reviewer = slug.as_ref().map_or_else(|| "view-reviewer".to_owned(), |s| s.to_string());
+            return do_view_verdict(data_dir, &reviewer, args).await;
+        }
         "hi_task_open" => {
             let writer = slug.as_ref().map_or_else(|| "cognition".to_owned(), |s| s.to_string());
             return do_task_open(data_dir, &writer, args).await;
@@ -3829,8 +3910,29 @@ mod surface_tests {
         };
         assert_eq!(task_verbs(Some("cognition")), vec!["hi_task_open"]);
         assert_eq!(task_verbs(Some("worker")), vec!["hi_task_note", "hi_task_set"]);
+        assert!(names(Some("worker")).contains(&"hi_view_verdict".to_string()));
         assert!(task_verbs(Some("reaction")).is_empty());
         assert!(task_verbs(Some("reflection")).is_empty());
+    }
+
+    /// **A view's verdict is kept on the view surface**, and a `not_yet` with nothing to act
+    /// on is not one.
+    #[tokio::test]
+    async fn a_view_verdict_is_kept_as_a_check_on_views() {
+        use crate::mind::memory::quality;
+        let dir = tempfile::tempdir().unwrap();
+        let refused = do_view_verdict(dir.path(), "view-reviewer-1", &json!({ "ref": "shoes/compare", "verdict": "not_yet" })).await;
+        assert_eq!(refused["isError"], true);
+        let kept = do_view_verdict(
+            dir.path(),
+            "view-reviewer-1",
+            &json!({ "ref": "shoes/compare", "verdict": "not_yet", "axis": "machinery", "note": "骨架是「已核实／待核实」，他关心的是鞋" }),
+        )
+        .await;
+        assert_eq!(kept["isError"], false);
+        let records = quality::read_since(dir.path(), Utc::now() - chrono::Duration::hours(1)).await;
+        let [quality::Record::Check(c)] = records.as_slice() else { panic!("{records:?}") };
+        assert_eq!((c.surface, c.outcome, c.axis.as_deref()), (quality::Surface::View, quality::Outcome::Revise, Some("machinery")));
     }
 
     #[test]

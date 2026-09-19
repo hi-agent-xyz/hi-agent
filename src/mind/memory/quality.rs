@@ -111,6 +111,10 @@ pub enum Scope {
     Waiting,
     /// A row being opened, or its name corrected: the title every card draws.
     Opening,
+    /// A reviewer's verdict on something built for the person — a view.
+    Review,
+    /// A label or note about to go on the home screen.
+    Label,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
