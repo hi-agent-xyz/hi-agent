@@ -546,7 +546,9 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
         "the tile must not be a picture of a blank page"
     );
     let img = image::load_from_memory(&bytes).expect("decodes as an image");
-    assert!(img.width() <= 480, "scaled down to a tile, got {}px wide", img.width());
+    // A tile is stored at the device pixels it is read at — `THUMB_WIDTH` in `view_shots.rs`,
+    // 960 since shots stopped being upscaled on a retina screen.
+    assert!(img.width() <= 960, "scaled down to a tile, got {}px wide", img.width());
 
     // The same raise again, this time as a *named* view. A name makes it a standing
     // surface rather than a one-off artifact, so its picture is filed under the ref and
