@@ -310,7 +310,7 @@ host fences anyone out.
 | **Cognition** | `SendMessage` · `CreateWorker` · session reads · **opening** a ledger row (`hi_task_open`) | it delegates rather than does, and it may create a duty but never retire one — that goes to a [Task Manager](agents.md#task-manager) |
 | **Reflection** | as Cognition, plus memory curation | it curates `data/`; duties are not its to record |
 | **Task Manager** | a worker's surface, aimed at one dimension | the only role that may **change** a task's `status` — close, reopen, stand down; it files and delivers none of it |
-| **Workers** | projected files and memory, shell, devices, web, build, brokered private capabilities, and a task's record through `hi_task_note` · `hi_task_set` | the job is here, so the surface is wide; ordinary drive files, including managed secret files, are locally usable |
+| **Workers** | projected files and memory, shell, devices, web, build, brokered private capabilities, a task's record through `hi_task_note` · `hi_task_set`, and a view reviewer's verdict through `hi_view_verdict` | the job is here, so the surface is wide; ordinary drive files, including managed secret files, are locally usable |
 
 Reaction is the one exception to "default, not rail". Its surface is **enforced at session
 open**, because the argument for the rung — that it is fast since it *cannot* wait — is worth

@@ -61,10 +61,15 @@ A new human-facing surface ships with its seam or it does not ship
 | A task's title and its `created` line | Cognition | `hi_task_open` | at the seam, gated — § L–M |
 | A task's timeline line | any worker | `hi_task_note` | at the seam, gated — § L–M |
 | A task's *Where it stands* prose | any worker | `hi_task_note` (`stands`) | after it lands — § N |
-| A view on screen | a view builder | `hi_review_view` | by the view reviewer, its verdict kept — § *Views* |
-| Home's group labels and notes | a task manager | `hi_set_home_groups` | at the seam, gated: short, rare, and on every screen |
-| A report to Reaction that becomes speech | Cognition, workers | `hi_send_message` | as the input of the turn it feeds — § B, § G |
+| A view on screen | a view builder | `hi_view_verdict` — the view reviewer's | by the view reviewer, its verdict kept — § *Views* |
+| Home's group labels and notes | a task manager | `hi_set_home_groups` | at the seam, gated — § *Home* |
+| A report's wording, where it reaches the person | Cognition, workers | `hi_say` — the speech it becomes | where it becomes speech — § B, § E, § G |
 | A file handed over (a report, a deck) | any worker | — | § Open |
+
+**A report to Reaction is not a surface of its own.** A model reads it, so it may be complete
+(§ B); what the person reads is the speech made from it, and that passes through `hi_say` like
+any other. The row is here because a report's wording is the most common way machinery
+reaches a message, and it is held where it reaches them rather than where it was written.
 
 **A file handed to the person is the one row with no seam**, and it is why this is a table of
 surfaces rather than a list of checks: the gap is found by enumerating what a person reads,
@@ -277,8 +282,10 @@ change.
 ### H. Reflection learns
 
 Reflection already reads the stream and keeps the per-subject read and the people facets. Each
-settling pass is shown the corrections and audit findings recorded over the stretch it is
-settling, beside the signals, and folds them in:
+settling pass is shown the corrections and the findings recorded over the stretch it is
+settling — **on every surface, each labelled with the surface it was on**, because a lesson
+about how the person wants to be told things is not speech's alone and a task line read as a
+"spoken message" would teach the wrong thing — beside the signals, and folds them in:
 
 - **grain per subject**, into the words-earned read — a question raises the grain for that
   question only; a correction ("以后简要汇报") changes the subject's standing;
@@ -290,8 +297,7 @@ Both reach Reaction through A. Nothing new is stored beside them.
 ### I. The number
 
 Server-side, beside the logs; no card in the face. `GET /api/legibility?days=7` computes them,
-one set per surface — `speech` and `record` —
-from the records on read.
+one set per surface — `speech`, `record`, `view` and `home` — from the records on read.
 
 | Measure | Why |
 |---|---|
@@ -318,6 +324,15 @@ since the person's last message as the journal had it when the turn started. Tha
 thread; codex's compactions are not reproduced. Both sides of the comparison are scored by the
 same audit, which is what the question needs. The set is private conversation, and the report
 stays in the data directory, under `memory/quality/replay/`.
+
+**A record is replayed at the moment it was written.** `make eval-records` takes worker turns
+that called `hi_task_note`, puts in front of a model everything that turn had seen up to the
+call — its brief, and what its commands and tools returned, as a transcript — under this
+build's worker prompt or `PROMPT=`, and asks for the line again with `hi_task_note` the only
+tool. Both lines are read by the record audit. The rest of a worker's turn — its shell, its
+builds — is not reproduced, and does not need to be: the question is whether a change writes
+a better line from the same material. The set is drawn the way speech's is: lines the gate
+flagged, lines it passed, and with no records the most recent.
 
 ### K. Changes go through replay first
 
@@ -442,17 +457,21 @@ judged after the write instead of before: one read per `stands`, and one read of
 record when a task manager closes it — the two moments the artifact is finished. Same judge,
 same standard, findings to `memory/quality/` under `surface: record`, nothing sent back.
 
-**The closing read also answers what the record does not say**, against the sessions that
-served the row. A gate on length is an incentive to write fewer lines, not shorter ones, and
+**The closing read also answers what the record does not say**, against what the sessions that
+served the row reported: every message they sent their owner, found by joining the mail log
+(`raw/sessions/mail.jsonl`) to the session index's `subject` (`raw/sessions/index.jsonl`).
+Their own account of what happened is the one source that was in the room, so what it says
+changed something for the person and the record never carries is *owed and left unsaid*. A gate on length is an incentive to write fewer lines, not shorter ones, and
 a line never written is invisible forever — worse than the long one it replaced, because a
 record's whole job is that somebody downstream was not in the room. Speech already carries
 this counterweight (*owed and left unsaid*, § I, so shorter never passes for better); the
 record surface needs its own or the gate will be measured as a success while making records
 thinner. It is the one number to watch first when the gate leaves shadow.
 
-§ G–K need no second copy. The audit's per-message read becomes a per-artifact read, the
-number (§ I) gains a surface column, Reflection (§ H) already reads that file, and replay
-(§ J) works on any seam whose input the frame log holds.
+The read's rubric is `judges/record_audit.md`; the `record_audit` setting turns it off and
+`record_audit_model` picks its model, as speech's audit does. What it writes is an audit like
+speech's — one entry per thing read, anything owed and left unsaid, anything wrong — so § I
+counts it, § H learns from it and § J scores with it without a second copy of any of them.
 
 ### Views
 
@@ -460,10 +479,22 @@ The builder writes against the standard and against **who the view is for** — 
 the person to review may mark what is unverified; something made to be shown to others (a
 deck, a shared page) carries no working notes, which go in the conversation. The reviewer
 judges against the same standard, and **its verdict is kept** in `memory/quality/` under
-`surface: view` like any other judgment — a verdict nobody keeps is one nothing counts and
+`surface: view` like any other judgment — recorded through `hi_view_verdict` (`ship` or
+`not_yet`, the axis and the finding), which only a view reviewer holds — a verdict nobody keeps is one nothing counts and
 nothing learns from, and a view that reads badly would never appear in § I. The reviewer is
 the view's judge already; what this surface needs is its answer recorded, not a second
 checker. The spoken line that goes with a view passes D and E like any other message.
+
+## Home
+
+A group's label and its note are on the person's home screen every time they open it, and are
+written by one task manager in one call that replaces the whole arrangement — so the gate is
+the record's (§ M), pointed at names: every label or note that is new or changed since the
+standing arrangement is read, with `judges/home.md` and the reader's conduct, before it lands.
+A label is a name in the person's own words; a note is one line on what the grouping was based
+on. `home_check` is the ladder (shadow first) and `home_check_model` the model; a refused
+arrangement is answered `not arranged — <note>` once, and the next one lands whatever it says,
+because an arrangement the person asked for is not held back over its wording.
 
 ## Decisions
 
