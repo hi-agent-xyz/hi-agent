@@ -483,7 +483,7 @@ the person to review may mark what is unverified; something made to be shown to 
 deck, a shared page) carries no working notes, which go in the conversation. The reviewer
 judges against the same standard, and **its verdict is kept** in `memory/quality/` under
 `surface: view` like any other judgment — recorded through `hi_view_verdict` (`ship` or
-`not_yet`, the axis and the finding), which only a view reviewer holds — a verdict nobody keeps is one nothing counts and
+`not_yet`, the axis and the finding), refused at dispatch to every worker but the view reviewer — a verdict nobody keeps is one nothing counts and
 nothing learns from, and a view that reads badly would never appear in § I. The reviewer is
 the view's judge already; what this surface needs is its answer recorded, not a second
 checker. The spoken line that goes with a view passes D and E like any other message.
