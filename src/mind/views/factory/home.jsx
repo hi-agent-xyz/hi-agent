@@ -31,6 +31,8 @@ const COPY = {
     trail: "Where this branch sits", back: "Step back out",
     upkeep: "Upkeep", upkeepNote: "The agent keeping its own house: nobody asked for this work, so no task holds it",
     ago: (n, unit) => `${n}${unit} ago`,
+    more: (n) => `${n} more`,
+    onBoard: (n) => `${n} more on the task board`,
   },
   zh: {
     core: "Hi Agent", context: "我们的交流", update: "最新更新",
@@ -45,6 +47,8 @@ const COPY = {
     trail: "这一支所在的位置", back: "退回上一层",
     upkeep: "自身维护", upkeepNote: "Hi Agent 在打理自己：没有人要过这些活，所以没有任务行承载它们",
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
+    more: (n) => `还有 ${n} 项`,
+    onBoard: (n) => `还有 ${n} 项，在任务板上`,
   },
 };
 const L = typeof document !== "undefined" && /^zh/i.test(document.documentElement.lang || navigator.language)
@@ -660,15 +664,15 @@ function dimensions(node) {
 }
 
 /**
- * **Home opens at 1x the first time, and after that at the scale this window left it at.** It
- * used to open fitted to the window with a floor of 0.7, and the floor was where every real
- * day landed: fitting shrank
- * every card to 70% — a 17px title drawn at 12px, a 16:9 picture at 168x95 — to buy the one
- * view of the whole chart that nobody was reading at that size. A day that is wider or taller
- * than the window scrolls from the core outward instead, and pinch or ⌘/Ctrl-wheel is there
- * for the moment the shape of the whole is what someone wants.
+ * **Home opens whole, and the scale that takes is chosen, not left to the day.** It opened fitted
+ * once before, with a floor of 0.7, and lost: every open task was drawn, so the fit was whatever
+ * the day's size forced and the floor was where every real day landed — a 17px title at 12px, a
+ * picture at 168x95, to buy a view of the whole that nobody read at that size. It then opened at
+ * 1x and scrolled, which kept the cards legible and put most of them outside the window. What
+ * changed is that the chart is now cut to fit (`budgeted` at `OVERVIEW`), so the whole-chart
+ * scale is a constant that was picked rather than a floor that was hit.
  *
- * The range reaches out far enough to see that shape and in far enough to read a picture.
+ * Pinch and ⌘/Ctrl-wheel still reach in to read a picture and out past the whole.
  */
 const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
 const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
@@ -681,7 +685,8 @@ const clampZoom = (scale) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, scale));
  * A card on the chart's outer edge could be scrolled no further than the window's edge, so
  * zooming in on one pinned it there, half off screen, with no way to drag it to where it
  * could be read. Half a frame each side is exactly the room that makes every edge reachable,
- * and it centres the core — or a focused group — without a rule of its own.
+ * and it lets any point of the drawing — its middle, where Home opens — be put at the centre
+ * without a rule of its own.
  */
 function stage(chart, frame, scale) {
   const drawn = { w: chart.width * scale, h: chart.height * scale };
@@ -726,38 +731,11 @@ function trail(model, id) {
 }
 
 /**
- * **Where the window was is a card, not a pixel.** The chart is laid out afresh on every open,
- * and a task filed since the last one moves every branch below it, so a remembered scroll
- * offset lands somewhere else on the next day's chart. What is kept instead is the card
- * nearest the middle of the window and how far the middle was from that card's centre, in
- * chart units; on the way back that card is put in the same place. A card that is gone falls
- * back to the root.
- */
-function anchorAt(chart, point) {
-  let best = null, bestDistance = Infinity;
-  for (const row of chart.placed) {
-    const cx = row.x + row.w / 2, cy = row.y + row.h / 2;
-    // To the box, not its centre: anywhere inside the core's large box is the core.
-    const distance = Math.hypot(Math.max(0, Math.abs(point.x - cx) - row.w / 2),
-      Math.max(0, Math.abs(point.y - cy) - row.h / 2));
-    if (distance < bestDistance) { best = row; bestDistance = distance; }
-  }
-  return best && { id: best.node.id, dx: point.x - (best.x + best.w / 2), dy: point.y - (best.y + best.h / 2) };
-}
-function anchorPoint(chart, anchor) {
-  const row = (anchor && chart.placed.find((p) => p.node.id === anchor.id)) || null;
-  const at = row || chart.placed[0];
-  return { x: at.x + at.w / 2 + (row ? Number(anchor.dx) || 0 : 0),
-    y: at.y + at.h / 2 + (row ? Number(anchor.dy) || 0 : 0) };
-}
-
-/**
  * Semantic edges determine the hierarchy; flextree only computes its geometry.
  * Overview children are embedded INSIDE the core, not duplicated as peripheral cards.
  *
- * **The whole tree is drawn** unless the person has taken a group as the centre (`focusOn`).
- * There is no collapse, because with the work in hand and nothing else there is nothing to
- * hide from: the instance that laid out 225 cards over 2556x16529px lays out 20.
+ * It draws the model it is given. What that is — which cards the window has room for — is
+ * `budgeted`'s call, made before this runs.
  *
  * `tones` are the whole model's, so a focused branch keeps the colour it wears on the whole
  * chart instead of going neutral for want of a core above its group.
@@ -817,6 +795,107 @@ function arrange(model, tones = branchTones(model)) {
   return { placed, wires, width, height };
 }
 
+/**
+ * **The chart opens whole, at one scale, so it holds what fits at that scale.** An ordinary day
+ * drew 22 cards over 2308x2178, and seeing all of it in a 1512x855 window took 0.39 — a 17px
+ * title at 7px. At 0.8 the same window holds 12 of them, two pictures and every group.
+ *
+ * The two axes are bought differently, and that is the whole rule. **Width is bought by depth**:
+ * a chart is exactly as wide as its deepest path, whatever the day holds. **Height is bought by
+ * cards**: every one stacks. So nothing that makes depth is cut — every group is drawn where it
+ * is, and one whose cards are all put away is its label and a count, 56px tall, still holding
+ * its rank. Only cards are cut, and only until the drawing is the window's shape at this scale.
+ * The first try cut depth instead, drawing first-level groups alone: it narrowed the chart to
+ * 1348, left the width it was meant to use empty, and hung inner groups' cards off their parent,
+ * which is a different tree.
+ *
+ * 0.8 is where the pictures start to fit: at 0.87 the width goes to inner groups and no picture
+ * is drawn, and at 0.7 a title is back to the 12px that fitting was rejected for before.
+ */
+const OVERVIEW = 0.8;
+
+/**
+ * How much a card is in hand: waiting on the person first — the one status that asks them to
+ * act — then anybody running on it, then how lately it moved.
+ */
+function heat(node) {
+  const task = node.data.task;
+  const sessions = node.kind === "activity" ? [node.data.session] : node.data.sessions || [];
+  return [(task && waitsOnPerson(task) ? 2 : 0) + (sessions.some((s) => s.state === "running") ? 1 : 0),
+    Math.max(instant(task?.latest?.at) ?? 0, instant(task?.statusSince) ?? 0,
+      ...sessions.map((s) => instant(s.stateSince) ?? 0))];
+}
+
+/**
+ * `model` cut to what the chart draws in `frame` at `OVERVIEW`, and how many cards each group
+ * holds that are not drawn. Every group stays; cards are chosen in this order:
+ *
+ * 1. **In a group taken as the centre, the group's own cards are all drawn.** The person pressed
+ *    into it to see them. On the whole chart the core's own cards — ungrouped work — get no such
+ *    pass. Exempting them was watched failing: a render with no transcript held nineteen closed,
+ *    ungrouped notices, they took the whole window, and every group was left a bare label. And
+ *    for someone who has never grouped anything, every card is ungrouped, so nothing would ever
+ *    be cut. What the core puts away it counts, and that count opens the task board.
+ * 2. **Every branch off the centre draws its hottest card that fits**, so no branch reads as empty
+ *    when it is only quiet. An ungrouped card is a branch of its own.
+ * 3. **Then the rest, hottest first, each while the whole still fits.** A card that would not is
+ *    passed over and the next is tried, so the shorter side fills.
+ * 4. **Pictures last, in what width is left.** A picture spends a rank of width and the width is
+ *    both sides' at once, so offered with its card, one picture on the right kept a card still in
+ *    progress out of its inner group on the left, and the branch showed one closed eight hours before.
+ *
+ * What is drawn keeps the order the record gives it: heat decides whether a card is on the chart,
+ * never where, so an update moves only the cards it changes.
+ */
+function budgeted(model, frame, tones) {
+  const children = childIndex(model);
+  const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
+  const room = { w: frame.w / OVERVIEW, h: frame.h / OVERVIEW };
+  const cards = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
+    .sort((a, b) => { const x = heat(a), y = heat(b); return y[0] - x[0] || y[1] - x[1]; });
+  const shown = new Set();
+  const cut = () => {
+    const keep = (n) => n.id === model.rootId || n.kind === "overview" || n.kind === "group" || shown.has(n.id);
+    const ids = new Set(model.nodes.filter(keep).map((n) => n.id));
+    return { ...model, nodes: model.nodes.filter((n) => ids.has(n.id)),
+      edges: model.edges.filter((e) => ids.has(e.from) && ids.has(e.to)) };
+  };
+  const offer = (ids) => {
+    ids.forEach((id) => shown.add(id));
+    const drawn = arrange(cut(), tones);
+    if (drawn.width <= room.w && drawn.height <= room.h) return true;
+    ids.forEach((id) => shown.delete(id));
+    return false;
+  };
+  const branchOf = (id) => { let at = id; while (parent.get(at) !== model.rootId) at = parent.get(at); return at; };
+  const pressedInto = model.nodes.find((n) => n.id === model.rootId)?.kind === "group";
+  if (pressedInto) for (const card of cards) if (parent.get(card.id) === model.rootId) shown.add(card.id);
+  const floored = new Set();
+  for (const card of cards) {
+    const branch = branchOf(card.id);
+    if (!shown.has(card.id) && !floored.has(branch) && offer([card.id])) floored.add(branch);
+  }
+  for (const card of cards) if (!shown.has(card.id)) offer([card.id]);
+  for (const card of cards) {
+    const tiles = shown.has(card.id) ? (children.get(card.id) || []).filter((k) => k.kind === "result").map((k) => k.id) : [];
+    if (tiles.length && !offer(tiles)) offer(tiles.slice(0, 1));
+  }
+  const hidden = new Map();
+  for (const card of cards) if (!shown.has(card.id)) hidden.set(parent.get(card.id), (hidden.get(parent.get(card.id)) || 0) + 1);
+  return { model: cut(), hidden };
+}
+
+/**
+ * The scale the window opens at: the whole drawing, never above 1x — and **never below
+ * `OVERVIEW`**. The cut makes the whole fit at that scale except when what it may not cut does
+ * not: every group's label, or a group's own cards once it is the centre. Then the window opens
+ * at `OVERVIEW` and scrolls, which is legible, rather than shrinking to whatever the day forces,
+ * which is the floor fitting was rejected for.
+ */
+function opening(chart, frame) {
+  return clampZoom(Math.max(OVERVIEW, Math.min(frame.w / chart.width, frame.h / chart.height, 1)));
+}
+
 async function getJson(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${response.status}`);
@@ -824,11 +903,15 @@ async function getJson(path) {
 }
 
 /**
- * **Where this window was on Home — its scale, the group it took as the centre, the card in
- * the middle — is kept by the window, for the next time Home is opened in it.** It is not a
- * record and nothing else reads it: another device, or a phone beside this laptop, keeps its
- * own. A store that refuses (a private window, storage switched off) opens Home the way a
- * first visit does.
+ * **The group this window took as the centre is kept by the window, for the next time Home is
+ * opened in it.** It is not a record and nothing else reads it: another device, or a phone beside
+ * this laptop, keeps its own. A store that refuses (a private window, storage switched off) opens
+ * Home the way a first visit does.
+ *
+ * It used to keep the scale and the card in the middle too, because the chart was larger than
+ * the window and there was a place in it to lose. The chart now opens whole, so there is not;
+ * the key is written whole, so a window's old `scale` and `anchor` go the next time it takes a
+ * centre.
  */
 const PLACE_KEY = "hi-home-place";
 function readPlace() {
@@ -838,7 +921,7 @@ function readPlace() {
   } catch { return {}; }
 }
 function writePlace(place) {
-  try { localStorage.setItem(PLACE_KEY, JSON.stringify({ ...readPlace(), ...place })); } catch { /* opens fresh next time */ }
+  try { localStorage.setItem(PLACE_KEY, JSON.stringify(place)); } catch { /* opens fresh next time */ }
 }
 
 export default function Home() {
@@ -921,9 +1004,12 @@ export default function Home() {
   const [focus, setFocus] = useState(() => (typeof kept.current.focus === "string" ? kept.current.focus : null));
   const focused = useMemo(() => focusOn(model, focus), [model, focus]);
   const shown = focused || model;
-  const chart = useMemo(() => arrange(shown, tones), [shown, tones]);
-  const path = useMemo(() => (focused ? trail(model, focus) : []), [model, focused, focus]);
   const mobile = frame.w < 760;
+  // The narrow flow is a list the page scrolls, so only the chart has a window to fill.
+  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones)),
+    [shown, frame, tones, mobile]);
+  const chart = useMemo(() => arrange(overview.model, tones), [overview, tones]);
+  const path = useMemo(() => (focused ? trail(model, focus) : []), [model, focused, focus]);
   const settled = sourcesSettled && ledgerSettled;
   // A focus whose group has closed to nothing is let go once the sources have answered, so the
   // group coming back later does not pull the window into it unasked.
@@ -939,27 +1025,18 @@ export default function Home() {
     });
     observer.observe(el); return () => observer.disconnect();
   }, []);
-  const [scale, setScale] = useState(() => clampZoom(Number(kept.current.scale) || 1));
+  // **The chart opens whole, and stays whole until the person takes the window.** `fit` is the
+  // scale `opening` picks; a zoom or a pan is theirs from then on, until they take another
+  // centre — a new chart, which opens whole again.
+  const fit = opening(chart, frame);
+  const [held, setHeld] = useState(null);
+  const scale = held ?? fit;
   const { canvas, offset } = stage(chart, frame, scale);
   // Wheel and gesture events arrive faster than renders, so each zoom composes on the scale and
   // scroll the previous one asked for rather than on what is on screen yet.
   const live = useRef({ scale, chart, frame, focus }), pending = useRef(null);
   live.current = { scale: pending.current?.scale ?? scale, chart, frame, focus };
-  // The place is read off the scroll as it moves, which is cheap — a nearest box among a few
-  // dozen — and written a moment after it stops, and once more as Home goes away.
-  const centred = useRef(false), place = useRef(null), writing = useRef(0);
-  const remember = useCallback(() => {
-    const el = viewport.current;
-    if (!el || !centred.current) return;
-    const { scale, chart, frame, focus } = live.current, { offset } = stage(chart, frame, scale);
-    const middle = { x: (el.scrollLeft + frame.w / 2 - offset.x) / scale, y: (el.scrollTop + frame.h / 2 - offset.y) / scale };
-    place.current = { scale, focus, anchor: anchorAt(chart, middle) };
-    clearTimeout(writing.current);
-    writing.current = setTimeout(() => { writePlace(place.current); writing.current = 0; }, 300);
-  }, []);
-  useEffect(() => () => {
-    if (writing.current) { clearTimeout(writing.current); writePlace(place.current); }
-  }, []);
+  const hold = useCallback(() => setHeld((was) => was ?? live.current.scale), []);
   const scrollToPoint = (point) => viewport.current?.scrollTo({ left: offset.x + point.x * scale - frame.w / 2,
     top: offset.y + point.y * scale - frame.h / 2, behavior: "instant" });
   const zoomTo = useCallback((next, point) => {
@@ -972,46 +1049,28 @@ export default function Home() {
     const at = point || { x: frame.w / 2, y: frame.h / 2 };
     pending.current = { scale: to, ...zoomAround(chart, frame, from, to, scroll, at) };
     live.current.scale = to;
-    setScale(to);
+    setHeld(to);
   }, []);
   useLayoutEffect(() => {
     if (!pending.current || !viewport.current) return;
     viewport.current.scrollTo({ left: pending.current.left, top: pending.current.top, behavior: "instant" });
     pending.current = null;
-    remember();
-  }, [scale, remember]);
-  // Place once the initial sources and viewport are ready: on the card this window was last
-  // looking at, or on the centre the first time. Later updates keep the person's scroll.
+  }, [scale]);
+  // While the window is whole, the drawing sits in its middle: on the first open, when the sources
+  // answer, when the window is resized, when a card comes or goes. **The drawing's middle, not the
+  // core's** — the two sides are rarely the same height, and centring the core put the taller
+  // side's last card half below the window of a chart that fit it.
   useLayoutEffect(() => {
-    if (!settled || !frameMeasured || mobile || !viewport.current || centred.current) return;
-    const el = viewport.current, style = getComputedStyle(el);
-    const height = el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-    const width = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    // A newly displayed error banner can resize the viewport before ResizeObserver runs.
-    if (Math.abs(height - frame.h) > 1 || Math.abs(width - frame.w) > 1) return;
-    // A kept focus is either drawn by now or about to be let go; place on the chart it settles to.
-    if (focus && !focused) return;
-    centred.current = true;
-    scrollToPoint(anchorPoint(chart, kept.current.anchor));
-    remember();
-  }, [settled, frameMeasured, mobile, chart, frame, scale, offset.x, offset.y, focus, focused, remember]);
-  // Taking a group as the centre puts it in the middle; stepping back out puts the group just
-  // left in the middle of the wider chart, so the person sees where it sits.
-  const recentre = useRef(null);
+    if (held !== null || mobile || !frameMeasured || !viewport.current) return;
+    scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
+  }, [held, mobile, frameMeasured, chart, frame, scale, offset.x, offset.y]);
+  // Another centre is another chart, and it opens whole.
   const centreOn = useCallback((next) => {
-    const from = live.current.focus;
-    if (next === from) return;
-    const outward = next === null || trail(model, from).some((n) => n.id === next);
-    recentre.current = { id: outward ? from : next, dx: 0, dy: 0 };
+    if (next === live.current.focus) return;
     setFocus(next);
-    if (mobile) writePlace({ focus: next });
-  }, [model, mobile]);
-  useLayoutEffect(() => {
-    if (!recentre.current || mobile || !centred.current) return;
-    scrollToPoint(anchorPoint(chart, recentre.current));
-    recentre.current = null;
-    remember();
-  });
+    setHeld(null);
+    writePlace({ focus: next });
+  }, []);
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
   // Pinch and ⌘/Ctrl-wheel zoom at the pointer. A plain wheel still scrolls. These are
   // registered by hand because React's wheel listener is passive and cannot stop the page
@@ -1021,7 +1080,9 @@ export default function Home() {
     if (!el || mobile) return;
     const at = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
     const wheel = (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      // A plain wheel scrolls, and a scroll is the person moving the window: from here an update
+      // must not pull it back to the middle.
+      if (!e.ctrlKey && !e.metaKey) { hold(); return; }
       e.preventDefault();
       const dy = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
       zoomTo(live.current.scale * Math.exp(-dy * 0.005), at(e));
@@ -1038,7 +1099,7 @@ export default function Home() {
       el.removeEventListener("gesturestart", start);
       el.removeEventListener("gesturechange", change);
     };
-  }, [mobile, zoomTo]);
+  }, [mobile, zoomTo, hold]);
   // Drag pans from anywhere, cards included, and two touches pinch. A press only becomes a
   // drag past a few pixels, so a tap on a card still opens it, and the click that ends a real
   // drag is swallowed rather than opening whatever the pointer happened to be over.
@@ -1078,7 +1139,7 @@ export default function Home() {
         </span>)}
       </nav>}
       <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
-        onScroll={mobile ? undefined : remember} onPointerDown={(e) => {
+        onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
         const el = e.currentTarget;
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1102,6 +1163,7 @@ export default function Home() {
           if (Math.hypot(dx, dy) < 5) return;
           dragged.current = true;
           el.setPointerCapture(e.pointerId);
+          hold();
         }
         el.scrollLeft = g.left - dx;
         el.scrollTop = g.top - dy;
@@ -1128,8 +1190,10 @@ export default function Home() {
               data-dir={row.dir}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
                 "--enter-delay": `${Math.min(index, 8) * 28}ms` }}>
-              {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now} />
-                : <Node node={row.node} root={row.node.id === shown.rootId} up={up} {...common} />}
+              {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now}
+                more={overview.hidden.get(row.node.id)} openRef={openRef} />
+                : <Node node={row.node} root={row.node.id === shown.rootId} up={up}
+                  more={overview.hidden.get(row.node.id)} {...common} />}
             </div>)}
           </div>
         </div>}
@@ -1139,8 +1203,13 @@ export default function Home() {
   );
 }
 
-/** Read-only. Every affordance this card had opened a detail dialog that no longer exists. */
-function Core({ node, model, now }) {
+/**
+ * Read-only, but for one handoff. Every affordance this card had opened a detail dialog that no
+ * longer exists. The one it has is the count of ungrouped work the chart put away (`budgeted`):
+ * that work has no group to press into, so the count opens the board that carries all of it —
+ * with the same named loan every card's handoff has, the board and not the rows.
+ */
+function Core({ node, model, now, more = 0, openRef }) {
   const overview = node.data.overviewIds.map((id) => model.nodes.find((n) => n.id === id)).filter(Boolean);
   const messages = overview.filter((n) => n.sourceRefs.some((r) => r.kind === "message"));
   const updates = overview.filter((n) => !messages.includes(n));
@@ -1165,6 +1234,7 @@ function Core({ node, model, now }) {
         <p>{item.data.text}</p>
       </div>)}
     </div>
+    {more > 0 && <button className="hi-work__core-more" onClick={() => openRef(TASK_BOARD)}>{L.onBoard(more)}</button>}
   </article>;
 }
 
@@ -1184,7 +1254,7 @@ function Core({ node, model, now }) {
  * lands you arrive at the board and find the row yourself. The item that takes this back is
  * a targeted view-open; see `docs/arch/home.md` § Open.
  */
-function Node({ node, now, children, openRef, tones, centreOn, root = false, up = null }) {
+function Node({ node, now, children, openRef, tones, centreOn, root = false, up = null, more = 0 }) {
   const state = stateOf(node), time = nodeTime(node);
   const board = node.kind === "task" ? TASK_BOARD : node.kind === "activity" ? SESSION_BOARD : null;
   // A tile is the one handoff that lands exactly where it points: `openRef` takes a view ref
@@ -1198,14 +1268,20 @@ function Node({ node, now, children, openRef, tones, centreOn, root = false, up 
   // based on, so the person reading the chart can see why these three are one thing.
   // **A group opens its own branch**, on this surface: pressed, it becomes the centre, and the
   // group at the centre pressed again steps back out one level.
+  // **A group says how much it holds that the chart put away** (`budgeted`), because a group
+  // drawing one card and a group that has one card would otherwise look the same.
   if (node.kind === "group") return <article className="hi-work__group" data-node-id={node.id}
-    data-kind="group" data-root={root ? "" : undefined} style={{ "--group-tone": branchPaint(tones.get(node.id), "label") }}>
+    data-kind="group" data-root={root ? "" : undefined} data-more={more ? "" : undefined}
+    style={{ "--group-tone": branchPaint(tones.get(node.id), "label") }}>
     <button onClick={() => centreOn(root ? up : node.id)}
       title={[root ? L.back : node.title, node.data.note].filter(Boolean).join(" · ")}>
       {/* A drawn icon whose file has gone since the last arrangement is the default again. */}
       <img className="hi-work__group-icon" src={groupIcon(node.data.icon)} alt="" aria-hidden="true"
         onError={(event) => { if (!event.currentTarget.src.endsWith(DEFAULT_GROUP_ICON)) event.currentTarget.src = DEFAULT_GROUP_ICON; }} />
-      <span>{node.title}</span>
+      <span className="hi-work__group-text">
+        <span className="hi-work__group-title">{node.title}</span>
+        {more > 0 && <small className="hi-work__group-more">{L.more(more)}</small>}
+      </span>
     </button>
   </article>;
   const body = <>
@@ -1265,6 +1341,8 @@ const CSS = `
 .hi-work__overview time { font-size:11px; }
 .hi-work__overview p { margin:5px 0 0; font-size:16px; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
+.hi-work__core-more { align-self:flex-start; margin-top:6px; padding:2px 0; font-size:13px; font-weight:500; color:var(--accent); }
+.hi-work__core-more:hover { text-decoration:underline; }
 .hi-work__node { height:100%; background:linear-gradient(155deg, var(--bg), color-mix(in srgb, var(--bg) 94%, transparent)); border:1px solid var(--work-line); border-radius:8px; display:flex; flex-direction:column; }
 .hi-work__node, .hi-work__core, .hi-work__tile { box-shadow:var(--work-shadow); }
 /* Animate the contents, never the positioned chart or its zoom transform. Backwards fill
@@ -1299,7 +1377,12 @@ const CSS = `
 .hi-work__trail button { color:var(--fg-mute); }
 .hi-work__trail button:hover { color:var(--fg); text-decoration:underline; text-underline-offset:3px; }
 .hi-work__trail strong { color:var(--fg); font-weight:600; }
-.hi-work__group span { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
+.hi-work__group-text { min-width:0; display:flex; flex-direction:column; }
+.hi-work__position[data-dir="-1"] .hi-work__group-text { align-items:flex-end; }
+.hi-work__group-title { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
+/* The count takes the second line a long title would have had: 56px holds one line of each. */
+.hi-work__group[data-more] .hi-work__group-title { -webkit-line-clamp:1; }
+.hi-work__group-more { font-size:13px; line-height:1.35; font-weight:500; opacity:.8; white-space:nowrap; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:8px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }

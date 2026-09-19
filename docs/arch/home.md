@@ -19,8 +19,8 @@ references do not duplicate the destination. The primary tree is acyclic.
 
 Nodes may have children at any depth. Selection and coordinates belong to the window,
 never to a task or a session. Overview nodes are embedded in the core rather than drawn
-as peripheral cards. **The whole tree is drawn**: there is no collapse, because a surface
-carrying only the work in hand has nothing to hide from.
+as peripheral cards. **Every group is drawn; not every card is.** The chart opens whole in the
+window, so it holds what fits there — see *What the window holds* below.
 
 **A group can be taken as the centre.** Pressing a group heading draws that group's branch
 and nothing else — the group where the core stood, a size up, with its tasks, inner groups,
@@ -28,55 +28,122 @@ sessions and pictures around it, laid out by the same rules and in the colour th
 on the whole chart. It is a lens the person takes, not a collapse the surface imposes. Pressing
 the group at the centre steps back out one level, and a trail at the top of the window names
 every group from the core down, each one a way back; the whole chart has no trail over it,
-the way it has no zoom control. Stepping in puts the new centre in the middle of the window;
-stepping out puts the group just left there, so the person sees where it sits. Escape is not
+the way it has no zoom control. Stepping in or out opens the new chart whole, cut on its own
+terms, so a branch the whole chart put away is drawn again with the window to itself. Escape is not
 the way out: the host already owns it for retreating the panel ([stage.md](stage.md)). A task
 is not a centre — a card's press is its handoff.
 
-**It opens at 1x the first time, and after that where this window left it.** A chart larger
-than the window scrolls, centred on the core; pinch or ⌘/Ctrl-wheel zooms at the pointer, from
-0.25 to 2, and dragging pans from anywhere a tap would not open. Two fingers pan it too, except
-the one roll that is the host's: from the room, fingers moving left bring the panel in rather
-than panning ([stage.md](stage.md) § *The trackpad's swipe*). There is no on-screen zoom
-control — a − / percentage / + stepper sat over the canvas and was removed as chrome. Initial
-positioning waits for both the task ledger and the other initial sources to settle, and for the
-viewport to be measured; positioning on an empty intermediate tree must not consume the one
-initial positioning.
+**It opens whole.** The chart is drawn at the scale that puts all of it in the window — never above
+1x, and **never below the overview scale** below: when what may not be cut still does not fit (every
+group's label, or a group's own cards once it is the centre), the window opens at that scale and
+scrolls, rather than shrinking to whatever the day forces. The drawing's middle — not the core's —
+sits at the window's middle. The two sides are rarely the
+same height, and centring the core put the taller side's last card half below the window of a
+chart that fit it. While the window is whole it stays whole: on the first open, when the sources
+answer, when the window is resized, when a card comes or goes. Positioning is therefore not a
+one-shot that an empty intermediate tree could use up; it is redone until the person takes the
+window. **A zoom, a drag or a plain scroll takes it**, and from then an update keeps their
+scroll, until they take another centre — a new chart, which opens whole again.
 
-**What is kept is the scale, the centre taken, and the card in the middle of the window — not
-the scroll offset.** A scale once taken used to stay the person's only until Home was opened
-again, and every open started back at 1x on the core; that was reported as losing their place.
-A pixel offset would not have kept it either: the chart is laid out afresh on each open, and a
-task filed in between moves every branch below it, so the same offset lands on a different
-card. So the window keeps the card nearest its middle and how far the middle was from that
-card, and puts the same card back in the same place. A card that has since gone falls back to
-the centre; a group that has closed to nothing lets go of the focus, once the sources have
-answered, rather than pulling the window into it when it reappears. **It is the window's**,
-kept in the webview's own storage: another device keeps its own, nothing on the server reads
-it, and a webview that refuses storage opens as a first visit does. The narrow flow keeps the
-centre taken; it has no scale or pan to keep.
+Pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and dragging pans from anywhere a tap
+would not open. Two fingers pan it too, except the one roll that is the host's: from the room,
+fingers moving left bring the panel in rather than panning ([stage.md](stage.md) § *The
+trackpad's swipe*). There is no on-screen zoom control — a − / percentage / + stepper sat over
+the canvas and was removed as chrome.
+
+**What the window holds is chosen, and only cards are cut.** The two axes are bought
+differently, and that is the whole rule. **Width is bought by depth**: a chart is exactly as wide
+as its deepest path, whatever the day holds — group → task is 1348px, group → group → task 1732,
+group → task → picture 1924. **Height is bought by cards**: every one stacks. So nothing that
+makes depth is cut. Every group is drawn where it is; one whose cards are all put away is its
+label and a count, *3 more* / *还有 3 项*, 56px tall, still holding its rank — and pressing it is
+the way to them. Only cards are cut, and only until the drawing is the window's shape at the
+overview scale.
+
+Two other ways of using the width were tried and rejected, both because they changed what the
+chart says rather than how much of it fits:
+
+- **Packing siblings into blocks.** A run of cards with nothing under them was laid out two to a
+  row, which took one day from 0.39 to 0.57 at whole-chart scale. But a block's second column
+  lands exactly where the next rank sits, and position across the chart is how it says depth:
+  a sibling beside a card reads as one level below it.
+- **Drawing first-level groups alone.** It narrowed the chart to the 1348 it was meant to grow out
+  of, and hung inner groups' cards straight off their parent, which is a different tree.
+
+Cards are chosen in this order, each tried against the whole chart laid out afresh:
+
+1. **In a group taken as the centre, the group's own cards are all drawn** — the person pressed
+   into it to see them. Ungrouped work on the whole chart gets no such pass. Exempting it was
+   watched failing: a render with no transcript held nineteen closed, ungrouped notices, they
+   took the whole window, and every group was left a bare label. And someone who has never
+   grouped anything has nothing *but* ungrouped work, so nothing would ever be cut for them.
+   What the core puts away it counts, *18 more on the task board*, and the count opens the board
+   that carries all of it — the same handoff, and the same named loan, as a card's.
+2. **Every branch off the centre draws its hottest card that fits**, so a quiet branch still says
+   something besides its count. An ungrouped card is a branch of its own.
+3. **Then the rest, hottest first, each while the whole still fits.** A card that would not is
+   passed over and the next is tried, so the shorter side fills.
+4. **Pictures last, in the width that is left.** A picture spends a rank of width, and the width is
+   both sides' at once. Offered with its card, one picture on the right kept a card still in
+   progress out of its inner group on the left, and the branch drew one closed eight hours
+   before.
+
+**Heat** is waiting on the person first — the one status that asks them to act — then anybody
+running on it, then how lately it moved. Heat decides whether a card is on the chart, never where:
+what is drawn keeps the record's order, so an update moves only the cards it changes.
+
+**The overview scale is 0.8**, measured against one day's record (22 open cards, nine pictures,
+eight groups, two of them inner) in a 1512×855 window:
+
+| Scale | Cards | Pictures | Chart | Title drawn at |
+|---|---|---|---|---|
+| 1.0 | 8 | 0 | 1348×820 | 17px |
+| 0.87 | 11 | 0 | 1732×978 | 14.8px |
+| **0.8** | **12** | **2** | 1828×1000 | 14.1px |
+| 0.7 | 13 | 3 | 2116×1125 | 12.1px |
+| everything | 22 | 9 | 2308×2178 | 6.6px, at the 0.39 it takes |
+
+At 1.0 there is no width for a third rank, so every inner group is a label; the room left over
+went to a to-do five days untouched while work in progress sat behind a count. At 0.87 the third
+rank opens and the width goes to inner groups — no picture fits. 0.8 is where pictures start,
+and 0.7 is the 12px title fitting was rejected for (below). On that record, pressing the
+heaviest group drew all nine of its cards and five pictures, at 0.86.
+
+**What is kept is the centre taken.** The window used to keep its scale and the card nearest its
+middle too, because the chart was larger than the window and there was a place in it to lose —
+every open starting back at 1x on the core was reported as losing it. A chart that opens whole
+has no such place. A group that has closed to nothing lets go of the focus once the sources have
+answered, rather than pulling the window into it when it reappears. **It is the window's**, kept
+in the webview's own storage: another device keeps its own, nothing on the server reads it, and a
+webview that refuses storage opens as a first visit does. The narrow flow keeps the centre taken
+too; it is a list the page scrolls, and nothing in it is cut.
 
 **Every card can be brought to the middle of the window.** The drawing sits inside half a
 window of air on every side. The canvas used to be the drawing plus only what centring the core
 needed, so a card on the chart's outer edge stopped at the window's edge: zoomed in, it stayed
 pinned there half off screen, with no way to drag it to where it could be read.
 
-**Fitting to the window was tried and lost.** The chart used to open at the largest scale that
-put all of it in the window, never above 1x and never below a legibility floor of 0.7. No real
-day fit at 1x — on the instance it was measured on, the 20 cards in hand were about 88% of a
-1511x727 window's area before a single gap or wire — and the floor was where ordinary days
-landed: an eleven-task day measured 1604x1281, needing 0.57. So the default was a chart drawn
-at 70% every time, a 17px title at 12px and a picture at 168x95, to buy the one view
-of the whole that nobody reads at that size. Reading a card beats seeing all of them, and the
-person can still pull back to the whole when that is what they want.
+**Fitting to the window was tried and lost, and is back on different terms.** The chart used to
+open at the largest scale that put all of it in the window, never above 1x and never below a
+legibility floor of 0.7. No real day fit at 1x — on the instance it was measured on, the 20 cards
+in hand were about 88% of a 1511x727 window's area before a single gap or wire — and the floor was
+where ordinary days landed: an eleven-task day measured 1604x1281, needing 0.57. So the default
+was a chart drawn at 70% every time, a 17px title at 12px and a picture at 168x95, to buy the one
+view of the whole that nobody reads at that size. It then opened at 1x and scrolled, which kept
+every card legible and put most of them outside the window.
+
+What lost was not fitting but fitting *everything*: the scale was whatever the day's size forced.
+With the chart cut to the window first, the scale is a constant that was chosen — 0.8, a title at
+14px — rather than a floor that was hit.
 
 **Height and width are both spent on legibility, not on fitting.** One appearance per kind of
 record, so a picture is never a strip inside a card; air graded by rank, so a branch can be
 seen to be one; a picture drawn large enough to read, below; and a 48px gutter between
 ranks, because a wire runs from its parent's edge to the midpoint and arrives flat at its child,
 so a narrow gutter makes every curve the same near-vertical kink and a card can no longer be
-traced back to the branch that owns it. Each of these was once priced in scale. At 1x they are
-priced in scroll, which is cheaper: the cards in view stay readable however far the day runs.
+traced back to the branch that owns it. Each of these was once priced in scale, then in scroll.
+They are now priced in cards put away, which is the cheapest of the three: a press on the group
+gets them back, and the cards that are drawn are the ones most in hand.
 
 **Air is graded by where two nodes' branches part, not by how deep either one sits.** One gap
 for every pair drew every rank as a flat column: a task's own pictures were exactly as far
@@ -569,11 +636,10 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   no surface can show a view's newest state as newer than another's. `bookmarked` and
   `shared` exist on the record and are set on none of 195, so neither can pick a
   representative one either.
-- **An ordinary day does not fit a laptop window, and scrolls on both axes.** Every open task
-  is present however old, and a two-sided chart is about 1604px wide before its height is
-  counted — an eleven-task day with ten pictures measures 1604x1281, a fourteen-task one with
-  twelve pictures more. What is clear is where the height goes: **a task's tiles stack one per
-  row**, so four pictures cost four 135px tile heights. Packing a task's tiles into a block
-  rather than a column is the largest single lever on how much a day scrolls — it is unbuilt
-  because flextree gives each child its own row, and a block is a placement rule layered on
-  top of the tree rather than something the tree can express.
+- **0.8 was chosen on one day's record.** The instance was down when it was measured, so the day
+  was rebuilt read-only from `data/` — the task records with their `made` lines, the arrangement,
+  the conversation journal. It has since been watched once in the render page against a live
+  instance: 14 groups, the chart whole at 0.82, the core counting 18 ungrouped cards onto the
+  board, and a running session's card the one its branch drew. That render has no transcript,
+  so no closed row aged out; a day read through the real face, and a day with twice the groups,
+  are not measured.

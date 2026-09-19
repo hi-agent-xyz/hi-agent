@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, anchorAt, anchorPoint });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -615,21 +615,100 @@ test("a group taken as the centre draws its branch alone, in the colour it has o
   assert.deepEqual(list(trail(model, "group:Saima").map((n) => n.id)), ["group:KNQ", "group:Saima"]);
 });
 
-test("where the window was is kept as a card and an offset, and survives the chart moving", () => {
-  const before = arrange(project({ tasks: ["a", "b", "c"].map((s) => task(s)) }));
-  const card = before.placed.find((p) => p.node.id === "task:b");
-  const middle = { x: card.x + card.w / 2 + 30, y: card.y + card.h / 2 - 10 };
-  const anchor = anchorAt(before, middle);
-  assert.deepEqual({ ...anchor }, { id: "task:b", dx: 30, dy: -10 });
-  // A day later more work is filed and every branch moves; the same card comes back to the middle.
-  const after = arrange(project({ tasks: ["0", "1", "2", "a", "b", "c", "d"].map((s) => task(s)) }));
-  const moved = after.placed.find((p) => p.node.id === "task:b");
-  assert.deepEqual({ ...anchorPoint(after, anchor) }, { x: moved.x + moved.w / 2 + 30, y: moved.y + moved.h / 2 - 10 });
-  // Inside the core's box is the core; a card that is gone is the root's centre.
-  const core = after.placed[0];
-  assert.equal(anchorAt(after, { x: core.x + 5, y: core.y + 5 }).id, "core");
-  assert.deepEqual({ ...anchorPoint(after, { id: "task:closed-since", dx: 400, dy: 400 }) }, { x: core.x + core.w / 2, y: core.y + core.h / 2 });
-  assert.deepEqual({ ...anchorPoint(after, undefined) }, { x: core.x + core.w / 2, y: core.y + core.h / 2 });
+const LAPTOP = { w: 1512, h: 855 };
+const ids = (model, kind) => list(model.nodes.filter((n) => n.kind === kind).map((n) => n.id));
+/** Two groups of `n` tasks each, every task a different age so heat has one answer. */
+function twoGroups(n) {
+  const tasks = [], a = [], b = [];
+  for (let i = 0; i < n; i++) {
+    tasks.push(task(`a${i}`, "doing", 1 + i * 2), task(`b${i}`, "doing", 2 + i * 2));
+    a.push(`a${i}`); b.push(`b${i}`);
+  }
+  return project({ tasks, groups: [{ label: "A", members: a }, { label: "B", members: b }] });
+}
+
+test("the chart keeps every group and cuts only cards, hottest first, until the window at the overview scale is full", () => {
+  // A day that does not fit: 16 cards in two groups is far taller than a laptop window at 0.8.
+  const model = twoGroups(8), cut = budgeted(model, LAPTOP);
+  assert.deepEqual(ids(cut.model, "group").sort(), ["group:A", "group:B"], "no group is ever cut");
+  const drawn = ids(cut.model, "task");
+  assert.ok(drawn.length > 2 && drawn.length < 16, `some cards cut, some kept (${drawn.length})`);
+  const chart = arrange(cut.model);
+  assert.ok(chart.width <= LAPTOP.w / 0.8 && chart.height <= LAPTOP.h / 0.8, "the whole fits the window at the overview scale");
+  // A group's cards cost the same and stack on one side, so what it draws is its freshest ones.
+  for (const g of ["a", "b"]) {
+    const kept = drawn.filter((id) => id.startsWith(`task:${g}`)).map((id) => Number(id.slice(6))).sort((x, y) => x - y);
+    assert.deepEqual(kept, kept.map((_, i) => i), `${g}'s drawn cards are its hottest`);
+  }
+  // Whatever is put away is counted on the group it hangs off, so the group says it holds more.
+  assert.equal(cut.hidden.get("group:A") + cut.hidden.get("group:B"), 16 - drawn.length);
+  // A day that fits is drawn whole, and nothing is counted.
+  const small = budgeted(twoGroups(2), LAPTOP);
+  assert.equal(ids(small.model, "task").length, 4);
+  assert.equal(small.hidden.size, 0);
+});
+
+test("ungrouped work competes like any other, and one waiting on the person comes before fresher work", () => {
+  // Someone who has never grouped anything has only ungrouped cards. Exempting them meant nothing
+  // was ever cut for that person — and, watched, nineteen closed ones left every group bare.
+  const loose = budgeted(project({ tasks: Array.from({ length: 30 }, (_, i) => task(`loose${i}`, "doing", 1 + i)) }), LAPTOP);
+  const kept = ids(loose.model, "task");
+  assert.ok(kept.length > 2 && kept.length < 30, `cut to the window (${kept.length})`);
+  assert.deepEqual(kept.map((id) => Number(id.slice("task:loose".length))).sort((a, b) => a - b),
+    kept.map((_, i) => i), "and what stays is the freshest");
+  assert.equal(loose.hidden.get("core"), 30 - kept.length, "the core counts what it put away");
+  // In a group that draws one or two, the two-day-old row that is waiting on him is one of them.
+  const members = Array.from({ length: 10 }, (_, i) => `w${i}`);
+  const tasks = members.map((s, i) => task(s, "doing", 1 + i));
+  tasks[9] = { ...task("w9", "doing", 50), latest: { kind: "waiting", at: hoursAgo(50), text: "which one?" } };
+  const others = Array.from({ length: 10 }, (_, i) => task(`o${i}`, "doing", 1 + i));
+  const cut = budgeted(project({ tasks: [...tasks, ...others],
+    groups: [{ label: "W", members }, { label: "O", members: others.map((t) => t.subject) }] }), LAPTOP);
+  const drawn = ids(cut.model, "task");
+  assert.ok(drawn.includes("task:w9"), "the waiting row is drawn");
+  assert.ok(!drawn.includes("task:w8"), "ahead of a fresher row that is not");
+});
+
+test("pictures take only the width the cards left, so one cannot keep a card out of its inner group", () => {
+  // The failure: offered with its card, a picture on one side took the width a card on the other
+  // side needed to reach its inner group, and the branch drew an older card instead. `Study`'s
+  // task is the hottest and has a picture; `Life` holds a warm card inside `Shoes` and a cold one
+  // on its own. In a window whose room fits an inner group and a picture, but not both at once:
+  const views = [{ view_ref: "views/p", label: "P", shot_url: "/p.png" }];
+  const model = project({ views, tasks: [
+    { ...task("t0", "doing", 1), refs: ["views/p"] }, task("s0", "doing", 3), task("l0", "doing", 9)],
+    groups: [{ label: "Life", members: ["l0"], groups: [{ label: "Shoes", members: ["s0"] }] }, { label: "Study", members: ["t0"] }] });
+  const both = arrange(model), narrow = { w: (both.width - 40) * 0.8, h: LAPTOP.h };
+  const cut = budgeted(model, narrow);
+  assert.ok(ids(cut.model, "task").includes("task:s0"), "the warm card reaches its inner group");
+  assert.deepEqual(ids(cut.model, "result"), [], "and the picture is what gives way");
+  // With room for both, both are drawn.
+  assert.deepEqual(ids(budgeted(model, { w: (both.width + 40) * 0.8, h: LAPTOP.h }).model, "result"), ["result:views/p"]);
+});
+
+test("what is drawn keeps the record's order: heat decides whether a card is on the chart, never where", () => {
+  const model = twoGroups(8), cut = budgeted(model, LAPTOP);
+  const order = (m) => list((childIndex(m).get("group:A") || []).map((n) => n.id));
+  const kept = new Set(ids(cut.model, "task"));
+  assert.deepEqual(order(cut.model), order(model).filter((id) => kept.has(id)));
+});
+
+test("the window opens on the whole drawing, never above 1x and never below the overview scale", () => {
+  const frame = { w: 1512, h: 855 };
+  assert.equal(opening({ width: 600, height: 400 }, frame), 1, "a small day is not blown up");
+  assert.equal(opening({ width: 1512 / 0.9, height: 855 / 0.9 }, frame).toFixed(3), "0.900", "a day that fits at 0.9 opens whole");
+  // What may not be cut can still overflow — a group's own cards once it is the centre. That
+  // scrolls at the overview scale; it does not shrink to whatever the day forces.
+  assert.equal(opening({ width: 1512 / 0.3, height: 855 }, frame), 0.8);
+});
+
+test("a group taken as the centre is cut on its own terms, with the whole window to itself", () => {
+  const model = twoGroups(8), overview = budgeted(model, LAPTOP);
+  assert.ok(overview.hidden.get("group:A") > 0, "the overview puts some of A away");
+  // Inside A, its cards hang off the centre — nowhere further in — so all of them are drawn.
+  const inside = budgeted(focusOn(model, "group:A"), LAPTOP);
+  assert.equal(ids(inside.model, "task").length, 8);
+  assert.equal(inside.hidden.size, 0);
 });
 
 test("finished nodes gradually lose emphasis without making their text invisible", () => {
