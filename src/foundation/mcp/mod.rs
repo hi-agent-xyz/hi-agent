@@ -3948,6 +3948,44 @@ mod surface_tests {
         assert_eq!((c.surface, c.outcome, c.axis.as_deref()), (quality::Surface::View, quality::Outcome::Revise, Some("machinery")));
     }
 
+    /// **Invariant 13: everything a person reads leaves through a seam** (`docs/arch/arch.md`).
+    /// Read off the design's own table of surfaces, so a surface added there without a verb —
+    /// or a verb renamed here without the table — fails, rather than the table going quietly
+    /// out of date. A row with no seam is allowed only while the design lists it under § Open.
+    #[test]
+    fn every_surface_a_person_reads_has_a_seam_some_rung_holds() {
+        const DESIGN: &str = include_str!("../../../docs/arch/legibility.md");
+        let table = DESIGN
+            .split("## The surfaces")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("legibility.md has a table of surfaces");
+        let held: std::collections::HashSet<String> = ["reaction", "cognition", "reflection", "worker"]
+            .into_iter()
+            .flat_map(|role| names(Some(role)))
+            .collect();
+        let mut rows = 0;
+        for row in table.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| What") && !l.starts_with("|---")) {
+            let cells: Vec<&str> = row.split('|').map(str::trim).collect();
+            let (surface, seam, judged) = (cells[1], cells[3], cells[4]);
+            rows += 1;
+            let verbs: Vec<&str> = seam
+                .split('`')
+                .skip(1)
+                .step_by(2)
+                .filter(|v| v.starts_with("hi_"))
+                .collect();
+            if verbs.is_empty() {
+                assert!(judged.contains("§ Open"), "{surface}: no seam, and not listed as open");
+                continue;
+            }
+            for verb in verbs {
+                assert!(held.contains(verb), "{surface}: its seam `{verb}` is no tool any rung holds");
+            }
+        }
+        assert!(rows >= 8, "the table of surfaces was not read: {rows} rows");
+    }
+
     #[test]
     fn only_the_standing_rungs_create_workers() {
         assert!(names(Some("reflection")).contains(&"hi_create_worker".to_string()));
