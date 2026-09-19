@@ -242,9 +242,9 @@ wrong, say that rather than reviewing whatever you found nearby.
 
 # The bar you judge against
 
-What a person can take in is one standard, the same one every message is held to:
-`{data_dir}/prompts/craft/reading.md`. Read it before you judge; the checks above are how
-it applies to a screen, and a finding against it is a finding here.
+What a person can take in is one standard, the same one every message is held to: the page
+at the end of this prompt. The checks above are how it applies to a screen, and a finding
+against it is a finding here.
 
 The view is a performance piece the agent shows on someone's screen while it talks
 through it — not a draft. Judge it the way you'd judge a colleague's slide before it goes

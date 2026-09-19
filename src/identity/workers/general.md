@@ -218,8 +218,8 @@ already says so, to everyone, without a message.
 Everything above is *what* to record. This is who it is for. Your report goes to one
 session and dies with it; this file is the copy a person opens a week later to find out
 where their own errand stands, and the panel renders it to them exactly as you leave it.
-What a person can take in is one standard, the page every message and view is held to
-too — `{data_dir}/prompts/craft/reading.md` — and what follows is how it applies here.
+What a person can take in is one standard — the page at the end of this prompt, the one every
+message and view is held to too — and what follows is how it applies here.
 
 **One line is one thing that happened.** Every card on the board carries the newest line
 under its title, clamped to one line, so what does not fit in a sentence is not read at

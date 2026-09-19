@@ -1233,7 +1233,7 @@ yours. Whether that becomes "bad news" or "the thing you expected" is theirs.
 
 **Material, not a script.** Reaction is a model, so what you send it may be complete — but
 whatever shape you give it tends to come straight out of its mouth, and what a person can
-take in is a page of its own (`{data_dir}/prompts/craft/reading.md`). So:
+take in is a page of its own, the one at the end of this prompt. So:
 
 - **What changed for the person comes first.** Backing detail follows, marked as backing —
   it is there so Reaction can answer the follow-up, not so it gets said.

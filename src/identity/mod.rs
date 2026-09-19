@@ -221,6 +221,21 @@ pub enum WorkerType {
 }
 
 impl WorkerType {
+    /// Whether sessions of this type write something a person reads — a task's record, a view,
+    /// a verdict on one, a home label — and so carry the reading standard whole
+    /// ([`worker_prompt`]). A drive organizer, a person reader and the skills manager write for
+    /// the agent itself.
+    pub fn writes_for_a_person(self) -> bool {
+        matches!(
+            self,
+            WorkerType::General
+                | WorkerType::ViewBuilder
+                | WorkerType::ViewReviewer
+                | WorkerType::DecisionMaker
+                | WorkerType::TaskManager
+        )
+    }
+
     /// The wire name, which is also the prompt's filename stem.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -533,6 +548,22 @@ pub async fn role_prompt(data_dir: &Path, role: Role) -> String {
     installed_prompt(data_dir, role.prompt_name(), role.base()).await
 }
 
+/// A worker's whole system prompt: its role's, closed by the reading standard when its type
+/// writes something a person reads (`docs/arch/legibility.md` § A).
+///
+/// **Carried, never pointed at.** These prompts used to name the page's path and ask the
+/// session to open it, which is a rule held on the condition that a model remembers to go and
+/// read it; the records written under that arrangement broke it 41 times out of 41. The page
+/// is 12 KB against windows that run past 100K at a ~99% cache hit.
+pub async fn worker_prompt(data_dir: &Path, kind: WorkerType) -> String {
+    let base = role_prompt(data_dir, Role::Worker(kind)).await;
+    if kind.writes_for_a_person() {
+        format!("{}\n\n{}", base.trim(), reading_standard(data_dir).await)
+    } else {
+        base
+    }
+}
+
 /// Absolutize `data_dir`: every path a prompt hands an agent must be absolute, because a
 /// relative one resolves against the *session's* cwd, and those differ by rung on purpose.
 fn abs(data_dir: &Path) -> PathBuf {
@@ -645,7 +676,11 @@ async fn installed_prompt(data_dir: &Path, name: &str, fallback: &'static str) -
 pub async fn cognition_prompt(data_dir: &Path) -> String {
     let text = role_prompt(data_dir, Role::Cognition).await;
     let target = crate::mind::memory::layout::reaction_seed_path(&abs(data_dir));
-    text.replace("{conversation_memory}", &target.display().to_string())
+    let text = text.replace("{conversation_memory}", &target.display().to_string());
+    // Cognition writes what a person reads — a task's title, what they asked for, its opening
+    // account — and the material Reaction's words are made from, so it carries the page whole
+    // like every other writer for a person (`docs/arch/legibility.md` § A).
+    format!("{}\n\n{}", text.trim(), reading_standard(data_dir).await)
 }
 
 /// The reflection ("sleep") session's system prompt: the materialised
@@ -920,11 +955,10 @@ mod soul_tests {
         );
     }
 
-    /// **One standard for what a person can take in, held by everything that writes for one
-    /// and everything that checks** (`docs/arch/legibility.md` § A). Reaction cannot open a
-    /// file, so it carries the page whole; the rest open it from where install puts it. A
-    /// prompt that names the page at a path install does not write is a dead end, and a
-    /// second copy of its rules in a prompt is the drift the page exists to end.
+    /// **One standard for what a person can take in, carried whole by everything that writes
+    /// for one and read by everything that checks** (`docs/arch/legibility.md` § A). Nothing is
+    /// pointed at the page any more: a rule held on the condition that a model goes and opens a
+    /// file is the arrangement 41 of 41 records broke.
     #[tokio::test]
     async fn every_writer_for_a_person_holds_the_one_reading_standard() {
         let dir = tempfile::tempdir().unwrap();
@@ -935,15 +969,21 @@ mod soul_tests {
         assert!(reaction.ends_with(READING.trim()), "Reaction's prompt closes with the page");
         assert_eq!(reading_standard(dir.path()).await, READING.trim(), "the judges read the same");
 
-        for (name, base) in [
-            ("cognition", COGNITION_BASE),
-            ("worker/general", WORKER_GENERAL_BASE),
-            ("worker/view-builder", WORKER_VIEW_BUILDER_BASE),
-            ("worker/view-reviewer", WORKER_VIEW_REVIEWER_BASE),
-        ] {
+        assert!(cognition_prompt(dir.path()).await.ends_with(READING.trim()), "Cognition carries the page");
+        for kind in WorkerType::ALL {
+            let prompt = worker_prompt(dir.path(), *kind).await;
+            assert_eq!(
+                prompt.ends_with(READING.trim()),
+                kind.writes_for_a_person(),
+                "{} carries the page exactly when it writes for a person",
+                kind.as_str()
+            );
+        }
+        for role in Role::ALL {
             assert!(
-                base.contains("{data_dir}/prompts/craft/reading.md"),
-                "{name} must be pointed at the installed standard"
+                !role.base().contains("prompts/craft/reading.md"),
+                "{} still points at the page instead of carrying it",
+                role.prompt_name()
             );
         }
         // The rules that moved into the page are gone from the prompt that used to hold them.

@@ -187,8 +187,8 @@ images — and the bar a view has to clear. Author to both. Your working directo
 agent's view workshop, `{views_dir}`.
 
 **What a person can take in is one standard, and a view is held to it like every message
-is:** `{data_dir}/prompts/craft/reading.md`. Read it before the first view of a job; what
-follows here is how that page becomes a screen, and a reviewer will judge you against both.
+is:** the page at the end of this prompt. What follows here is how that page becomes a
+screen, and a reviewer will judge you against both.
 
 **Report every ref you saved.** That ref is how the agent puts your view on screen; a
 view you built and did not name in your summary is a view nobody can show.

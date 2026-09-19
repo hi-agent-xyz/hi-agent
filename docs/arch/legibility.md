@@ -128,15 +128,18 @@ window every turn.
 - **The standard** — one written standard, `src/identity/craft/reading.md`, distilled from
   the principles document, and the one text every writer and every judge is written against.
 
-  **A rung that writes for a person carries it whole; it is never handed the path.** Reaction
-  does today, because it cannot open a file. Everyone else — the general worker, the view
-  builder and reviewer, Cognition, the task manager — is given
-  `{data_dir}/prompts/craft/reading.md` to go and open, and each prompt restates the parts
-  its author thought applied. That is a second copy of a standard whose whole value is being
-  one, and it is measurably not holding: [`general.md`](../../src/identity/workers/general.md)
-  restates the length rule beside the previous measurement of records breaking it, and the
-  records opened after it broke it 41 times out of 41. The page is 12 KB against windows that
-  run past 100K at a ~99% cache hit. It is carried, and the restatements are deleted.
+  **A rung that writes for a person carries it whole; it is never handed the path.** Reaction,
+  Cognition, and every worker type that writes something a person reads — the general worker,
+  the view builder and reviewer, the decision maker, the task manager
+  ([`worker_prompt`](../../src/identity/mod.rs)) — close their system prompt with the page. A
+  rule held on the condition that a model goes and opens a file is the arrangement 41 of 41
+  records broke; the page is 12 KB against windows that run past 100K at a ~99% cache hit.
+
+  **What each prompt keeps is how the page applies to its surface, which is not a copy of
+  it** — a line on a record is one line, a view has one first landing point, a verdict names
+  what to change. The page says what a person can take in; a prompt says what that means for
+  the thing it writes. The sign that one has become a copy is a sentence the page already
+  says, and those are deleted.
 
 **Catches:** a reader's preferences and grain being unknown at the moment of writing.
 **Misses:** a writer that has them and still does not apply them.
@@ -515,7 +518,7 @@ because an arrangement the person asked for is not held back over its wording.
 | **Changes are replayed before they land** | Two prompt changes without a measurement between them cannot be told apart |
 | **Bound to the artifact class, not to `hi_say`** | A mechanism wired to one verb covers what that verb carries. Beside a speech path with triage, a check, an audit, a number and a replay set, 41 of 41 task records opened in four days carried jargon and machine timestamps, against rules written in three prompts |
 | **One record for every surface, carrying which surface it was** | A correction about how the person is told things is a fact about the person. Kept per surface, "以后简要汇报" teaches speech and leaves their task lines alone |
-| **The standard is carried whole, never linked** | Four rungs were handed the path and each restated the parts it thought applied. One of those restatements quotes the measurement of the failure its own records then repeated 41 times |
+| **The standard is carried whole, never linked** | Four rungs were handed the page's path and asked to open it — a rule held on the condition that a model remembers to go and read a file. The records written under that arrangement broke it 41 times out of 41 |
 | **The host writes a record's instant and kind; a caller passes prose** | 2,959 machine timestamps across 144 records were written into prose because hand-writing the whole line is what the format asked for. Removing the ask removes the class |
 | **Prose is judged; machinery is validated** | The status word, a due date and a duty's liveness fields are values `reconcile` could always repair from the bytes; a sentence is not. `hi_task_set` exists anyway, because a worker that must open the record to stamp `checked_at` is a worker with the timeline under its cursor |
 | **A refused record line lands on the second attempt; a refused message does not** | Speech that is dropped is silence, which the floor already answers for. A fact that is not recorded is gone, and a gate able to lose facts is a worse failure than the one it fixes |

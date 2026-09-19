@@ -377,7 +377,7 @@ impl WorkerRegistry {
         // anonymous `worker`, with nothing downstream able to say otherwise.
         let role = Role::Worker(kind);
 
-        let system_prompt = crate::identity::role_prompt(reaction.inner.memory.data_dir(), role).await;
+        let system_prompt = crate::identity::worker_prompt(reaction.inner.memory.data_dir(), kind).await;
 
         // The address exists before subprocess startup so mail can queue during both
         // eager warm-up and an ordinary create_worker spawn.
