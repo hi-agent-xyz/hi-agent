@@ -57,6 +57,13 @@ enum JoinState {
 enum CoreClient {
     private static let sessionCookieName = "hi_surface"
 
+    /// Names one act of handing something over, so that sending it again is not a
+    /// second thing said. Minted by the queue and the same on every attempt at one
+    /// item — see [`HandedDrop.delivery(of:)`], which is where the reasoning is. A
+    /// **409** answers that the first attempt is still arriving, and is the one
+    /// refusal to read as "hold on to it", never as "stop".
+    private static let idempotencyKey = "Idempotency-Key"
+
     /// Where a name without a dot in it lives. An agent's name is a label in this
     /// zone, which is why the add screen draws the zone beside the field instead of
     /// asking anybody to type it.
@@ -256,11 +263,13 @@ enum CoreClient {
         at baseURL: URL,
         credential: String,
         body: URL,
-        boundary: String
+        boundary: String,
+        delivery: String
     ) async throws {
         var request = URLRequest(url: endpoint(baseURL, path: "api/in/file"))
         request.httpMethod = "POST"
         request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        request.setValue(delivery, forHTTPHeaderField: idempotencyKey)
         request.setValue(
             "multipart/form-data; boundary=\(boundary)",
             forHTTPHeaderField: "Content-Type"
@@ -284,11 +293,13 @@ enum CoreClient {
     static func say(
         at baseURL: URL,
         credential: String,
-        text: String
+        text: String,
+        delivery: String
     ) async throws {
         var request = URLRequest(url: endpoint(baseURL, path: "api/in/text"))
         request.httpMethod = "POST"
         request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+        request.setValue(delivery, forHTTPHeaderField: idempotencyKey)
         request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
         request.httpBody = Data(text.utf8)

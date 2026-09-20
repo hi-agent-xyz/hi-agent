@@ -25,6 +25,7 @@ pub mod activity;
 pub mod audio;
 pub mod binder;
 pub mod channels;
+pub mod deliveries;
 pub mod drive;
 pub mod duty;
 pub mod external_sessions;
@@ -398,6 +399,13 @@ pub struct AppState {
     /// [`crate::body::attachments`].
     pub attachments: crate::body::attachments::Attachments,
 
+    /// The arrivals already taken, keyed by what their carrier called them. A
+    /// carrier whose queue survives the process — the iPhone's — cannot tell a
+    /// request that never landed from one whose answer never came back, so it
+    /// retries both; this is what keeps the retry from becoming a second message.
+    /// See [`deliveries`].
+    pub deliveries: deliveries::Deliveries,
+
     /// Phone-upload grants for the file-upload carrier. A QR encodes `/up/<token>`;
     /// holding a live token is what authorizes the upload. Short TTL, pruned on
     /// access, in-memory (a restart drops outstanding links). See [`files`].
@@ -576,6 +584,7 @@ pub fn build(
         tool_registry,
         floor,
         attachments,
+        deliveries: deliveries::Deliveries::default(),
         handoffs: Mutex::new(HashMap::new()),
         face_presence: Mutex::new(FacePresence::default()),
         surfaces: surface_reach.clone(),

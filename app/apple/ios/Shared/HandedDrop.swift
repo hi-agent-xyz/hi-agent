@@ -284,6 +284,26 @@ struct HandedDrop {
         directory.appendingPathComponent(part.file)
     }
 
+    /// What names one item of this drop, to a core, across every attempt at it.
+    ///
+    /// **The queue's own duplicate, closed from the other end.** A send is discarded
+    /// only once it is believed to have landed, and belief is all there is: a request
+    /// that arrived and whose answer was lost looks exactly like one that never
+    /// arrived, so the drop stays and goes out again — and on 2026-09-19 one press of
+    /// the Action Button put the same screenshot in the conversation three times. The
+    /// core keeps these keys and throws a repeat away
+    /// (`src/foundation/server/deliveries.rs`).
+    ///
+    /// It is derived rather than minted because minting is the mistake: the id has to
+    /// be the *same* on the second attempt, and a drop that has waited out a reboot
+    /// has nothing in memory to be the same as. `id` is the directory's own name, so
+    /// it is on disk beside the bytes it names, and `item` is the part's filename —
+    /// `0.part`, or `text` for the words, which is not a filename and so cannot
+    /// collide with one.
+    func delivery(of item: String) -> String {
+        "\(id).\(item)"
+    }
+
     /// Drop it. Called once the whole thing has landed — never per part, so a
     /// half-sent drop is retried from the start rather than silently truncated.
     func discard() {

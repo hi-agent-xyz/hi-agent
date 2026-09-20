@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -99,9 +99,27 @@ pub async fn post_text(
     AuthBearer(auth): AuthBearer,
     surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
     Query(query): Query<InText>,
+    headers: HeaderMap,
     body: Body,
 ) -> Response {
     let ts = Utc::now();
+
+    // **The same line, sent again by a carrier that retries.** A shared link rides
+    // this route out of the phone's drop queue, which keeps what it sent until it is
+    // sure it landed and cannot be sure — see [`super::deliveries`]. Read out and
+    // dropped, for the reason `files::already_landed` gives.
+    let mut claim = match state.deliveries.claim(&headers) {
+        super::deliveries::Claim::Take(claim) => claim,
+        super::deliveries::Claim::Landed => {
+            drain(body).await;
+            tracing::info!("POST /api/in/text was this one again; nothing said twice");
+            return StatusCode::ACCEPTED.into_response();
+        }
+        super::deliveries::Claim::InFlight => {
+            tracing::info!("POST /api/in/text is this one again, and the first is still arriving");
+            return (StatusCode::CONFLICT, "that one is still arriving; try again").into_response();
+        }
+    };
     // A typed line has no capture source to tell apart, so the stream header stops
     // here rather than riding along on a message that has no use for it.
     let _ = stream;
@@ -140,12 +158,25 @@ pub async fn post_text(
         crate::foundation::config::owner(&state.data_dir).as_deref(),
     );
 
-    match received.kind {
+    let response = match received.kind {
         Received::Words(text) => post_words(&state, ts, text, sender, task).await,
         Received::Artifact { rel, peek } => {
             post_artifact(&state, ts, rel, peek, received.total, sender, task).await
         }
+    };
+    if response.status().is_success() {
+        claim.landed();
     }
+    response
+}
+
+/// Read a repeated body out and keep none of it. Same reasoning as
+/// [`super::files::already_landed`]: the answer cannot arrive before the sender has
+/// finished sending without looking, to the sender, like a connection that broke.
+async fn drain(body: Body) {
+    use futures::StreamExt as _;
+    let mut stream = body.into_data_stream();
+    while let Some(Ok(_)) = stream.next().await {}
 }
 
 /// What the URL of a typed line may say about it.

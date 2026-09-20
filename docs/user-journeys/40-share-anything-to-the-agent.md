@@ -42,4 +42,6 @@ _机制:两扇门,按东西的形状分 —— 文件走 `POST /api/in/file`(mul
 
 _iOS 的形状是**扩展只排队,app 才发送**([`HandedDrop`](../../app/apple/ios/Shared/HandedDrop.swift))。原因不是审美:分享扩展的 sheet 一关进程就被杀,而且它要发就得共享 keychain。改成排队之后,唯一新增的 entitlement 就是一个 App Group,没有 keychain 共享、没有 roster 迁移、没有后台 URLSession,队列本身还成了重试缓冲 —— 连 [36](36-show-your-screen-from-a-button.md) 的截图也搬了上去,它以前失败一次就随进程丢了。Android 不需要这一整套:`ACTION_SEND` 直接启动 activity,同一个进程,东西到手时 app 已经开着。_
 
+_队列的重复在 [36](36-show-your-screen-from-a-button.md) 的真机实测里现了形(同一个 drop 发了三遍),修在共用的那一层:每一项带一个 `Idempotency-Key`,由 drop 的目录名推出来,core 把重复的那次读完扔掉。分享这条路没单独验过,但它和截图手势是同一个队列、同一段发送代码。_
+
 _状态:**一次都没跑过。** iOS `xcodebuild` 过(扩展已嵌入并通过 embedded-binary 校验),Android `make android` 过(编译 + 单测),core 那半 `make test` 过 —— 但**没有人打开过一次分享单**:没有 drop 被排过队,没有排过的 drop 到过 core,那条 Universal Link 没打开过任何东西。而且这条路**只有真机能验**:App Group 在 `CODE_SIGNING_ALLOWED=NO` 的构建里不工作(模拟器要按 [apple-ios.md](../platforms/apple-ios.md) ad-hoc 签名),Universal Link 还要从线上域名取到 AASA、对上真的 App ID。_

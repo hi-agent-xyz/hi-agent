@@ -444,6 +444,68 @@ async fn a_carriers_note_precedes_the_file_it_frames() {
     assert_eq!(handed.attachment.expect("the file rides along").mime, "image/png");
 }
 
+/// A carrier that keeps what it sends until it is sure it landed can never be sure:
+/// a request that arrived and whose answer was lost looks exactly like one that never
+/// arrived. The iPhone's queue answers both by sending again, and on 2026-09-19 one
+/// press of the Action Button put the same screenshot in the conversation twice, and
+/// then three times. The key is what makes the second attempt cost nothing — the body
+/// is read out and dropped, and the conversation gains one arrival, not two.
+#[tokio::test]
+async fn the_same_delivery_sent_twice_is_one_arrival() {
+    let (base, _dir, _seams, _memory) = spawn_server().await;
+    let mut feed = Feed::open(&base).await;
+    assert!(feed.next().await.reset().is_empty());
+
+    const BOUNDARY: &str = "hiagentretryboundary";
+    let drop = |note: &str| {
+        format!(
+            "--{BOUNDARY}\r\n\
+             Content-Disposition: form-data; name=\"note\"\r\n\r\n\
+             {note}\r\n\
+             --{BOUNDARY}\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"screen.png\"\r\n\
+             Content-Type: image/png\r\n\r\n\
+             not really a png\r\n\
+             --{BOUNDARY}--\r\n"
+        )
+    };
+    let post = |key: &str, body: String| {
+        let base = base.clone();
+        let key = key.to_string();
+        async move {
+            reqwest::Client::new()
+                .post(format!("{base}/api/in/file"))
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={BOUNDARY}"),
+                )
+                .header("Idempotency-Key", key)
+                .body(body)
+                .send()
+                .await
+                .expect("post file")
+        }
+    };
+
+    let first = drop("Here's my iPhone screen right now.");
+    assert!(post("drop-a.0.part", first.clone()).await.status().is_success());
+    assert_eq!(feed.next().await.appended().text, "Here's my iPhone screen right now.");
+    assert!(feed.next().await.appended().text.contains("screen.png"));
+
+    // The retry the queue makes when it cannot tell whether the first one landed:
+    // byte for byte the same request, under the same key. Accepted, so the carrier
+    // stops holding the drop.
+    assert!(post("drop-a.0.part", first).await.status().is_success());
+
+    // A second press of the button, which is a different act and says so. **This is
+    // what makes the assertion above discriminating**: if the retry had been taken,
+    // the next two messages in the list would be its own, and the note read here
+    // would be the first sentence again rather than this one.
+    assert!(post("drop-b.0.part", drop("And this one.")).await.status().is_success());
+    assert_eq!(feed.next().await.appended().text, "And this one.");
+    assert!(feed.next().await.appended().text.contains("screen.png"));
+}
+
 /// A rolling recognition partial is a preview of a message, not a message: it
 /// never enters the list, and the settled line clears it.
 #[tokio::test]

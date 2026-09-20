@@ -292,7 +292,12 @@ final class AppModel: ObservableObject {
                 // it — the sentence lands ahead of the artifact, which is the order
                 // the person did it in.
                 if let text = drop.manifest.text, !text.isEmpty {
-                    try await CoreClient.say(at: baseURL, credential: credential, text: text)
+                    try await CoreClient.say(
+                        at: baseURL,
+                        credential: credential,
+                        text: text,
+                        delivery: drop.delivery(of: "text")
+                    )
                     sent += 1
                 }
                 for part in drop.manifest.parts {
@@ -300,21 +305,26 @@ final class AppModel: ObservableObject {
                         at: baseURL,
                         credential: credential,
                         body: drop.url(for: part),
-                        boundary: drop.manifest.boundary
+                        boundary: drop.manifest.boundary,
+                        delivery: drop.delivery(of: part.file)
                     )
                     sent += 1
                 }
                 // Only now: a drop that died halfway is retried whole rather than
-                // half-delivered and forgotten. The cost of that choice is a possible
-                // duplicate; the cost of the other is a file the person believes they
-                // sent.
+                // half-delivered and forgotten. The cost of that choice would be a
+                // duplicate — the parts that did land, landing again — and the reason
+                // it no longer is one is [`HandedDrop.delivery(of:)`]: the core reads
+                // the key and throws the repeat away. Choosing the other way round is
+                // what leaves a file the person believes they sent.
                 drop.discard()
             } catch {
                 // **Kept, and the others are still tried.** Nothing here can tell a
-                // refusal apart from a tunnel, and discarding on the wrong guess
-                // throws away something a person chose to send. Carrying on past it
-                // is the other half: a drop that can never land must not become a
-                // wall that everything shared afterwards queues up behind.
+                // refusal apart from a tunnel — nor from a send that landed and whose
+                // answer never came back, which is why every item carries the key that
+                // makes trying again cost nothing. Discarding on the wrong guess throws
+                // away something a person chose to send. Carrying on past it is the
+                // other half: a drop that can never land must not become a wall that
+                // everything shared afterwards queues up behind.
                 failure = failure ?? error.localizedDescription
             }
         }

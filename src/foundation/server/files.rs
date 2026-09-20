@@ -475,13 +475,35 @@ async fn drain_multipart(
 // Routes
 // -----------------------------------------------------------------------------
 
-/// `POST /api/in/file` — drag-drop / picker from the agent's own page.
+/// `POST /api/in/file` — drag-drop / picker from the agent's own page, and the
+/// phone's own queue.
+///
+/// **A carrier may name the act it is performing**, in `Idempotency-Key`, and one
+/// that does gets the retry it has to make anyway for free: the same key twice is
+/// read out and thrown away rather than journalled a second time. See
+/// [`super::deliveries`] for why only the carrier can know that, and
+/// `docs/user-journeys/36-show-your-screen-from-a-button.md` for the press of an
+/// Action Button that landed three times.
 pub async fn post_file(
     State(state): State<Arc<AppState>>,
     surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
+    headers: HeaderMap,
     mp: Multipart,
 ) -> Response {
     tracing::info!("POST /api/in/file");
+    let mut claim = match state.deliveries.claim(&headers) {
+        super::deliveries::Claim::Take(claim) => claim,
+        super::deliveries::Claim::Landed => return already_landed(mp).await,
+        // **Refused, and hung up on without reading.** The carrier keeps the drop on
+        // anything that is not a success, which is what should happen: the attempt
+        // still being read may yet fail. Reading this one out first would only be
+        // paying for bytes whose whole purpose is to be refused — the opposite of
+        // [`already_landed`], where reading is what stops an endless retry.
+        super::deliveries::Claim::InFlight => {
+            tracing::info!("POST /api/in/file is this one again, and the first is still arriving");
+            return (StatusCode::CONFLICT, "that one is still arriving; try again").into_response();
+        }
+    };
     // Addressed, like a typed line: whose device handed this over answers who, when
     // that device is registered to somebody. Decided here, at the boundary.
     let sender = Sender::stated_or_owner(
@@ -489,9 +511,39 @@ pub async fn post_file(
         crate::foundation::config::owner(&state.data_dir).as_deref(),
     );
     match drain_multipart(&state, mp, sender).await {
-        Ok(result) => (result.status(), Json(result)).into_response(),
+        Ok(result) => {
+            // Only a body that landed whole. A partial one is worth sending again,
+            // and the carrier is the only thing holding the parts that failed.
+            if result.received > 0 && result.failed.is_empty() {
+                claim.landed();
+            }
+            (result.status(), Json(result)).into_response()
+        }
         Err((code, msg)) => (code, msg).into_response(),
     }
+}
+
+/// Answer a repeat: read the body out, store none of it, and say it landed —
+/// because it did, the first time.
+///
+/// **It is read rather than refused mid-upload.** The key arrives in the headers, so
+/// the repeat is known before a byte of the body is, but there is no way to tell a
+/// sender already streaming a file to stop; answering and hanging up gives the
+/// carrier a broken connection, and a carrier that cannot tell a broken connection
+/// from a lost request answers it by sending the thing again. Reading a duplicate
+/// upload out costs bandwidth that was already spent.
+async fn already_landed(mut mp: Multipart) -> Response {
+    let mut result = UploadResult::default();
+    while let Ok(Some(mut field)) = mp.next_field().await {
+        let is_file = field.file_name().is_some();
+        while let Ok(Some(_)) = field.chunk().await {}
+        if is_file {
+            result.attempted += 1;
+            result.received += 1;
+        }
+    }
+    tracing::info!(files = result.received, "POST /api/in/file was this one again; nothing stored");
+    (StatusCode::OK, Json(result)).into_response()
 }
 
 /// `POST /api/handoff` — mint a short-lived upload token and return the

@@ -36,3 +36,22 @@
 _机制:iOS 上**任何 app 都不能给别的 app 拍照**,能拍的只有系统自己 —— 快捷指令的 Take Screenshot 动作,而操作按钮跑快捷指令时不离开当前 app。所以图由系统拍,`ShowScreenIntent`(App Intent,`openAppWhenRun`)只是接过来的载体:它把字节 POST 给 `POST /api/in/file`,并在 multipart 里带一个 `note` 部分说这是什么 —— 和桌面 ⌘⌘ 在进程内填的是同一个字段(`files::deliver_artifact` 的 `note`)。截图必须先于开 app 拍好,否则拍到的是 hi agent 自己。_
 
 _状态:Rust 那半有集成测试(`tests/transcript.rs::a_carriers_note_precedes_the_file_it_frames`);iOS 那半 `make ios` 编译通过,**没在真机上跑过** —— 操作按钮和 Take Screenshot 都只有真机有,模拟器没有,所以第 1 步至今没人看着它发生。_
+
+## 实测 2026-09-19 · 真机 iPhone(第一次有人看着它跑)
+
+上面那句"没在真机上跑过"到此为止:操作按钮按下去,截图确实拍的是当前 app,hi agent 确实开到对话上,那句话和那张图确实是两条自己的消息 —— 第 1~3 步成立。
+
+**发现的唯一一件事:一次按键进了不止一条。** 当天两次:
+
+| 按下 | 落地 | 文件名 | 字节 |
+|---|---|---|---|
+| 11:50:43 | 11:50:51 / 11:51:01 / 11:51:02 | `screen-20260919-115043.png` ×3 | 694014,三份一模一样 |
+| 21:47:25 | 21:47:26 / 21:47:29 | `screen-20260919-214725.png` ×2 | 1305382,两份一模一样 |
+
+三次**同一个文件名**是关键:名字是入队那一刻按秒生成的([`ShowScreen.filename`](../../app/apple/ios/HiAgentIOS/ShowScreen.swift)),所以这不是 intent 跑了三遍(那样名字会是 `115043`/`115053`/`115054`),而是**同一个 drop 发了三遍**。每一遍 core 都当新到达处理:两条消息、一次唤醒、Reaction 当天为其中一遍派了个 worker 出去看图。
+
+原因在队列本身,不在哪一次调用重了:`deliverQueued` 只有在它**认为**送达之后才 `drop.discard()`,而"到了但回执丢了"和"根本没到"在客户端看起来一模一样。它对两者都只能选择留着重发 —— 否则丢的是人以为已经发出去的东西。所以重复不是载体的 bug,是它独自解决不了的事。
+
+**改法(2026-09-20,本次)**:每一项带一个跨重试不变的 key。`Idempotency-Key: <drop 目录名>.<item>`,由 [`HandedDrop.delivery(of:)`](../../app/apple/ios/Shared/HandedDrop.swift) 从磁盘上的目录名推出来(不是 mint 出来的 —— 重启后内存里没有东西可以"保持一致"),core 在 [`deliveries.rs`](../../src/foundation/server/deliveries.rs) 记住收过的 key,重复的那次把 body 读完扔掉、答 200。读完再答是故意的:提前答完挂断,在客户端眼里就是断线,而断线正是它会重发的那个信号。**还在收的那一次答 409,不答 200** —— 它可能还会失败,而被告知"已送达"的载体会把唯一一份扔掉,那是比重复更坏的结果。分享那条路([40](40-share-anything-to-the-agent.md))共用同一个队列,所以一起修好了,`POST /api/in/text` 同样认这个 header。
+
+`tests/transcript.rs::the_same_delivery_sent_twice_is_one_arrival` 钉住它。**但这一版还没回到真机上** —— 复测要做的就一件事:按一次操作按钮,对话里是一句话一张图,不是两遍。

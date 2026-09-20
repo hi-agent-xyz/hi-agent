@@ -136,6 +136,25 @@ disk (`upload(fromFile:)`) or from the sharing app's content provider (OkHttp's
 codes are not enough on their own, and a client that sends one file per request must
 read a 207 as a failure.
 
+**A client that retries says which act it is retrying**, in `Idempotency-Key`, and the
+same value on every attempt at one item. A client that parks what it is sending on
+disk — iOS does, so that a share survives a crash — can never tell a request that
+never arrived from one that arrived and whose answer was lost, and it must keep the
+thing on either, because the other mistake is a file the person believes they sent. So
+it retries both, and without the key the retry is a second message in the conversation:
+one press of the Action Button landed three times on 2026-09-19. The core remembers
+what it has taken for a day, reads a repeat's body out, stores none of it and answers
+as it did the first time. **Nothing is inferred from the bytes** — handing the same file
+over twice on purpose is a thing people do, and only the carrier knows which happened —
+so a client that never retries sends no key and nothing changes for it. Both doors read
+the header; the key is per *item*, not per drop, since one drop is one request per file.
+
+**409 means the first attempt is still arriving**, and it is the one refusal a client
+must not read as "stop". The core will not absolve a second attempt while the first is
+still being read, because that one may yet fail and a client told it landed throws away
+its only copy. Keep the item and try later: the next attempt finds the first one either
+landed or gone.
+
 The `note` multipart part is the line the person effectively said as they handed
 something over. **A share sends none**: what was shared is the whole of what was
 communicated. The iOS screen gesture is the one carrier that fills it, because it is
