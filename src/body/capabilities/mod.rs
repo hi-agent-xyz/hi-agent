@@ -48,6 +48,7 @@ use crate::foundation::models;
 
 pub mod audio_capture;
 pub mod bundle;
+pub mod decision;
 pub mod face;
 pub mod hotkey;
 pub mod image_gen;
@@ -78,10 +79,10 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
     use crate::foundation::credentials::VendorKey;
     let eff = creds.effective();
     let none: &[VendorKey] = &[];
-    let (stt_wires, tts_wires, vision_wires, image_wires, image_edit_wires, video_wires) =
+    let (stt_wires, tts_wires, vision_wires, image_wires, image_edit_wires, video_wires, decision_wires) =
         match eff.as_ref() {
-            Some(e) => (e.stt, e.tts, e.vision, e.image, e.image_edit, e.video),
-            None => (none, none, none, none, none, none),
+            Some(e) => (e.stt, e.tts, e.vision, e.image, e.image_edit, e.video, e.decision),
+            None => (none, none, none, none, none, none, none),
         };
 
     stt::init(
@@ -156,6 +157,21 @@ pub fn init(creds: &crate::foundation::credentials::Credentials) -> anyhow::Resu
                         price: m.price,
                     })
                     .collect(),
+            })
+            .collect(),
+    )?;
+    // The caller names a model here (the tool takes an optional `model`), but unlike
+    // image/video it does not pick a *wire* with it: one wire serves this task, and the
+    // model argument chooses between that vendor's own ids. So this is the STT/TTS/vision
+    // shape — hold the first speakable wire — rather than the generation one.
+    decision::init(
+        decision_wires
+            .iter()
+            .map(|v| decision::ProviderSpec {
+                wire: v.wire_opt().map(str::to_owned),
+                base_url: v.base_url_opt().map(str::to_owned),
+                api_key: v.key_opt().unwrap_or_default().to_owned(),
+                model: v.model_opt().map(str::to_owned),
             })
             .collect(),
     )?;

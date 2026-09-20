@@ -258,6 +258,7 @@ fn managed_from(c: &ConfigsDto) -> Managed {
         // was tried and is wrong in both directions.
         image_edit: wires_for("image-text-to-image"),
         video: wires_for("text-to-video"),
+        decision: wires_for("system-one"),
     }
 }
 

@@ -181,6 +181,7 @@ struct EnergyEcho: Decodable { var energy: EnergySnapshot? }
 let featureLabels: [String: String] = [
     "llm": "Language model", "stt": "Speech-to-text", "tts": "Text-to-speech",
     "vision": "Vision", "image": "Image", "video": "Video",
+    "decision": "Decision",
 ]
 
 // MARK: - View model

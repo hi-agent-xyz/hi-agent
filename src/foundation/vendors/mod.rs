@@ -29,6 +29,7 @@ pub mod macos_tray;
 #[cfg(target_os = "macos")]
 pub mod macos_window;
 pub mod openai_image_gen;
+pub mod typesafe_system_one;
 pub mod volcengine_stt;
 pub mod volcengine_tts;
 #[cfg(target_os = "windows")]

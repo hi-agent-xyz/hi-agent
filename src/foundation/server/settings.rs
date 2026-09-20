@@ -34,7 +34,7 @@ use crate::foundation::server::AppState;
 /// The BYOK features, keyed by the stored credential-field name. Cross-platform (the
 /// macOS `Feature` enum lives in a `vendors/macos_*` file we deliberately don't depend
 /// on here). Face/voiceprint are local ONNX with no key, so they're absent.
-const FEATURES: &[&str] = &["llm", "stt", "tts", "vision", "image", "video"];
+const FEATURES: &[&str] = &["llm", "stt", "tts", "vision", "image", "video", "decision"];
 
 /// The product's About link. Static; not user config.
 const WEBSITE: &str = "https://hi.xiaoyuanzhu.com";
@@ -471,6 +471,12 @@ fn feature_status(creds: &Credentials, feature: &str) -> Option<FeatureStatus> {
             &creds.video.api_key,
             &creds.video.model,
         ),
+        "decision" => (
+            &creds.decision.wire,
+            &creds.decision.base_url,
+            &creds.decision.api_key,
+            &creds.decision.model,
+        ),
         _ => return None,
     };
     Some(FeatureStatus {
@@ -556,6 +562,12 @@ fn set_feature(
                 &mut creds.video.base_url,
                 &mut creds.video.api_key,
                 &mut creds.video.model,
+            ),
+            "decision" => (
+                &mut creds.decision.wire,
+                &mut creds.decision.base_url,
+                &mut creds.decision.api_key,
+                &mut creds.decision.model,
             ),
             _ => anyhow::bail!("unknown feature: {feature}"),
         };

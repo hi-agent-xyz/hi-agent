@@ -339,8 +339,8 @@ would require broker-only access and is not the chosen design.
 ## Bundled
 
 Ship with the agent runtime: read/write, shell, web search and fetch, plus the vendor-backed
-capabilities — TTS, ASR, text→image, text→video, image→text. Assume present. Most work is
-done with these.
+capabilities — TTS, ASR, text→image, text→video, image→text, and typed judgment. Assume
+present. Most work is done with these.
 
 Vendor-backed capabilities keep two layers independent: a **capability** (the interface and
 its adaptation) and a **vendor** (one API implementation of it). No shared-vendor umbrella,
@@ -357,6 +357,23 @@ better than guess. Two consequences follow, and they are the interface rule:
   at once — one tool, a wider menu. Adding a wire adds models, never a second tool.
 - Where the caller **names nothing** (speech, vision), the capability keeps the first wire it
   can speak and says which it passed over.
+
+**Typed judgment is a capability because of scale and calibration, not because of judging.**
+The host is a language model and can weigh one thing itself; what it cannot do is weigh
+hundreds in one round trip, or produce a number that means the same thing on the next call.
+Both are what a *System One* model sells, so the capability's worth is the sweep — score
+every candidate, rank the shortlist, match the pairs — and a probability that can be
+thresholded and sorted rather than re-argued. It goes to the worker, which does the sweep,
+and to Cognition, which decides what to dispatch and can ask before it does.
+
+**Its interface is the wire, deliberately.** Image generation has an adaptation layer because
+two vendors disagree about how to say the same thing; there is one System One vendor, so
+normalizing here would invent a vocabulary no second vendor is asking for — state and
+questions cross untouched, and answers are read at the key each answer's own `type` names, so
+a type this build has never heard of arrives whole instead of guessed at. It takes the
+"names nothing" shape above for *wire* selection even though a caller may name a model: one
+wire serves the task, so the model argument chooses among that vendor's own ids and never
+picks a vendor.
 
 **Image generation follows the vendor's own API, and drawing and editing are two
 questions.** A Responses-API adapter that reached an image model as an `image_generation`

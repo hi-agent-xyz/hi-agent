@@ -88,6 +88,13 @@ pub(crate) fn browser_note() -> &'static str {
 /// those platforms.
 const DRIVING_A_DESKTOP: &str = include_str!("driving-a-desktop.md");
 
+/// Seeded skill: when a job wants calibrated probabilities rather than a judgment call.
+/// **A note beside a tool, not a note instead of one** — `hi_system_one` carries the ways
+/// the model is wrong, because those have to be in hand at the moment of the call; this
+/// carries the shapes of job that are worth a call at all, which is read once while the
+/// job is being planned.
+const ASKING_TYPED_QUESTIONS: &str = include_str!("asking-typed-questions.md");
+
 /// Seeded skill: how to equip a tool the workshop does not have yet — the *writing*
 /// half of the workshop, and the only path by which a learnt tool ever exists.
 const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
@@ -489,6 +496,7 @@ pub fn install_factory_skills(data_dir: &Path) -> io::Result<()> {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("adding-a-device.md"), ADDING_A_DEVICE)?;
+    std::fs::write(dir.join("asking-typed-questions.md"), ASKING_TYPED_QUESTIONS)?;
     std::fs::write(dir.join("browser.md"), interpolate(BROWSER, data_dir))?;
     std::fs::write(dir.join("driving-a-desktop.md"), DRIVING_A_DESKTOP)?;
     std::fs::write(dir.join("equipping-a-tool.md"), interpolate(EQUIPPING_A_TOOL, data_dir))?;

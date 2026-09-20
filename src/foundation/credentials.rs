@@ -118,6 +118,10 @@ pub struct Credentials {
     pub vision: VendorKey,
     pub image: VendorKey,
     pub video: VendorKey,
+    /// The typed-question model (TypeSafe System One). Named for what it does rather
+    /// than for the vendor's product: a Settings row reading "System One" is vendor
+    /// jargon, and every other feature key here says what it is for.
+    pub decision: VendorKey,
     /// Stable per-install id — the seed for the free bootstrap (not a secret).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub device_id: String,
@@ -306,6 +310,12 @@ pub struct Managed {
     pub image_edit: Vec<VendorKey>,
     #[serde(deserialize_with = "one_or_many")]
     pub video: Vec<VendorKey>,
+    /// The wires that answer typed questions with calibrated probabilities. Defaulted
+    /// for the same reason `image_edit` is: a menu minted before the task existed must
+    /// load as "no decision capability" rather than failing the whole store — which
+    /// would take the account and every other key down with it.
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub decision: Vec<VendorKey>,
 }
 
 /// Accept both a bare `VendorKey` object and an array of them.
@@ -363,6 +373,7 @@ pub struct Effective<'a> {
     /// which serves many vendors, has to say which wires edit.
     pub image_edit: &'a [VendorKey],
     pub video: &'a [VendorKey],
+    pub decision: &'a [VendorKey],
 }
 
 impl Credentials {
@@ -379,6 +390,7 @@ impl Credentials {
                 image: std::slice::from_ref(&self.image),
                 image_edit: std::slice::from_ref(&self.image),
                 video: std::slice::from_ref(&self.video),
+                decision: std::slice::from_ref(&self.decision),
             }),
             Mode::Xiaoyuanzhu => self.managed.as_ref().map(|m| Effective {
                 llm: &m.llm,
@@ -388,6 +400,7 @@ impl Credentials {
                 image: &m.image,
                 image_edit: &m.image_edit,
                 video: &m.video,
+                decision: &m.decision,
             }),
         }
     }
@@ -478,6 +491,7 @@ impl std::fmt::Debug for Credentials {
             .field("vision", &self.vision)
             .field("image", &self.image)
             .field("video", &self.video)
+            .field("decision", &self.decision)
             .field("device_id", &self.device_id)
             .field("tokens", &self.tokens)
             .field("managed", &self.managed)
@@ -695,6 +709,7 @@ mod db {
             vision: read_vendor(conn, Mode::Byok, "vision")?,
             image: read_vendor(conn, Mode::Byok, "image")?,
             video: read_vendor(conn, Mode::Byok, "video")?,
+            decision: read_vendor(conn, Mode::Byok, "decision")?,
             managed: read_managed(conn)?,
             tokens,
             energy,
@@ -739,6 +754,7 @@ mod db {
         write_vendors(conn, Mode::Byok, "vision", std::slice::from_ref(&c.vision))?;
         write_vendors(conn, Mode::Byok, "image", std::slice::from_ref(&c.image))?;
         write_vendors(conn, Mode::Byok, "video", std::slice::from_ref(&c.video))?;
+        write_vendors(conn, Mode::Byok, "decision", std::slice::from_ref(&c.decision))?;
         if let Some(m) = &c.managed {
             write_llm(conn, Mode::Xiaoyuanzhu, "llm", &m.llm)?;
             write_vendors(conn, Mode::Xiaoyuanzhu, "stt", &m.stt)?;
@@ -747,6 +763,7 @@ mod db {
             write_vendors(conn, Mode::Xiaoyuanzhu, "image", &m.image)?;
             write_vendors(conn, Mode::Xiaoyuanzhu, "image_edit", &m.image_edit)?;
             write_vendors(conn, Mode::Xiaoyuanzhu, "video", &m.video)?;
+            write_vendors(conn, Mode::Xiaoyuanzhu, "decision", &m.decision)?;
         }
         write_account(conn, c)?;
         write_identity(conn, c.identity.as_ref())?;
@@ -916,6 +933,7 @@ mod db {
             image: read_vendors(conn, Mode::Xiaoyuanzhu, "image")?,
             image_edit: read_vendors(conn, Mode::Xiaoyuanzhu, "image_edit")?,
             video: read_vendors(conn, Mode::Xiaoyuanzhu, "video")?,
+            decision: read_vendors(conn, Mode::Xiaoyuanzhu, "decision")?,
         }))
     }
 
@@ -1403,6 +1421,47 @@ mod tests {
         assert_eq!(m.image[0].model.as_deref(), Some("gpt-image-2"));
         assert_eq!(m.stt[0].api_key, "sk");
         assert!(m.video.is_empty(), "an absent slot is an empty list, not a blank provider");
+        // The store above predates the `decision` task entirely — no such key was ever
+        // written. It has to read as "no decision capability", never as a failed load:
+        // the slot is the newest one here, so it is the one a real install will be
+        // missing, and failing on it would take the account and every other key with it.
+        assert!(m.decision.is_empty());
+    }
+
+    /// The same guard from the other side: a store round-trips the new slot, and one
+    /// saved without it comes back empty rather than absent.
+    #[test]
+    fn a_store_written_before_the_decision_task_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut before = Credentials {
+            mode: Mode::Byok,
+            image: VendorKey { api_key: "ik".into(), ..Default::default() },
+            managed: Some(Managed {
+                stt: vec![VendorKey { api_key: "sk".into(), ..Default::default() }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        before.save(dir.path()).unwrap();
+
+        let loaded = Credentials::load(dir.path());
+        assert_eq!(loaded.image.api_key, "ik");
+        assert!(loaded.decision.api_key.is_empty());
+        assert!(loaded.managed.as_ref().unwrap().decision.is_empty());
+        // And it is off, rather than configured with nothing.
+        assert!(loaded.effective().unwrap().decision[0].key_opt().is_none());
+
+        before.decision = VendorKey {
+            wire: "typesafe-systemone".into(),
+            api_key: "dk".into(),
+            model: Some("jev-latest".into()),
+            ..Default::default()
+        };
+        before.save(dir.path()).unwrap();
+        let again = Credentials::load(dir.path());
+        assert_eq!(again.decision.api_key, "dk");
+        assert_eq!(again.decision.wire, "typesafe-systemone");
+        assert_eq!(again.decision.model.as_deref(), Some("jev-latest"));
     }
 
     #[test]
