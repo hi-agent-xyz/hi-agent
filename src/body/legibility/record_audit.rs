@@ -1,5 +1,10 @@
-//! What is read after it lands (`docs/arch/legibility.md` § N): a task's *Where it stands* each
-//! time it is rewritten, and the whole record when a task manager closes it.
+//! What is read after it lands (`docs/arch/legibility.md` § N): the whole record when a task
+//! manager closes it.
+//!
+//! **There used to be a second read, on every rewrite of a task's account.** It went with the
+//! account itself — a judge call per `stands` write, spent on prose that was a second record
+//! with no clock. A line is still read before it lands (`record.rs`); what a close reads is now
+//! the record and nothing beside it.
 //!
 //! **Nothing here can touch the record** — what was written is written — so both reads run on
 //! their own task and every failure costs a data point, never a write. What they find goes to
@@ -29,31 +34,14 @@ pub(crate) const MODEL_KEY: &str = "record_audit_model";
 /// Nobody is waiting on an audit, so it gets room — the same as speech's.
 const AUDIT_LIMIT: Duration = Duration::from_secs(300);
 
-/// How much of the account a closing read is shown, newest reading first. Past a screenful the
-/// panel clamps it too; this is generous so a finding about what is buried can be made.
-const ACCOUNT_CHARS: usize = 8_000;
-
 /// How much of what the serving sessions reported a closing read is shown, newest kept.
 const REPORT_CHARS: usize = 24_000;
 
-/// How many of the row's newest lines a read of *Where it stands* sees beside it.
+/// How many of the row's newest lines a read of one line sees beside it.
 const RECENT_LINES: usize = 8;
 
 pub fn enabled() -> bool {
     !matches!(tunables::get(MODE_KEY).as_deref().map(str::trim), Some("off"))
-}
-
-/// Read what was just written under *Where it stands*, on its own task.
-pub fn after_stands(data_dir: PathBuf, subject: String, text: String) {
-    if !enabled() || text.trim().is_empty() {
-        return;
-    }
-    tokio::spawn(async move {
-        let Ok(Some(task)) = tasks::read_task(&data_dir, &subject).await else { return };
-        let items = vec![text.trim().to_string()];
-        let case = written_case(&reader(&data_dir).await, &task, STANDS, &items[0]);
-        read_and_keep(&data_dir, &subject, &case, &items).await;
-    });
 }
 
 /// Read a record whole as it closes, against what its sessions reported, on its own task.
@@ -126,7 +114,6 @@ fn the_task(s: &mut String, task: &Task) {
     section(s, "The task", &format!("Title: {}\nWhat they asked for: {asked}", task.title));
 }
 
-const STANDS: &str = "Just written under Where it stands — item 1";
 const LINE: &str = "Just written on the record — item 1";
 
 /// Read one line as the record audit reads it, without keeping the answer — what record replay
@@ -174,9 +161,9 @@ fn written_case(reader: &str, task: &Task, heading: &str, text: &str) -> String 
     s
 }
 
-/// A closing read: the reader, the row, the account and every line a mind wrote, numbered, then
-/// what the sessions that served it reported. The items are what is judged; the reports are what
-/// the record is judged against.
+/// A closing read: the reader, the row, and every line a mind wrote, numbered, then what the
+/// sessions that served it reported. The items are what is judged; the reports are what the
+/// record is judged against.
 fn closing_case(
     reader: &str,
     task: &Task,
@@ -184,10 +171,6 @@ fn closing_case(
 ) -> (String, Vec<String>) {
     use std::fmt::Write as _;
     let mut items: Vec<String> = Vec::new();
-    let account = task.body.trim();
-    if !account.is_empty() {
-        items.push(account.chars().take(ACCOUNT_CHARS).collect());
-    }
     items.extend(
         task.timeline
             .iter()
@@ -199,8 +182,7 @@ fn closing_case(
     the_task(&mut s, task);
     let mut numbered = String::new();
     for (i, item) in items.iter().enumerate() {
-        let label = if i == 0 && !account.is_empty() { " (Where it stands, newest reading first)" } else { "" };
-        let _ = writeln!(numbered, "{}.{label} {}", i + 1, item.replace('\n', "\n   "));
+        let _ = writeln!(numbered, "{}. {}", i + 1, item.replace('\n', "\n   "));
     }
     section(&mut s, "The record, numbered — what you judge", &numbered);
     let reported = reports
@@ -219,7 +201,6 @@ mod tests {
 
     fn task() -> Task {
         let mut task = Task::new("导入简历", TaskStatus::Done);
-        task.body = "交付了，等你看。".into();
         let at = Utc::now();
         task.timeline.push(TimelineEntry::new(TimelineKind::Created, at, "要能直接改"));
         task.timeline.push(TimelineEntry::new(TimelineKind::Delivered, at, "在你盘上了"));
@@ -227,23 +208,24 @@ mod tests {
         task
     }
 
-    /// **The close judges what a mind wrote, against what the work reported.** The account comes
-    /// first and says so; the store's own lines are not judged; the reports come after, as what
-    /// the record is read against.
+    /// **The close judges what a mind wrote, against what the work reported.** The record is
+    /// every line of it and nothing else — the store's own lines are not judged, and there is
+    /// no account above them any more; the reports come after, as what the record is read
+    /// against.
     #[test]
     fn a_closing_read_numbers_the_record_and_ends_with_the_reports() {
         let reports = vec![(Utc::now(), "简历导进来了，另外发现 PDF 里有两页扫描件没法编辑".to_string())];
         let (case, items) = closing_case("以后简要汇报", &task(), &reports);
-        assert_eq!(items, vec!["交付了，等你看。", "created — 要能直接改", "delivered — 在你盘上了"]);
-        assert!(case.contains("1. (Where it stands, newest reading first) 交付了"));
+        assert_eq!(items, vec!["created — 要能直接改", "delivered — 在你盘上了"]);
+        assert!(case.contains("1. created — 要能直接改"));
         assert!(!case.contains("doing → done"), "the store's own lines are not judged");
         assert!(case.find("## The record").unwrap() < case.find("扫描件").unwrap());
     }
 
     #[test]
-    fn a_stands_read_numbers_the_new_prose_as_its_one_item() {
-        let case = written_case("以后简要汇报", &task(), STANDS, "交付了，等你看。\n第二段。");
-        assert!(case.trim_end().ends_with("1. 交付了，等你看。\n   第二段。"));
+    fn a_line_read_numbers_what_was_written_as_its_one_item() {
+        let case = written_case("以后简要汇报", &task(), LINE, "在你盘上了");
+        assert!(case.trim_end().ends_with("1. 在你盘上了"));
         assert!(case.contains("要能直接改"));
     }
 }

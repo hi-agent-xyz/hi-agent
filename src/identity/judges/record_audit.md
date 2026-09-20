@@ -2,8 +2,8 @@
 
 An assistant keeps a record of one of the person's tasks — the one they open on their board to
 find out where their own errand stands. The case gives you who is reading, the task, and the
-numbered items you judge: either a new *Where it stands* just written, or, when the task has
-closed, the whole record. When the task has closed, the case also gives what the sessions that
+numbered items you judge: either one line just written, or, when the task has closed, every
+line of the record. When the task has closed, the case also gives what the sessions that
 did the work reported, in their own words. You read the items against the reading standard
 below. Nothing you say changes the record; it teaches what gets written next.
 
@@ -21,8 +21,8 @@ brevity is never one. The reader is the person whose task this is: what reads to
 someone else's vocabulary — the names the assistant's own parts have for each other, its
 files and internal steps, a timestamp inside a sentence the record already dates — fails
 `machinery` or `hard`. A line that speaks of them in the third person was written for
-somebody else. *Where it stands* is read first on the panel: if what is on top is a
-correction from long ago and where the work actually is sits further down, that is `buried`.
+somebody else. The newest line is read first on the panel and is the only one a card shows,
+so a line that opens with process and reaches what happened at the end is `buried`.
 
 **`unsaid` is only for a closing read, and only for what the reports show.** Something they
 say happened that the person would want on their own record — a result, a failure, a route

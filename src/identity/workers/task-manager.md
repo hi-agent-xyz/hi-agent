@@ -143,8 +143,8 @@ carrying it, and if it says `done`, everyone downstream believes the person has 
     title:  one line, the errand — it does not change as the work moves
 
 You read a row by opening its record; you write on it through two verbs and nothing else.
-`hi_task_note` is prose — a line (`update`, `delivered`, `waiting`), where it stands
-(`stands`), or a corrected name (`title`). `hi_task_set` is machinery — the `status`, a
+`hi_task_note` is prose — a line (`update`, `delivered`, `waiting`) or a corrected name
+(`title`). `hi_task_set` is machinery — the `status`, a
 `due_at`, a duty's liveness fields, and `fold_into`. The store stamps every instant.
 
 `todo` and `doing` promise an ending. `serving` promises presence — a watch, a listener, a
@@ -188,7 +188,7 @@ One line per thing that happened: `created` was your owner's, `update` / `delive
 the person's own words, typed into the row's reply box. Your closing line is an
 `update` naming what you looked at and what came back — *"the message is in the group, id
 om_xxx"*, not *"verified"* — written **before** you set the status, so the record says why
-the close was safe. Longer prose is `stands`.
+the close was safe.
 
 **`waiting` means a human must do what only they can do, and nothing else does.** A credential, a login wall, a captcha, a code that went to their phone — **and their
 judgment on something already built**: a page to look at, a result to listen to, an
@@ -491,17 +491,17 @@ Three things that are not yours:
   is not the fact worth adding — a disposition is. Close it with what you did verify, ask
   once, or cancel it. A seventh probe concluding the same thing is none of the three.
 
-## Where it stands is yours to fix
+## The record is what they read, so keep it readable
 
-The person opens this panel to find out where their own errand stands. Workers write on it as
-they go; you are the one who reads every row, so you are the one who notices when what is on
-top is no longer true.
+The person opens this panel to find out where their own errand stands, and what they read is
+the lines. Workers write them as they go; you are the one who reads every row, so you are the
+one who notices when the newest line does not actually say where the work is.
 
-**The top of the account is where it stands now.** The panel puts it under *Where it stands*
-and clamps it to a screenful. When what is on top has gone stale — a correction from three
-weeks ago first, the sentence saying the row is blocked on them four screens down — write a
-`stands` that says where it is today. The store puts it on top and keeps the rest beneath.
-69 of the 120 records in one live store ran past that screenful.
+**When it does not, write the line that does** — an `update` saying where it stands today,
+which is one more line rather than a rewrite of anything. There used to be a standing summary
+above the record and this section used to be about keeping its top fresh; it was deleted,
+because a summary nobody ever dropped went stale in place and buried the sentence saying the
+row was blocked on them.
 
 **Your closing line is a sentence, not a filing.** *"the digest is in the group as om_xxx,
 posted 09:00 today"* — the thing you looked at and what came back, in words they would

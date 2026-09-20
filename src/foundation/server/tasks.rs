@@ -62,15 +62,13 @@ struct TaskDto {
     cancelled_at: Option<String>,
     liveness: Option<LivenessDto>,
     /// The running record, oldest first — why the row exists, what happened, what was
-    /// delivered, who is being waited on, and every status change. This is what the
-    /// panel renders;
-    /// `body` is the long prose behind it.
+    /// delivered, who is being waited on, and every status change. **It is the whole of
+    /// what this row says**: the prose that used to sit above it went with the account.
     timeline: Vec<MomentDto>,
     /// The same moment [`RowDto::latest`] carries, computed once here rather than derived a
     /// second time from `timeline` by whoever is drawing — two derivations of "the newest
     /// thing a mind said" is two things to keep agreeing forever.
     latest: Option<MomentDto>,
-    body: String,
     /// The artifacts the record itself points at, that are actually on disk beside the
     /// `facet.md` — see [`referenced_files`].
     files: Vec<FileDto>,
@@ -329,7 +327,6 @@ fn dto(task: &Task, malformed: bool, files: Vec<FileDto>) -> TaskDto {
         liveness: liveness_dto(task),
         timeline: task.timeline.iter().map(moment).collect(),
         latest: latest_moment(task),
-        body: task.body.clone(),
         files,
         malformed,
         extra,
@@ -373,26 +370,25 @@ fn row(task: &Task, malformed: bool, views: &std::collections::HashSet<String>) 
 /// happened, not a shelf of deliverables: one live store holds 39,946 files under
 /// `tasks/` — cloned repos, `__pycache__`, scraped HTML — and a single task's *top level*
 /// holds 114. Listing that is showing somebody the workshop floor when they asked what
-/// was made. What they came back for is the file the account names — *"the completed
+/// was made. What they came back for is the file the record names — *"the completed
 /// report is `inspection-report.md` in this task directory"* — and until that sentence is
 /// reachable, the panel is pointing at something the reader cannot open.
 ///
 /// So the record stays the authority and this only makes its own references resolvable:
-/// every inline-code token the prose or the timeline spells, kept when a regular file of
-/// that name is really there. A record naming a file it never wrote lists nothing; a file
+/// every inline-code token a line spells, kept when a regular file of that name is really
+/// there. A record naming a file it never wrote lists nothing; a file
 /// nobody wrote down stays where it is, which is the same rule the ledger runs on
 /// everywhere else — two listings would mean one of them is wrong and no way to tell
 /// which.
 async fn referenced_files(data_dir: &FsPath, task: &Task) -> Vec<FileDto> {
     let mut candidates: Vec<String> = Vec::new();
-    code_spans(&task.body, &mut candidates);
     for entry in &task.timeline {
         code_spans(&entry.text, &mut candidates);
     }
     candidates.retain(|token| names_a_file(token));
     candidates.sort();
     candidates.dedup();
-    // A body is a few KB of prose and carries a handful of these; the cap is a backstop
+    // A record carries a handful of these; the cap is a backstop
     // against a record that pasted a directory listing into itself, not a policy. It
     // bounds the stats per task, and what it drops is reported in the log rather than
     // silently vanishing from the panel.
@@ -831,13 +827,12 @@ mod tests {
     }
 
     /// The property the whole split exists for: **a row's size is not a function of how much
-    /// has been written on the task.** A record with a 200 KB account and a hundred timeline
-    /// entries has to serialize to about what an empty one does, or the board is back where it
-    /// started the next time somebody keeps a good ledger.
+    /// has been written on the task.** A record with a hundred long timeline entries has to
+    /// serialize to about what an empty one does, or the board is back where it started the
+    /// next time somebody keeps a good ledger.
     #[test]
     fn a_row_does_not_carry_the_record() {
         let mut task = Task::new("Watch the group", TaskStatus::Serving);
-        task.body = "x".repeat(200_000);
         task.timeline = (0..100)
             .map(|i| TimelineEntry {
                 at: Some(at(1, 9)),
@@ -920,18 +915,25 @@ mod tests {
     #[test]
     fn a_view_the_record_only_mentions_is_not_a_result() {
         let mut task = Task::new("Put the KTV method page up", TaskStatus::Doing);
-        task.body = [
-            "inline code says `deck/leader`",
-            "quoted says \"health/checkin\"",
-            "a builder just wrote data/views/knq/commentary.jsx",
-            "and the field reads view_ref: \"xiaoyuanzhu/vocab\"",
-        ]
-        .join("\n");
-        task.timeline = vec![TimelineEntry::new(
-            TimelineKind::Update,
-            at(1, 9),
-            "\u{5c4f}\u{4e0a}\u{73b0}\u{5728}\u{6302}\u{7684}\u{662f} `research-two-pairs`",
-        )];
+        task.timeline = vec![
+            TimelineEntry::new(TimelineKind::Update, at(1, 9), "inline code says `deck/leader`"),
+            TimelineEntry::new(TimelineKind::Update, at(1, 9), "quoted says \"health/checkin\""),
+            TimelineEntry::new(
+                TimelineKind::Update,
+                at(1, 9),
+                "a builder just wrote data/views/knq/commentary.jsx",
+            ),
+            TimelineEntry::new(
+                TimelineKind::Update,
+                at(1, 9),
+                "and the field reads view_ref: \"xiaoyuanzhu/vocab\"",
+            ),
+            TimelineEntry::new(
+                TimelineKind::Update,
+                at(1, 9),
+                "\u{5c4f}\u{4e0a}\u{73b0}\u{5728}\u{6302}\u{7684}\u{662f} `research-two-pairs`",
+            ),
+        ];
         let known = views(&[
             "deck/leader",
             "health/checkin",
@@ -978,7 +980,6 @@ mod tests {
         task.checked_at = Some(at(4, 22));
         task.liveness.verify =
             Some("last row of drive/ledgers/oil.jsonl is under 30m old".into());
-        task.body = "Brent, every three hours.".into();
         tasks::write_task(dir.path(), &task).await.unwrap();
 
         let got = tasks::read_task(dir.path(), "watch-oil-prices")
@@ -997,13 +998,12 @@ mod tests {
         assert!(value.get("state").is_none());
     }
 
-    /// The seam the panel is built on: prose and running record reach it as two things,
-    /// so the record renders as dated lines and the account as the prose above them.
+    /// The seam the panel is built on: the running record reaches it as dated lines, and it
+    /// is the whole of what the row says — a record read off disk carries no prose beside it.
     #[tokio::test]
-    async fn dto_carries_the_running_record_apart_from_the_prose() {
+    async fn dto_carries_the_running_record_as_dated_lines() {
         let dir = tempfile::tempdir().unwrap();
         let mut task = Task::new("Daily ops digest", TaskStatus::Doing);
-        task.body = "The long account, written whole.".into();
         task.timeline = vec![
             TimelineEntry::new(
                 tasks::TimelineKind::Created,
@@ -1019,7 +1019,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let value = serde_json::to_value(dto(&got, false, Vec::new())).unwrap();
-        assert_eq!(value["body"], "The long account, written whole.");
+        assert!(value.get("body").is_none(), "no prose beside the record: {value}");
         assert_eq!(value["timeline"][0]["kind"], "created");
         assert_eq!(value["timeline"][0]["at"], "2026-08-01T09:00:00Z");
         assert_eq!(
@@ -1144,15 +1144,20 @@ mod tests {
     async fn only_the_named_files_that_exist_come_back() {
         let dir = tempfile::tempdir().unwrap();
         let mut task = Task::new("Inspect gz-02 /data disk usage", TaskStatus::Done);
-        task.body = "The completed report is `inspection-report.md` in this task \
-             directory. `hi_say` carried the headline; `status_since` moved with it, and \
-             the draft `never-written.md` was abandoned."
-            .into();
-        task.timeline = vec![TimelineEntry::new(
-            tasks::TimelineKind::Delivered,
-            at(25, 6),
-            "`notes/working.md` has the sampling method",
-        )];
+        task.timeline = vec![
+            TimelineEntry::new(
+                tasks::TimelineKind::Delivered,
+                at(25, 6),
+                "The completed report is `inspection-report.md` in this task directory. \
+                 `hi_say` carried the headline; `status_since` moved with it, and the draft \
+                 `never-written.md` was abandoned.",
+            ),
+            TimelineEntry::new(
+                tasks::TimelineKind::Delivered,
+                at(25, 6),
+                "`notes/working.md` has the sampling method",
+            ),
+        ];
         tasks::write_task(dir.path(), &task).await.unwrap();
 
         let folder = facets::subject_dir(dir.path(), tasks::DIMENSION, &task.subject);

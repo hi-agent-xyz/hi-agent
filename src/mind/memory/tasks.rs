@@ -352,12 +352,25 @@ pub struct Task {
     /// only those, silently deleting the rest of the ledger. **A writer that does not
     /// understand a line is not thereby entitled to drop it.**
     pub extra: Vec<String>,
-    /// Prose above the timeline: the long-form account, written whole by whoever is
-    /// keeping it. Not read line by line and not rendered on a card.
-    pub body: String,
+    /// Prose above the timeline on records written before the account was retired.
+    ///
+    /// **Nothing writes this and nothing reads it.** It is round-tripped so that [`render`]
+    /// does not delete text somebody wrote: 212 records on one live store carried a median
+    /// 2.2 KB of it, and a writer that no longer understands a section is not thereby
+    /// entitled to drop it — the same rule [`Task::extra`] exists for. A mind that wants it
+    /// opens the file (`hi_read_facet`), where it is still the first thing in it.
+    ///
+    /// The account was deleted because it was a second record with no clock: `stands`
+    /// prepended and never removed, so it grew without bound, went stale at the top — the
+    /// record audit had a verdict named `buried` for exactly that — and, sitting at the head
+    /// of the file, it took the whole of a worker's 3,000-character record budget. On the
+    /// same store it left the worker **zero timeline lines on 36% of records** and a median
+    /// of 3 of the 8 written. What it was for, a standing summary, is what the newest lines
+    /// of the record already say, dated and in order.
+    pub retired_account: String,
     /// The running record, oldest first — **append-only, and that is the whole design.**
     ///
-    /// The body used to be one prose blob three writers shared, and a rewrite by any of
+    /// The record used to be one prose blob three writers shared, and a rewrite by any of
     /// them silently replaced the other two. Dated lines do not fix a clobber, but they
     /// make one *visible*: an entry that disappears leaves a gap in a sequence, where a
     /// rewritten paragraph leaves nothing at all. Order is the file's order, never sorted
@@ -404,7 +417,7 @@ impl Task {
             cancelled_at: (status == TaskStatus::Cancelled).then_some(now),
             status_since: Some(now),
             extra: Vec::new(),
-            body: String::new(),
+            retired_account: String::new(),
             timeline: Vec::new(),
         }
     }
@@ -507,14 +520,14 @@ impl Task {
         before != (self.completed_at, self.cancelled_at)
     }
 
-    /// Prose and running record as one text: the body exactly as the file carries it.
+    /// The file's text below the frontmatter: a retired account where the record still
+    /// carries one, then the running record.
     ///
-    /// The struct splits them because the two are read differently — the panel renders
-    /// the timeline as lines and the prose as a block — but anything handed a task
-    /// *whole* (a duty handler's brief, [`render`]) wants them joined, and joining them
-    /// here is what keeps one source of truth for the bytes.
+    /// The struct splits them so that nothing but [`render`] ever sees the first half —
+    /// see [`Task::retired_account`]. Joining them here is what keeps one source of truth
+    /// for the bytes on disk.
     pub fn record(&self) -> String {
-        let mut out = self.body.trim().to_owned();
+        let mut out = self.retired_account.trim().to_owned();
         if !self.timeline.is_empty() {
             if !out.is_empty() {
                 out.push_str("\n\n");
@@ -903,9 +916,6 @@ pub enum Note {
     Update,
     Delivered,
     Waiting,
-    /// Where it stands now. Not a line: the prose goes on top of the account and what was
-    /// there moves down beneath it, so the first paragraph a person reads is today's.
-    Stands,
     /// The row's name, corrected — a title that grew into a report cut back to what it is
     /// called. Prose a person reads on every card, so it goes through here and not
     /// [`set`].
@@ -918,7 +928,6 @@ impl Note {
             "update" => Some(Self::Update),
             "delivered" => Some(Self::Delivered),
             "waiting" => Some(Self::Waiting),
-            "stands" => Some(Self::Stands),
             "title" => Some(Self::Title),
             _ => None,
         }
@@ -929,7 +938,6 @@ impl Note {
             Self::Update => "update",
             Self::Delivered => "delivered",
             Self::Waiting => "waiting",
-            Self::Stands => "stands",
             Self::Title => "title",
         }
     }
@@ -939,7 +947,7 @@ impl Note {
             Self::Update => Some(TimelineKind::Update),
             Self::Delivered => Some(TimelineKind::Delivered),
             Self::Waiting => Some(TimelineKind::Waiting),
-            Self::Stands | Self::Title => None,
+            Self::Title => None,
         }
     }
 }
@@ -1006,21 +1014,15 @@ impl Task {
         if text.is_empty() {
             return Err(Refused::Empty);
         }
-        let one_line = note != Note::Stands;
-        if one_line && text.contains('\n') {
+        // Every kind is one line. `stands` was the one that took a paragraph, and it is the
+        // one that is gone: a paragraph now belongs in the record like everything else, as
+        // the line that says what happened.
+        if text.contains('\n') {
             return Err(Refused::Paragraph);
         }
         match note.kind() {
             Some(kind) => self.timeline.push(TimelineEntry::new(kind, at, text)),
-            None if note == Note::Title => self.title = text.to_owned(),
-            None => {
-                let before = self.body.trim();
-                self.body = if before.is_empty() {
-                    text.to_owned()
-                } else {
-                    format!("{text}\n\n{before}")
-                };
-            }
+            None => self.title = text.to_owned(),
         }
         Ok(())
     }
@@ -1035,8 +1037,6 @@ pub struct Opening {
     pub status: TaskStatus,
     /// The `created` line — what they want to end up with, in their words.
     pub wanted: String,
-    /// Opening prose for *Where it stands*, when there is more to say than the line.
-    pub account: Option<String>,
     pub due_at: Option<DateTime<Utc>>,
     pub liveness: Liveness,
     /// The systems it touches — what [`super::snapshot::work_record`] puts in front of the
@@ -1075,7 +1075,6 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
     task.subject = subject.clone();
     task.due_at = opening.due_at;
     task.liveness = opening.liveness;
-    task.body = opening.account.unwrap_or_default().trim().to_owned();
     set_systems(&mut task.extra, &opening.systems);
     task.timeline.push(TimelineEntry::new(TimelineKind::Created, now, wanted));
     write_task(data_dir, &task).await?;
@@ -1225,10 +1224,13 @@ pub async fn fold(
 impl Task {
     /// [`fold`]'s carry, on records in hand.
     fn absorb(&mut self, other: &Task) {
-        let theirs = other.body.trim();
+        // Carried for the reason it is kept at all: a fold must not be the thing that
+        // deletes text a writer wrote before the account was retired.
+        let theirs = other.retired_account.trim();
         if !theirs.is_empty() {
-            let ours = self.body.trim();
-            self.body = if ours.is_empty() { theirs.to_owned() } else { format!("{ours}\n\n{theirs}") };
+            let ours = self.retired_account.trim();
+            self.retired_account =
+                if ours.is_empty() { theirs.to_owned() } else { format!("{ours}\n\n{theirs}") };
         }
         if self.due_at.is_none() {
             self.due_at = other.due_at;
@@ -2021,7 +2023,7 @@ fn parse(subject: &str, content: &str) -> Task {
         start_key: field("start_key"),
     };
     let created_at = field("created_at").and_then(|value| parse_timestamp(&value));
-    let (body, timeline) = split_timeline(strip_frontmatter(content));
+    let (retired_account, timeline) = split_timeline(strip_frontmatter(content));
     Task {
         subject: subject.to_owned(),
         status: coerce_duty(status, &liveness),
@@ -2040,7 +2042,7 @@ fn parse(subject: &str, content: &str) -> Task {
             .and_then(|value| parse_timestamp(&value))
             .or(created_at),
         extra: foreign_frontmatter(content),
-        body,
+        retired_account,
         timeline,
     }
 }
@@ -2194,7 +2196,7 @@ fn render(task: &Task) -> String {
     out
 }
 
-/// Split a stored body into the prose above the running record and the record itself.
+/// Split a stored body into the retired account above the running record and the record.
 ///
 /// **Nothing is dropped, at any level.** Prose keeps its lines verbatim. A line under the
 /// heading that is not a bullet continues the entry above it, so a wrapped note survives a
@@ -2576,7 +2578,7 @@ mod tests {
             moves[0].at.unwrap().timestamp(),
             task.status_since.unwrap().timestamp()
         );
-        assert_eq!(task.body, "prose", "the prose above it is untouched");
+        assert_eq!(task.retired_account, "prose", "the prose above it is untouched");
     }
 
     /// A pass that ran forever would append forever. The record is the one part of a task
@@ -2650,7 +2652,7 @@ mod tests {
         // Written in the vocabulary of 2026-08-25, read in the one that replaced it: the
         // migration is the parse, and the rewrite below is where it reaches the disk.
         let task = read_task(dir.path(), "round-trip").await.unwrap().unwrap();
-        assert_eq!(task.body, "The long account, written whole.");
+        assert_eq!(task.retired_account, "The long account, written whole.");
         assert_eq!(task.timeline.len(), 2);
         assert_eq!(task.timeline[0].kind, TimelineKind::Created);
         assert_eq!(task.timeline[0].text, "it goes to the Feishu group, not to me");
@@ -2666,7 +2668,7 @@ mod tests {
         assert!(on_disk.contains("created \u{2014} it goes"), "rewritten: {on_disk}");
         assert!(!on_disk.contains(" asked "), "the old spelling is gone: {on_disk}");
         let again = read_task(dir.path(), "round-trip").await.unwrap().unwrap();
-        assert_eq!(again.body, task.body);
+        assert_eq!(again.retired_account, task.retired_account);
         assert_eq!(again.timeline, task.timeline);
         assert_eq!(reconcile(dir.path()).await.unwrap(), 0, "canonical already");
     }
@@ -2726,8 +2728,12 @@ mod tests {
         assert_eq!(task.timeline.len(), 2, "{:?}", task.timeline);
         assert_eq!(task.timeline[0].text, "first");
         assert_eq!(task.timeline[1].text, "second");
-        assert!(task.body.contains("## Notes"), "the other section is prose: {:?}", task.body);
-        assert!(task.body.contains("kept prose"));
+        assert!(
+            task.retired_account.contains("## Notes"),
+            "the other section is prose: {:?}",
+            task.retired_account
+        );
+        assert!(task.retired_account.contains("kept prose"));
 
         write_task(dir.path(), &task).await.unwrap();
         let raw = stored(dir.path(), "two-sections").await;
@@ -3074,7 +3080,6 @@ mod tests {
         task.checked_at = Some(at(28, 10));
         task.liveness.verify =
             Some("count today's rows in drive/ledgers/feishu.jsonl".into());
-        task.body = "Boss asked for a daily digest of the ops group.".into();
 
         write_task(dir.path(), &task).await.unwrap();
         let raw = read_record(dir.path(), "file-the-feishu-digest")
@@ -3092,7 +3097,6 @@ mod tests {
         assert_eq!(got.created_at, Some(at(1, 9)));
         assert_eq!(got.due_at, Some(at(30, 9)));
         assert_eq!(got.checked_at, Some(at(28, 10)));
-        assert_eq!(got.body, "Boss asked for a daily digest of the ops group.");
     }
 
     /// The ledger a real task carries is mostly not schema: `report_to:`, and dated note
@@ -3670,7 +3674,6 @@ mod verb_tests {
             title: "导入赵力的简历".into(),
             status: TaskStatus::Doing,
             wanted: "要能直接改的一份简历".into(),
-            account: None,
             due_at: None,
             liveness: Liveness::default(),
             systems: vec!["songguo".into()],
@@ -3726,19 +3729,24 @@ mod verb_tests {
         assert_eq!(task.timeline.len(), 2, "a rename is not a line");
     }
 
-    /// **`stands` puts today's reading first and keeps the old one beneath it.** The panel
-    /// clamps the account to a screenful, so what is on top is what gets read.
+    /// **A row has one place to write, and it takes one line at a time.** `stands` was the
+    /// second — a paragraph that went on top of an account and pushed the last one down,
+    /// never dated and never dropped — and it is gone: what a row says is the record.
     #[tokio::test]
-    async fn stands_goes_on_top_and_pushes_the_previous_reading_down() {
+    async fn a_paragraph_is_refused_whatever_kind_it_carries() {
         let dir = tempfile::tempdir().unwrap();
         open(dir.path(), opening("resume")).await.unwrap().unwrap();
         let at = Utc::now();
-        note(dir.path(), "resume", Note::Stands, "第一版在做。", at).await.unwrap();
-        note(dir.path(), "resume", Note::Stands, "交付了，等你看。\n第二段。", at).await.unwrap();
+        assert!(Note::parse("stands").is_none(), "the kind is gone, not hidden");
+        assert!(matches!(
+            note(dir.path(), "resume", Note::Update, "交付了，等你看。\n第二段。", at).await.unwrap(),
+            Some(Err(Refused::Paragraph))
+        ));
+        note(dir.path(), "resume", Note::Update, "交付了，等你看。", at).await.unwrap();
 
         let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
-        assert_eq!(task.body, "交付了，等你看。\n第二段。\n\n第一版在做。");
-        assert_eq!(task.timeline.len(), 1, "stands is not a line");
+        assert!(task.retired_account.is_empty(), "nothing writes an account any more");
+        assert_eq!(task.timeline.len(), 2, "the created line, and the one that landed");
     }
 
     /// **Machinery is validated, not judged, and a status set through the verb is marked as a

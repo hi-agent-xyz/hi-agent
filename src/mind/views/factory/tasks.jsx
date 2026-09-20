@@ -94,8 +94,6 @@ const T = {
     attentionN: (n) => `${n} need attention`,
     needsYouN: (n) => `${n} waiting on you`,
     created: (at) => `Created ${at}`,
-    completed: (at) => `Completed ${at}`,
-    cancelled: (at) => `Cancelled ${at}`,
     due: (at) => `Due ${at}`,
     overdue: (at) => `Overdue ${at}`,
     checked: (at) => `Alive ${at}`,
@@ -114,21 +112,14 @@ const T = {
     close: "Close",
     malformed: "This task has invalid stored fields. Changing its status will rewrite the recognized fields.",
     malformedShort: "Invalid fields",
-    noBody: "(no notes)",
-    wanted: "What you asked for",
     needsYou: "Needs you",
-    assumed: "assumed, never confirmed",
-    timeline: "What has happened",
     noTimeline: "Nothing recorded yet.",
     readingRecord: "Reading the record\u2026",
-    // One field, two questions, because the reader arrives with a different one
-    // depending on whether the row is still owed.
-    accountOpen: "Where it stands",
-    accountClosed: "What came of it",
-    showAll: "Show everything",
-    showLess: "Show less",
     moment: {
-      created: "created",
+      // **The ask, in its place in the record rather than pinned above it.** It is the oldest
+      // entry and the word says which of the two it is: not *when this row was opened*, which
+      // is a clock, but *what was asked for*, which is a sentence somebody said.
+      created: "asked",
       update: "update",
       delivered: "delivered",
       waiting: "waiting",
@@ -161,7 +152,8 @@ const T = {
     restart: "If it stops",
     owner: "Owner",
     startKey: "Start key",
-    fields: "Other fields",
+    record: "Record",
+    more: "More",
     moreFields: (n) => `+${n} more, in the record`,
     standing: (label, span) => `${label} for ${span}`,
     agoUnits: { m: "m", h: "h", d: "d" },
@@ -194,8 +186,6 @@ const T = {
     attentionN: (n) => `${n} 件需要留意`,
     needsYouN: (n) => `${n} 件等你`,
     created: (at) => `创建于 ${at}`,
-    completed: (at) => `完成于 ${at}`,
-    cancelled: (at) => `取消于 ${at}`,
     due: (at) => `截止 ${at}`,
     overdue: (at) => `已逾期 ${at}`,
     checked: (at) => `${at} 确认在跑`,
@@ -212,19 +202,11 @@ const T = {
     close: "关闭",
     malformed: "这条任务包含无效字段。修改状态时会重写可识别的字段。",
     malformedShort: "字段无效",
-    noBody: "（没有备注）",
-    wanted: "你要什么",
     needsYou: "等你处理",
-    assumed: "推断的，未经确认",
-    timeline: "发生了什么",
     noTimeline: "还没有记录。",
     readingRecord: "正在读取记录\u2026",
-    accountOpen: "进展如何",
-    accountClosed: "结果如何",
-    showAll: "展开全部",
-    showLess: "收起",
     moment: {
-      created: "创建",
+      created: "你要的",
       update: "进展",
       delivered: "交付",
       waiting: "等人",
@@ -251,7 +233,8 @@ const T = {
     restart: "停止后",
     owner: "负责人",
     startKey: "启动标识",
-    fields: "其他字段",
+    record: "记录",
+    more: "更多",
     moreFields: (n) => `还有 ${n} 条，在记录里`,
     standing: (label, span) => `${label} ${span}`,
     agoUnits: { m: "分钟", h: "小时", d: "天" },
@@ -766,6 +749,18 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
   );
 }
 
+// **The panel is a head and one list.** It used to be four labelled blocks of prose stacked
+// above the record — the ask, the wait, the account, then the timeline — drawn at three ranks
+// the eye could not tell apart, and two of them were the record saying the same thing twice:
+// the ask *is* the timeline's oldest entry, and the wait *is* its newest. So both go back into
+// the list they came from, and what is left above it is the account, which is the one piece of
+// prose no entry holds.
+//
+// **The account is not an entry and must never be drawn as one.** It is the standing summary,
+// rewritten in place and carrying no instant; heading it with a kind word and a time would make
+// a row nobody has touched in a week read as one that just moved. It sits above the list as the
+// paragraph it is, clamped to a screenful, with no label — with the ask gone from over it there
+// is nothing left for it to be confused with.
 function Detail({ task, busy, onStatus, onClose, onReplied }) {
   const panel = useRef(null);
 
@@ -778,23 +773,9 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const due = dueMeta(task);
-  const health = healthMeta(task);
-  const age = ageMeta(task);
-  // Whether anybody is on this, beside the status: "somebody is on this" is a qualifier on the
-  // word `Doing`. Only the fact and its clock live here — *what* the worker is doing is the
-  // newest line of the record below, where it fits whole (see `liveMoment`).
-  const on = onItMeta(task);
   const live = liveMoment(task);
-  // What they asked for is pinned rather than scrolled to: it is the first thing somebody
-  // catching up on their own errand wants, and it does not move for the life of the task.
-  // It is a **reading, not a gate** — nothing here waits on it and no task is held open
-  // against it; showing it is what makes a wrong reading cheap to correct in one sentence.
-  const wanted = (task.timeline || []).find((moment) => moment.kind === "created");
-  // The live wait, if there is one, so the reader learns whether to act before reading a
-  // record to work it out. It is the same object as the line below in the list, which is
-  // what lets that line keep the alarm colour while every older wait goes quiet.
-  const waiting = waitsOnPerson(task) ? latestSpoken(task) : null;
+  // One worry, not five — see `concernMeta`.
+  const concern = concernMeta(task);
   // A record spells its artifacts in inline code — *"the completed report is
   // `inspection-report.md` in this task directory"* — and that was a pointer the one
   // person reading it could not follow. The server says which of those names are really
@@ -812,6 +793,14 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
   // Newest first. The file appends, because that is what a writer with a shell can do
   // safely; a reader catching up wants the opposite order.
   const moments = [...(task.timeline || [])].reverse();
+  // Which `waiting` line is still true, by position: the newest thing anybody *said*, which is
+  // what the server's `latest_moment` picks and with the same two exclusions.
+  //
+  // It was `moment === task.latest`, and that identity can never hold — `latest` is serialised
+  // as its own object beside the timeline, so the comparison was false on every line of every
+  // record. No wait ever kept its alarm colour, and the one line meant to catch an eye crossing
+  // the panel was drawn in the grey that means *superseded*.
+  const spoken = moments.findIndex((moment) => moment.kind !== "moved" && moment.kind !== "made");
   // **Whether the record is here at all.** The list carries no `timeline` key — it is the one
   // thing only the record has — so its absence is the read that has not landed yet, and its
   // emptiness is a task nothing has been written on. Those are different sentences and the
@@ -819,22 +808,17 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
   // duty with forty entries is the stale reading that still reads as authoritative.
   const reading = !task.timeline;
   // Frontmatter this schema does not know. The store keeps it because a writer that does not
-  // understand a line is not entitled to drop it; the panel shows it for the same reason —
-  // most of what a real record says about itself is down here, not in the twelve parsed keys.
+  // understand a line is not entitled to drop it; the panel keeps it for the same reason — but
+  // folded, with the rest of the machinery, because most of it is read once a month by somebody
+  // debugging the row rather than by the person whose errand it is.
   //
-  // `systems` is promoted because it is the one that answers *what is this about*: it is on
+  // `systems` leads the fold because it is the one that answers *what is this about*: it is on
   // 78 of one live store's 108 records and it reads as a tag, not as a field. That is a
   // presentation guess about one common spelling, deliberately not a schema — every other key
   // is listed exactly as written, in the file's order.
   const fields = task.extra || [];
   const systems = fields.find((field) => field.key === "systems" && !field.clipped);
   const rest = fields.filter((field) => field !== systems);
-  const closedAt =
-    task.status === "done" && task.completedAt
-      ? L.completed(formatStamp(task.completedAt))
-      : task.status === "cancelled" && task.cancelledAt
-        ? L.cancelled(formatStamp(task.cancelledAt))
-        : null;
 
   return (
     <div className="hi-tasks__scrim" onClick={onClose}>
@@ -849,69 +833,28 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="hi-tasks__detail-head">
-          <span className="hi-tasks__chip">{L.category[task.status] || task.status}</span>
-          <button type="button" className="hi-tasks__close" aria-label={L.close} onClick={onClose}>
-            ×
-          </button>
+          <div className="hi-tasks__headline">
+            <span className="hi-tasks__chip">{L.category[task.status] || task.status}</span>
+            <h3 className="hi-tasks__detail-title">{task.title || task.subject}</h3>
+            <button
+              type="button"
+              className="hi-tasks__close"
+              aria-label={L.close}
+              onClick={onClose}
+            >
+              ×
+            </button>
+          </div>
+          {concern && (
+            <div className="hi-tasks__detail-meta">
+              <span data-warn={concern.warn ? "true" : undefined}>{concern.text}</span>
+            </div>
+          )}
         </div>
 
         <div className="hi-tasks__detail-scroll">
-          <h3 className="hi-tasks__detail-title">{task.title || task.subject}</h3>
-
-          <div className="hi-tasks__detail-meta">
-            {on && <span data-warn={on.warn ? "true" : undefined}>{on.text}</span>}
-            {task.createdAt && <span>{L.created(formatStamp(task.createdAt))}</span>}
-            {closedAt && <span>{closedAt}</span>}
-            {age && <span data-warn={age.warn ? "true" : undefined}>{age.text}</span>}
-            {due && <span data-warn={due.warn ? "true" : undefined}>{due.text}</span>}
-            {health && <span data-warn={health.warn ? "true" : undefined}>{health.text}</span>}
-          </div>
-
-          {systems && (
-            <div className="hi-tasks__systems">
-              {systems.value
-                .split(",")
-                .map((name) => name.trim())
-                .filter(Boolean)
-                .map((name) => (
-                  <span key={name} className="hi-tasks__system">
-                    {name}
-                  </span>
-                ))}
-            </div>
-          )}
-
           {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
 
-          {waiting && (
-            <div className="hi-tasks__waiting">
-              <div className="hi-tasks__waiting-title">{L.needsYou}</div>
-              <div className="hi-tasks__waiting-text">
-                {inline(waiting.text, "waiting", linkFile)}
-              </div>
-            </div>
-          )}
-
-          {wanted && (
-            <div className="hi-tasks__asked">
-              <div className="hi-tasks__asked-title">{L.wanted}</div>
-              <div className="hi-tasks__asked-text">{inline(wanted.text, "wanted", linkFile)}</div>
-            </div>
-          )}
-
-          {task.body && task.body.trim() ? (
-            <Account
-              text={task.body}
-              link={linkFile}
-              label={
-                task.status === "done" || task.status === "cancelled"
-                  ? L.accountClosed
-                  : L.accountOpen
-              }
-            />
-          ) : null}
-
-          <div className="hi-tasks__moments-title">{L.timeline}</div>
           {moments.length === 0 && !live ? (
             <div className="hi-tasks__none">{reading ? L.readingRecord : L.noTimeline}</div>
           ) : (
@@ -942,12 +885,12 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
                   <li
                     key={`${moment.at || ""}-${index}`}
                     className="hi-tasks__moment"
-                    style={{ "--moment": momentTone(moment, moment === waiting) }}
+                    style={{ "--moment": momentTone(moment, index === spoken) }}
                   >
                     <span className="hi-tasks__moment-head">
                       <span className="hi-tasks__moment-kind">
                         {life || L.moment[moment.kind] || moment.kind}
-                        {life && byHand(moment.text) ? ` \u00b7 ${L.byHand}` : ""}
+                        {life && byHand(moment.text) ? ` · ${L.byHand}` : ""}
                       </span>
                       {moment.at && (
                         <span className="hi-tasks__moment-at">{formatStamp(moment.at)}</span>
@@ -964,44 +907,55 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
             </ol>
           )}
 
-          {(rest.length > 0 || task.extraDropped > 0) && (
-            <details className="hi-tasks__notes hi-tasks__fields">
-              <summary>{L.fields}</summary>
+          {/* The row's machinery, in one fold: what it is about, the frontmatter this schema
+              does not parse, a duty's check, and the name of the file all of it is in. None of
+              it is a sentence anybody wrote, and none of it is why the panel was opened. */}
+          <details className="hi-tasks__fields">
+            <summary>{L.record}</summary>
+            {systems && (
+              <div className="hi-tasks__systems">
+                {systems.value
+                  .split(",")
+                  .map((name) => name.trim())
+                  .filter(Boolean)
+                  .map((name) => (
+                    <span key={name} className="hi-tasks__system">
+                      {name}
+                    </span>
+                  ))}
+              </div>
+            )}
+            {rest.length > 0 && (
               <dl>
                 {rest.map((field, index) => (
                   <div key={`${field.key}-${index}`}>
                     {field.key && <dt>{field.key}</dt>}
                     <dd>
-                      {/* Autolinked for the reason a `waiting` line is: the panel has no
-                          address bar, and a URL the agent filed under `report_to:` or a
-                          dated note key is otherwise one to retype off the screen. Through
-                          `linked` and not `inline` — a field value is a literal, so the
-                          asterisks and backticks in it are its own characters. */}
-                      {linked(
-                        field.clipped ? `${field.value}\u2026` : field.value,
-                        `f${index}`,
-                      )}
+                      {/* Autolinked because the panel has no address bar, and a URL the agent
+                          filed under `report_to:` or a dated note key is otherwise one to
+                          retype off the screen. Through `linked` and not `inline` — a field
+                          value is a literal, so the asterisks and backticks in it are its own
+                          characters. */}
+                      {linked(field.clipped ? `${field.value}…` : field.value, `f${index}`)}
                     </dd>
                   </div>
                 ))}
               </dl>
-              {task.extraDropped > 0 && (
-                <div className="hi-tasks__fields-more">{L.moreFields(task.extraDropped)}</div>
-              )}
-            </details>
-          )}
-
-          {task.liveness && (
-            <div className="hi-tasks__liveness">
-              <div className="hi-tasks__liveness-title">{L.monitoring}</div>
-              {task.liveness.verify && <div><b>{L.verify}:</b> {task.liveness.verify}</div>}
-              {task.liveness.restart && <div><b>{L.restart}:</b> {task.liveness.restart}</div>}
-              {task.liveness.owner && <div><b>{L.owner}:</b> {task.liveness.owner}</div>}
-              {task.liveness.startKey && <div><b>{L.startKey}:</b> {task.liveness.startKey}</div>}
-            </div>
-          )}
-
-          <div className="hi-tasks__subject">{task.subject}</div>
+            )}
+            {task.extraDropped > 0 && (
+              <div className="hi-tasks__fields-more">{L.moreFields(task.extraDropped)}</div>
+            )}
+            {task.liveness && (
+              <div className="hi-tasks__liveness">
+                <div className="hi-tasks__liveness-title">{L.monitoring}</div>
+                {task.liveness.verify && <div><b>{L.verify}:</b> {task.liveness.verify}</div>}
+                {task.liveness.restart && <div><b>{L.restart}:</b> {task.liveness.restart}</div>}
+                {task.liveness.owner && <div><b>{L.owner}:</b> {task.liveness.owner}</div>}
+                {task.liveness.startKey && <div><b>{L.startKey}:</b> {task.liveness.startKey}</div>}
+              </div>
+            )}
+            <div className="hi-tasks__subject">{task.subject}</div>
+          </details>
         </div>
 
         <Reply task={task} onSent={onReplied} />
@@ -1163,34 +1117,118 @@ function Actions({ task, busy, onStatus, card }) {
     return null;
   }
 
-  if (task.status === "done" || task.status === "cancelled") {
-    return (
-      <div className="hi-tasks__actions" draggable={false}>
-        {button("ghost", "todo", L.reopen)}
-      </div>
-    );
-  }
-
-  // A duty has no "done" to offer: it ends by being stood down, which is the same close
-  // wearing the name of what actually happened.
-  if (task.status === "serving") {
-    return (
-      <div className="hi-tasks__actions" draggable={false}>
-        {button("ghost", "todo", L.moveTodo)}
-        {button("danger", "cancelled", L.cancel)}
-        {button("primary", "done", L.standDown)}
-      </div>
-    );
-  }
+  // **The likely next step is a button; the rest is behind `⋯`.** Four verbs of near-equal
+  // weight across the foot of the panel — one of them the five-word sentence *Keep as a standing
+  // duty* — read as a toolbar, on a row that has one obvious next step and three decisions taken
+  // once in its life. A decision taken once can afford a click.
+  //
+  // A duty has no "done" to offer: it ends by being stood down, which is the same close wearing
+  // the name of what actually happened. A closed row has one verb and no menu.
+  const verbs = PANEL_VERBS[task.status] || PANEL_VERBS.done;
 
   return (
     <div className="hi-tasks__actions" draggable={false}>
-      {task.status === "todo"
-        ? button("ghost", "doing", L.start)
-        : button("ghost", "todo", L.moveTodo)}
-      {button("ghost", "serving", L.serve)}
-      {button("danger", "cancelled", L.cancel)}
-      {button("primary", "done", L.markDone)}
+      {verbs.rest.length > 0 && (
+        <Menu
+          items={verbs.rest}
+          busy={busy}
+          onPick={(status) => onStatus(task.subject, status)}
+        />
+      )}
+      {button(verbs.lead[0], verbs.lead[1], verbs.lead[2])}
+    </div>
+  );
+}
+
+// `lead` is the one verb drawn as a button — the step this row is most likely to take next —
+// and `rest` is what the menu holds, in the order a person would look for them, with the one
+// that throws work away marked so it is not clicked by aim.
+const PANEL_VERBS = {
+  todo: {
+    lead: ["primary", "doing", L.start],
+    rest: [
+      ["serving", L.serve],
+      ["done", L.markDone],
+      ["cancelled", L.cancel, true],
+    ],
+  },
+  doing: {
+    lead: ["primary", "done", L.markDone],
+    rest: [
+      ["todo", L.moveTodo],
+      ["serving", L.serve],
+      ["cancelled", L.cancel, true],
+    ],
+  },
+  serving: {
+    lead: ["primary", "done", L.standDown],
+    rest: [
+      ["todo", L.moveTodo],
+      ["cancelled", L.cancel, true],
+    ],
+  },
+  done: { lead: ["ghost", "todo", L.reopen], rest: [] },
+  cancelled: { lead: ["ghost", "todo", L.reopen], rest: [] },
+};
+
+function Menu({ items, busy, onPick }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (event) => {
+      if (!box.current?.contains(event.target)) setOpen(false);
+    };
+    // Escape closes the menu and stops there. Both listeners are on `document` and the panel's
+    // is on the bubble phase, so taking this one on capture is what keeps one Escape from
+    // closing the panel out from under an open menu.
+    const key = (event) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", away, true);
+    document.addEventListener("keydown", key, true);
+    return () => {
+      document.removeEventListener("mousedown", away, true);
+      document.removeEventListener("keydown", key, true);
+    };
+  }, [open]);
+
+  return (
+    <div className="hi-tasks__menu" ref={box}>
+      <button
+        type="button"
+        className="hi-tasks__button hi-tasks__button--ghost hi-tasks__menu-open"
+        aria-label={L.more}
+        title={L.more}
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => setOpen((was) => !was)}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="hi-tasks__menu-pop" role="menu">
+          {items.map(([status, label, danger]) => (
+            <button
+              key={status}
+              type="button"
+              role="menuitem"
+              className="hi-tasks__menu-item"
+              data-danger={danger ? "true" : undefined}
+              disabled={busy}
+              onClick={() => {
+                setOpen(false);
+                onPick(status);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1400,10 +1438,10 @@ function onItMeta(task) {
 // it carries no instant, only an age — *2m ago* — which is the one phrasing that cannot be
 // mistaken for something written down.
 //
-// **That age is the line's own clock and not the worker's**, which is what stops it repeating
-// the status chip two inches above it. The chip answers how long this session has been running;
-// `doing_at` answers when this step last changed, and the gap between those two numbers is the
-// difference between a worker working and one hung — the thing neither field says alone.
+// **That age is the line's own clock and not the worker's**: `doing_at` is when this step last
+// changed, where the roster's `state_since` is how long the session has been up. It is the
+// better of the two and it is why the panel prints this line *instead of* the worker's — `now,
+// 40m ago` is a worker hung on one step, and the session's own age never said that.
 //
 // What it prints is what used to hang off the status chip, clipped to 72 characters with its
 // newlines collapsed. The line arrives already bounded — `registry::record_activity` cuts it at
@@ -1436,6 +1474,27 @@ function healthMeta(task) {
   if (task.status !== "serving") return null;
   if (!task.checkedAt) return { text: L.neverChecked, warn: true };
   return { text: L.checked(formatStamp(task.checkedAt)), warn: false };
+}
+
+// **The one thing worth worrying about on this row, worst first** — and only the kind of thing
+// that could never be an entry.
+//
+// The panel's head used to print every clock the row had — created, closed, age, due, last
+// confirmed alive, and who was on it — in one run of identical small type, six items wide on a
+// duty. Most of them were the list below saying the same thing a second time: `created` is its
+// oldest entry, a close is a `moved` line, a wait is its newest line in red, and a worker
+// working is the switchboard's line at the top of it.
+//
+// **So the rule is where a fact lives, not how important it is: a sentence somebody wrote is in
+// the record, and the head holds only what no entry could carry** — a due date, a duty's last
+// confirmed breath, how long this has sat where it sits. Nothing in the head is repeated in the
+// list, and nothing in the list is summarised in the head. The board is where a row shouts (see
+// `cardNote`); this panel is where it is read.
+function concernMeta(task) {
+  const due = dueMeta(task);
+  const health = healthMeta(task);
+  const age = ageMeta(task);
+  return [due, health, age].find((meta) => meta?.warn) || due || health || age || null;
 }
 
 function taskNeedsAttention(task) {
@@ -1675,59 +1734,6 @@ function Prose({ text, link }) {
           </p>
         );
       })}
-    </div>
-  );
-}
-
-// The account, in the panel rather than behind a fold.
-//
-// It was a `<details>` under the timeline, and what that hid was the answer: a report went
-// back in conversation, the row closed, and the one paragraph saying what was found — 90%
-// used, this writer, this much a day — sat collapsed below a reverse-chronological list of
-// housekeeping. Somebody coming back to their own errand a week later opened the panel and
-// saw that it had been updated, not what it said. A fold is the right shape for a
-// reference; it is the wrong shape for the thing the reader came for.
-//
-// **Clamped, not truncated.** The reason for the fold was real — the live store's median
-// body is 3.2 KB and its largest 48 KB, and unfolding that on top of the timeline buries
-// it just as thoroughly. So the first screenful reads by itself and the rest is one click
-// away, and the button only exists when there is something under it: measured, because a
-// guess from character count is wrong in both directions on prose this varied.
-function Account({ text, link, label }) {
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const box = useRef(null);
-
-  // The clamp is unconditional while collapsed, and the measurement only decides whether
-  // there is a button. Hanging the clamp itself on the measurement is the bug this
-  // comment exists to stop coming back: unclamped, `scrollHeight` equals `clientHeight`,
-  // so nothing ever reads as too long and a 48 KB account renders whole.
-  useLayoutEffect(() => {
-    if (expanded) return;
-    const el = box.current;
-    if (el) setOverflows(el.scrollHeight - el.clientHeight > 4);
-  }, [text, expanded]);
-
-  return (
-    <div className="hi-tasks__account">
-      <div className="hi-tasks__moments-title">{label}</div>
-      <div
-        ref={box}
-        className="hi-tasks__account-body"
-        data-clamped={expanded ? undefined : "true"}
-        data-fade={!expanded && overflows ? "true" : undefined}
-      >
-        <Prose text={text} link={link} />
-      </div>
-      {overflows && (
-        <button
-          type="button"
-          className="hi-tasks__more"
-          onClick={() => setExpanded((was) => !was)}
-        >
-          {expanded ? L.showLess : L.showAll}
-        </button>
-      )}
     </div>
   );
 }
@@ -2246,17 +2252,27 @@ const CSS = `
     outline: none;
   }
 
+  /* The title moved up here from the scroll, beside the chip that qualifies it: it is the
+     row's name and it should not scroll away from the record it names. Under it, at most two
+     facts — who is on this, and the one thing wrong — and then the list, which is everything
+     else this panel has. */
   .hi-tasks__detail-head {
     flex: none;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
     padding: 12px 12px 12px 16px;
     border-bottom: 1px solid var(--line);
   }
 
+  .hi-tasks__headline {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
   .hi-tasks__chip {
+    flex: none;
+    margin-top: 2px;
     padding: 3px 8px;
     border-radius: 5px;
     background: color-mix(in srgb, var(--task-status) 12%, transparent);
@@ -2266,6 +2282,7 @@ const CSS = `
   }
 
   .hi-tasks__close {
+    flex: none;
     width: 30px;
     height: 30px;
     display: grid;
@@ -2289,10 +2306,12 @@ const CSS = `
   }
 
   .hi-tasks__detail-title {
-    margin: 0 0 10px;
+    flex: 1;
+    min-width: 0;
+    margin: 0;
     color: var(--fg);
-    font-size: 16px;
-    line-height: 1.5;
+    font-size: 15.5px;
+    line-height: 1.45;
     font-weight: 760;
     overflow-wrap: anywhere;
   }
@@ -2302,7 +2321,7 @@ const CSS = `
     align-items: center;
     flex-wrap: wrap;
     gap: 6px 14px;
-    margin-bottom: 14px;
+    margin: 8px 0 0 0;
     color: var(--fg-dim);
     font-size: 12px;
     line-height: 1.35;
@@ -2320,13 +2339,13 @@ const CSS = `
     line-height: 1.5;
   }
 
-  /* What the record says this touches, read as tags rather than as a field — it is the
-     answer to "what is this about", and it belongs beside the title. */
+  /* What the record says this touches, read as tags rather than as a field. It leads the
+     fold because it is the one line of machinery that answers "what is this about". */
   .hi-tasks__systems {
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
   }
 
   .hi-tasks__system {
@@ -2338,9 +2357,29 @@ const CSS = `
     font-weight: 650;
   }
 
-  /* Everything else the frontmatter carries, in the file's order and folded away: a real
-     record's own ledger runs to tens of keys, and it is a thing to go and read rather than a
-     thing to be shown. */
+  /* The row's machinery, folded away: the frontmatter in the file's order, a duty's check,
+     and the file's own name. A real record's ledger runs to tens of keys, and it is a thing to
+     go and read rather than a thing to be shown. */
+  .hi-tasks__fields {
+    margin-top: 18px;
+  }
+
+  .hi-tasks__fields summary {
+    color: var(--fg-dim);
+    font-size: 11.5px;
+    font-weight: 750;
+    cursor: pointer;
+  }
+
+  .hi-tasks__fields summary:focus-visible {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: 2px;
+  }
+
+  .hi-tasks__fields[open] summary {
+    margin-bottom: 10px;
+  }
+
   .hi-tasks__fields dl {
     margin: 0;
     display: grid;
@@ -2372,61 +2411,6 @@ const CSS = `
     margin-top: 8px;
     color: var(--fg-dim);
     font-size: 11.5px;
-  }
-
-  /* Pinned above the record and never scrolled past: one or three lines in their own
-     words, so it can be read as prose rather than parsed as a field. */
-  /* Louder than the pin below it, because it is the one block on this surface that is
-     asking the reader for something rather than telling them how the work went. */
-  .hi-tasks__waiting {
-    margin-bottom: 16px;
-    padding: 11px 13px;
-    border-left: 3px solid var(--danger);
-    background: color-mix(in srgb, var(--danger) 10%, transparent);
-  }
-
-  .hi-tasks__waiting-title {
-    margin-bottom: 4px;
-    color: var(--danger);
-    font-size: 11.5px;
-    font-weight: 750;
-  }
-
-  .hi-tasks__waiting-text {
-    color: var(--fg);
-    font-size: 13.5px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .hi-tasks__asked {
-    margin-bottom: 16px;
-    padding: 11px 13px;
-    border-left: 3px solid var(--accent-2);
-    background: color-mix(in srgb, var(--accent-2) 8%, transparent);
-  }
-
-  .hi-tasks__asked-title {
-    margin-bottom: 4px;
-    color: var(--fg-dim);
-    font-size: 11.5px;
-    font-weight: 750;
-  }
-
-  .hi-tasks__asked-text {
-    color: var(--fg);
-    font-size: 13.5px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .hi-tasks__moments-title {
-    margin-bottom: 8px;
-    color: var(--fg-dim);
-    font-size: 11.5px;
-    font-weight: 750;
   }
 
   .hi-tasks__moments {
@@ -2509,53 +2493,6 @@ const CSS = `
     line-height: 1.6;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-
-  /* The account sits above the timeline and reads without being asked for. Clamped to a
-     screenful, with the rest one click down: whole, but never the wall the fold was
-     hiding. The fade is drawn on the box, so it lands on whatever the last visible line
-     happens to be. */
-  .hi-tasks__account {
-    margin-bottom: 18px;
-  }
-
-  .hi-tasks__account-body {
-    position: relative;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .hi-tasks__account-body[data-clamped="true"] {
-    /* A screenful of account, and the timeline still on screen under it. Taller and the
-       spine goes back below the fold, which is the shape this was fixing. */
-    max-height: 22em;
-    overflow: hidden;
-  }
-
-  .hi-tasks__account-body[data-fade="true"]::after {
-    content: "";
-    position: absolute;
-    inset: auto 0 0;
-    height: 4.5em;
-    background: linear-gradient(to bottom, transparent, var(--bg-0));
-    pointer-events: none;
-  }
-
-  .hi-tasks__more {
-    margin-top: 6px;
-    padding: 0;
-    border: 0;
-    background: none;
-    cursor: pointer;
-    color: var(--accent-2);
-    font: inherit;
-    font-size: 11.5px;
-    font-weight: 750;
-  }
-
-  .hi-tasks__more:focus-visible {
-    outline: 3px solid var(--accent-soft);
-    outline-offset: 2px;
   }
 
   /* A name the record wrote that turned out to be a file it has. It stays typographically
@@ -2644,7 +2581,7 @@ const CSS = `
   }
 
   .hi-tasks__liveness {
-    margin-top: 14px;
+    margin-top: 12px;
     padding: 12px 14px;
     border-left: 3px solid var(--task-serving);
     background: color-mix(in srgb, var(--task-serving) 7%, transparent);
@@ -2661,7 +2598,7 @@ const CSS = `
   }
 
   .hi-tasks__subject {
-    margin-top: 12px;
+    margin-top: 10px;
     color: var(--fg-mute);
     font-size: 11.5px;
     line-height: 1.4;
@@ -2680,6 +2617,63 @@ const CSS = `
     padding: 0 13px;
     font-size: 13px;
     font-weight: 750;
+  }
+
+  /* Anchored to the button, opening upwards: the actions are the last band of the panel and
+     there is nothing under them to open into. */
+  .hi-tasks__menu {
+    position: relative;
+    display: flex;
+    /* Pushed away from the verb beside it, so a decision is never taken by aiming for the
+       button the row was opened to press. */
+    margin-right: auto;
+  }
+
+  .hi-tasks__menu-open {
+    min-width: 38px;
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .hi-tasks__menu-pop {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 2;
+    min-width: 170px;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--bg-0);
+    box-shadow: 0 12px 30px var(--shadow-strong);
+  }
+
+  .hi-tasks__menu-item {
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--fg);
+    text-align: left;
+    white-space: nowrap;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .hi-tasks__menu-item:hover {
+    background: var(--surface-strong);
+  }
+
+  .hi-tasks__menu-item[data-danger="true"] {
+    color: var(--danger);
+  }
+
+  .hi-tasks__menu-item:focus-visible {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: -1px;
   }
 
   .hi-tasks__reply {

@@ -200,8 +200,9 @@ line describes, add an `update` saying so. **moved** is written by the host on e
 change. **replied** is the person's own words, typed into the row's reply box and written by
 the host: read it as their answer before asking anything again.
 
-**A line is one line** — the store refuses one with a line break in it. Anything longer — the
-working account, the reasoning, where it stands — is `kind: stands`, below.
+**A line is one line** — the store refuses one with a line break in it. There is no second
+place to put a paragraph: the record is the whole of what this row says, so the reasoning and
+where the work stands go in as the lines that say them.
 
 **The row's machinery is `hi_task_set`, and the status is not yours.** `status` belongs to a
 `task-manager` — a status you set yourself is the close nobody audited. What is yours is the
@@ -226,15 +227,15 @@ under its title, clamped to one line, so what does not fit in a sentence is not 
 all. In
 one live store the median timeline line is **411 characters** and the longest is
 **1,369** — six facts, three timestamps and a path welded together with semicolons, of
-which a person sees the opening few words. When what you have is a paragraph, the line
-takes the one fact that moved and `stands` takes the rest.
+which a person sees the opening few words. When what you have is several things, that is
+several lines, each saying its own.
 
-**`stands` is where it stands now.** The panel puts that prose under *Where it stands*,
-clamped to a screenful with the remainder one click below, and the store puts what you write
-on top with the previous reading beneath it. So write it as today's answer, whole: what a
-person reads first should be where the work is, not a correction of three weeks ago. 69 of
-the 120 records in that store ran past the screenful and the largest was 48 KB, because the
-prose was a file everyone appended to.
+**Do not restate where the whole row stands.** There used to be a place for that — a standing
+summary above the record — and it was deleted because nothing ever dropped a stale one: it
+grew to a median 2.2 KB, the newest reading sank under older ones, and, sitting at the head of
+the file, it took the whole of the budget that puts a record in front of the next worker —
+leaving 36% of records with no record in it at all. The lines are the answer. Write the next
+thing that happened; between them they say where it is, and each carries the day it was true.
 
 **And a duty's lines are what it did, not that it is still there.** A standing job is the
 easiest record to fill with nothing, because the thing that happens most often is nothing

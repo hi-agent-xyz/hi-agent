@@ -537,9 +537,12 @@ async fn a_task_serves_the_files_its_own_record_names() {
         "Inspect gz-02 /data disk usage",
         hi_agent::mind::memory::tasks::TaskStatus::Done,
     );
-    task.body = "The completed report is `inspection-report.md` in this task directory. \
-                 `hi_say` carried the headline."
-        .into();
+    task.timeline.push(hi_agent::mind::memory::tasks::TimelineEntry::new(
+        hi_agent::mind::memory::tasks::TimelineKind::Delivered,
+        chrono::Utc::now(),
+        "The completed report is `inspection-report.md` in this task directory. \
+         `hi_say` carried the headline.",
+    ));
     hi_agent::mind::memory::tasks::write_task(dir.path(), &task)
         .await
         .expect("write task");
@@ -551,7 +554,7 @@ async fn a_task_serves_the_files_its_own_record_names() {
     std::fs::create_dir_all(&folder).expect("task folder");
     std::fs::write(folder.join("inspection-report.md"), "# /data at 90%\n").expect("write report");
     // The one thing on disk that the record does not name stays where it is: the panel
-    // shows the account's own references, not a listing of the working folder.
+    // shows the record's own references, not a listing of the working folder.
     std::fs::write(folder.join("scratch.log"), "noise").expect("write scratch");
 
     // The list carries neither the prose, the timeline nor the files it names, which is the
@@ -575,7 +578,7 @@ async fn a_task_serves_the_files_its_own_record_names() {
     assert!(row.get("body").is_none(), "a row carries no prose: {row}");
     assert!(row.get("timeline").is_none(), "a row carries no timeline: {row}");
 
-    // Opening it is what asks, and the answer is the account behind that name.
+    // Opening it is what asks, and the answer is the record behind that name.
     let opened: serde_json::Value = client
         .get(format!("{base}/api/tasks/{}", task.subject))
         .send()
@@ -586,7 +589,12 @@ async fn a_task_serves_the_files_its_own_record_names() {
         .expect("json");
     let record = &opened["task"];
     assert_eq!(record["subject"], serde_json::Value::String(task.subject.clone()));
-    assert!(record["body"].as_str().expect("body").contains("inspection-report.md"));
+    assert!(
+        record["timeline"][0]["text"]
+            .as_str()
+            .expect("the line that names it")
+            .contains("inspection-report.md")
+    );
     assert_eq!(record["files"][0]["path"], "inspection-report.md");
     assert_eq!(record["files"][0]["bytes"], 15);
     assert_eq!(record["files"].as_array().expect("files").len(), 1, "only what it names");

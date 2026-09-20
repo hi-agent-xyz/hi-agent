@@ -60,7 +60,6 @@ A new human-facing surface ships with its seam or it does not ship
 | A spoken message | Reaction | `hi_say` | at the seam, gated — § A–K |
 | A task's title and its `created` line | Cognition | `hi_task_open` | at the seam, gated — § L–M |
 | A task's timeline line | any worker | `hi_task_note` | at the seam, gated — § L–M |
-| A task's *Where it stands* prose | any worker | `hi_task_note` (`stands`) | after it lands — § N |
 | A view on screen | a view builder | `hi_view_verdict` — the view reviewer's | by the view reviewer, its verdict kept — § *Views* |
 | Home's group labels and notes | a task manager | `hi_set_home_groups` | at the seam, gated — § *Home* |
 | A report's wording, where it reaches the person | Cognition, workers | `hi_say` — the speech it becomes | where it becomes speech — § B, § E, § G |
@@ -188,7 +187,7 @@ no wording, but a message it does not route goes out exactly as if a judge had p
 left unrecorded those writes are missing from the denominator of every number in § I rather
 than present in it. Measured 2026-09-20 on five days of this install: 154 messages went out and
 115 were routed, so a quarter of the surface was outside every number being read off it — and
-on records, where the audit reads only *Where it stands* and the close, a skip is final.
+on records, where the audit reads only the close, a skip is final.
 
 ### E. Pre-send check — one model request
 
@@ -370,11 +369,15 @@ per turn. Model and context length are levers of this design, not background.
 ## Task records, end to end
 
 What a person reads of a record is not the file: [`tasks.jsx`](../../src/mind/views/factory/tasks.jsx) draws the title and **the newest
-line said on the row — a mind's, or the person's own reply — clamped to one line**, on the card, and behind it a panel that pins the
-`created` line under *What they asked for*, a `waiting` line as *Needs you*, the body's top
-prose under *Where it stands*, then the whole timeline. Home draws the title again. A title,
-a line and a paragraph are three reads with three different budgets, so the seam has to be
-able to tell them apart.
+line said on the row — a mind's, or the person's own reply — clamped to one line**, on the card, and behind it a panel that is a head and
+one list. The head is the status word, the title, who is on it, and the single worst thing wrong
+with it — *Needs you*, overdue, nobody on it, and only the worst. Under it the whole record, newest
+first, and nothing above it: the standing prose that used to open the panel went with the
+account. **The ask and the wait are entries in that list, and the panel draws neither of them
+twice**: `created` is its oldest entry and a `waiting` line its newest. The row's machinery —
+the frontmatter this schema does not parse, a duty's check, the file's own name — is one fold
+at the bottom. Home draws the title again. A title, a line and a paragraph are three reads with
+three different budgets, so the seam has to be able to tell them apart.
 
 ### L. The seam — three verbs, and the host owns the file
 
@@ -383,7 +386,7 @@ Cognition opens a row and every worker appends to it with `apply_patch` on `face
 see any of it. Three verbs replace that, and `## Timeline` stops being hand-patched:
 
     hi_task_open(subject, title, status, wanted, …)            Cognition
-    hi_task_note(kind: update | delivered | waiting | stands | title, text, subject?)   workers
+    hi_task_note(kind: update | delivered | waiting | title, text, subject?)             workers
     hi_task_set(status?, due_at?, checked?, verify?, …, subject?)            workers
 
 **Prose is judged; machinery is validated.** The first two carry sentences a person reads
@@ -402,9 +405,9 @@ re-stamped as now — and closes the folded row saying where the promise went.
   removes the corpus's most common failure by construction rather than by rule — 2,959
   machine timestamps across 144 records, in the prose because hand-writing the whole line is
   what the format asked for.
-- **`stands` is the one that is not a line.** It puts new prose at the top of the body and
-  pushes what was there down — what the prompt already asks for by hand, and what 154 of 211
-  records run past a screenful of.
+- **Every kind is one line, because the account is gone.** `stands` was the one that was not:
+  it put new prose on top of a body and pushed the last reading down, never dated and never
+  dropped. See § *Decisions*.
 - **`created` is written once, at open, by `hi_task_open`**, so the acceptance line and the
   title are one call by the rung that was in the conversation. A second `created` is refused.
   Nothing enforces the "once" today and nothing reports its absence: of 106 rows in one
@@ -484,14 +487,15 @@ derived against the same problem:
   moved off 2.5 s).
 - **What triage passes is recorded as a `skipped`** (§ D), and on this surface that matters
   more than on speech: an ordinary short line is read by nothing afterwards either, because
-  § N reads only *Where it stands* and the close.
+  § N reads only the close.
 
 ### N. What is read after it lands
 
-The body under *Where it stands* is long, rewritten rarely, and nothing waits on it, so it is
-judged after the write instead of before: one read per `stands`, and one read of the whole
-record when a task manager closes it — the two moments the artifact is finished. Same judge,
-same standard, findings to `memory/quality/` under `surface: record`, nothing sent back.
+One read of the whole record when a task manager closes it — the moment the artifact is
+finished — judged after the write rather than before, because nothing waits on a record that
+is already written. Same judge as the line gate, same standard, findings to `memory/quality/`
+under `surface: record`, nothing sent back. **There was a second read, on every rewrite of a
+task's account**; it went with the account, and with it a judge call per write.
 
 **The closing read also answers what the record does not say**, against what the sessions that
 served the row reported: every message they sent their owner, found by joining the mail log
@@ -555,7 +559,8 @@ because an arrangement the person asked for is not held back over its wording.
 | **The host writes a record's instant and kind; a caller passes prose** | 2,959 machine timestamps across 144 records were written into prose because hand-writing the whole line is what the format asked for. Removing the ask removes the class |
 | **Prose is judged; machinery is validated** | The status word, a due date and a duty's liveness fields are values `reconcile` could always repair from the bytes; a sentence is not. `hi_task_set` exists anyway, because a worker that must open the record to stamp `checked_at` is a worker with the timeline under its cursor |
 | **A refused record line lands on the second attempt; a refused message does not** | Speech that is dropped is silence, which the floor already answers for. A fact that is not recorded is gone, and a gate able to lose facts is a worse failure than the one it fixes |
-| **Gate the line, judge the body after it lands** | A gate is worth a wait only where the writer can still act on it and something is waiting on the text. Nothing waits on *Where it stands*, and a builder must not queue behind a judge |
+| **Gate the line, judge the record at its close** | A gate is worth a wait only where the writer can still act on it and something is waiting on the text. Nothing waits on a record already written, and a builder must not queue behind a judge |
+| **The account is deleted; the record is the whole of what a row says** | `stands` prepended and nothing ever dropped a reading, so it grew without bound (median 2.2 KB over 212 records, largest 58 KB), went stale at the top — `buried` was a verdict for exactly that — and, sitting at the head of the file, took the whole of `work_record`'s 3,000-character budget: **zero timeline lines reached the worker on 36% of records**, a median of 3 of the 8 written. What it was for, a standing summary, is what the newest lines already say, dated and in order. Prose on records written before the retirement is round-tripped and surfaced nowhere: deleting a mechanism is not licence to delete what somebody wrote |
 | **The hand-patched path is deleted, not deprecated** | Two ways to write a record is a door beside the check, and the compatibility path kept until the prompts catch up is the one that stays |
 
 ## Open

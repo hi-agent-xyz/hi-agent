@@ -563,13 +563,23 @@ pub async fn work_record(data_dir: &Path, subject: &str) -> String {
         out.push_str("## The systems this touches\n");
         out.push_str(&sections.join("\n\n"));
     }
-    let task = crate::mind::memory::episodes::strip_frontmatter(&task).trim();
-    if !task.is_empty() {
+    // **The newest of the record, not the first 3,000 characters of the file.** This used to
+    // hand the raw text to [`clip`], which cuts from the head — and a record's useful end is
+    // its tail. Measured against one live store of 212 records it delivered **zero timeline
+    // lines on 36% of them**, because the retired account sat in front of the record and ate
+    // the whole budget, and a median of 3 of the 8 lines written. [`Task::recent_record`] is
+    // the walk the duty brief already takes: newest first within the budget, plus the
+    // `created` line however far back it sits, plus a marker saying how much was left out.
+    let record = match tasks::read_task(data_dir, subject).await {
+        Ok(Some(row)) => row.recent_record(WORK_RECORD_CHARS),
+        _ => String::new(),
+    };
+    if !record.is_empty() {
         if !out.is_empty() {
             out.push_str("\n\n");
         }
         out.push_str("## The record on this task\n");
-        out.push_str(&clip(task));
+        out.push_str(&record);
     }
     out
 }
@@ -1197,7 +1207,7 @@ mod window_tests {
             dir.path(),
             "tasks",
             "deploy-songguo",
-            "---\nstatus: doing\nsystems: songguo\n---\nDeploy it.",
+            "---\nstatus: doing\nsystems: songguo\n---\n\n## Timeline\n\n- 2026-09-01T09:00:00Z created \u{2014} Deploy it.\n",
         )
         .await;
         write_facet(dir.path(), "systems", "songguo", "Deployed by `./deploy.sh`. Nothing else.")

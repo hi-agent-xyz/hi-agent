@@ -137,8 +137,7 @@ pub mod judges {
     pub const RECEPTION: &str = include_str!("judges/reception.md");
     /// Whether one line goes onto a task's record as written.
     pub const RECORD: &str = include_str!("judges/record.md");
-    /// The read of a task's record after it lands: a new *Where it stands*, or the whole record
-    /// as it closes.
+    /// The read of a task's record after it lands: one line, or the whole record as it closes.
     pub const RECORD_AUDIT: &str = include_str!("judges/record_audit.md");
     /// Whether the labels and notes about to go on the home screen go up as written.
     pub const HOME: &str = include_str!("judges/home.md");

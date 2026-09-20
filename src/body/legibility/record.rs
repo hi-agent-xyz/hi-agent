@@ -3,9 +3,8 @@
 //!
 //! **It reads a line, not a record.** A line is short, the worker writes it holding
 //! everything it is about, and the card on the board draws one line of it — so a send-back
-//! arrives while the writer can still act on it. *Where it stands* is long, rewritten rarely
-//! and waited on by nobody, so it is judged after it lands (§ N, [`super::record_audit`]),
-//! never here.
+//! arrives while the writer can still act on it. The record whole is waited on by nobody, so
+//! it is read once at its close (§ N, [`super::record_audit`]), never here.
 //!
 //! The ladder, the one send-back and the recording are every gate's ([`super::gate`]); what is
 //! the record's own is what it triages on and what the judge is shown.
@@ -47,7 +46,6 @@ fn triage(writing: &Writing) -> Option<Scope> {
     match *writing {
         Writing::Open { .. } | Writing::Note { note: Note::Title, .. } => Some(Scope::Opening),
         Writing::Note { note: Note::Waiting, .. } => Some(Scope::Waiting),
-        Writing::Note { note: Note::Stands, .. } => None,
         Writing::Note { text, .. } if text.chars().count() > TRIAGE_CHARS => Some(Scope::Long),
         Writing::Note { .. } => None,
     }
@@ -107,8 +105,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    /// **A line that asks the person to act is always read; a short ordinary line never is,
-    /// and where it stands is read after it lands, not here.**
+    /// **A line that asks the person to act is always read; a short ordinary line never is.**
     #[test]
     fn triage_reads_facts_only() {
         let long = "字".repeat(TRIAGE_CHARS + 1);
@@ -117,7 +114,7 @@ mod tests {
         assert_eq!(triage(&note(Note::Waiting, "你来登录")), Some(Scope::Waiting));
         assert_eq!(triage(&note(Note::Update, "简历在你盘上了")), None);
         assert_eq!(triage(&note(Note::Update, &long)), Some(Scope::Long));
-        assert_eq!(triage(&note(Note::Stands, &longer)), None);
+        assert_eq!(triage(&note(Note::Delivered, &longer)), Some(Scope::Long));
         assert_eq!(triage(&note(Note::Title, "简历")), Some(Scope::Opening));
         assert_eq!(triage(&Writing::Open { title: "简历", wanted: "能改" }), Some(Scope::Opening));
     }

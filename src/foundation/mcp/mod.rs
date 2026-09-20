@@ -481,8 +481,8 @@ fn task_open_tool() -> Value {
          working folder is `memory/facets/tasks/<subject>/`). `title` is a name, the way you \
          would refer to it out loud, in the person's language — not a report. `wanted` is the \
          `created` line: what they actually want to end up with, in their words, plus any \
-         reading you had to take because they did not say. `account` is optional opening \
-         prose for *Where it stands*. A `serving` duty says how its machinery is checked \
+         reading you had to take because they did not say. A `serving` duty says how its \
+         machinery is checked \
          (`verify`, a result, never an existence), brought back (`restart`), whose it is \
          (`owner`) and the name it and the row share (`start_key`). `systems` names what it \
          touches — the record we keep on each is put in front of the worker before your \
@@ -495,7 +495,6 @@ fn task_open_tool() -> Value {
                 "title": { "type": "string", "description": "A short name for it, in the person's language." },
                 "status": { "type": "string", "enum": ["todo", "doing", "serving"], "description": "Where it starts." },
                 "wanted": { "type": "string", "description": "One line: what they want to end up with, in their words, and any reading you took." },
-                "account": { "type": "string", "description": "Optional opening prose, when there is more to say than the line." },
                 "due_at": { "type": "string", "description": "Only when they set a date or time: RFC3339 or YYYY-MM-DD." },
                 "verify": { "type": "string" },
                 "restart": { "type": "string" },
@@ -515,18 +514,17 @@ fn task_note_tool() -> Value {
          shows your newest line and the panel shows the rest. `kind`: `update` (something \
          happened — work done, a finding, a check and what it came back with), `delivered` \
          (they have something now, or it went out), `waiting` (a person must do what only \
-         they can: say who, what, and where, pasting the link or path), or `stands` (where it \
-         stands now — prose that goes on top of the account, the previous reading moving \
-         down beneath it), or `title` (the row's name, corrected — a task manager cutting a \
-         title that grew into a report back to what the thing is called). `text` is what you \
-         are saying, to them and in their language. The \
-         store writes the time and the kind, so put neither in the text. A line is one line, \
-         one thing that happened; a paragraph belongs in `stands`. `subject` defaults to the \
-         task you serve.",
+         they can: say who, what, and where, pasting the link or path), or `title` (the row's \
+         name, corrected — a task manager cutting a title that grew into a report back to \
+         what the thing is called). `text` is what you are saying, to them and in their \
+         language. The store writes the time and the kind, so put neither in the text. **A \
+         line is one line, one thing that happened** — the record is the whole of what this \
+         row says, so write the next thing as the next line rather than restating where it \
+         all stands. `subject` defaults to the task you serve.",
         json!({
             "type": "object",
             "properties": {
-                "kind": { "type": "string", "enum": ["update", "delivered", "waiting", "stands", "title"] },
+                "kind": { "type": "string", "enum": ["update", "delivered", "waiting", "title"] },
                 "text": { "type": "string" },
                 "subject": { "type": "string", "description": "The row. Omit for the task you serve." },
             },
@@ -2612,7 +2610,6 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
         title: title.to_owned(),
         status,
         wanted: wanted.to_owned(),
-        account: field("account"),
         due_at,
         liveness: Liveness {
             verify: field("verify"),
@@ -2635,7 +2632,7 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
     use crate::mind::memory::tasks::{self, Note};
 
     let Some(note) = arg_text(args, "kind").and_then(Note::parse) else {
-        return tool_error("`kind` must be update, delivered, waiting, stands or title");
+        return tool_error("`kind` must be update, delivered, waiting or title");
     };
     let Some(subject) = task_subject(served, args) else {
         return tool_error("name the row — `subject` — since this session serves no task");
@@ -2656,15 +2653,6 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
     }
     match tasks::note(data_dir, &subject, note, text, Utc::now()).await {
         Ok(Some(Ok(()))) => tool_ok(match note {
-            // Judged after it lands rather than before (`docs/arch/legibility.md` § N).
-            Note::Stands => {
-                crate::body::legibility::record_audit::after_stands(
-                    data_dir.to_path_buf(),
-                    subject.clone(),
-                    text.to_string(),
-                );
-                "on top of the account; the previous reading is beneath it"
-            }
             Note::Title => "renamed",
             _ => "recorded",
         }),
@@ -3987,7 +3975,7 @@ mod surface_tests {
                 assert!(held.contains(verb), "{surface}: its seam `{verb}` is no tool any rung holds");
             }
         }
-        assert!(rows >= 8, "the table of surfaces was not read: {rows} rows");
+        assert!(rows >= 7, "the table of surfaces was not read: {rows} rows");
     }
 
     #[test]
