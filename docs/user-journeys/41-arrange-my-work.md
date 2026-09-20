@@ -49,7 +49,8 @@ agent 自己身上的几个毛病是另一摊。
 
 1. 一次排布里出现了一个新的组名(比如"学习类")。它先戴默认图标 —— 一叠卡片,和其它
    还没画的组一样。
-2. `hi_set_home_groups` 的回执点名 `default icon still — draw from ⟨ref: drive/home/group-icon.png⟩: 学习类`。
+2. `hi_set_home_groups` 的回执每次都带 `the picture every icon is an edit of: ⟨ref: drive/home/group-icon.png⟩`,
+   另起一行点名还戴着默认图标的组:`default icon still: 学习类`。
 3. **同一个 task-manager 接着画**:挑一个代表"这一组对他来说是什么"的东西(不是把组名
    画出来),用 `hi_image_to_image` 从那张默认图改,只换物体,背景、配色、平面画法、构图
    全都不动,不带字。看一眼画出来的东西,再把排布整份发一次,这组带上 `icon`。
@@ -57,6 +58,10 @@ agent 自己身上的几个毛病是另一摊。
    它们都是同一张图改出来的。
 5. 之后的整理不重画:不带 `icon` 的重写保留这个组名原来的图标。改了名的组是新组名,
    除非 manager 把旧图标带过去。
+6. **但"重画"是可以开口要的**:那张所有图标都从它改出来的底图会变(换了风格、换了尺寸),
+   一换,已经画过的和以后画的就是两套。回执每次都给底图的 ref,所以说一句"把图标都重画一下"
+   就够 —— task-manager 拿那个 ref 把每个组重画一遍,再整份发回去。**没人说就不重画**:
+   整理不是重画,忘了带 `icon` 不该让每个组赔上一次生成。
 
 ## What must be true
 

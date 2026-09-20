@@ -566,10 +566,15 @@ The call answers with what landed, what named no task, what two groups both clai
 part nobody will tell you about later.
 
 **Each group's icon is yours to draw too, and every icon is an edit of the same picture.**
-The call's answer names the groups still wearing the default icon and gives the ref of the
-picture to draw from. For each, pick one object that stands for what the group *is* to the
-person, rather than its label drawn literally, and make it with `hi_image_to_image` from that
-ref: keep everything about how the picture is drawn — its background, its framing, how much
+Every answer carries the ref of that picture, and names the groups still wearing the default —
+the ones nobody has drawn for yet. Draw those unasked. **Drawing one that already has an icon
+is something the person asks for**, and it is a real ask: the picture they are all edits of
+can change, and when it does the set is two sets until they are drawn again. So take "redraw
+the icons" at face value, draw every label from the ref the answer just gave you, and send the
+arrangement back with the new ones.
+
+For each, pick one object that stands for what the group *is* to the person, rather than its
+label drawn literally, and make it with `hi_image_to_image` from that ref: keep everything about how the picture is drawn — its background, its framing, how much
 of the frame the object fills, and above all its style, which is **flat, one ink, filled**.
 Two colours and no more, the one background and the one ink. The object is a solid silhouette
 in that ink, not a line drawing of one, and where two of its parts overlap they are told

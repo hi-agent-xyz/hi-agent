@@ -571,9 +571,16 @@ is a shaded picture.
 - **An icon that cannot be used is refused on its own.** It might not be a `drive/` ref,
   might name no file, or might not decode. The arrangement still lands, the label keeps what it
   had, and the answer says why.
-- **The answer names every group still wearing the default**, with the ref to draw from, and
-  the anchor is filed at that moment, so the ref it hands out can always be read. A kept icon
-  whose file has since gone counts as the default again, which is what gets it redrawn.
+- **Every answer carries the ref, and every write refiles the anchor**; the list of groups
+  still wearing the default is a second, separate line. Both used to be conditional on that
+  list being non-empty, which quietly made a *redraw* impossible: an arrangement where every
+  label already had an icon got no ref, so a writer asked to draw the set again had no picture
+  to match — and the copy on disk was never refreshed, so a binary shipping a new default
+  could sit behind a year-old anchor and every icon drawn from it would carry the style that
+  had been replaced. Wanting the picture and having no icon are different things, and only the
+  second is a state of the record. The filing compares before it writes, so the ordinary pass
+  is a read. A kept icon whose file has since gone counts as the default again, which is what
+  gets it redrawn.
 
 ### What the surface does with it
 

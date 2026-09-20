@@ -2524,19 +2524,24 @@ async fn set_home_groups(data_dir: &std::path::Path, writer: &str, args: &Value)
     say(&mut out, "kept in the first group only", &written.duplicated);
     say(&mut out, "open and in no group", &written.ungrouped);
     say(&mut out, "icon not used, the label keeps what it had", &written.refused_icons);
-    if !written.iconless.is_empty() {
-        // The anchor is filed at the moment its ref is handed out, so the ref in this line
-        // is always one `hi_image_to_image` can read.
-        match home::file_icon_anchor(data_dir).await {
-            Ok(()) => say(
-                &mut out,
-                &format!("default icon still — draw from ⟨ref: {}⟩", home::ICON_ANCHOR_REF),
-                &written.iconless,
-            ),
-            Err(err) => {
-                tracing::warn!(error = %err, "could not file the group icon anchor");
-                say(&mut out, "default icon still (the picture to draw from could not be filed)", &written.iconless);
-            }
+    // **The ref is on every answer, and the anchor is filed on every write.** Both used to be
+    // conditional on a group wearing the default, which quietly made a *redraw* impossible:
+    // an arrangement where every label already has an icon got no ref, so a writer asked to
+    // draw the set again had no picture to match — and the copy on disk was never refreshed,
+    // so a binary shipping a new default could sit behind a year-old anchor and every icon
+    // drawn from it would carry the style that was replaced. Wanting the picture and having
+    // no icon are different things: only the second is a state of the record.
+    //
+    // `file_icon_anchor` compares before it writes, so on the ordinary pass this is a read.
+    match home::file_icon_anchor(data_dir).await {
+        Ok(()) => {
+            use std::fmt::Write as _;
+            let _ = write!(out, "\nthe picture every icon is an edit of: ⟨ref: {}⟩", home::ICON_ANCHOR_REF);
+            say(&mut out, "default icon still", &written.iconless);
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "could not file the group icon anchor");
+            say(&mut out, "default icon still (the picture to draw from could not be filed)", &written.iconless);
         }
     }
     tool_ok(&out)
@@ -3612,11 +3617,52 @@ mod surface_tests {
         .await;
         let text = got["content"][0]["text"].as_str().unwrap_or_default();
         assert!(
-            text.contains(&format!("draw from ⟨ref: {}⟩: 学习类", home::ICON_ANCHOR_REF)),
+            text.contains(&format!("an edit of: ⟨ref: {}⟩", home::ICON_ANCHOR_REF)),
             "{text}"
         );
+        assert!(text.contains("default icon still: 学习类"), "{text}");
         let anchor = crate::mind::memory::media::resolve_ref(dir.path(), home::ICON_ANCHOR_REF).await;
         assert_eq!(tokio::fs::read(anchor.unwrap()).await.unwrap(), home::DEFAULT_ICON);
+    }
+
+    /// **A redraw needs the picture as much as a first draw does**, so an arrangement where
+    /// every label already has an icon still carries the ref and still refreshes the anchor.
+    /// Without this a person cannot ask for the set to be drawn again in a new style: the
+    /// writer has nothing to match, and the copy on disk is whatever the last iconless write
+    /// left there.
+    #[tokio::test]
+    async fn an_arrangement_with_every_icon_drawn_still_hands_out_the_anchor() {
+        use crate::foundation::server::home;
+        let dir = tempfile::tempdir().unwrap();
+        crate::mind::memory::tasks::write_raw(dir.path(), "vocabulary-book",
+            "---\nstatus: doing\ntitle: t\n---\n\nbody\n",
+        )
+        .await
+        .unwrap();
+        // A picture to be this label's icon, so nothing is wearing the default.
+        let drawn = crate::mind::memory::media::drive_root(dir.path()).join("made/icon.png");
+        tokio::fs::create_dir_all(drawn.parent().unwrap()).await.unwrap();
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(512, 512)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        tokio::fs::write(&drawn, &png).await.unwrap();
+        let got = set_home_groups(
+            dir.path(),
+            "task-manager-1",
+            &json!({ "groups": [{ "label": "学习类", "icon": "drive/made/icon.png",
+                "members": ["vocabulary-book"] }] }),
+        )
+        .await;
+        let text = got["content"][0]["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains(&format!("an edit of: ⟨ref: {}⟩", home::ICON_ANCHOR_REF)),
+            "the ref is on every answer, not only one that found a default: {text}"
+        );
+        assert!(!text.contains("default icon still"), "nothing is wearing it: {text}");
+        let anchor = crate::mind::memory::media::resolve_ref(dir.path(), home::ICON_ANCHOR_REF).await;
+        assert_eq!(tokio::fs::read(anchor.unwrap()).await.unwrap(), home::DEFAULT_ICON,
+            "and the anchor on disk is this build's picture, not the last iconless write's");
     }
 
     /// Groups inside a group go through the call as the schema describes them, and the receipt
