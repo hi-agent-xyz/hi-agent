@@ -59,10 +59,31 @@ fi
 [ -f "$WIN_EXE" ] || { echo "error: $WIN_EXE not found; run without SKIP_BUILD" >&2; exit 1; }
 
 # --- 2. compile the installer ----------------------------------------------
+# **NSIS reads backslashes only.** Its `File` and `OutFile` directives parse a
+# forward-slash path as garbage and report `no files found` for a file that is
+# demonstrably there — which is how the first native Windows run of this script
+# failed, one line from the end, after an 8-minute engine build. It never bit on
+# the Mac mini because POSIX builds of makensis accept either separator, so this
+# is the one place in the repo where the *host running the packager* changes what
+# a path has to look like. `cygpath` ships with the Git Bash that GitHub's
+# `shell: bash` uses on Windows, and exists nowhere else — which makes it both
+# the converter and the test for whether conversion is needed.
+nsis_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+
 SHELL_DEFINE=()
 if [ -f "$SHELL_DIR/HiAgent.exe" ]; then
   echo ">> including the WinUI shell from $SHELL_DIR"
-  SHELL_DEFINE=("-DSHELLDIR=$SHELL_DIR")
+  # The trailing separator is what tells `File /r` to copy the directory's
+  # *contents* rather than the directory itself, and it has to be the separator
+  # NSIS is reading — so it is appended here, where the platform is known,
+  # rather than in the .nsi where it would have to be one or the other.
+  if command -v cygpath >/dev/null 2>&1; then
+    SHELL_DEFINE=("-DSHELLDIR=$(nsis_path "$SHELL_DIR")\\")
+  else
+    SHELL_DEFINE=("-DSHELLDIR=$SHELL_DIR/")
+  fi
 else
   echo ">> no WinUI shell at $SHELL_DIR — building the engine-only installer"
   echo "   (build it on a Windows host with 'make win-app', then re-run with SKIP_BUILD=1)"
@@ -76,10 +97,10 @@ export LC_ALL="en_US.UTF-8"
 makensis -V2 \
   "-DVERSION=$VERSION" \
   "-DVERSION4=$VERSION4" \
-  "-DSRCEXE=$WIN_EXE" \
-  "-DICON=$ICON" \
+  "-DSRCEXE=$(nsis_path "$WIN_EXE")" \
+  "-DICON=$(nsis_path "$ICON")" \
   "${SHELL_DEFINE[@]+"${SHELL_DEFINE[@]}"}" \
-  "-DOUTFILE=$SETUP" \
+  "-DOUTFILE=$(nsis_path "$SETUP")" \
   "$ROOT/scripts/hi-agent.nsi"
 
 echo ""

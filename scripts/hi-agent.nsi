@@ -103,8 +103,12 @@ Section "Install"
   ; The shell, beside the engine rather than under it: the shell resolves
   ; hi-agent.exe from its own directory (AppPaths.EngineExe), which is what
   ; makes the pair need no configuration to find each other.
+  ; SHELLDIR arrives with its trailing separator already on it — that separator
+  ; is what makes this copy the directory's contents instead of the directory,
+  ; and which separator NSIS will accept depends on the host running makensis
+  ; (see nsis_path in make-installer.sh). So it is not appended here.
 !ifdef SHELLDIR
-  File /r "${SHELLDIR}/"
+  File /r "${SHELLDIR}"
 !endif
 
   ; Shortcuts (icon from the .ico, since neither exe carries one yet).
