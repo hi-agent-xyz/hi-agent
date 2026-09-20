@@ -181,8 +181,9 @@ function groupIcon(ref) {
  * object without duplicating it. Nodes have no x/y or selected properties.
  *
  * Internal mappings:
- * 1. TaskDto (/api/tasks) -> task:<subject>. Status/time are copied, not inferred from
- *    sessions. Open tasks always; a closed one only while its own closure is recent.
+ * 1. TaskDto (/api/tasks) -> task:<subject>, EVERY row, whatever its status and age. Status
+ *    and time are copied, not inferred from sessions. What the clock decides is `inHand` — a
+ *    tier, read by the window's cut — never whether the node exists.
  * 2. Registry Status (/api/workers) -> session:<run>:<id>. running means busy; waiting
  *    means QUEUED WORK, not waiting for the user; idle is still a LIVE session. Only live
  *    sessions are here at all — a session that has ended is `factory/workers`' subject.
@@ -263,7 +264,15 @@ const collectedAt = (end, inbound) => {
   return null;
 };
 /**
- * Whether a closed row is still kept, given its innermost group's own open work.
+ * Whether a closed row is still **in hand**, given its innermost group's own open work.
+ *
+ * **This decides rank, never existence.** Every row the ledger has is a node with its whole
+ * branch — its groups, its pictures, its sessions — and what this answers is whether the row
+ * is part of what is going on right now or part of what the thread has been through. `heat`
+ * turns that into a tier, `budgeted` fills the window from the top, and what is left over
+ * is drawn where there is room for it. It used to be an admission gate in `buildHome`: a row
+ * that failed it was never a node, so no lens downstream could reach it, and pressing into a
+ * group could only ever take away. The rules below are unchanged; only what they decide is.
  *
  * `threadLive` is "an open task shares this row's innermost group" — the person's words for it
  * were *the parent has not disappeared*, and the innermost group is that parent. The first-level
@@ -415,25 +424,27 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     if (chain?.length) liveGroups.add(chain[chain.length - 1].label);
   }
   for (const task of tasks) {
-    // **A live session no longer re-admits its expired task.** That rule kept a closed task
-    // present "as context" whenever anything recent still named it, and it was the single
-    // biggest leak: fifteen of the twenty-five closed tasks on the canvas arrived that way,
-    // the oldest closed twenty-six days earlier, each drawn as a peer of the work in hand.
-    // A session whose task has aged out now connects to the core and keeps its own title.
-    if (!OPEN.has(task.status)) {
-      const chain = grouped.get(task.subject);
-      const threadLive = !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
-      if (!keepsClosed(task, taskEnd(task), { threadLive, inbound }, now)) continue;
-    }
+    // **Every row in the ledger is a node, with the whole of its branch.** What the clock and
+    // the person's presence decide is `inHand` — whether this row is what is going on now —
+    // and that is a tier in `heat`, not a gate here. A row that is not in hand is history: it
+    // is drawn where a branch has room for it, and pressing into a group is how somebody asks
+    // for it. As a gate this dropped the row before it was ever a node, which is why the lens
+    // downstream could only ever take away.
+    //
+    // It is still the one thing that separates the work in hand from the record of it, so it
+    // is also what the core's updates are built from and what a group's *N more* counts.
+    const chain = grouped.get(task.subject);
+    const threadLive = !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
+    const inHand = OPEN.has(task.status)
+      || keepsClosed(task, taskEnd(task), { threadLive, inbound }, now);
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
-      sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
+      sourceRefs: [ref("task", task.subject)], data: { task, status: task.status, inHand,
         endedAt: taskEnd(task), results: taskResults(task, views), sessions: [] } });
     // A task hangs off its group when the arrangement puts it in one, and off the core when
     // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
     // here invents a group for a task the person has not placed.
     // A task inside an inner group draws every group on the way to it, each once however
     // many tasks pass through it — `add` and `link` both dedupe by id.
-    const chain = grouped.get(task.subject);
     let parent = "core";
     for (const group of chain || []) {
       const id = `group:${group.label}`;
@@ -455,7 +466,15 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     }
   }
   for (const session of activities) {
-    const taskId = session.subject && byId.has(taskKey(session.subject)) ? taskKey(session.subject) : null;
+    // **A live session still does not re-admit its own expired task.** The row is in the model
+    // now — everything is — but a session hangs off a task only while that task is in hand;
+    // otherwise it connects to the core and keeps its own title, exactly as before. Hanging it
+    // under a row that is history would make the row drawable through its child, which is the
+    // leak this rule was written for: fifteen of twenty-five closed tasks on the old canvas
+    // arrived that way, the oldest closed twenty-six days earlier. The join itself is not lost
+    // — the session's `subject` still names it, and `factory/workers` has both ends.
+    const host = session.subject ? byId.get(taskKey(session.subject)) : null;
+    const taskId = host?.data.inHand ? host.id : null;
     // A session working on a drawn task belongs to that task. Whether it is a word on the row
     // or a card below it is decided once the count is known — see the pass after this loop.
     if (taskId) {
@@ -517,8 +536,10 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
   // public statement. They remain individually addressable and link to the original task.
   // These now report only genuinely recent closures — which is the honest count, and on the
   // instance this was written against took the list from ten entries to one.
+  // The model now holds every closed row ever, so what makes one an update is the same fact
+  // that used to make it a node at all: it closed and the person may not have seen it yet.
   for (const node of [...nodes]) {
-    if (node.kind !== "task" || OPEN.has(node.data.status)) continue;
+    if (node.kind !== "task" || OPEN.has(node.data.status) || !node.data.inHand) continue;
     const id = `overview:task:${node.id}`;
     add({ id, kind: "overview", title: node.title,
       summary: L.status[node.data.status], sourceRefs: node.sourceRefs,
@@ -813,49 +834,103 @@ function arrange(model, tones = branchTones(model)) {
  * is drawn, and at 0.7 a title is back to the 12px that fitting was rejected for before.
  */
 const OVERVIEW = 0.8;
+const CANDIDATES = 64;
 
 /**
  * How much a card is in hand: waiting on the person first — the one status that asks them to
  * act — then anybody running on it, then how lately it moved.
  */
+/**
+ * How much a card wants the window, as a tier and then a time.
+ *
+ * **The tier is what keeps a complete model from drawing like an archive.** Every row the
+ * ledger has is a node now, so "how lately it moved" alone would let a report that closed an
+ * hour ago outrank a to-do nobody has touched in a week — the thing that is actually in hand.
+ * Waiting on the person is still first, because it is the one status that asks them to act.
+ *
+ *   4 waiting on the person · 3 somebody running on it · 2 open · 1 closed and in hand · 0 history
+ *
+ * Within a tier, how lately it moved. Heat decides whether a card is on the chart and never
+ * where: what is drawn keeps the record's order, so an update moves only the cards it changes.
+ */
 function heat(node) {
   const task = node.data.task;
   const sessions = node.kind === "activity" ? [node.data.session] : node.data.sessions || [];
-  return [(task && waitsOnPerson(task) ? 2 : 0) + (sessions.some((s) => s.state === "running") ? 1 : 0),
+  const open = node.kind === "activity" || (!!task && OPEN.has(task.status));
+  const tier = task && waitsOnPerson(task) ? 4
+    : sessions.some((s) => s.state === "running") ? 3
+    : open ? 2 : node.data.inHand ? 1 : 0;
+  return [tier,
     Math.max(instant(task?.latest?.at) ?? 0, instant(task?.statusSince) ?? 0,
       ...sessions.map((s) => instant(s.stateSince) ?? 0))];
 }
+/** A card that is part of what is going on now, rather than what a branch has been through. */
+const inHand = (node) => heat(node)[0] >= 1;
 
 /**
- * `model` cut to what the chart draws in `frame` at `OVERVIEW`, and how many cards each group
- * holds that are not drawn. Every group stays; cards are chosen in this order:
+ * **The model is the whole graph; this picks what the window draws of it**, in `frame` at
+ * `OVERVIEW`, and counts what a group holds in hand that did not fit.
  *
- * 1. **In a group taken as the centre, the group's own cards are all drawn.** The person pressed
- *    into it to see them. On the whole chart the core's own cards — ungrouped work — get no such
- *    pass. Exempting them was watched failing: a render with no transcript held nineteen closed,
+ * Nothing is kept out of the model, so this is the only place a card is ever left off the
+ * chart. Cards are offered hottest first — the tier in `heat`, so every card in hand is
+ * offered before any history — and each is tried against the whole chart laid out afresh:
+ *
+ * 1. **In a group taken as the centre, everything it holds in hand is drawn**, at any depth
+ *    below it, inner groups included: the person pressed in to see this thread. It is the one
+ *    thing here that may overflow the window, which is what the overview scale and a scroll
+ *    are for. On the whole chart the core's own cards — ungrouped work — get no such pass.
+ *    Exempting them was watched failing: a render with no transcript held nineteen closed,
  *    ungrouped notices, they took the whole window, and every group was left a bare label. And
  *    for someone who has never grouped anything, every card is ungrouped, so nothing would ever
  *    be cut. What the core puts away it counts, and that count opens the task board.
- * 2. **Every branch off the centre draws its hottest card that fits**, so no branch reads as empty
- *    when it is only quiet. An ungrouped card is a branch of its own.
+ * 2. **Every branch with work in hand draws its hottest card that fits**, so no branch reads as
+ *    empty when it is only quiet. An ungrouped card is a branch of its own. A branch holding
+ *    nothing but history gets no such floor — it is drawn if there is room and not otherwise.
  * 3. **Then the rest, hottest first, each while the whole still fits.** A card that would not is
- *    passed over and the next is tried, so the shorter side fills.
+ *    passed over and the next is tried, so the shorter side fills. **History is the tail of this
+ *    pass**: a branch's finished work is drawn in whatever room its thread's live work leaves,
+ *    which on a full day is none and in a group taken as the centre is most of the window.
  * 4. **Pictures last, in what width is left.** A picture spends a rank of width and the width is
  *    both sides' at once, so offered with its card, one picture on the right kept a card still in
  *    progress out of its inner group on the left, and the branch showed one closed eight hours before.
  *
  * What is drawn keeps the order the record gives it: heat decides whether a card is on the chart,
  * never where, so an update moves only the cards it changes.
+ *
+ * **Only in-hand cards are counted.** *3 more* is an invitation to press in; "and 47 things
+ * that finished" is not one, and the number would be the ledger's depth rather than anything
+ * about the work. History that did not fit is simply not drawn.
  */
 function budgeted(model, frame, tones) {
   const children = childIndex(model);
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
   const room = { w: frame.w / OVERVIEW, h: frame.h / OVERVIEW };
-  const cards = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
+  const all = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
     .sort((a, b) => { const x = heat(a), y = heat(b); return y[0] - x[0] || y[1] - x[1]; });
+  // **What the fitting loop costs is bounded by the window, not by the ledger.** Every offer
+  // lays the whole chart out again, and a complete model can hold hundreds of rows against a
+  // window that draws a dozen. Everything in hand is always a candidate — the sort puts it
+  // first — and history is offered `CANDIDATES` deep, which is several times what any window
+  // has ever drawn.
+  const cards = all.filter((n, i) => inHand(n) || i < CANDIDATES);
   const shown = new Set();
+  const groupsAbove = (id) => {
+    const out = [];
+    for (let at = parent.get(id); at && at !== model.rootId; at = parent.get(at)) out.push(at);
+    return out;
+  };
+  // **A group is drawn on the way to a card, or because it holds work in hand.** The second
+  // half is what keeps a busy group that lost the fit from vanishing: it is a label and its
+  // count, still holding its rank. The first is what draws a finished group when a branch has
+  // the room for its history. A group with neither is not a node — structure standing where
+  // its content used to be is what this surface refuses.
+  const standing = new Set();
+  for (const card of all) if (inHand(card)) for (const id of groupsAbove(card.id)) standing.add(id);
   const cut = () => {
-    const keep = (n) => n.id === model.rootId || n.kind === "overview" || n.kind === "group" || shown.has(n.id);
+    const reached = new Set();
+    for (const id of shown) for (const above of groupsAbove(id)) reached.add(above);
+    const keep = (n) => n.id === model.rootId || n.kind === "overview" || shown.has(n.id)
+      || (n.kind === "group" && (standing.has(n.id) || reached.has(n.id)));
     const ids = new Set(model.nodes.filter(keep).map((n) => n.id));
     return { ...model, nodes: model.nodes.filter((n) => ids.has(n.id)),
       edges: model.edges.filter((e) => ids.has(e.from) && ids.has(e.to)) };
@@ -869,11 +944,11 @@ function budgeted(model, frame, tones) {
   };
   const branchOf = (id) => { let at = id; while (parent.get(at) !== model.rootId) at = parent.get(at); return at; };
   const pressedInto = model.nodes.find((n) => n.id === model.rootId)?.kind === "group";
-  if (pressedInto) for (const card of cards) if (parent.get(card.id) === model.rootId) shown.add(card.id);
+  if (pressedInto) for (const card of cards) if (inHand(card)) shown.add(card.id);
   const floored = new Set();
   for (const card of cards) {
     const branch = branchOf(card.id);
-    if (!shown.has(card.id) && !floored.has(branch) && offer([card.id])) floored.add(branch);
+    if (!shown.has(card.id) && inHand(card) && !floored.has(branch) && offer([card.id])) floored.add(branch);
   }
   for (const card of cards) if (!shown.has(card.id)) offer([card.id]);
   for (const card of cards) {
@@ -881,7 +956,10 @@ function budgeted(model, frame, tones) {
     if (tiles.length && !offer(tiles)) offer(tiles.slice(0, 1));
   }
   const hidden = new Map();
-  for (const card of cards) if (!shown.has(card.id)) hidden.set(parent.get(card.id), (hidden.get(parent.get(card.id)) || 0) + 1);
+  for (const card of all) {
+    if (shown.has(card.id) || !inHand(card)) continue;
+    hidden.set(parent.get(card.id), (hidden.get(parent.get(card.id)) || 0) + 1);
+  }
   return { model: cut(), hidden };
 }
 

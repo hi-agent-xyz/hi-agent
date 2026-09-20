@@ -4,10 +4,22 @@ Home answers what Hi Agent and the person are discussing and what work is in han
 It is a read projection of existing records, not another task ledger or session
 lifecycle store. It remains a normal factory view.
 
-**It is deliberately not complete, and that is the design.** `factory/tasks` carries the
-whole ledger and `factory/workers` carries every session; Home repeats neither. What it
-draws is the open work, the live sessions, and the conversation. Anything closed, ended
-or produced is reached by handing off to the surface that owns it.
+**The model is complete; the chart is not.** The projection holds every row the ledger has
+with the whole of its structure — the groups it sits in, the pictures it made, the hands on
+it — and the window then draws as much of that as fits, work in hand first. What this surface
+refuses is not the record but the claim that all of it is worth the window. `factory/tasks`
+still carries the ledger to *read*, `factory/workers` every session, and a card's press hands
+off to whichever owns it.
+
+**The two used to be one decision, and that was the mistake.** A row that failed the age and
+presence rules was never made a node, so nothing downstream could reach it: pressing into a
+group could only ever take away, and the surface had no way to answer *show me this thread*
+without a second fetch and a second rule. Those rules are unchanged — they are in § *In hand,
+and history* — but what they decide now is **rank**. Everything is in the model; the window
+fills from the top; what does not fit is simply not drawn.
+
+A live session is the one thing here that is never history: only live ones are on this surface
+at all, and an ended one is `factory/workers`' subject.
 
 ## Nodes and relationships
 
@@ -19,13 +31,19 @@ references do not duplicate the destination. The primary tree is acyclic.
 
 Nodes may have children at any depth. Selection and coordinates belong to the window,
 never to a task or a session. Overview nodes are embedded in the core rather than drawn
-as peripheral cards. **Every group is drawn; not every card is.** The chart opens whole in the
-window, so it holds what fits there — see *What the window holds* below.
+as peripheral cards. **A group is drawn on the way to a card, or because it holds work in hand.** The second is
+what keeps a busy group that lost the fit from vanishing — it is a label and a count, still
+holding its rank; the first is what draws a finished group when a branch has room for its
+history. A group with neither is not a node: structure standing where its content used to be
+is the thing this refuses. The chart opens whole in the window, so it holds what fits
+there — see *What the window holds* below.
 
 **A group can be taken as the centre.** Pressing a group heading draws that group's branch
 and nothing else — the group where the core stood, a size up, with its tasks, inner groups,
 sessions and pictures around it, laid out by the same rules and in the colour the branch wears
-on the whole chart. It is a lens the person takes, not a collapse the surface imposes. Pressing
+on the whole chart. It is a lens the person takes, not a collapse the surface imposes, and **it is the one thing
+that adds**: the branch has the whole window, so everything it holds in hand is drawn at any
+depth, inner groups included, and its finished work fills the room that is left. Pressing
 the group at the centre steps back out one level, and a trail at the top of the window names
 every group from the core down, each one a way back; the whole chart has no trail over it,
 the way it has no zoom control. Stepping in or out opens the new chart whole, cut on its own
@@ -70,27 +88,47 @@ chart says rather than how much of it fits:
 - **Drawing first-level groups alone.** It narrowed the chart to the 1348 it was meant to grow out
   of, and hung inner groups' cards straight off their parent, which is a different tree.
 
-Cards are chosen in this order, each tried against the whole chart laid out afresh:
+Cards are offered hottest first, each tried against the whole chart laid out afresh:
 
-1. **In a group taken as the centre, the group's own cards are all drawn** — the person pressed
-   into it to see them. Ungrouped work on the whole chart gets no such pass. Exempting it was
+1. **In a group taken as the centre, everything it holds in hand is drawn** — at any depth below
+   it, inner groups included — because the person pressed in to see this thread. It is the one
+   thing on this surface that may overflow the window, which is what the overview scale and a
+   scroll are for. Ungrouped work on the whole chart gets no such pass. Exempting it was
    watched failing: a render with no transcript held nineteen closed, ungrouped notices, they
    took the whole window, and every group was left a bare label. And someone who has never
    grouped anything has nothing *but* ungrouped work, so nothing would ever be cut for them.
    What the core puts away it counts, *18 more on the task board*, and the count opens the board
    that carries all of it — the same handoff, and the same named loan, as a card's.
-2. **Every branch off the centre draws its hottest card that fits**, so a quiet branch still says
-   something besides its count. An ungrouped card is a branch of its own.
+2. **Every branch with work in hand draws its hottest card that fits**, so a quiet branch still
+   says something besides its count. An ungrouped card is a branch of its own. A branch holding
+   nothing but history gets no such floor: it is drawn where there is room and not otherwise.
 3. **Then the rest, hottest first, each while the whole still fits.** A card that would not is
-   passed over and the next is tried, so the shorter side fills.
+   passed over and the next is tried, so the shorter side fills. **History is the tail of this
+   pass**: a branch's finished work is drawn in whatever room its live work leaves, which on a
+   full day is none, and in a group taken as the centre is most of the window.
 4. **Pictures last, in the width that is left.** A picture spends a rank of width, and the width is
    both sides' at once. Offered with its card, one picture on the right kept a card still in
    progress out of its inner group on the left, and the branch drew one closed eight hours
    before.
 
-**Heat** is waiting on the person first — the one status that asks them to act — then anybody
-running on it, then how lately it moved. Heat decides whether a card is on the chart, never where:
-what is drawn keeps the record's order, so an update moves only the cards it changes.
+**Heat is a tier and then a time**: waiting on the person, then anybody running on it, then
+open, then closed and in hand, then history — and within a tier, how lately it moved. **The tier
+is what keeps a complete model from drawing like an archive.** On time alone the freshest thing
+on a busy instance is almost always something that just finished, so a report closed an hour ago
+would outrank the to-do nobody has touched in a week. Heat decides whether a card is on the
+chart, never where: what is drawn keeps the record's order, so an update moves only the cards it
+changes.
+
+**Only work in hand is counted.** *3 more* is an invitation to press into a group; *and 47 things
+that finished* is not one, and the number would say how deep the ledger is rather than anything
+about the work. History that did not fit is simply not drawn, and pressing in is what asks for
+it.
+
+**What the fitting loop costs is the window's, not the ledger's.** Every offer lays the whole
+chart out again, and the model can hold hundreds of rows against a window that draws a dozen. So
+the candidates are everything in hand — always, however much of it there is — and then history
+64 deep, which is several times what any window has drawn. On a 211-row instance the whole pass
+costs 19ms against the 16ms it cost when the model held 80 nodes.
 
 **The overview scale is 0.8**, measured against one day's record (22 open cards, nine pictures,
 eight groups, two of them inner) in a 1512×855 window:
@@ -258,8 +296,10 @@ on a row that is waiting on them says the opposite of what is true.
 
 ## Internal mapping
 
-- A task is `task:<subject>` from the task ledger. Its status and lifecycle timestamps
-  stay authoritative even when its worker is idle, fails a turn, or disappears.
+- A task is `task:<subject>` from the task ledger, **all of them**, whatever their status and
+  age. Its status and lifecycle timestamps stay authoritative even when its worker is idle,
+  fails a turn, or disappears. Whether it is in hand or history is a tier on the node, read by
+  the window's cut and by nothing else.
 - An activity is `session:<run>:<session>`, and only a live one. The run is required
   because session slugs can recur after restart. A session that has ended belongs to
   `factory/workers`, not here.
@@ -514,9 +554,14 @@ interpret a busy flag as a plan. Internal output tails are not public statements
 User-visible conversation excerpts and factual task transitions are valid grounded
 overview content. A previous response is earlier context after a new user message.
 
-## Retention
+## In hand, and history
 
-**What keeps a closed card is the work it belongs to, not the clock. An unknown age reads
+**These rules decide rank, never existence.** Every row the ledger has is a node with its whole
+branch; what follows is how the surface tells what is going on right now from what a thread has
+been through. The tier feeds three readers and nothing else: which cards fill the window first,
+which undrawn ones a group counts as *N more*, and which closures are news on the core.
+
+**What puts a closed card in hand is the work it belongs to, not the clock. An unknown age reads
 as old.**
 
 A closed row is on a surface that draws the work in hand for one of two reasons, and they
@@ -529,13 +574,13 @@ on a real instance: of the 15 closed cards it was drawing, 7 were cancellations 
 a shoe-research report the person was still working against, because the report was 24 hours
 old. The clock had no way to tell those apart.
 
-- All `todo`, `doing` and `serving` tasks are present however long they have been open.
-- **A `done` task whose thread is still in hand is present**: an open task shares its
+- All `todo`, `doing` and `serving` tasks are in hand however long they have been open.
+- **A `done` task whose thread is still in hand stays in hand with it**: an open task shares its
   innermost group. The person's own words for this were *the parent has not disappeared*,
   and the innermost group is that parent. **Not the first-level branch** — a merged-video row
   sat in `北控视频` with nothing else open while the `KNQ` branch above it was busy, and
   testing the branch would have kept it.
-- **Everything else closed is a notice, and a notice is kept for a glance the person
+- **Everything else closed is a notice, and a notice is in hand for a glance the person
   actually gets**: until the first message they send *after* it closed, and an hour past that.
   Nobody back yet means nobody has had their glance, so the card stays — work that closes at
   3am is still there when they wake, which a fixed window could never promise.
@@ -553,23 +598,30 @@ old. The clock had no way to tell those apart.
 - **Seven days is the ceiling, and it is a backstop rather than a window.** Nothing else
   bounds a thread that stays open, and the arrangement record cannot be the bound: it still
   named 17 closed members, the oldest 45 hours past its closure, and
-  [nothing tidies it](#open).
-- **A closed record with no usable closure time is treated as old and is not drawn.** Not
+  [nothing tidies it](#open). Past the ceiling a row is history, which is a rank and not a
+  disappearance: the branch it belongs to still draws it where there is room.
+- **A closed record with no usable closure time reads as old, so it is history.** Not
   fabricating a missing timestamp is right; concluding from a missing one that the record
-  is current is not. A task that IS drawn may still print its time as unknown.
-- Visual emphasis decreases over the first 24 hours, and **the fade no longer decides
-  retention**. The two were one constant when retention was one clock; a card kept because
-  the work it serves is still open should not read as a day-old leftover.
+  is current is not. A card that IS drawn may still print its time as unknown.
+- Visual emphasis decreases over the first 24 hours, and **the fade decides nothing**. It and
+  the tier were one constant when one clock did both; a card in hand because the work it
+  serves is still open should not read as a day-old leftover, and a history card drawn in a
+  branch's spare room should read as exactly what it is.
 
 **Whether the person has *seen* a result is deliberately not the test, and the measurement is
 why.** Their screen moves are recorded durably — 509 `went to "<ref>"` observations on that
 instance, each with a sender — but the only host-written task↔view join is the `made` line,
 and there were 17 of those across 12 of 208 tasks. A signal that can answer for 6% of rows
-cannot decide retention. Nor is seen the axis that was asked for: the report the person had
+cannot decide a tier. Nor is seen the axis that was asked for: the report the person had
 already read is the one they wanted kept, because the work it serves was still open. Seen
 would have deleted it.
-- **A live session does not re-admit its own expired task.** That task is gone; the
-  session connects to the core and keeps its own title.
+- **A live session does not lift its own task out of history.** The row is in the model like
+  every other, but a session hangs off a task only while that task is in hand; otherwise it
+  connects to the core and keeps its own title. Hanging it under a history row would make the
+  row drawable through its child, which is the leak the rule was written for — fifteen of the
+  twenty-five closed tasks on the old canvas arrived that way, the oldest closed twenty-six
+  days earlier. The join is not lost: the session's `subject` still names it, and
+  `factory/workers` has both ends.
 - All live sessions are present. Ended sessions are not on this surface at all.
 
 Missing sources are distinct from empty sources; refresh failure keeps the last
@@ -584,29 +636,46 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
 
 ## Open
 
-- **The retention grace has never been watched on a live instance.** An hour past collection
+- **The grace has never been watched on a live instance.** An hour past collection
   was chosen because it made no difference to the measured board — 1 hour and 6 hours drew the
   same 6 cards, because inbound messages are bursty and the first one after a closure is
   usually hours later. That says the number is not sensitive on *that* day's traffic, not that
   it is right. What would move it: a closure landing mid-conversation, where the person's next
   message is a minute later and the hour is the whole of the glance they get.
-- **A closed row with pictures, in a finished thread, now leaves as fast as one with
-  nothing.** `在那段篮球 clip 上全自动标出一张正确的场地` was the measured instance of it —
-  two result tiles, its own group finished, so it is kept only by the grace. Whether a result
-  tile should itself be a keeper is undecided; the reason it is not one is that a picture says
-  nothing about whether anything still needs it, and § *Open* below already records that
-  nothing marks which result a task is *for*.
+- **A closed row with pictures, in a finished thread, falls to history as fast as one with
+  nothing.** `在那段篮球 clip 上全自动标出一张正确的场地` was the measured instance of it — two
+  result tiles, its own group finished, so it is in hand only for the grace. Whether a result
+  tile should itself hold a row in hand is undecided; the reason it does not is that a picture
+  says nothing about whether anything still needs it, and § *Open* below already records that
+  nothing marks which result a task is *for*. It costs less than it did: the row is still in
+  the model, and its branch draws it again wherever there is room.
 - **A new default does not redraw the icons made from the old one.** The anchor in the drive
   is refiled whenever the binary's default differs, so everything drawn afterwards matches the
   new one, but icons already recorded were edits of the old picture and keep its look. Nothing
   forgets them: a set drawn across that change is two sets until a person asks for a redraw.
 
-- **Nothing tidies the grouping record.** A task closes and ages out, and its line stays in
-  `groups.json` until a mind next rewrites the file; a group whose members have all gone
-  closes to nothing and draws nothing, but is still written down. Ignoring what it cannot
-  draw makes this harmless to look at, and the open work in hand is a dozen rows, so the
-  sweep it would take is not worth owning. It becomes worth owning if the record ever
-  outgrows what one rewrite can hold.
+- **Nothing tidies the grouping record, and something now reads what is left in it.** A task
+  closes and its line stays in `groups.json` until a mind next rewrites the file; a group whose
+  members have all finished draws nothing on a busy day, but is still written down. That was
+  harmless to look at, and it is now load-bearing: those lines are what hangs a branch's
+  history under the right heading, so **a sweep, if one is ever written, keeps closed
+  members** — dropping them would file finished work back onto the core. What is still unowned
+  is the opposite case, a record that outgrows what one rewrite can hold.
+- **What the change costs was measured; how it reads over months was not.** On a live instance
+  (211 rows, 222 views, 140 inbound messages, 13 groups, a 1512×855 window) the model went from
+  80 nodes to 264 and **the whole chart did not move**: the same 10 cards, 13 groups, 2 pictures
+  and 20 counted away, at the same size and scale, for 19ms of fitting against 16ms. The
+  branches are where it shows — `KNQ` 4 cards → 7 and 2 pictures → 3; `hi-agent 内部维护`
+  1 → 4; `学习类`, `生活类` and `买鞋` unchanged, because their windows were already full of
+  work in hand. Unmeasured: a day quiet enough that history fills the *whole chart*, which is
+  now possible and has never been seen; and a group with a year of finished work pressed into,
+  where the in-hand pass may overflow the window and the first and last cards sit half off it.
+- **A branch still has to be on the chart to be pressed into.** A group whose work is all
+  finished is drawn only where some branch had room for it, so on a busy day there is no
+  heading to press. Its rows are in the model and unreachable from here; `factory/tasks` is
+  where they are read. Whether the chart should keep a way into a finished group — a heading
+  with no card under it — is undecided, and the reason it does not today is the same one that
+  refuses an empty heading anywhere else.
 - **The order within a side is the record's, but which side is not.** Groups and ungrouped
   tasks are fed to the layout in the order the record gives, and the two-sided balance then
   takes them alternately as weight allows, so "first in the file" means near the core rather
