@@ -21,6 +21,7 @@ pub(crate) const GATE: Gate = Gate {
     surface: Surface::Record,
     mode_key: "record_check",
     model_key: "record_check_model",
+    budget_key: "record_check_budget_ms",
     rubric: crate::identity::judges::RECORD,
 };
 
@@ -61,7 +62,12 @@ pub async fn review(
     task: Option<&Task>,
     writing: Writing<'_>,
 ) -> Review {
-    let Some(scope) = triage(&writing) else { return Review::Pass };
+    let Some(scope) = triage(&writing) else {
+        // Not read, and said so: what triage passes is a verdict host code made, and it is
+        // counted beside the judge's (`super::skipped`).
+        super::skipped(data_dir, Surface::Record, subject, &describe(&writing));
+        return Review::Pass;
+    };
     gate(data_dir, &GATE, writer, subject, scope, case(task, &writing), describe(&writing)).await
 }
 
@@ -114,6 +120,33 @@ mod tests {
         assert_eq!(triage(&note(Note::Stands, &longer)), None);
         assert_eq!(triage(&note(Note::Title, "简历")), Some(Scope::Opening));
         assert_eq!(triage(&Writing::Open { title: "简历", wanted: "能改" }), Some(Scope::Opening));
+    }
+
+    /// **What triage passes is counted too.** A short ordinary line is never read by a judge,
+    /// and until this record existed that made it absent from the denominator rather than
+    /// present as a pass — so the share of lines anything had read looked like all of them.
+    #[tokio::test]
+    async fn a_line_triage_passes_is_recorded_as_unread() {
+        use crate::mind::memory::quality;
+        let dir = tempfile::tempdir().unwrap();
+        let writing = Writing::Note { note: Note::Update, text: "简历在你盘上了" };
+        assert!(matches!(review(dir.path(), "worker-1", "resume", None, writing).await, Review::Pass));
+
+        // Written off the write's path on purpose, so wait for it rather than assume it landed.
+        let mut records = Vec::new();
+        for _ in 0..50 {
+            records = quality::read_since(dir.path(), Utc::now() - chrono::Duration::hours(1)).await;
+            if !records.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let [quality::Record::Skipped(s)] = records.as_slice() else {
+            panic!("one record, saying host code let it through unread: {records:?}")
+        };
+        assert_eq!(s.surface, Surface::Record);
+        assert_eq!(s.turn, "resume");
+        assert!(s.message.contains("简历在你盘上了"), "{}", s.message);
     }
 
     /// **A writer that was sent back once is let through next** — the record gets the fact

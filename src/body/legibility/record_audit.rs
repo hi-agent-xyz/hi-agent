@@ -86,8 +86,12 @@ async fn read_and_keep(data_dir: &Path, subject: &str, case: &str, items: &[Stri
             return;
         }
     };
-    let Some((messages, unsaid, wrong)) = super::read_audit(&answer, items) else {
-        tracing::warn!(task = %subject, "record audit answered in a shape it could not be read in");
+    let Some((messages, unsaid, wrong)) = super::read_audit(&answer.text, items) else {
+        tracing::warn!(
+            task = %subject,
+            answer = %answer.text.chars().take(200).collect::<String>(),
+            "record audit answered in a shape it could not be read in"
+        );
         return;
     };
     tracing::info!(
@@ -141,7 +145,7 @@ pub(crate) async fn read_line(
     };
     let items = vec![line.trim().to_string()];
     let case = written_case(&reader(data_dir).await, &task, LINE, &items[0]);
-    let answer = judge.ask(instructions, &case, AUDIT_LIMIT).await.ok()?;
+    let answer = judge.ask(instructions, &case, AUDIT_LIMIT).await.ok()?.text;
     let (messages, unsaid, wrong) = super::read_audit(&answer, &items)?;
     Some(quality::Audit {
         ts: Utc::now(),

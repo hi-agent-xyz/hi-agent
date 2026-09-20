@@ -32,7 +32,7 @@ Three things bind, and they are the same three on every surface:
    prompt substitutes for one — that is what the measurement above is.
 2. **One standard, one judge, one record.** [`craft/reading.md`](../../src/identity/craft/reading.md)
    is the single text every writer writes against and every reader-of-writing judges against;
-   [`judge.rs`](../../src/body/reaction/legibility/judge.rs) is one model request carrying it
+   [`judge.rs`](../../src/body/legibility/judge.rs) is one model request carrying it
    as a cacheable prefix; every judgment lands in `memory/quality/` **naming which surface it
    was on**. One record rather than one per surface, because a correction the person makes
    about how they are spoken to is a fact about *them* — "以后简要汇报" is supposed to shorten
@@ -171,20 +171,29 @@ a view goes up with it.
 
 ### D. Triage — host code, facts only
 
-Inside `ToolSink::say` ([`tools.rs`](../../src/body/reaction/tools.rs)), after the floor
-check. It judges nothing; it decides whether the check runs. A message is in scope when **the
-turn carries a report**, or **the message is longer than a short reply** (starting line: 120
-characters), or **it is not the first message of the turn**.
+Inside `ToolSink::say` ([`tools.rs`](../../src/body/reaction/tools.rs)), after the length and
+the run count (§ F) and before the floor — a read that can take seconds must not hold a floor
+decision made about the moment the words are ready. It judges nothing; it decides whether the
+check runs. A message is in scope when **the turn carries a report**, or **the message is
+longer than a short reply** (starting line: 120 characters), or **it is not the first message
+of the turn**.
 
 The scope is set by where the failures concentrate, not by how well code can find them: code
 cannot tell a paraphrased repetition from new content (measured: routing 24% of messages to a
 check caught half of the problem messages, 89% caught 95%). Short first replies to the person
 go out untouched and immediately.
 
+**What it passes is recorded, as a `skipped`** — because "not read" is a verdict. Triage judges
+no wording, but a message it does not route goes out exactly as if a judge had passed it, and
+left unrecorded those writes are missing from the denominator of every number in § I rather
+than present in it. Measured 2026-09-20 on five days of this install: 154 messages went out and
+115 were routed, so a quarter of the surface was outside every number being read off it — and
+on records, where the audit reads only *Where it stands* and the close, a skip is final.
+
 ### E. Pre-send check — one model request
 
 **What it is.** A single Responses API request from the host — no session, no memory — to the
-agent's own endpoint ([`judge.rs`](../../src/body/reaction/legibility/judge.rs)): the rubric
+agent's own endpoint ([`judge.rs`](../../src/body/legibility/judge.rs)): the rubric
 ([`judges/check.md`](../../src/identity/judges/check.md)) and the standard as a fixed,
 cacheable prefix; then who is reading (the conduct and words-earned blocks Reaction's window
 carries), the recent conversation, this turn's incoming signals, the messages already sent
@@ -200,15 +209,23 @@ rewrites or drops the message; no new turn is woken.
   as the floor lets a reply through after repeated refusals. Per turn rather than per message
   because the host cannot tell a rewrite from a new message, and a turn is what bounds the
   latency;
-- **timeout 2.5 s, and any error, sends the message** — silence is the worst failure, and a
-  checker must not be able to produce it. Time spent queued behind an earlier message counts;
+- **a timeout, and any error, sends the message** — silence is the worst failure, and a
+  checker must not be able to produce it. Time spent queued behind an earlier message counts.
+  The budget is `speech_check_budget_ms`, **10 s**, and the record gate's is 20 s (§ M): nobody
+  waits on a line. It was 2.5 s for both until 2026-09-20, when five days of shadow turned out
+  to hold 131 verdicts and not one inside the budget — the judge spends 900–1,500 tokens
+  thinking before ~50 tokens of verdict, so the cheapest real case on the fastest model this
+  install has takes 3.3 s, and both of its models are reasoning models. **A budget nothing can
+  meet records `timeout` for everything and teaches nothing**, which is what it did;
 - **serial within a turn**, so order holds; a message that had already reached the mouth when
   an earlier one was sent back goes back with it, since it may depend on it — and one that
   arrives after the answer is the rewrite;
 - **shadow first** — the `speech_check` setting is `shadow` unless set to `on` or `off`:
   every in-scope message is judged on its own task and recorded, with what the check would
   have cost, and nothing is sent back until that latency and the check's agreement with the
-  audit are known.
+  audit are known. A shadow read is given **twice the live budget** before it is abandoned, so
+  that what it measures — how far past the budget the answers that miss it land — is not
+  censored by its own ceiling.
 
 **Catches:** relay, process narration, replaying the person, repeating an earlier message,
 claiming more than the report supports (09-15: "it's on screen" a minute before it was), a
@@ -308,8 +325,10 @@ one set per surface — `speech`, `record`, `view` and `home` — from the recor
 | audit findings per 100 messages, by axis | where the failures are |
 | owed and left unsaid, per 100 turns | so shorter never passes for better |
 | pre-send revise rate; latency p50/p95; timeouts | whether the source is getting fixed, and what the check costs |
+| **the share of writes a judge read at all** (`read_rate`, checks over checks + skips) | a revise rate over the routed alone describes the sample, not the surface |
+| tokens per verdict, and how many of them were thinking | latency here is almost all output tokens; without this a slow judge and a slow network read the same |
 | check–audit agreement | whether the check deserves its place |
-| writes around the seam, per surface | the record seam is held by detection, not a wall (§ L); this is the number that says whether it is holding |
+| writes around the seam, per surface — with who was on the row and how much moved | the record seam is held by detection, not a wall (§ L); this is the number that says whether it is holding, and the fields are what make it answerable |
 
 ### J. Replay
 
@@ -418,6 +437,15 @@ own cost. Two things carry it instead:
   every window build and already keeps a `LAST_SEEN` mark per row, which is why detection is
   an extension rather than a mechanism.
 
+  **A detection carries who was on the row and how much moved**, not only that something did.
+  The first shape of it held the instant, the surface and the subject; asked on 2026-09-20
+  which session had written twenty-one lines around the verbs on one row, it could not answer,
+  and the frame logs took half an hour to half-answer. So the record names the sessions the
+  index has opened against that subject — a short list to look at, never proof, since anything
+  unsandboxed can write any file — and the record's size before and after, because one line
+  appended by hand and a record rewritten whole are the same fact to a hash and are not the
+  same event.
+
 **This overturns a decision `reconcile` was written under, and it is worth saying which
 half.** Its reasoning — *the ledger has no code on its write path and should not get one; a
 verb an agent could be asked to use is a door beside an open wall, absent exactly when it is
@@ -443,7 +471,7 @@ derived against the same problem:
   person to act is the one whose burial costs most — on one store the longest ran 920
   characters with the ask in the middle and a second, unrelated ask behind it. Everything
   else is recorded untouched.
-- **One model request** — the same [`judge.rs`](../../src/body/reaction/legibility/judge.rs),
+- **One model request** — the same [`judge.rs`](../../src/body/legibility/judge.rs),
   a rubric in `judges/record.md`, the standard as the cacheable prefix, plus who the reader is
   (their conduct) and the row's recent lines, without which "the same thing said again" is
   invisible.
@@ -451,7 +479,12 @@ derived against the same problem:
   whatever it says. Speech can be dropped; a record cannot. An unrecorded fact is worse than
   an ugly one, and a gate able to lose facts would be a worse failure than the one it fixes.
 - **Fail open, shadow first** — `record_check`, the ladder `speech_check` is already on. A
-  timeout writes the line.
+  timeout writes the line. Its budget is `record_check_budget_ms`, **20 s** — twice speech's,
+  because the only thing a record gate holds is the worker writing the line (§ E for why both
+  moved off 2.5 s).
+- **What triage passes is recorded as a `skipped`** (§ D), and on this surface that matters
+  more than on speech: an ordinary short line is read by nothing afterwards either, because
+  § N reads only *Where it stands* and the close.
 
 ### N. What is read after it lands
 

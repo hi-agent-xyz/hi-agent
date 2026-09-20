@@ -465,6 +465,8 @@ mod tests {
                 note: None,
                 latency_ms: 1,
                 model: "m".into(),
+                cost: Default::default(),
+                budget_ms: 0,
             })
         };
         let records = vec![check("update: a", quality::Outcome::Pass), check("update: c", quality::Outcome::Revise)];

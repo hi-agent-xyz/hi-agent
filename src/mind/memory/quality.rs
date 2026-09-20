@@ -81,6 +81,7 @@ impl Surface {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Record {
     Check(Check),
+    Skipped(Skipped),
     Audit(Audit),
     Reception(Reception),
     Bypass(Bypass),
@@ -90,6 +91,7 @@ impl Record {
     pub fn ts(&self) -> DateTime<Utc> {
         match self {
             Record::Check(c) => c.ts,
+            Record::Skipped(s) => s.ts,
             Record::Audit(a) => a.ts,
             Record::Reception(r) => r.ts,
             Record::Bypass(b) => b.ts,
@@ -150,6 +152,56 @@ pub struct Check {
     /// what the check *would* have cost.
     pub latency_ms: u64,
     pub model: String,
+    /// What the request cost upstream, which is the only thing that explains the latency
+    /// beside it.
+    #[serde(default, skip_serializing_if = "Cost::is_unknown")]
+    pub cost: Cost,
+    /// The budget this verdict was measured against, so a row stamped `timeout` can still be
+    /// read a month later when the budget has moved.
+    #[serde(default)]
+    pub budget_ms: u64,
+}
+
+/// What one judge request cost upstream, as the reply reported it.
+///
+/// **Kept because latency here is almost entirely output tokens, and nothing else
+/// distinguishes a slow judge from a slow network.** Measured 2026-09-20 against
+/// `deepseek-flash`: a record check answered in 4.7s, of which 914 of 1,012 output tokens
+/// were the model thinking before it wrote ~50 tokens of verdict; the same request with a
+/// one-line case answered in 1.6s, and a bare prompt in 0.7s. Without these four numbers
+/// that is indistinguishable from an upstream having a bad day.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cost {
+    pub input: u64,
+    /// Of `input`, what the upstream served from its prefix cache. The standard rides in
+    /// front of every case so that this number stays high (`docs/arch/legibility.md` § A).
+    pub cached: u64,
+    pub output: u64,
+    /// Of `output`, what was spent before the answer began.
+    pub thinking: u64,
+}
+
+impl Cost {
+    /// Nothing was reported — an older record, or an upstream that sends no usage.
+    pub fn is_unknown(&self) -> bool {
+        *self == Cost::default()
+    }
+}
+
+/// A write that reached a seam and went through unread, because host code decided it was out
+/// of scope (`docs/arch/legibility.md` § D).
+///
+/// **Kept because "not read" is a verdict.** Triage judges no wording — it routes on facts a
+/// person never sees, like a length or a position in a turn — but a message it does not route
+/// goes out exactly as if a judge had passed it. Left unrecorded, those writes are missing
+/// from the denominator of every number here, which makes the checked share read as the whole.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Skipped {
+    pub ts: DateTime<Utc>,
+    pub surface: Surface,
+    /// The turn, or the task's subject.
+    pub turn: String,
+    pub message: String,
 }
 
 /// One message of an audited turn.
@@ -183,11 +235,34 @@ pub struct Audit {
 /// A surface written some other way than through its seam — a record the host did not write
 /// the last version of. The seam is held by detection rather than by a wall
 /// (`docs/arch/legibility.md` § L), so this is what makes a walk-around countable.
+///
+/// **Countable was not enough.** The first shape of this record carried the instant, the
+/// surface and the subject, and nothing else. On 2026-09-20, asked which session had written
+/// twenty-one lines around the verbs on one row, the record could not answer and the wire log
+/// took half an hour to half-answer. So it now carries who was on the row and how much moved:
+/// enough to name a suspect and to tell one hand-written line from a rewritten record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Bypass {
     pub ts: DateTime<Utc>,
     pub surface: Surface,
     pub subject: String,
+    /// The sessions opened against this subject, as the session index knows them. Not proof —
+    /// anything running unsandboxed can write any file — but it is where to look first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub serving: Vec<String>,
+    /// The record's size when the host last wrote it, and as it was found.
+    #[serde(default)]
+    pub was: Size,
+    #[serde(default)]
+    pub found: Size,
+}
+
+/// How big a record is, in the two units a reader of one cares about.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Size {
+    pub chars: u64,
+    /// Lines on its timeline — the count that says whether entries were added by hand.
+    pub entries: u64,
 }
 
 /// What the person's next message said about how the turns before it were put.
@@ -307,10 +382,15 @@ pub struct Numbers {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckNumbers {
     pub checked: u32,
+    /// Writes host code let through without reading. **The denominator's other half**: a
+    /// `revise_rate` over `checked` alone describes the sample, not the surface.
+    pub skipped: u32,
     pub revise: u32,
     pub timeout: u32,
     pub error: u32,
     pub revise_rate: Option<f64>,
+    /// Of everything written to this surface, the share a judge read at all.
+    pub read_rate: Option<f64>,
     pub latency_p50_ms: Option<u64>,
     pub latency_p95_ms: Option<u64>,
 }
@@ -344,6 +424,7 @@ fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
 pub fn on(record: &Record, surface: Surface) -> bool {
     match record {
         Record::Check(c) => c.surface == surface,
+        Record::Skipped(s) => s.surface == surface,
         Record::Audit(a) => a.surface == surface,
         Record::Reception(_) => surface == Surface::Speech,
         Record::Bypass(b) => b.surface == surface,
@@ -374,6 +455,7 @@ pub fn numbers(records: &[Record], surface: Surface) -> Numbers {
                     *n.corrections_per_day.entry(r.ts.date_naive()).or_default() += 1;
                 }
             }
+            Record::Skipped(_) => n.check.skipped += 1,
             Record::Check(c) => {
                 n.check.checked += 1;
                 match c.outcome {
@@ -425,6 +507,7 @@ pub fn numbers(records: &[Record], surface: Surface) -> Numbers {
         findings.into_iter().map(|(k, v)| (k, per_100(v, n.messages_audited))).collect();
     n.unsaid_per_100_turns = per_100(unsaid, n.turns_audited);
     n.check.revise_rate = ratio(n.check.revise, n.check.checked);
+    n.check.read_rate = ratio(n.check.checked, n.check.checked + n.check.skipped);
     latencies.sort_unstable();
     n.check.latency_p50_ms = percentile(&latencies, 0.50);
     n.check.latency_p95_ms = percentile(&latencies, 0.95);
@@ -452,6 +535,8 @@ mod tests {
             note: None,
             latency_ms,
             model: "m".into(),
+            cost: Default::default(),
+            budget_ms: 0,
         })
     }
 
@@ -467,6 +552,9 @@ mod tests {
             check("t1", "a", Outcome::Pass, 1_000),
             on_record,
             Record::Bypass(Bypass {
+                serving: Vec::new(),
+                was: Size::default(),
+                found: Size::default(),
                 ts: at("2026-09-15T01:30:00Z"),
                 surface: Surface::Record,
                 subject: "resume".into(),

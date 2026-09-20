@@ -73,13 +73,13 @@ struct Verdict {
 /// for the writer to act on. A shadow verdict slower than `live_limit` is recorded as the
 /// timeout live would have been.
 pub(crate) fn read_verdict(
-    answer: anyhow::Result<String>,
+    answer: &anyhow::Result<judge::Answer>,
     elapsed: Duration,
     live_limit: Duration,
     mode: Mode,
 ) -> (Outcome, Option<String>, Option<String>) {
     let (outcome, axis, note) = match answer {
-        Ok(text) => match json_object::<Verdict>(&text) {
+        Ok(answer) => match json_object::<Verdict>(&answer.text) {
             Some(v) if v.verdict.trim().eq_ignore_ascii_case("revise") => {
                 let note = v.note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
                 match note {
@@ -88,7 +88,16 @@ pub(crate) fn read_verdict(
                 }
             }
             Some(_) => (Outcome::Pass, None, None),
-            None => (Outcome::Error, None, None),
+            None => {
+                // **The answer itself, clipped**, because an unreadable verdict is only
+                // debuggable from what was actually said: a fenced object, a refusal, and a
+                // model that wrote prose all land here identically otherwise.
+                tracing::warn!(
+                    answer = %answer.text.chars().take(200).collect::<String>(),
+                    "a legibility judge answered in a shape it could not be read in"
+                );
+                (Outcome::Error, None, None)
+            }
         },
         Err(err) if format!("{err:#}").contains("timed out") => (Outcome::Timeout, None, None),
         Err(err) => {
@@ -156,15 +165,37 @@ pub(crate) struct Gate {
     pub surface: Surface,
     pub mode_key: &'static str,
     pub model_key: &'static str,
+    pub budget_key: &'static str,
     pub rubric: &'static str,
 }
 
-/// How long a live gate may hold a write. Past it the write goes through.
-pub(crate) const GATE_LIMIT: Duration = Duration::from_millis(2_500);
+/// How long a live gate may hold a write, unless its setting says otherwise.
+///
+/// **Twenty seconds, and it used to be two and a half.** The first number was picked for a
+/// person waiting on a reply and then reused here, where nobody is: a worker writing a line
+/// is the only thing held. Measured 2026-09-20, the two and a half were unreachable — of 131
+/// checks over five days not one answered inside them, because the judge spends 900 to 1,500
+/// tokens thinking before ~50 tokens of verdict, and the cheapest real case on the fastest
+/// model this install has ran 3.3 seconds. A budget nothing can meet records `timeout` for
+/// everything and teaches nothing.
+const GATE_BUDGET_MS: u64 = 20_000;
 
-/// How long a shadow gate may run and still record a verdict. Longer than the live limit on
-/// purpose: what shadow measures includes how often the live limit would be missed.
-const SHADOW_LIMIT: Duration = Duration::from_secs(30);
+/// A budget from its setting, in milliseconds, or `fallback`. Read per call rather than at
+/// startup, so turning it costs no restart.
+pub(crate) fn budget(key: &str, fallback: u64) -> Duration {
+    let ms = tunables::get(key)
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .unwrap_or(fallback);
+    Duration::from_millis(ms)
+}
+
+/// How long a shadow run may take and still record a verdict: twice the live budget, so what
+/// shadow measures includes how far past the budget the answers that miss it actually land.
+/// A ceiling equal to the budget would censor exactly the number being looked for.
+pub(crate) fn shadow_limit(budget: Duration) -> Duration {
+    budget * 2
+}
 
 pub enum Review {
     Pass,
@@ -175,6 +206,11 @@ impl Gate {
     /// Its mode, from its setting. Shadow unless set otherwise.
     pub fn mode(&self) -> Mode {
         Mode::from_setting(tunables::get(self.mode_key).as_deref())
+    }
+
+    /// How long it may hold a write, from its setting.
+    pub fn budget(&self) -> Duration {
+        budget(self.budget_key, GATE_BUDGET_MS)
     }
 }
 
@@ -216,6 +252,7 @@ pub(crate) async fn gate(
         if reader.trim().is_empty() { "(nothing)" } else { reader.trim() },
         case
     );
+    let live = gate.budget();
     let checked = Checked {
         data_dir: data_dir.to_path_buf(),
         surface: gate.surface,
@@ -224,20 +261,21 @@ pub(crate) async fn gate(
         scope,
         mode,
         model: judge.model().to_string(),
+        budget: live,
     };
     match mode {
         Mode::Off => Review::Pass,
         Mode::Shadow => {
             tokio::spawn(async move {
                 let started = Instant::now();
-                let answer = judge.ask(&instructions, &case, SHADOW_LIMIT).await;
+                let answer = judge.ask(&instructions, &case, shadow_limit(live)).await;
                 checked.write(answer, started.elapsed()).await;
             });
             Review::Pass
         }
         Mode::On => {
             let started = Instant::now();
-            let answer = match tokio::time::timeout(GATE_LIMIT, judge.ask(&instructions, &case, GATE_LIMIT)).await {
+            let answer = match tokio::time::timeout(live, judge.ask(&instructions, &case, live)).await {
                 Ok(answer) => answer,
                 Err(_) => Err(anyhow::anyhow!("timed out")),
             };
@@ -262,12 +300,14 @@ struct Checked {
     scope: Scope,
     mode: Mode,
     model: String,
+    budget: Duration,
 }
 
 impl Checked {
     /// Read the answer, record it, and hand back the outcome and note.
-    async fn write(self, answer: anyhow::Result<String>, elapsed: Duration) -> (Outcome, Option<String>) {
-        let (outcome, axis, note) = read_verdict(answer, elapsed, GATE_LIMIT, self.mode);
+    async fn write(self, answer: anyhow::Result<judge::Answer>, elapsed: Duration) -> (Outcome, Option<String>) {
+        let (outcome, axis, note) = read_verdict(&answer, elapsed, self.budget, self.mode);
+        let cost = answer.as_ref().map(|a| a.cost).unwrap_or_default();
         tracing::info!(
             surface = ?self.surface,
             mode = self.mode.as_str(),
@@ -275,6 +315,11 @@ impl Checked {
             outcome = ?outcome,
             axis = axis.as_deref().unwrap_or(""),
             latency_ms = elapsed.as_millis() as u64,
+            budget_ms = self.budget.as_millis() as u64,
+            tokens_in = cost.input,
+            tokens_cached = cost.cached,
+            tokens_out = cost.output,
+            tokens_thinking = cost.thinking,
             key = %self.key,
             "legibility gate"
         );
@@ -290,12 +335,34 @@ impl Checked {
             note: note.clone(),
             latency_ms: elapsed.as_millis() as u64,
             model: self.model,
+            cost,
+            budget_ms: self.budget.as_millis() as u64,
         });
         if let Err(err) = quality::append(&self.data_dir, &record).await {
             tracing::warn!(error = %format!("{err:#}"), "could not record a gate's verdict");
         }
         (outcome, note)
     }
+}
+
+/// Record that host code let a write through without reading it (`quality::Skipped`).
+///
+/// **Every seam's triage calls this**, so that what the code passed is countable beside what a
+/// judge passed. It is spawned rather than awaited: a write nobody is judging must not wait on
+/// a file append, and a record that fails to write costs a data point, never the write.
+pub(crate) fn skipped(data_dir: &Path, surface: Surface, key: &str, message: &str) {
+    let record = quality::Record::Skipped(quality::Skipped {
+        ts: Utc::now(),
+        surface,
+        turn: key.to_owned(),
+        message: message.to_owned(),
+    });
+    let data_dir = data_dir.to_path_buf();
+    tokio::spawn(async move {
+        if let Err(err) = quality::append(&data_dir, &record).await {
+            tracing::warn!(error = %format!("{err:#}"), "could not record a skipped write");
+        }
+    });
 }
 
 /// A seam's gate is held once per writer per key: a send-back is remembered until that

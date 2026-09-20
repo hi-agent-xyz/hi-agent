@@ -14,6 +14,7 @@ pub(crate) const GATE: Gate = Gate {
     surface: Surface::Home,
     mode_key: "home_check",
     model_key: "home_check_model",
+    budget_key: "home_check_budget_ms",
     rubric: crate::identity::judges::HOME,
 };
 

@@ -736,7 +736,7 @@ async fn write_record(data_dir: &Path, subject: &str, content: &str) -> anyhow::
     tokio::fs::write(&tmp, content).await?;
     tokio::fs::rename(&tmp, &path).await?;
     if let Ok(mut written) = last_written().lock() {
-        written.insert(path, fingerprint(content));
+        written.insert(path, seen_as(content));
     }
     Ok(())
 }
@@ -746,29 +746,53 @@ async fn write_record(data_dir: &Path, subject: &str, content: &str) -> anyhow::
 /// being edited by hand; what can be done is noticing, and this is what [`reconcile`]
 /// compares against. In memory on purpose: after a restart the first look seeds it, because
 /// while the host is down nothing that could write a record is running.
-fn last_written() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, u64>> {
-    static WRITTEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, u64>>> =
-        std::sync::OnceLock::new();
+/// **The size rides with the hash** so a walk-around can say how much moved. A hash answers
+/// only "different", and that is the same word for one line appended by hand and for a record
+/// rewritten whole — which on 2026-09-20 left twenty-three detections that could be counted
+/// and not told apart.
+fn last_written() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, Fingerprint>> {
+    static WRITTEN: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Fingerprint>>,
+    > = std::sync::OnceLock::new();
     WRITTEN.get_or_init(Default::default)
 }
 
-fn fingerprint(content: &str) -> u64 {
+/// A record as the host last left it: what it hashed to, and how big it was.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Fingerprint {
+    hash: u64,
+    size: super::quality::Size,
+}
+
+fn seen_as(content: &str) -> Fingerprint {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     content.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Whether `content` at `path` is what the host last wrote there. `true` on a first sight,
-/// which is seeded rather than judged.
-fn written_by_host(path: &Path, content: &str) -> bool {
-    let Ok(mut written) = last_written().lock() else { return true };
-    let now = fingerprint(content);
-    match written.insert(path.to_path_buf(), now) {
-        None => true,
-        Some(before) => before == now,
+    Fingerprint {
+        hash: hasher.finish(),
+        size: super::quality::Size {
+            chars: content.chars().count() as u64,
+            // One `- ` line per timeline entry, its wrapped lines riding indented
+            // ([`render_timeline`]) — so this counts entries, not their width.
+            entries: content.lines().filter(|l| l.starts_with("- ")).count() as u64,
+        },
     }
 }
+
+/// How big the host's last write was, when `content` at `path` is not it. `None` when it is,
+/// and on a first sight, which is seeded rather than judged.
+fn written_around(path: &Path, content: &str) -> Option<super::quality::Size> {
+    let mut written = last_written().lock().ok()?;
+    let now = seen_as(content);
+    match written.insert(path.to_path_buf(), now) {
+        Some(before) if before.hash != now.hash => Some(before.size),
+        _ => None,
+    }
+}
+
+/// How many of a subject's sessions a bypass record names: enough to open each one's frame log
+/// by hand, short enough that the record stays a line.
+const SUSPECTS: usize = 8;
 
 /// Write a record, and tell [`reconcile`] this status is now the one on disk.
 ///
@@ -1453,14 +1477,30 @@ pub async fn reconcile(data_dir: &Path) -> anyhow::Result<usize> {
         let wanted = render(&task);
         let stored = read_record(data_dir, &subject).await?;
         if let Some(stored) = &stored
-            && !written_by_host(&record_path(data_dir, &subject), stored)
+            && let Some(was) = written_around(&record_path(data_dir, &subject), stored)
         {
-            // Countable rather than invisible, which is the whole of what detection promises.
-            tracing::warn!(task = %subject, "a task record was written around its verbs");
+            let found = seen_as(stored).size;
+            // Countable rather than invisible, which is the whole of what detection promises —
+            // and named, so that "which session" is a short list rather than a frame hunt.
+            let serving =
+                crate::foundation::registry::index::sessions_serving(data_dir, &subject, SUSPECTS)
+                    .await;
+            tracing::warn!(
+                task = %subject,
+                entries_was = was.entries,
+                entries_found = found.entries,
+                chars_was = was.chars,
+                chars_found = found.chars,
+                serving = %serving.join(", "),
+                "a task record was written around its verbs"
+            );
             let bypass = super::quality::Record::Bypass(super::quality::Bypass {
                 ts: Utc::now(),
                 surface: super::quality::Surface::Record,
                 subject: subject.clone(),
+                serving,
+                was,
+                found,
             });
             if let Err(error) = super::quality::append(data_dir, &bypass).await {
                 tracing::warn!(%error, "could not record a bypass");
@@ -3807,11 +3847,60 @@ mod verb_tests {
         let bypasses: Vec<_> = records
             .iter()
             .filter_map(|r| match r {
-                super::super::quality::Record::Bypass(b) => Some(b.subject.as_str()),
+                super::super::quality::Record::Bypass(b) => Some(b),
                 _ => None,
             })
             .collect();
-        assert_eq!(bypasses, vec!["hand-edited"], "once, and not for the verb's own writes");
+        let [bypass] = bypasses.as_slice() else {
+            panic!("once, and not for the verb's own writes: {bypasses:?}")
+        };
+        assert_eq!(bypass.subject, "hand-edited");
+        // **How much moved, not just that something did.** One line appended by hand and a
+        // record rewritten whole are the same fact to a hash, and they are not the same event.
+        assert_eq!(
+            bypass.found.entries,
+            bypass.was.entries + 1,
+            "one entry appeared: {:?} → {:?}",
+            bypass.was,
+            bypass.found
+        );
+        assert!(bypass.found.chars > bypass.was.chars);
+    }
+
+    /// **A bypass names the sessions that were on the row**, so the question it raises — which
+    /// of them wrote this — starts from a short list rather than from every frame log on the box.
+    #[tokio::test]
+    async fn a_bypass_names_who_was_on_the_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = crate::foundation::registry::index::index_path(dir.path());
+        tokio::fs::create_dir_all(index.parent().unwrap()).await.unwrap();
+        tokio::fs::write(
+            &index,
+            "{\"event\":\"opened\",\"run\":\"r1\",\"session\":\"general-watched\",\"subject\":\"watched\",\
+             \"at\":\"2026-09-20T01:00:00Z\",\"role\":\"worker\",\"type\":\"general\",\"title\":\"t\",\"owner\":null}\n\
+             {\"event\":\"opened\",\"run\":\"r1\",\"session\":\"general-elsewhere\",\"subject\":\"elsewhere\",\
+             \"at\":\"2026-09-20T01:00:00Z\",\"role\":\"worker\",\"type\":\"general\",\"title\":\"t\",\"owner\":null}\n",
+        )
+        .await
+        .unwrap();
+
+        open(dir.path(), opening("watched")).await.unwrap().unwrap();
+        reconcile(dir.path()).await.unwrap();
+        let path = record_path(dir.path(), "watched");
+        let mut text = tokio::fs::read_to_string(&path).await.unwrap();
+        text.push_str("- 2026-09-20T02:00:00Z update — typed into the file\n");
+        tokio::fs::write(&path, text).await.unwrap();
+        reconcile(dir.path()).await.unwrap();
+
+        let records = super::super::quality::read_since(dir.path(), Utc::now() - chrono::Duration::hours(1)).await;
+        let named: Vec<&Vec<String>> = records
+            .iter()
+            .filter_map(|r| match r {
+                super::super::quality::Record::Bypass(b) => Some(&b.serving),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(named, vec![&vec!["r1/general-watched".to_string()]], "the row's sessions, and no other row's");
     }
 
     /// **A reply is the host's own write**: it is not counted as a record written around the

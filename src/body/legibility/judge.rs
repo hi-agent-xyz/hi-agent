@@ -15,10 +15,17 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::foundation::config::{AgentConfig, tunables};
+use crate::mind::memory::quality::Cost;
 
 /// Connect budget. The request's own limit is the caller's, because the check and the
 /// audit can afford very different waits.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One answer, with what it cost to get.
+pub struct Answer {
+    pub text: String,
+    pub cost: Cost,
+}
 
 #[derive(Clone)]
 pub struct Judge {
@@ -77,8 +84,8 @@ impl Judge {
 
     /// Ask once: `instructions` is the fixed part (the standard and the rubric — a stable
     /// prefix, so an upstream that caches prefixes caches it), `input` is the case.
-    /// Returns the answer's text.
-    pub async fn ask(&self, instructions: &str, input: &str, limit: Duration) -> anyhow::Result<String> {
+    /// Returns the answer's text and what it cost.
+    pub async fn ask(&self, instructions: &str, input: &str, limit: Duration) -> anyhow::Result<Answer> {
         let body = json!({
             "model": self.model,
             "instructions": instructions,
@@ -89,7 +96,14 @@ impl Judge {
             "store": false,
         });
         let reply = self.respond(&body, limit).await?;
-        output_text(&reply).context("the answer carried no text")
+        let cost = cost(&reply);
+        // **What it spent belongs in the failure too.** A model that thinks past its budget
+        // and a model that answers in a shape nothing can read both arrive as "no verdict",
+        // and they need opposite fixes.
+        let text = output_text(&reply).with_context(|| {
+            format!("the answer carried no text ({} output tokens, {} of them thinking)", cost.output, cost.thinking)
+        })?;
+        Ok(Answer { text, cost })
     }
 
     /// One raw Responses request, for a caller that needs more than text back — replay
@@ -113,6 +127,24 @@ impl Judge {
             anyhow::bail!("upstream answered {status}: {head}");
         }
         serde_json::from_str(&text).context("the judge response was not JSON")
+    }
+}
+
+/// What a reply says it cost. Absent fields read as zero, which is also what an upstream
+/// that reports no usage at all leaves behind ([`Cost::is_unknown`]).
+pub fn cost(reply: &Value) -> Cost {
+    let at = |path: &[&str]| -> u64 {
+        let mut node = reply.get("usage");
+        for key in path {
+            node = node.and_then(|n| n.get(key));
+        }
+        node.and_then(Value::as_u64).unwrap_or(0)
+    };
+    Cost {
+        input: at(&["input_tokens"]),
+        cached: at(&["input_tokens_details", "cached_tokens"]),
+        output: at(&["output_tokens"]),
+        thinking: at(&["output_tokens_details", "reasoning_tokens"]),
     }
 }
 
@@ -180,6 +212,22 @@ mod tests {
         assert_eq!(json_object::<V>("```json\n{\"verdict\":\"revise\"}\n```"), want);
         assert_eq!(json_object::<V>("Here you go: {\"verdict\":\"revise\"} done"), want);
         assert_eq!(json_object::<V>("no verdict here"), None);
+    }
+
+    /// **The four numbers that explain a verdict's latency**, read off a reply shaped the way
+    /// the upstream sends it, and zero where it sends nothing.
+    #[test]
+    fn what_a_reply_cost_is_read_off_it() {
+        let reply = json!({ "usage": {
+            "input_tokens": 3647,
+            "input_tokens_details": { "cached_tokens": 3456 },
+            "output_tokens": 1012,
+            "output_tokens_details": { "reasoning_tokens": 914 },
+        }});
+        let c = cost(&reply);
+        assert_eq!((c.input, c.cached, c.output, c.thinking), (3647, 3456, 1012, 914));
+        assert!(!c.is_unknown());
+        assert!(cost(&json!({ "output": [] })).is_unknown(), "no usage is unknown, not zero cost");
     }
 
     #[test]

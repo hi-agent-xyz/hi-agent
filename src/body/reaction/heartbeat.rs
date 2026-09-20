@@ -893,6 +893,8 @@ mod frontier_tests {
             note: Some("「写手」「挂屏」是我们的词".into()),
             latency_ms: 900,
             model: "m".into(),
+            cost: Default::default(),
+            budget_ms: 0,
         }));
         let both = render_reading(&with_record);
         assert!(both.contains("3 spoken messages") && both.contains("1 task-record lines"), "{both}");

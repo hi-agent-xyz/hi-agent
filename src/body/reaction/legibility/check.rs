@@ -35,16 +35,27 @@ use crate::body::legibility::{Mode, read_verdict};
 /// starting value (`docs/arch/legibility.md` § Open), for the replay set to settle.
 pub(crate) const TRIAGE_CHARS: usize = 120;
 
-/// How long a live check may hold a message. Past it the message goes out.
-pub(crate) const CHECK_LIMIT: Duration = Duration::from_millis(2_500);
+/// How long a live check may hold a message, unless `speech_check_budget_ms` says otherwise.
+/// Past it the message goes out.
+///
+/// **Ten seconds, and it used to be two and a half.** Someone is waiting on this one, so it is
+/// half the record gate's — but two and a half turned out to be a budget the judge could not
+/// meet at all: measured 2026-09-20, the cheapest real case on this install's fastest model ran
+/// 3.3 seconds, because ~90% of the tokens a verdict costs are spent thinking before it starts.
+/// Ten is long for a pause and short for a model; what it buys is verdicts that exist, which is
+/// what shadow has to have before any of this can be turned on.
+const CHECK_BUDGET_MS: u64 = 10_000;
 
-/// How long a shadow check may run and still record a verdict. Longer than the live limit
-/// on purpose: what shadow is measuring includes how often the live limit would be missed.
-const SHADOW_LIMIT: Duration = Duration::from_secs(30);
-
-/// The `app_settings` key choosing the mode, and the one choosing the model.
+/// The `app_settings` key choosing the mode, the one choosing the model, and the one choosing
+/// how long a verdict may take.
 pub(crate) const MODE_KEY: &str = "speech_check";
 pub(crate) const MODEL_KEY: &str = "speech_check_model";
+pub(crate) const BUDGET_KEY: &str = "speech_check_budget_ms";
+
+/// How long a live check may hold a message, from its setting.
+pub(crate) fn budget() -> Duration {
+    crate::body::legibility::budget(BUDGET_KEY, CHECK_BUDGET_MS)
+}
 
 /// The note a message gets when it was waiting behind one that was sent back.
 const LEANS_ON_IT: &str = "a message sent in the same breath was sent back, and this one may \
@@ -241,6 +252,14 @@ impl Speech {
                 };
             }
             let Some(scope) = triage(d.brief.carries_report, d.sent.len(), text) else {
+                // Not read, and said so — a message triage passes goes out exactly as if a
+                // judge had passed it, so it is counted (`legibility::skipped`).
+                crate::body::legibility::skipped(
+                    &self.data_dir,
+                    quality::Surface::Speech,
+                    &d.key,
+                    text,
+                );
                 return Review::Pass;
             };
             let Some(judge) = d.judge.clone() else { return Review::Pass };
@@ -249,6 +268,7 @@ impl Speech {
             (scope, judge, d.instructions.clone(), case, d.key.clone())
         };
 
+        let live = budget();
         let record = CheckRecord {
             data_dir: self.data_dir.clone(),
             key,
@@ -256,13 +276,15 @@ impl Speech {
             scope,
             mode: self.mode,
             model: judge.model().to_string(),
+            budget: live,
         };
         match self.mode {
             Mode::Off => Review::Pass,
             Mode::Shadow => {
                 tokio::spawn(async move {
                     let started = Instant::now();
-                    let answer = judge.ask(&instructions, &case, SHADOW_LIMIT).await;
+                    let answer =
+                        judge.ask(&instructions, &case, crate::body::legibility::shadow_limit(live)).await;
                     record.write(answer, started.elapsed()).await;
                 });
                 Review::Pass
@@ -270,8 +292,8 @@ impl Speech {
             Mode::On => {
                 let started = Instant::now();
                 let answer = match tokio::time::timeout(
-                    CHECK_LIMIT.saturating_sub(arrived.elapsed().min(CHECK_LIMIT)),
-                    judge.ask(&instructions, &case, CHECK_LIMIT),
+                    live.saturating_sub(arrived.elapsed().min(live)),
+                    judge.ask(&instructions, &case, live),
                 )
                 .await
                 {
@@ -316,6 +338,7 @@ struct CheckRecord {
     scope: Scope,
     mode: Mode,
     model: String,
+    budget: Duration,
 }
 
 impl CheckRecord {
@@ -323,16 +346,22 @@ impl CheckRecord {
     /// cannot be read is an error, and an error passes.
     async fn write(
         self,
-        answer: anyhow::Result<String>,
+        answer: anyhow::Result<crate::body::legibility::judge::Answer>,
         elapsed: Duration,
     ) -> Option<(Outcome, String)> {
-        let (outcome, axis, note) = read_verdict(answer, elapsed, CHECK_LIMIT, self.mode);
+        let (outcome, axis, note) = read_verdict(&answer, elapsed, self.budget, self.mode);
+        let cost = answer.as_ref().map(|a| a.cost).unwrap_or_default();
         tracing::info!(
             mode = self.mode.as_str(),
             scope = ?self.scope,
             outcome = ?outcome,
             axis = axis.as_deref().unwrap_or(""),
             latency_ms = elapsed.as_millis() as u64,
+            budget_ms = self.budget.as_millis() as u64,
+            tokens_in = cost.input,
+            tokens_cached = cost.cached,
+            tokens_out = cost.output,
+            tokens_thinking = cost.thinking,
             "speech check"
         );
         let record = quality::Record::Check(quality::Check {
@@ -347,6 +376,8 @@ impl CheckRecord {
             note: note.clone(),
             latency_ms: elapsed.as_millis() as u64,
             model: self.model,
+            cost,
+            budget_ms: self.budget.as_millis() as u64,
         });
         let data_dir = self.data_dir;
         tokio::spawn(async move {
@@ -442,18 +473,34 @@ mod tests {
             scope: Scope::Report,
             mode,
             model: "judge".into(),
+            budget: budget(),
+        };
+        let said = |text: &str| {
+            Ok(crate::body::legibility::judge::Answer {
+                text: text.to_string(),
+                cost: Default::default(),
+            })
         };
         let revise = r#"{"verdict":"revise","axis":"known","note":"「还没读完」是读的人默认的"}"#;
         assert_eq!(
-            record(Mode::On).write(Ok(revise.into()), Duration::from_millis(900)).await,
+            record(Mode::On).write(said(revise), Duration::from_millis(900)).await,
             Some((Outcome::Revise, "「还没读完」是读的人默认的".into()))
         );
         let bare = r#"{"verdict":"revise","axis":"known","note":""}"#;
-        assert_eq!(record(Mode::On).write(Ok(bare.into()), Duration::from_millis(900)).await, None);
-        assert_eq!(record(Mode::On).write(Ok("not json".into()), Duration::ZERO).await, None);
+        assert_eq!(record(Mode::On).write(said(bare), Duration::from_millis(900)).await, None);
+        assert_eq!(record(Mode::On).write(said("not json"), Duration::ZERO).await, None);
         assert_eq!(
-            record(Mode::On).write(Err(anyhow::anyhow!("timed out")), CHECK_LIMIT).await,
+            record(Mode::On).write(Err(anyhow::anyhow!("timed out")), budget()).await,
             None
         );
+    }
+
+    /// **The budget is a setting, and shadow gets room past it** — a ceiling equal to the
+    /// budget censors the one number five days of shadow were supposed to produce.
+    #[test]
+    fn the_budget_comes_from_its_setting_and_shadow_sees_past_it() {
+        use crate::body::legibility::{budget as read_budget, shadow_limit};
+        assert_eq!(read_budget("nothing-is-set-here", 10_000), Duration::from_secs(10));
+        assert_eq!(shadow_limit(Duration::from_secs(10)), Duration::from_secs(20));
     }
 }

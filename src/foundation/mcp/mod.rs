@@ -616,8 +616,12 @@ async fn do_view_verdict(data_dir: &Path, reviewer: &str, args: &Value) -> Value
         outcome,
         axis: quality::axis(arg_text(args, "axis")),
         note,
+        // A reviewer is a session, not a host request: no budget it could miss, and no usage
+        // reported back here. Both read as unknown rather than as a cost of zero.
         latency_ms: 0,
         model: reviewer.to_owned(),
+        cost: Default::default(),
+        budget_ms: 0,
     });
     match quality::append(data_dir, &record).await {
         Ok(()) => tool_ok("kept"),

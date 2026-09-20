@@ -254,6 +254,32 @@ pub fn index_path(data_dir: &Path) -> PathBuf {
     layout::raw_root(data_dir).join(layout::SESSIONS_DIR).join("index.jsonl")
 }
 
+/// Every session opened against the ledger subject `subject`, newest first, named the way the
+/// frame logs are (`<run>/<session>`), at most `most` of them.
+///
+/// **Who to look at, not who did it.** A session is recorded against a subject when it opens,
+/// and every session runs unsandboxed, so this proves authorship of nothing. It is what a
+/// record written around its verbs carries, so that "which of these wrote it" starts from a
+/// short list of frame logs instead of every one on the box.
+pub async fn sessions_serving(data_dir: &Path, subject: &str, most: usize) -> Vec<String> {
+    let index = tokio::fs::read_to_string(index_path(data_dir)).await.unwrap_or_default();
+    let mut out: Vec<String> = index
+        .lines()
+        .filter(|l| l.contains(subject))
+        .filter_map(|l| serde_json::from_str::<Record>(l).ok())
+        .filter_map(|r| match r {
+            Record::Opened { run, session, subject: Some(s), .. } if s == subject => {
+                Some(format!("{run}/{session}"))
+            }
+            _ => None,
+        })
+        .collect();
+    out.reverse();
+    out.dedup();
+    out.truncate(most);
+    out
+}
+
 // ── writing ───────────────────────────────────────────────────────────────────
 
 pub use super::jsonl::Writer;

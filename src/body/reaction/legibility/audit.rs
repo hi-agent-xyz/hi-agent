@@ -51,14 +51,17 @@ pub(crate) async fn audit(
     shown: &[String],
 ) -> Option<quality::Audit> {
     let answer = match judge.ask(instructions, &audit_case(brief, sent, shown), AUDIT_LIMIT).await {
-        Ok(text) => text,
+        Ok(answer) => answer,
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), "speech audit failed");
             return None;
         }
     };
-    let Some((messages, unsaid, wrong)) = crate::body::legibility::read_audit(&answer, sent) else {
-        tracing::warn!("speech audit answered in a shape it could not be read in");
+    let Some((messages, unsaid, wrong)) = crate::body::legibility::read_audit(&answer.text, sent) else {
+        tracing::warn!(
+            answer = %answer.text.chars().take(200).collect::<String>(),
+            "speech audit answered in a shape it could not be read in"
+        );
         return None;
     };
     Some(quality::Audit {
@@ -157,13 +160,13 @@ pub(crate) async fn reception(
     theirs: &str,
 ) -> Option<quality::Reception> {
     let answer = match judge.ask(instructions, &reception_case(&said, theirs), AUDIT_LIMIT).await {
-        Ok(text) => text,
+        Ok(answer) => answer,
         Err(err) => {
             tracing::warn!(error = %format!("{err:#}"), "reading the reply failed");
             return None;
         }
     };
-    let answer = json_object::<ReceptionAnswer>(&answer)?;
+    let answer = json_object::<ReceptionAnswer>(&answer.text)?;
     Some(quality::Reception {
         ts: Utc::now(),
         turns: said.into_iter().map(|(key, _)| key).collect(),
