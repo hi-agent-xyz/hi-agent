@@ -274,13 +274,25 @@ discover them.
 | 2 | C# compile | `CS1729` — `CoreWebView2EnvironmentOptions` takes no constructor arguments |
 | 3 | packaging | `MSB4062` — `Microsoft.Build.Packaging.Pri.Tasks.dll` not found under SDK 10.0.400 |
 
-**Windows is not in 0.1.0.** Its job in `release.yml` is commented out, with the
-conditions for uncommenting it written above the comment block. The run-3 fix —
-the repo-root `global.json` pinning the SDK 8.0 band — is committed and has
-never been tried, so the next run starts there rather than at the top. What
-stopped it being worth holding a release for is not the three errors above,
-which are ordinary; it is that nobody knows how many stages sit behind
+**Windows was not in 0.1.0.** Its job was commented out rather than held for,
+because what stopped it being worth a release delay is not the three errors
+above, which are ordinary; it is that nobody knows how many stages sit behind
 packaging, on a surface that has never produced a running window.
+
+**It was taken back in on 2026-09-20, on a dry run rather than a release.** The
+run-3 fix — the repo-root `global.json` pinning the SDK 8.0 band — had still
+never been tried, so the next run starts at packaging rather than at the top,
+and `workflow_dispatch` with `publish=false` is the way to learn that without
+tagging anything: no tag, no draft, each platform job asserting only that its
+artifact exists. Run 4 onward is recorded in the table above.
+
+Deciding that also cleared up what the Mac mini can and cannot stand in for.
+`make installer` there is verified again as of `fc61c11` / 0.1.2 — the engine
+cross-compiles and links in 48 s and NSIS produces a 22 MB Setup.exe — but it
+prints `no WinUI shell … building the engine-only installer` and means it. That
+installer's shortcuts start `hi-agent.exe`, so it installs a headless core to
+open in a browser. **The Mac mini cannot host this job**: `make win-app` needs
+a real Windows host, and every error runs 1–3 found was in that half.
 
 Three lessons, each now fixed in the general form rather than the specific one.
 
