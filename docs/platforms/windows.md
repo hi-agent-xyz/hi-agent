@@ -259,7 +259,7 @@ start.
 
 ## Verification
 
-**Not yet compiled end to end — but no longer untouched.** There is no Windows
+**It builds, as of 2026-09-20 — and that is all it does.** There is no Windows
 machine among the hosts this repo is developed from, so the C# and XAML here
 were written the way the Phase 1 SwiftUI window was: blind and fix-forward.
 What changed on 2026-09-10/11 is that `.github/workflows/release.yml` builds
@@ -273,26 +273,60 @@ discover them.
 | 1 | NuGet restore | `NU1202` — `H.NotifyIcon.WinUI 2.*` had floated to 2.4.1, which ships only net10.0 |
 | 2 | C# compile | `CS1729` — `CoreWebView2EnvironmentOptions` takes no constructor arguments |
 | 3 | packaging | `MSB4062` — `Microsoft.Build.Packaging.Pri.Tasks.dll` not found under SDK 10.0.400 |
+| 4 | packaging | `MSB4062` **again, under SDK 8.0.425** — so run 3's diagnosis was wrong |
+| 5 | NSIS | `File: "D:/a/…/hi-agent.exe" -> no files found`, for a file built 30 s earlier |
+| 6 | **done** | — a 67 MB `hi-agent-0.1.2-windows-x64.exe` carrying both halves |
 
-**Windows was not in 0.1.0.** Its job was commented out rather than held for,
-because what stopped it being worth a release delay is not the three errors
-above, which are ordinary; it is that nobody knows how many stages sit behind
-packaging, on a surface that has never produced a running window.
+**Run 4 is the one worth reading twice.** Run 3 was written up here as the
+runner's SDK 10 laying the packaging tasks out where WindowsAppSDK 1.6 does not
+look, and `global.json` was committed to pin the 8.0 band. Run 4 satisfied that
+pin and failed *identically* — which is what a disproven theory looks like when
+it is cheap to test. The path in the error was always the tell:
+`<dotnet-sdk>/Microsoft/VisualStudio/v17.0/AppxPackage/` exists under a Visual
+Studio install and under no .NET SDK of any version, because that task assembly
+ships with VS's MSBuild. It is [WindowsAppSDK#4889][4889], known since 1.2 and
+fixed in 1.8-preview1; for the 1.6 this project pins, `EnableMsixTooling=true`
+is the documented workaround. The name reads backwards for an app that is
+deliberately unpackaged, and it does **not** disable PRI generation — run 6's
+publish carries a freshly built 1.3 MB `resources.pri` beside the three
+`Assets/*.ico`, which is what `ms-appx:///Assets/…` needs to have any chance of
+resolving.
 
-**It was taken back in on 2026-09-20, on a dry run rather than a release.** The
-run-3 fix — the repo-root `global.json` pinning the SDK 8.0 band — had still
-never been tried, so the next run starts at packaging rather than at the top,
-and `workflow_dispatch` with `publish=false` is the way to learn that without
-tagging anything: no tag, no draft, each platform job asserting only that its
-artifact exists. Run 4 onward is recorded in the table above.
+[4889]: https://github.com/microsoft/WindowsAppSDK/issues/4889
 
-Deciding that also cleared up what the Mac mini can and cannot stand in for.
-`make installer` there is verified again as of `fc61c11` / 0.1.2 — the engine
-cross-compiles and links in 48 s and NSIS produces a 22 MB Setup.exe — but it
-prints `no WinUI shell … building the engine-only installer` and means it. That
-installer's shortcuts start `hi-agent.exe`, so it installs a headless core to
-open in a browser. **The Mac mini cannot host this job**: `make win-app` needs
-a real Windows host, and every error runs 1–3 found was in that half.
+**Run 5 could only ever have happened on Windows.** NSIS's own parser takes
+backslash paths; `makensis` built for POSIX accepts either, so every Mac mini
+run had been hiding it. `make-installer.sh` now converts with `cygpath`, gated
+on `cygpath` existing — which is both the converter and the test for whether
+conversion is needed, since it ships with the Git Bash that `shell: bash` uses
+on Windows and with nothing else here.
+
+**What runs 4–6 did not touch is the C#.** Every failure from run 4 on was in
+packaging, and the shell itself compiled, linked and published on the first
+compiler it ever met. The engine half was never the wall either: a native
+`x86_64-pc-windows-msvc` release build linked on `windows-latest` in 8–11
+minutes with `ort`, `knf-rs` and the rest, first try.
+
+**Windows was not in 0.1.0**, and the way it came back is the method worth
+keeping. Its job was commented out rather than held for, because the cost of
+waiting was not the three ordinary errors above — it was that nobody knew how
+many stages sat behind packaging. Runs 4–6 answered that for the price of three
+dry runs instead of three releases: `workflow_dispatch` with `publish=false`
+creates no tag, opens no draft, and asks each platform job only whether its
+artifact exists. Runs 5 and 6 were narrower still — the Windows job alone, in a
+scratch workflow deleted with the branch, because `release.yml` is
+all-or-nothing by design and that is the wrong granularity for iterating on one
+`dotnet publish`.
+
+That also settled what the Mac mini can and cannot stand in for. `make
+installer` there is verified again as of `fc61c11` / 0.1.2 — the engine
+cross-compiles and links in 48 s and NSIS produces a **22 MB** Setup.exe — but
+it prints `no WinUI shell … building the engine-only installer` and means it.
+Those shortcuts start `hi-agent.exe`, so it installs a headless core to open in
+a browser. The full-payload installer run 6 built on Windows is **67 MB**, and
+the difference is the whole shell. **The Mac mini cannot host this job**: `make
+win-app` needs a real Windows host, and every error from run 4 on was either in
+that half or in NSIS's own path parsing.
 
 Three lessons, each now fixed in the general form rather than the specific one.
 
@@ -316,27 +350,38 @@ out. The repo root now carries a `global.json` pinning the 8.0 band, which
 binds a local `make win-app` as much as CI, and the workflow installs that
 band so the pin can be satisfied.
 
-**What is verified is therefore: restore succeeds, the C# compiles, and the
-XAML compiles** — as of run 3, and of the code that existed then. Packaging
-does not, yet. Nothing has linked, nothing has run, and no window has ever
-appeared. `TaskbarIcon.IconSource` — the other API flagged as probably wrong
-where it is used — remains unsettled, along with every runtime question behind
-it: whether the tray appears, whether the WebView loads the face, whether the
-engine child is adopted and dies with its parent. `make exe` and `make
-installer` are verified to *build* on the Mac mini and have never been run on
-Windows either.
+**What is verified is therefore: it builds, all of it.** Restore, the C#, the
+XAML, `dotnet publish`, a native MSVC engine, and NSIS wrapping both halves into
+an installer — every stage, on a real Windows host, as of run 6 and of the code
+that exists now. `make exe` and `make installer` have been run on Windows, not
+only on the Mac mini.
 
-**Settings, the tray's state, and the listening state added after them have not
-met even that much** — all were written after run 3 and no run has happened since.
-Four things about them are worth knowing before the next one:
+**Nothing has run, and no window has ever appeared.** That sentence is the whole
+remaining gap, and building cannot close any of it. `TaskbarIcon.IconSource` —
+the API flagged as probably wrong where it is used — is still unsettled, along
+with every runtime question behind it: whether the tray appears, whether the
+WebView loads the face, whether the engine child is adopted and dies with its
+parent, whether a held right Ctrl is heard. A `windows-latest` runner has no
+desktop session and answers none of them. **The next thing this platform needs
+is a person running that 67 MB installer**, not another CI run.
+
+**Settings, the tray's state, and the listening state have now met a compiler**
+— they were written after run 3 and runs 4–6 are the first to have read them —
+**and nothing more than a compiler.** Four things about them are worth knowing
+before someone installs it:
 
 - `TaskbarIcon.IconSource` is now load-bearing rather than cosmetic: it is
   assigned on every state change, not once at startup. If that property turns
   out to be the wrong shape, what breaks is the state signal and not just the
   picture.
-- `ms-appx:///Assets/…` is resolved three times now, for three icons. It has never
-  been resolved once — the app is unpackaged (`WindowsPackageType=None`), where
-  WinUI maps those URIs to the install directory, and nothing has confirmed that.
+- `ms-appx:///Assets/…` is resolved three times now, for three icons, and has
+  still never been resolved once — the app is unpackaged
+  (`WindowsPackageType=None`), where WinUI maps those URIs to the install
+  directory, and nothing has confirmed that. What run 6 *did* settle is the half
+  that could have made it hopeless: the publish carries all three `.ico` files in
+  `Assets/` and a freshly built 1.3 MB `resources.pri`, so there is something to
+  resolve against. `EnableMsixTooling=true` did not cost that, which was the risk
+  in adding it.
 - The Settings window's controls are filled from the engine's own snapshot, so
   the first real question it can answer is whether `GET /api/settings` reaches a
   Windows client at all — one call, before any of the writes matter.
@@ -346,13 +391,15 @@ Four things about them are worth knowing before the next one:
   Nothing has confirmed that `HttpClient` streams SSE the way this assumes, or
   that `ReadLineAsync` sees a line before the buffer it is reading from fills.
 
-**The engine half is a different story and is verified further.** `make exe`
+**The engine half is verified further still, and was never the wall.** `make exe`
 cross-compiles and *links* a real `x86_64-pc-windows-msvc` binary on the Mac mini,
-and as of 2026-09-18 that binary contains the keyboard hook, cpal's WASAPI capture
-and `GET /api/listening`. So the Rust side is known to compile, link and typecheck
-its own Windows-only tests; what is unknown is everything that happens when it
-runs — whether the hook receives an edge, whether WASAPI opens the default input,
-and whether a person holding the right Ctrl is heard.
+and as of run 6 it also builds **natively** on `windows-latest` — 8–11 minutes,
+first attempt, with `ort` and `knf-rs` and everything else that has a C++ half.
+That binary contains the keyboard hook, cpal's WASAPI capture and
+`GET /api/listening`. So the Rust side compiles, links and typechecks its own
+Windows-only tests on the OS it targets; what is unknown is everything that
+happens when it runs — whether the hook receives an edge, whether WASAPI opens
+the default input, and whether a person holding the right Ctrl is heard.
 
 ## See also
 
