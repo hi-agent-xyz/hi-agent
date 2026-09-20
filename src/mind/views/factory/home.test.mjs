@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, runningHand, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, runningHand, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -175,33 +175,52 @@ test("conversation and coordination make the core; two hands on a task are cards
   assert.ok(model.edges.some((e) => e.from === "task:a" && e.to === "session:0123456789ab:w1" && e.relation === "works-on"));
   assert.ok(drawn.sourceRefs.some((r) => r.kind === "session"), "the sessions stay source references");
   assertConnected(model);
-  // One hand draws nothing: its title is the task's said back and its state is what the row's
-  // word already implied, so the card would be a restatement costing a node.
+  // One hand draws no card: its title is the task's said back, so the card would be a
+  // restatement costing a node. The one thing it had to add is a word on the row instead.
   const alone = project({ tasks: [task("a")], workers: [worker("w1", "worker", { subject: "a" })] });
   assert.deepEqual(titles(alone, "activity"), []);
   assert.deepEqual(list(childIndex(alone).get("task:a")), []);
   assert.deepEqual(list(ofKind(alone, "task")[0].data.sessions.map((s) => s.slug)), ["w1"], "it is still the row's own state");
-  assert.equal(stateOf(ofKind(alone, "task")[0]), "doing", "and the row stays the ledger's");
+  assert.equal(stateOf(ofKind(alone, "task")[0]), "running", "and the row says it is in a turn");
 });
 
-test("a task's word and clock are the ledger's, whatever the hands on it are doing", () => {
+test("a task's word is the ledger's, except that a hand in a turn makes it Working", () => {
   // The grid the two-line card promised mostly does not exist: nothing is being worked on while
-  // it is still to do, and a closed row is closed whatever is still warm beside it.
+  // it is still to do, and a closed row is closed whatever is still warm beside it. What is
+  // left of it is one word — `In progress` is where the row got to, and it was read as saying
+  // that something is happening in it, which it never did.
   const of = (status, workers, hours = 1) => ofKind(project({ tasks: [task("a", status, hours)], workers }), "task")[0];
   const on = (state, extra = {}) => worker(`w${state}`, "worker", { subject: "a", state, ...extra });
   assert.equal(stateOf(of("todo", [])), "todo");
-  assert.equal(stateOf(of("doing", [on("running")])), "doing");
+  assert.equal(stateOf(of("doing", [])), "doing", "open, and nobody on it");
+  assert.equal(stateOf(of("doing", [on("idle")])), "doing", "a hand that is not in a turn is not working");
+  assert.equal(stateOf(of("doing", [on("running")])), "running");
+  assert.equal(stateOf(of("doing", [on("idle"), on("running")])), "running", "any hand in a turn");
   assert.equal(stateOf(of("serving", [on("idle")])), "serving");
-  assert.equal(stateOf(of("done", [on("idle")])), "done");
-  // Not even a cut turn: that is one hand's state, and that hand has a card to wear it on.
+  assert.equal(stateOf(of("serving", [on("running")])), "running", "a duty in a turn spends On duty");
+  assert.equal(stateOf(of("done", [on("running")])), "done", "a closed row is closed whatever is still warm");
+  // Not a cut turn: that is one hand's state, and that hand has a card to wear it on.
   const cut = of("doing", [on("idle", { last_turn: { outcome: "failed" } })]);
   assert.equal(stateOf(cut), "doing");
   const cards = ofKind(project({ tasks: [task("a")], workers: [on("idle", { last_turn: { outcome: "failed" } }), on("running")] }), "activity");
   assert.equal(stateOf(cards.find((n) => n.data.session.state === "idle")), "failed");
   assert.equal(TONE.failed, "var(--danger)");
-  // And the clock stays the ledger's with it: how long the row has held its status, not how
-  // long some session has been idle.
-  assert.equal(nodeTime(of("serving", [on("running", { state_since: hoursAgo(1) })], 360)), hoursAgo(360));
+});
+
+test("the clock is the age of whatever the word says", () => {
+  const of = (status, workers, hours = 1) => ofKind(project({ tasks: [task("a", status, hours)], workers }), "task")[0];
+  const on = (state, extra = {}) => worker(`w${state}`, "worker", { subject: "a", state, ...extra });
+  // A duty open for 15 days, in a turn for one hour, reads `Working · 1h ago`: the row's own
+  // clock there would have said 15d and read as fifteen days of work.
+  assert.equal(nodeTime(of("serving", [on("running", { state_since: hoursAgo(1) })], 360)), hoursAgo(1));
+  // Two hands in a turn: how long the row has had something in flight, not when the last one
+  // happened to start.
+  const both = of("doing", [on("running", { state_since: hoursAgo(1) }),
+    { ...worker("w2", "worker", { subject: "a", state: "running", state_since: hoursAgo(3) }) }], 360);
+  assert.equal(nodeTime(both), hoursAgo(3));
+  // With nothing in a turn it is the ledger's again: how long the row has held its status.
+  assert.equal(nodeTime(of("serving", [on("idle", { state_since: hoursAgo(1) })], 360)), hoursAgo(360));
+  assert.equal(runningHand(of("serving", [on("idle")])), null);
 });
 
 test("the agent's own upkeep is a group code draws: Reflection and every session with no subject", () => {

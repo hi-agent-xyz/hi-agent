@@ -253,8 +253,8 @@ says the rest. Status tone, which was a coloured left edge, is carried by the st
 core has the same plain 1px border as a card.
 
 **A task with more than one live session draws them as cards one rank below it, joined by
-`works-on`. A task with one draws nothing, and the task's status line is the ledger's either
-way.**
+`works-on`. A task with one draws no card for it, and either way the row keeps one status
+line: the ledger's word, or *Working* while a hand on it is in a turn.**
 
 The sessions were marks in that status line: a dot each, filled while running, three at most
 and a `+1` past that. **A mark is a poor way to say a thing a word can say.** The row read *On
@@ -265,26 +265,57 @@ on a touch screen is nothing.
 **But the lone session is the one that really had nothing to add, and that is why it is drawn
 nowhere.** A session's title is the errand as it was handed out, and when it is the only errand
 on the task it is the task's own title said back — *做每周总结页第一版* under *每周五自动出一页
-总结 view*, *VICTOR 球拍智联传感器能统计哪些信息* under *把 VICTOR VI-01 能统计什么做成一页* —
-while its state is what *In progress* already implied. A card for it costs a node to restate the
-row above it, which is what a reader feels as clutter without being able to name it. That is the
-same objection that took session cards off the chart as peers of their tasks; it survives the
-move onto the branch, because it was never about where the card sat.
+总结 view*, *VICTOR 球拍智联传感器能统计哪些信息* under *把 VICTOR VI-01 能统计什么做成一页*.
+A card for it costs a node to restate the row above it, which is what a reader feels as clutter
+without being able to name it. That is the same objection that took session cards off the chart
+as peers of their tasks; it survives the move onto the branch, because it was never about where
+the card sat.
+
+**The one thing it did have to add is the row's own word, and the row now says it.** This
+section used to go on to say that the lone hand's state "is what *In progress* already implied",
+and that was false: *In progress* is where the ledger row got to, not what is happening in it.
+On one day's record, *买鞋：把之前那几份合成一页综合对比* had been `doing` for two days with no
+live session at all and *游戏截图→结构化数据 POC* had a worker mid-turn, and the two cards read
+the same word — the only difference on the chart was the age of the row's status, which says
+nothing about whether anybody is on it. The one place *Working* appeared was Upkeep, the agent's
+own housekeeping, whose sessions are activity cards of their own.
+
+**So an open row with a hand in a turn says *Working*, and its clock is that turn's.** The word
+is the same one that hand would wear on a card, and the time beside it is how long the turn has
+run — *Working · 3m ago* — because a card's time is the age of what its word says, which is
+already why a wait is timed from its own line rather than from the row's. The row's clock there
+would say how long it has been open and read as three days of work. When no hand is in a turn
+the ledger's word stands, unchanged, with the row's own clock.
+
+**A mark was tried here first, and it is the wrong instrument twice over.** A single dot on the
+status line, filled while a hand ran, adds the fact at no width and keeps the ledger's word — but
+it is the same mark this line threw out two paragraphs up, making a smaller claim, and a reader
+still has to be told what it means before the card says anything. *A mark is a poor way to say a
+thing a word can say* decides this one too.
+
+**What the word costs is *On duty* for the length of a turn**, and that is taken deliberately. A
+`serving` row is a standing assignment and *On duty* is how it says so, but Home answers what is
+going on right now; between the two facts, the slot goes to the one that changes, and the
+standing one comes back the moment the turn ends. `factory/tasks` is where a duty is a duty
+whatever it is doing this minute.
 
 Two or more is a different fact, and not a bigger version of the same one: *which* hands, how
 many, and that one of them has stalled while another runs are things no word on the row can say.
 
-- **The task's word is the ledger's** — to do, in progress, on duty, completed, cancelled — and
-  so is the time beside it: how long *the row* has held its status. However many hands are on
-  it and whatever they are each doing.
+- **The task's word is the ledger's — to do, in progress, on duty, completed, cancelled —
+  unless a hand on it is in a turn, when it is *Working***. The time beside it is whichever of
+  those the word says: how long the row has held its status, or how long the turn has run. Both
+  are facts about the row, true however many hands are on it; a closed row keeps its own word
+  whatever is still warm beside it, and so does a row waiting on the person.
 - **Past two, nothing is capped and nothing collapses into a number**: four hands draw four
   cards, and the length of that branch IS the news.
 - **Each card says its own state**: *Working*, *Work queued*, *Idle*, or that its last turn
   failed or was cut off, in the danger tone. That last one used to replace the task's word,
   since it was the one thing a session knew that the ledger could not. It no longer does, which
-  leaves a **known gap**: a task with a single stalled hand reads *In progress* on Home with
-  nothing to contradict it. `factory/tasks` and `factory/workers` both show it; this surface
-  waits for a second hand before it says anything about hands at all.
+  leaves a **known gap**: a task whose single hand has stalled falls back to *In progress*,
+  which is what the row says when no hand is on it at all. The word separates *a hand is in a
+  turn* from *nothing is in flight*; it does not separate the two reasons for the second.
+  `factory/tasks` and `factory/workers` both show which it is.
 
 **A task waiting on the person says *Needs you*, in the danger tone, in place of its status.**
 The test is the board's: the task is open and the newest line a mind wrote on it is a
@@ -292,7 +323,9 @@ The test is the board's: the task is open and the newest line a mind wrote on it
 line's. It is the one status that asks the reader to act, and Home is where somebody comes
 back to once the conversation has stopped saying where each thing got to — three messages go
 out between one of theirs and the next ([legibility.md](legibility.md) § *F*). *In progress*
-on a row that is waiting on them says the opposite of what is true.
+on a row that is waiting on them says the opposite of what is true, and so does *Working*: a
+hand may be in a turn on some other part of the row, but the step the record is stopped on is
+theirs.
 
 ## Internal mapping
 

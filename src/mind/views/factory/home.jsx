@@ -506,11 +506,13 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
   // **The lone session is the one that earns no card**, and this is not a special case bolted
   // on: it is the same reason session cards came off the chart as peers in the first place. A
   // session's title is the errand as it was handed out, which when it is the only one is the
-  // task's title said back — `做每周总结页第一版` under `每周五自动出一页总结 view` — and its
-  // state is what `In progress` already implied. A card for it is a restatement wearing the
-  // cost of a node. Two of them are not: which hands, how many, and that one has stalled while
-  // another runs are all things the row cannot say. So nothing is capped past that and nothing
-  // collapses into a number — four hands draw four, and a long branch IS the news.
+  // task's title said back — `做每周总结页第一版` under `每周五自动出一页总结 view` — so a card
+  // for it is a restatement wearing the cost of a node. **The one thing it did have to add is
+  // now the row's own word**, `Working` (`runningHand`): `In progress` was read as saying it
+  // and does not. Two hands are not a bigger version of that one word: which hands, how many,
+  // and that one has stalled while another runs are all things the row cannot say. So nothing
+  // is capped past that and nothing collapses into a number — four hands draw four, and a long
+  // branch IS the news.
   for (const node of nodes.filter((n) => n.kind === "task" && n.data.sessions.length > 1)) {
     for (const session of node.data.sessions) {
       add({ id: session.id, kind: "activity", title: session.title,
@@ -579,35 +581,69 @@ function childIndex(model) {
  * It is the card's status word because it is the one status the person has to act on, and
  * Home is where somebody comes back to once the conversation has stopped telling them where
  * each thing got to (`docs/arch/legibility.md` § F). "In progress" on a row that is waiting
- * on them says the opposite of what is true. It wins over a cut turn below, which says our
- * side stopped: a row whose last step is theirs is not one anybody is progressing.
+ * on them says the opposite of what is true, and so does `Working`: a hand may well be in a
+ * turn on some other part of the row, but the step the record is stopped on is theirs, and
+ * that is the one thing the card exists to tell them.
  */
 function waitsOnPerson(task) {
   return OPEN.has(task.status) && task.latest?.kind === "waiting";
 }
 
 /**
- * **One word, and on a task it is the ledger's.** A card used to be able to carry a ledger
- * status and a session state at once — `To do` above `Working`, `Completed` above `Idle` — and
- * most of that grid does not exist: nothing is being worked on while it is still to do, and a
- * closed row is closed whatever is still warm. The row is the task, so the word is the task's,
- * however many hands are on it and whatever they are each doing.
+ * **One word, and every state it can take is a fact about the row.** A card used to be able to
+ * carry a ledger status and a session state at once — `To do` above `Working`, `Completed`
+ * above `Idle` — and most of that grid does not exist: nothing is being worked on while it is
+ * still to do, and a closed row is closed whatever is still warm. What is left of the second
+ * line is a single word the first line can hold.
  *
- * **No session state reaches this row at all any more.** A last turn that failed used to
- * replace the word, in the danger tone, because it was the one thing a session knew that the
- * ledger could not and the row had nowhere else to say it. It has somewhere else now: every
- * session on a task is a card below it, wearing its own word in its own tone. A cut turn is
- * that card's word, not the task's, and the row is spared a state that belongs to one hand.
+ * **One session fact reaches it: that a hand is in a turn, which the row then says as
+ * `Working`** (`runningHand`). *In progress* was read as already saying that and never did.
+ * A last turn that *failed* does not come with it: it used to replace the word, in the danger
+ * tone, because it was the one thing a session knew that the ledger could not and the row had
+ * nowhere else to say it — and every session on a task is a card below it now, wearing its own
+ * word in its own tone. A cut turn is that card's word. The difference is that `Working` is a
+ * fact about the row, true however many hands are on it, while a cut turn belongs to one of
+ * them and says nothing about the others.
  *
  * A row waiting on the person is `needsYou` over everything — and that is a ledger fact too,
  * read from `latest`, not a session's.
  */
 function stateOf(node) {
-  if (node.kind === "task") return waitsOnPerson(node.data.task) ? "needsYou" : node.data.status;
+  if (node.kind === "task") {
+    if (waitsOnPerson(node.data.task)) return "needsYou";
+    return runningHand(node) ? "running" : node.data.status;
+  }
   if (node.kind !== "activity") return node.kind;
   const s = node.data.session;
   if (s.state !== "running" && ["failed", "interrupted"].includes(s.lastTurn?.outcome)) return s.lastTurn.outcome;
   return s.state;
+}
+
+/**
+ * **The hand whose turn the row is in**, or nothing. This is the one session fact that reaches
+ * a task's status line, and it reaches it as the word — `Working` — not as a mark.
+ *
+ * `doing` is where the ledger row got to, not what is happening in it. On the record this was
+ * written against, `shoe-comparison-master-20260918` had been `doing` for two days with no live
+ * session at all and `game-screenshot-parse-poc-20260920` had a worker mid-turn, and the two
+ * cards read the same *In progress* — the only difference on the chart was the age of the row's
+ * status, which says nothing about whether anybody is on it. The one place *Working* appeared
+ * was Upkeep, whose sessions are activity cards of their own.
+ *
+ * **A mark was tried here and is the wrong instrument twice over.** This status line used to
+ * carry a dot per hand, and `A mark is a poor way to say a thing a word can say` is why they
+ * went; a single filled dot for *something is in flight* is the same mark making a smaller
+ * claim, and a reader still has to be told what it means before the card says anything.
+ *
+ * Only an open row borrows it: a closed row is closed whatever is still warm beside it, and a
+ * row waiting on the person keeps `needsYou`, which is the one word that asks them to act.
+ * Where more than one hand is in a turn it is the one that has been in it longest — how long
+ * this row has had something in flight, not when the latest hand happened to start.
+ */
+function runningHand(node) {
+  if (node.kind !== "task" || !OPEN.has(node.data.status) || waitsOnPerson(node.data.task)) return null;
+  const at = (s) => instant(s.stateSince) ?? Infinity;
+  return node.data.sessions.filter((s) => s.state === "running").sort((a, b) => at(a) - at(b))[0] || null;
 }
 
 function age(value, now) {
@@ -618,8 +654,12 @@ function age(value, now) {
 }
 
 function nodeTime(node) {
-  // A card's time is how long its status word has held, so a wait is timed from its line.
+  // A card's time is how long its status word has held, so a wait is timed from its line and a
+  // turn from its own start: *Working · 3m ago* is a turn three minutes old, where the row's
+  // own clock would have said how long it has been open and read as three days of work.
   if (node.kind === "task" && waitsOnPerson(node.data.task)) return node.data.task.latest.at || node.data.task.statusSince;
+  const hand = runningHand(node);
+  if (hand) return hand.stateSince || node.data.task.statusSince;
   return node.kind === "task" ? node.data.endedAt || node.data.task.statusSince
     : node.kind === "activity" ? node.data.session.stateSince
     : node.kind === "overview" ? node.data.updatedAt : null;
@@ -1322,8 +1362,10 @@ function Core({ node, model, now, more = 0, openRef }) {
  * **What a card is, it says without a label.** There are two kinds of card — a task and a live
  * session working on one — and a word naming the kind was the first line of every card. A
  * session instead wears the dot the core's roles wear, because it is the same fact: the dot
- * means a live session, filled while it is running. A task has none. The status word carries
- * the tone a coloured left edge used to, so no side of the border means anything.
+ * means a live session, filled while it is running. A task has none: what a hand on it puts on
+ * the row is a word, `Working` (`runningHand`), because this line threw its marks out. The
+ * status word carries the tone a coloured left edge used to, so no side of the border means
+ * anything.
  *
  * **Named loan:** the handoff opens the board, not this row on it. `openRef(viewRef)` carries
  * a view ref and nothing else, and `factory/tasks` reads no incoming target, so there is no
