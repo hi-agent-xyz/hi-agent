@@ -28,6 +28,22 @@
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
+    <!--
+      Unpackaged, and this still has to be on. `EnableMsixTooling` reads like it
+      asks for MSIX, which this app does not want — but without it MrtCore's
+      PriGen target resolves its own task assembly to
+      `<dotnet-sdk>/Microsoft/VisualStudio/v17.0/AppxPackage/Microsoft.Build.Packaging.Pri.Tasks.dll`,
+      a path that exists under a Visual Studio install and never under the .NET
+      SDK. So every `dotnet build`/`dotnet publish` of this project dies at
+      MSB4062 while the same project builds fine in VS — which is exactly the
+      shape release runs 3 and 4 took, and why run 4 failed identically after
+      run 3's SDK-version theory was pinned down and turned out to be wrong.
+      It is a Windows App SDK bug, known since 1.2, fixed in 1.8-preview1; this
+      property is the documented workaround for the 1.6 we pin, and it does not
+      disable PRI generation, so `ms-appx:///Assets/…` still resolves.
+      https://github.com/microsoft/WindowsAppSDK/issues/4889
+    -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <Nullable>enable</Nullable>

@@ -1,0 +1,90 @@
+# SCRATCH — must not reach `main`. Delete this file before this branch lands.
+#
+# The Windows half of release.yml, on its own, so a one-line csproj fix can be
+# tried without also building a 460 MB .dmg on the Mac mini and two APKs. The
+# release workflow is all-or-nothing by design and that is right for a release;
+# it is the wrong granularity for finding out how many stages sit behind
+# `dotnet publish` on a project no compiler had read until three days ago.
+#
+# `on: push` rather than `workflow_dispatch`, and not by preference: GitHub only
+# offers a workflow for manual dispatch once it exists on the default branch, so
+# a new file can only trigger itself by being pushed. Every push to this branch
+# is therefore one attempt.
+#
+# It deliberately does NOT upload anything, touch a tag, or run `prepare`. When
+# `make win-app` and `make installer` both pass here, the real answer is a
+# `publish=false` dispatch of release.yml — this file is a faster way to get to
+# the point where that is worth an hour of the Mac mini.
+name: scratch — Windows only
+
+on:
+  push:
+    branches:
+      - ci/windows-dry-run
+
+concurrency:
+  group: scratch-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows shell + installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # For `make installer`, which builds the engine natively here and embeds
+      # the SPA on the way. `make win-app` on its own would not need Node.
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install make and NSIS
+        shell: bash
+        run: |
+          set -euo pipefail
+          choco install -y --no-progress make nsis
+          echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
+
+      # What is actually being tested. Kept as its own step so the log says
+      # whether the shell or the installer is the one that failed.
+      - name: Publish the WinUI shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          make win-app
+          shell_exe="app/windows/HiAgentWindows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/HiAgent.exe"
+          [ -f "$shell_exe" ] || { echo "make win-app produced no $shell_exe" >&2; exit 1; }
+          echo "published: $(ls -l "$shell_exe")"
+
+      # The three `ms-appx:///Assets/…` icons are resolved at runtime, not here,
+      # but a publish that drops them cannot resolve them later either — so say
+      # what landed beside the .exe while a log is being written anyway.
+      - name: What the publish actually contains
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="app/windows/HiAgentWindows/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish"
+          ls -l "$out" | head -40
+          echo "--- assets:"
+          ls -lR "$out/Assets" 2>/dev/null || echo "NO Assets DIRECTORY IN THE PUBLISH OUTPUT"
+          echo "--- resources.pri:"
+          ls -l "$out"/*.pri 2>/dev/null || echo "no .pri beside the exe"
+
+      - name: Build the installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          make installer
+          version="$(tr -d '\r\n' < VERSION)"
+          setup="target/installer/hi-agent-$version-windows-x64.exe"
+          [ -s "$setup" ] || { echo "make installer reported success but $setup is missing or empty" >&2; exit 1; }
+          echo "installer: $(ls -l "$setup")"
