@@ -9,8 +9,9 @@
 //!
 //! A pin is one immutable per-tag release asset from `eugeneware/ffmpeg-static`,
 //! verified by SHA-256 + size exactly like a
-//! [`super::super::models::ModelSpec`]. Two hosts have one — the macOS `.app` and
-//! the Windows install; every other target keeps using `PATH`. We only ever
+//! [`super::super::models::ModelSpec`]. Three hosts have one — the macOS `.app`,
+//! the Windows install and the Debian package; every other target keeps using
+//! `PATH`. We only ever
 //! *decode* (H.264 / HEVC / VP8 / VP9 are native ffmpeg decoders) and encode
 //! `mjpeg` stills + `pcm_s16le` clips — all built in — so the stock build covers
 //! our use.
@@ -64,16 +65,43 @@ const WINDOWS_X64: FfmpegPin = FfmpegPin {
     license_url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/win32-x64.LICENSE",
 };
 
-/// The pin for the current host, or `None` on a target we ship no static build
-/// for — Linux, and Windows on arm64, where upstream publishes no asset at all.
-/// Those keep using `PATH`/`FFMPEG_BIN` ffmpeg.
+/// The Debian/Ubuntu package's build.
+///
+/// This entry did not exist until 2026-09-20, and the reason recorded for its
+/// absence was wrong: the comment below said upstream "publishes no asset at
+/// all" for Linux. It publishes four — `linux-x64`, `linux-arm64`, `linux-arm`
+/// and `linux-ia32` — at the tag already pinned here. Nothing was blocking a
+/// Linux pin except the belief that one was impossible.
+const LINUX_X64: FfmpegPin = FfmpegPin {
+    url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-linux-x64",
+    sha256: "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99",
+    size: 79_826_272,
+    license_url: "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/linux-x64.LICENSE",
+};
+
+/// The pin for the current host, or `None` on a target upstream publishes no
+/// asset for — Windows on arm64 is the real case, and it keeps using
+/// `PATH`/`FFMPEG_BIN` ffmpeg.
+///
+/// **A pin only enables *staging*.** It is read by [`provision_into`], which is
+/// package-time only; runtime resolution still goes through [`bundled_bin`] and
+/// falls through to `PATH` when nothing was staged. So adding a target here
+/// changes nothing for a Docker core or a dev box until an installer actually
+/// lays the tree down.
 fn pin() -> Option<&'static FfmpegPin> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => Some(&MACOS_ARM64),
-        ("windows", "x86_64") => Some(&WINDOWS_X64),
-        _ => None,
-    }
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    PINS.iter().find(|(o, a, _)| *o == os && *a == arch).map(|(_, _, p)| *p)
 }
+
+/// Every pin, keyed by the host it is for. A table rather than a `match` so that
+/// [`pin`] and the test that validates pins read the *same* list: the test used
+/// to carry its own copy of the rows, which makes a new target's first check
+/// happen on whichever machine builds it rather than in CI.
+const PINS: &[(&str, &str, &FfmpegPin)] = &[
+    ("macos", "aarch64", &MACOS_ARM64),
+    ("windows", "x86_64", &WINDOWS_X64),
+    ("linux", "x86_64", &LINUX_X64),
+];
 
 /// What the static binary is called once provisioned. Upstream ships bare
 /// binaries with no extension, so the suffix is ours to add: a Windows install's
@@ -265,7 +293,9 @@ mod tests {
         // Every row, not just the one this host resolves. A pin only a host
         // nobody builds on can reach would otherwise never be checked, and a typo
         // in it surfaces as a broken bundle on whichever machine tries first.
-        for p in [&MACOS_ARM64, &WINDOWS_X64] {
+        // Reading PINS rather than a list written out here is what makes "every
+        // row" stay true when a row is added.
+        for (_, _, p) in PINS {
             assert_eq!(p.sha256.len(), 64, "{}", p.url);
             assert!(p.sha256.chars().all(|c| c.is_ascii_hexdigit()), "{}", p.url);
             assert!(p.url.starts_with("https://"), "{}", p.url);

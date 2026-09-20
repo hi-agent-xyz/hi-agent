@@ -9,18 +9,26 @@
 //! Linux/Docker process simply gets `None` and falls through to the existing
 //! behavior unchanged — so this is purely additive.
 //!
-//! Two installers, two layouts, one directory name:
+//! Three installers, two layouts, one directory name:
 //!
 //! - **macOS** — `Foo.app/Contents/Resources`, derived from a binary living at
 //!   `Foo.app/Contents/MacOS/<bin>`.
 //! - **Windows** — `resources` beside the executable, next to `hi-agent.exe`.
+//! - **Debian** — the same beside-the-executable rule, and no third case in this
+//!   file: the `.deb` puts the real binaries in `/usr/lib/hi-agent` with
+//!   `/usr/bin` symlinks, and `current_exe()` on Linux is `/proc/self/exe`,
+//!   already resolved. So an engine started as `/usr/bin/hi-agent` reads
+//!   `/usr/lib/hi-agent/resources` through the Windows rule, unchanged.
 //!
-//! **The Windows half is the read side only.** Nothing stages that tree for a
-//! Windows target yet: `--provision-into` provisions the platform it is *running
-//! on*, so packaging on the Mac mini still produces a Mac tree. Until that is
-//! built, a Windows install finds no bundle here and falls through to the
-//! `PATH`/download tiers exactly as it does today — this rule changes nothing
-//! until something writes the directory it looks for.
+//! All three stage the tree by running the engine's own `--provision-into` at
+//! package time, on the platform being packaged — which is why the Windows half
+//! was read-only until CI got a Windows host, and why the Mac mini still builds
+//! the non-hermetic Windows tier: the flag provisions the platform it is
+//! *running on*.
+//!
+//! An install that finds no tree here is still correct — Docker, a dev binary,
+//! a `SKIP_PAYLOAD=1` package — and falls through to the `PATH`/download tiers
+//! exactly as before.
 //!
 //! Either way the directory is populated at package time by the binary
 //! provisioning itself (the hidden `--provision-into` flag), so what the shipped

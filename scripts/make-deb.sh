@@ -4,14 +4,23 @@
 # entry, an icon, and the optional `systemd --user` unit. The Linux analog of
 # scripts/make-dmg.sh and scripts/make-installer.sh.
 #
-# Unlike the .dmg this is deliberately *not* hermetic. The engine's payload —
-# codex, esbuild, ffmpeg, the headless browser, the ONNX models — is downloaded
-# on first run. That is the opposite of macOS and the difference is not taste:
-# notarization requires every Mach-O inside the .app to be co-signed, so the
-# hermetic layout there is a consequence of signing rather than a distribution
-# choice. Linux has no such requirement, first-run provisioning is the platform
-# norm, it keeps the package near 30 MB instead of near a gigabyte, and it is
-# the best-tested path in the codebase — every Docker core already takes it.
+# Hermetic since 2026-09-20: the engine's payload — codex, esbuild, ffmpeg, the
+# headless browser, the ONNX models — ships inside the package.
+#
+# This reverses what stood here before, so the old argument is worth answering
+# rather than deleting. It said: notarization forces the .dmg's hermetic layout,
+# Linux has no such requirement, first-run provisioning is the platform norm,
+# and it keeps the package near 30 MB instead of near a gigabyte. Three of those
+# are still true. The one that decided it is that *why the .dmg is hermetic* and
+# *what being hermetic is worth* are different questions: signing is why macOS
+# had to, but a first launch that downloads 721 MB is a first launch that fails
+# on a metered connection, on a plane, or behind a firewall that dislikes
+# GitHub — on every platform equally. A 500 MB download the person chose beats a
+# 721 MB one sprung on them at the worst moment.
+#
+# The fourth argument — that first-run provisioning is the best-tested path —
+# was the real one, and it is preserved rather than traded away: every Docker
+# core still takes it, and SKIP_PAYLOAD=1 builds a package that does too.
 #
 # Runs on a Debian 13 / Ubuntu 26.04 host with the GTK4 development packages.
 # There is no cross build: the shell links GTK4, libadwaita and WebKitGTK.
@@ -20,6 +29,9 @@
 #                  to a core somewhere else — the shell shows a stage message
 #                  instead of starting one)
 #   SKIP_BUILD=1   reuse whatever is already built
+#   SKIP_PAYLOAD=1 leave the payload out; first launch provisions it as before.
+#                  A ~25 MB package again — for a quick local build, or a
+#                  channel where the download size is the binding constraint.
 #
 # Output: target/linux/hi-agent_<version>_<arch>.deb
 set -euo pipefail
@@ -68,10 +80,47 @@ mkdir -p \
   "$STAGE/usr/share/doc/hi-agent" \
   "$STAGE/usr/lib/systemd/user"
 
-install -m 0755 "$SHELL_BIN" "$STAGE/usr/bin/hi-agent-shell"
-# The shell finds the engine beside itself, so /usr/bin is not a convention
-# here — it is the lookup.
-[ -z "${SKIP_ENGINE:-}" ] && install -m 0755 "$ENGINE_BIN" "$STAGE/usr/bin/hi-agent"
+# Both binaries live in /usr/lib/hi-agent, with /usr/bin symlinks, and the
+# payload sits beside them. That layout is what makes the bundle resolvable
+# without a line of Rust: `bundle::resources_dir` derives `resources` from the
+# *canonicalized* executable path, and on Linux `current_exe()` is already
+# /proc/self/exe — fully resolved — so an engine launched as /usr/bin/hi-agent
+# (the systemd unit does exactly that) finds /usr/lib/hi-agent/resources.
+#
+# "The shell finds the engine beside itself" still holds and is still the
+# lookup: `engine_bin()` resolves its own exe first, so both real files being
+# in one directory is what matters, not which directory.
+mkdir -p "$STAGE/usr/lib/hi-agent"
+install -m 0755 "$SHELL_BIN" "$STAGE/usr/lib/hi-agent/hi-agent-shell"
+ln -sf ../lib/hi-agent/hi-agent-shell "$STAGE/usr/bin/hi-agent-shell"
+if [ -z "${SKIP_ENGINE:-}" ]; then
+  install -m 0755 "$ENGINE_BIN" "$STAGE/usr/lib/hi-agent/hi-agent"
+  ln -sf ../lib/hi-agent/hi-agent "$STAGE/usr/bin/hi-agent"
+
+  # The hermetic payload — the managed runtime, the three recognition models,
+  # the static ffmpeg and the headless browser — laid out by the engine
+  # provisioning itself, so what ships is byte-for-byte what a first run would
+  # have fetched. This is the package's whole size: ~25 MB becomes ~500 MB.
+  #
+  # It is staged here rather than downloaded at launch so an install works on a
+  # machine that is offline, metered, or behind a firewall that does not like
+  # GitHub — the same reason the .dmg does it. First-run provisioning is not
+  # deleted and is not unexercised: every Docker core still takes that path,
+  # and so does any build made with SKIP_PAYLOAD=1.
+  if [ -z "${SKIP_PAYLOAD:-}" ]; then
+    echo ">> provisioning the hermetic payload (large download, cached between runs)…"
+    "$ENGINE_BIN" --provision-into "$STAGE/usr/lib/hi-agent/resources"
+    for d in runtime models ffmpeg browser; do
+      [ -d "$STAGE/usr/lib/hi-agent/resources/$d" ] || {
+        echo "error: --provision-into left no $d/ — the package would silently still download" >&2
+        exit 1
+      }
+    done
+    echo ">> payload staged: $(du -sh "$STAGE/usr/lib/hi-agent/resources" | cut -f1)"
+  else
+    echo ">> SKIP_PAYLOAD=1 — first launch will provision"
+  fi
+fi
 
 install -m 0644 "$SHELL_DIR/data/dev.human-interface.HiAgent.desktop" \
   "$STAGE/usr/share/applications/"
@@ -101,8 +150,9 @@ Description: Your agent, on this computer
  starts the engine and supervises it, or attaches to one already running —
  including one managed by the bundled systemd user unit.
  .
- The managed runtime (codex, esbuild, ffmpeg and the recognition models) is
- downloaded on first run.
+ The managed runtime (codex, esbuild, ffmpeg, the headless browser and the
+ recognition models) ships inside this package, so a fresh install works
+ without downloading anything.
 CONTROL
 
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'

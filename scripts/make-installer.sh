@@ -72,6 +72,40 @@ nsis_path() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
 }
 
+# The hermetic payload: the managed runtime, the three recognition models, the
+# static ffmpeg and the headless browser, laid out by the engine provisioning
+# *itself* (`--provision-into`) so what ships is byte-for-byte what a first run
+# would have downloaded. `bundle::resources_beside_exe` looks for `resources`
+# next to `hi-agent.exe`, which is where the .nsi puts this.
+#
+# **Only a Windows host can stage it, and that is not a policy.** The flag
+# provisions the platform it is *running on*, so the Mac mini — which cannot
+# execute a win32 binary at all — would stage a macOS tree under a Windows
+# installer. So the test is whether this host can run what it just built, and
+# a Mac simply produces the non-hermetic tier it always has: an installer whose
+# first launch downloads ~721 MB into the OS cache. That tier is not deprecated;
+# it is what `make installer` means anywhere but Windows.
+RES_DEFINE=()
+RES_DIR="$OUT/resources"
+if [ "${OS:-}" = "Windows_NT" ]; then
+  echo ">> provisioning the hermetic payload into $RES_DIR (large download, cached between runs)…"
+  rm -rf "$RES_DIR"
+  mkdir -p "$RES_DIR"
+  "$WIN_EXE" --provision-into "$RES_DIR"
+  # The engine reports success by exiting 0, but an empty tree would sail
+  # through NSIS and ship an installer that silently still downloads. Check the
+  # one subdirectory every resolver looks for.
+  [ -d "$RES_DIR/runtime" ] && [ -d "$RES_DIR/models" ] && [ -d "$RES_DIR/ffmpeg" ] && [ -d "$RES_DIR/browser" ] || {
+    echo "error: --provision-into left an incomplete tree in $RES_DIR" >&2
+    ls -la "$RES_DIR" >&2
+    exit 1
+  }
+  echo ">> payload staged: $(du -sh "$RES_DIR" 2>/dev/null | cut -f1)"
+  RES_DEFINE=("-DRESDIR=$(nsis_path "$RES_DIR")\\")
+else
+  echo ">> not a Windows host — no hermetic payload staged (first launch will provision)"
+fi
+
 SHELL_DEFINE=()
 if [ -f "$SHELL_DIR/HiAgent.exe" ]; then
   echo ">> including the WinUI shell from $SHELL_DIR"
@@ -100,6 +134,7 @@ makensis -V2 \
   "-DSRCEXE=$(nsis_path "$WIN_EXE")" \
   "-DICON=$(nsis_path "$ICON")" \
   "${SHELL_DEFINE[@]+"${SHELL_DEFINE[@]}"}" \
+  "${RES_DEFINE[@]+"${RES_DEFINE[@]}"}" \
   "-DOUTFILE=$(nsis_path "$SETUP")" \
   "$ROOT/scripts/hi-agent.nsi"
 

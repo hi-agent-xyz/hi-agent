@@ -111,6 +111,18 @@ Section "Install"
   File /r "${SHELLDIR}"
 !endif
 
+  ; The hermetic payload, in a `resources` directory beside hi-agent.exe —
+  ; `bundle::resources_beside_exe` derives exactly that path from the running
+  ; executable, so this location is the contract rather than a convention.
+  ; Absent when the installer was built anywhere but Windows, and then the
+  ; engine provisions on first launch as it always has. No uninstall change:
+  ; `RMDir /r "${APPDIR}"` below already takes the whole directory.
+!ifdef RESDIR
+  SetOutPath "${APPDIR}\resources"
+  File /r "${RESDIR}"
+  SetOutPath "${APPDIR}"
+!endif
+
   ; Shortcuts (icon from the .ico, since neither exe carries one yet).
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "${APPDIR}\${LAUNCHER}" "" "${APPDIR}\HiAgent.ico"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk"    "${APPDIR}\${LAUNCHER}" "" "${APPDIR}\HiAgent.ico"
