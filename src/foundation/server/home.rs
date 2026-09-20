@@ -52,12 +52,22 @@ pub const DEFAULT_ICON: &[u8] = include_bytes!("assets/home-group-icon.png");
 pub const ICON_ANCHOR_REF: &str = "drive/home/group-icon.png";
 
 /// Where the icon-sized copies live, under the drive. A generation comes back at 1024px or
-/// more and a megabyte or two; Home draws it at 40px on every open, so the copy is what is
-/// recorded and the original stays where it was made.
+/// more and a megabyte or two; Home draws it small, so the copy is what is recorded and the
+/// original stays where it was made.
 const ICONS_DIR: &str = "home/icons";
 
-/// 40px at 3x.
-const ICON_PX: u32 = 120;
+/// **The size the icon is ever actually drawn at, not the size it usually is.** This was 120 —
+/// "40px at 3x" — which is the heading's icon on the densest screen and nothing else. Two
+/// things draw it larger: a group taken as the centre wears a 56px icon, and the chart zooms
+/// to 2. So the real ceiling is 56 x 2 x 3 = 336 device pixels, and at 120 the one act that
+/// reaches in to look at an icon was the act that blurred it.
+///
+/// That is the same rule the result tiles already hold — `home.jsx` sizes a shot so it is 1:1
+/// at `ZOOM_MAX` on a retina screen, after a 480x270 store was found to be 1:1 at 1x and an
+/// upscale from there. The icons were never held to it. 360 covers the ceiling with a little
+/// headroom and costs about 21 KB an icon rather than 5, which a surface that draws a dozen
+/// of them behind the browser's cache does not notice.
+const ICON_PX: u32 = 360;
 
 /// `<data_dir>/home` — one surface's state, and nothing else reads it.
 pub fn home_dir(data_dir: &Path) -> PathBuf {

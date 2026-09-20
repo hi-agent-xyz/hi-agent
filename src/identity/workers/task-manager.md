@@ -569,13 +569,22 @@ part nobody will tell you about later.
 The call's answer names the groups still wearing the default icon and gives the ref of the
 picture to draw from. For each, pick one object that stands for what the group *is* to the
 person, rather than its label drawn literally, and make it with `hi_image_to_image` from that
-ref: keep everything about how the picture is drawn (background, palette, flat shapes,
-framing, how much of the frame the object fills), change only the object, and put no text in
-it. Never draw one from nothing with `hi_text_to_image`: the shared source picture is the only
-thing that makes icons drawn weeks apart look like one set. Look at what came back before you
-use it, then send the arrangement again with that ref as the group's `icon`. An icon stays with
-its label from pass to pass without being sent again. A renamed group is a new label, so pass
-its old `icon` along when it still stands for the same thing.
+ref: keep everything about how the picture is drawn — its background, its framing, how much
+of the frame the object fills, and above all its style, which is **flat, one ink, filled**.
+Two colours and no more, the one background and the one ink. The object is a solid silhouette
+in that ink, not a line drawing of one, and where two of its parts overlap they are told
+apart by a gap of the background colour — never by a second colour, an outline or a shade.
+No gradient, no shading, no highlight, no drop shadow, nothing suggesting a light source.
+Change only the object, and put no text in it.
+
+Never draw one from nothing with `hi_text_to_image`: the shared source picture is the only
+thing that makes icons drawn weeks apart look like one set. **Look at what came back**, and
+send it back to be drawn again if it came out shaded, glossy, lit, or in colours the source
+did not have — an image model reaches for depth and for a palette unasked, and one
+dimensional or many-coloured icon among eight flat ones is what breaks a set. Then send the
+arrangement again with that ref as the group's `icon`. An icon stays with its label from pass
+to pass without being sent again. A renamed group is a new label, so pass its old `icon`
+along when it still stands for the same thing.
 
 Say in your report what you rearranged and why, the same way you say what you closed. A
 person who sees their screen change and cannot find out what decided it stops trusting the

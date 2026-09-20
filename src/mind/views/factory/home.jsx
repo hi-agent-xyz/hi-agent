@@ -683,13 +683,24 @@ function emphasis(node, now) {
  */
 const CORE_W = 340, CORE_H = 320, CARD_W = 240, CARD_H = 135;
 /**
- * The gutter between one rank and the next. Wider than it needs to be to keep boxes apart,
- * because it is also the room the wires bend in: a wire leaves its parent's edge, runs to the
- * midpoint and arrives flat at its child, so a narrow gutter makes every curve the same
- * near-vertical kink and the branch that owns a card stops being readable from its wire.
- * At 1x, a 48px gutter preserves the curve without spending a card's width on empty ranks.
+ * The gutter between one rank and the next, **by the rank it leaves**. It is wider than it
+ * needs to be to keep boxes apart, because it is also the room the wires bend in: a wire
+ * leaves its parent's edge, runs to the midpoint and arrives flat at its child, so a narrow
+ * gutter makes every curve the same near-vertical kink and the branch that owns a card stops
+ * being readable from its wire.
+ *
+ * **The gutter off the core is the one that has to be widest, and it used to be the same 48px
+ * as every other.** Every group on the chart parts from the core, so that one gutter carries
+ * the whole fan — a dozen wires spreading over the full height of the drawing inside 48px of
+ * run, which drew them as a near-vertical bundle leaving one edge rather than as a branch
+ * each. Deeper ranks fan two or three ways over a card's height, and 48px is ample there.
+ * Width is cheap on the widest axis only at the first rank: one gutter, paid once.
+ *
+ * Indexed by the depth of the *parent*, so `[0]` is the core's own.
  */
-const GAP_X = 48, MARGIN = 24;
+const RANK_GUTTER = [104, 56, 48];
+const gutterAt = (depth) => RANK_GUTTER[Math.min(depth, RANK_GUTTER.length - 1)];
+const MARGIN = 24;
 /**
  * The air between two adjacent nodes, by **the rank their branches part at** — not by how deep
  * either of them happens to sit.
@@ -831,7 +842,10 @@ function arrange(model, tones = branchTones(model)) {
     if (!sides[side].length) continue;
     // The node's own extent only; the air between two of them is `spacing`, which sees both
     // and so can ask where they parted. A padded `nodeSize` cannot — it is one number per node.
-    const layout = flextree({ nodeSize: (n) => [n.data.h, n.data.w + GAP_X],
+    // `n.depth` is the rank the gutter leaves: the hub root is the core, so its gutter is the
+    // one the whole fan bends in. A gutter is a node's own padding here, not a pair's, which
+    // is right — every child of one parent leaves through the same run.
+    const layout = flextree({ nodeSize: (n) => [n.data.h, n.data.w + gutterAt(n.depth)],
       spacing: (a, b) => gapAt(divergence(a, b)) });
     const hub = layout.hierarchy({ w: rootBox.w / 2, h: rootBox.h, children: sides[side] });
     layout(hub);
@@ -1428,7 +1442,14 @@ function Branch({ nodes, parent, ...props }) {
 }
 
 const CSS = `
-.hi-work { --bg:var(--bg-0); --work-line:color-mix(in srgb, var(--fg-mute) 25%, var(--bg)); --work-glint:#ffffffd9; --work-shade:#343c5010; --work-shadow:inset 0 1px 0 var(--work-glint), 0 2px 4px #20283805, 0 8px 22px var(--work-shade); --work-shadow-raised:inset 0 1px 0 var(--work-glint), 0 3px 6px #20283808, 0 14px 30px var(--work-shade); --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:linear-gradient(115deg, color-mix(in srgb, #ff9393 9%, var(--bg)), var(--bg) 46%, color-mix(in srgb, #86c7ed 12%, var(--bg))); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
+/* **The wash is what the cards are frosted against, so it has to be a colour and not a hint.**
+   It was one 115deg sweep mixing 9% and 12% of the two tints into the page colour, which on a
+   white theme left the middle of the window flat white — and the middle is where the core and
+   most of the cards sit, so the glass had nothing to pick up and read as plain white boxes on
+   plain white. Two corner-anchored radials over a gentler sweep put the colour where the
+   drawing is and keep it a wash: strong enough to see the blur bend it, far too soft to
+   compete with a title. */
+.hi-work { --bg:var(--bg-0); --work-warm:#ff9393; --work-cool:#86c7ed; --work-wash-warm:30%; --work-wash-cool:34%; --work-sweep-warm:8%; --work-sweep-cool:9%; --work-line:color-mix(in srgb, var(--fg-mute) 25%, var(--bg)); --work-glint:#ffffffd9; --work-shade:#343c502e; --work-shadow:inset 0 1px 0 var(--work-glint), 0 1px 1px #2028380f, 0 10px 20px -6px #20283826, 0 28px 44px -12px var(--work-shade); --work-shadow-raised:inset 0 1px 0 var(--work-glint), 0 1px 1px #20283812, 0 16px 28px -8px #2028382e, 0 40px 64px -16px var(--work-shade); --work-pane:color-mix(in srgb, var(--bg) 72%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 84%, transparent); --work-frost:blur(18px) saturate(150%); --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:radial-gradient(78% 62% at 2% 0%, color-mix(in srgb, var(--work-warm) var(--work-wash-warm), transparent), transparent 72%), radial-gradient(80% 66% at 100% 100%, color-mix(in srgb, var(--work-cool) var(--work-wash-cool), transparent), transparent 72%), linear-gradient(115deg, color-mix(in srgb, var(--work-warm) var(--work-sweep-warm), var(--bg)), var(--bg) 52%, color-mix(in srgb, var(--work-cool) var(--work-sweep-cool), var(--bg))); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
 .hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -1442,11 +1463,20 @@ const CSS = `
 .hi-work__canvas img { -webkit-user-drag:none; }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000038; } }
-:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000038; }
-.hi-work__wires path { fill:none; stroke-width:1.8; stroke-linecap:round; opacity:0.8; }
+/* Dark mode softens the highlight, deepens the shadow, and leans the panes more opaque: a
+   blur of a dark wash returns almost no colour, so transparency there costs legibility and
+   buys nothing. The wash itself is dimmed for the same reason — the tints read far stronger
+   against ink than against paper. */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000066; --work-pane:color-mix(in srgb, var(--bg) 84%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 90%, transparent); --work-wash-warm:14%; --work-wash-cool:16%; --work-sweep-warm:5%; --work-sweep-cool:6%; } }
+:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000066; --work-pane:color-mix(in srgb, var(--bg) 84%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 90%, transparent); --work-wash-warm:14%; --work-wash-cool:16%; --work-sweep-warm:5%; --work-sweep-cool:6%; }
+/* **A wire is structure, so it is drawn like structure.** At 1.8px and 0.8 opacity the
+   branch hues came out as pastel threads that a card's border out-weighed, and the one thing
+   a wire says — which branch a card belongs to — was the faintest mark on the chart. */
+.hi-work__wires path { fill:none; stroke-width:2.6; stroke-linecap:round; opacity:0.95; }
 .hi-work__position { position:absolute; }
-.hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:linear-gradient(145deg, color-mix(in srgb, #ff9393 7%, var(--bg)), var(--bg) 45%, color-mix(in srgb, #86c7ed 5%, var(--bg))); border:1px solid var(--work-line); border-radius:8px; }
+/* The core is the same glass one step more solid and one step warmer: it holds the most text
+   of anything on the chart, so it is the one pane where the wash behind is a cost. */
+.hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:linear-gradient(145deg, color-mix(in srgb, var(--work-warm) 7%, var(--work-pane-top)), var(--work-pane-top) 45%, color-mix(in srgb, var(--work-cool) 6%, var(--work-pane-top))); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:14px; }
 .hi-work__core-title { display:flex; gap:10px; align-items:center; margin:0; min-height:36px; font-size:24px; font-weight:600; }
 .hi-work__pip { width:11px; height:11px; flex:0 0 11px; border-radius:50%; background:var(--accent); }
 .hi-work__roles { display:flex; gap:14px; padding:10px 0 12px; border-bottom:1px solid var(--work-line); }
@@ -1463,7 +1493,13 @@ const CSS = `
 .hi-work__update p { font-size:14px; color:var(--fg-dim, var(--fg-mute)); }
 .hi-work__core-more { align-self:flex-start; margin-top:6px; padding:2px 0; font-size:13px; font-weight:500; color:var(--accent); }
 .hi-work__core-more:hover { text-decoration:underline; }
-.hi-work__node { height:100%; background:linear-gradient(155deg, var(--bg), color-mix(in srgb, var(--bg) 94%, transparent)); border:1px solid var(--work-line); border-radius:8px; display:flex; flex-direction:column; }
+/* **A card is a pane of glass over the wash, not a white box on it.** Near-opaque white on a
+   near-white page left the separation entirely to a hairline and a shadow nobody could see,
+   and the wash — the one thing that says this is a canvas — stopped at the card's edge. A
+   blurred, tinted backdrop separates a card by *material*: the colour under it carries
+   through, softened, so the card sits above the canvas instead of hiding a patch of it. The
+   top-lit gradient is what keeps it a pane and not a smear. */
+.hi-work__node { height:100%; background:linear-gradient(155deg, var(--work-pane-top), var(--work-pane)); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:12px; display:flex; flex-direction:column; }
 .hi-work__node, .hi-work__core, .hi-work__tile { box-shadow:var(--work-shadow); }
 /* Animate the contents, never the positioned chart or its zoom transform. Backwards fill
    releases opacity afterwards so the model's emphasis still owns the settled card. */
@@ -1487,12 +1523,17 @@ const CSS = `
    drew the hub off its own spine. */
 .hi-work__position[data-dir="-1"] .hi-work__group > button { flex-direction:row-reverse; text-align:right; }
 .hi-work__position[data-dir="0"] .hi-work__group > button { justify-content:center; }
-.hi-work__group-icon { width:40px; height:40px; flex:0 0 40px; border-radius:10px; object-fit:cover; }
+/* **An icon is flat, so nothing around it is not.** The picture carries a background of its
+   own, which against the canvas wash cut a hard square out of it; a hairline ring in the
+   group's own colour closes that edge and joins the icon to the label beside it. No shadow
+   and no gradient here on purpose — every other pane on this chart is glass, and the one
+   flat thing on it should stay the one flat thing. */
+.hi-work__group-icon { width:40px; height:40px; flex:0 0 40px; border-radius:11px; object-fit:cover; box-shadow:0 0 0 1px color-mix(in srgb, var(--group-tone) 30%, transparent); }
 /* The group at the centre is the same heading a size up, standing where the core stood. */
 .hi-work__group[data-root] { font-size:22px; }
 .hi-work__group[data-root] > button { gap:12px; padding:0 8px; }
-.hi-work__group[data-root] .hi-work__group-icon { width:56px; height:56px; flex-basis:56px; border-radius:14px; }
-.hi-work__trail { position:absolute; top:12px; left:16px; z-index:3; max-width:calc(100% - 32px); display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 14px; font-size:13px; line-height:1.4; color:var(--fg-mute); background:var(--bg); border:1px solid var(--work-line); border-radius:999px; box-shadow:var(--work-shadow); }
+.hi-work__group[data-root] .hi-work__group-icon { width:56px; height:56px; flex-basis:56px; border-radius:15px; }
+.hi-work__trail { position:absolute; top:12px; left:16px; z-index:3; max-width:calc(100% - 32px); display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 14px; font-size:13px; line-height:1.4; color:var(--fg-mute); background:var(--work-pane-top); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:999px; box-shadow:var(--work-shadow); }
 .hi-work__trail-step { display:inline-flex; align-items:center; gap:6px; min-width:0; }
 .hi-work__trail button { color:var(--fg-mute); }
 .hi-work__trail button:hover { color:var(--fg); text-decoration:underline; text-underline-offset:3px; }
@@ -1504,7 +1545,9 @@ const CSS = `
 .hi-work__group[data-more] .hi-work__group-title { -webkit-line-clamp:1; }
 .hi-work__group-more { font-size:13px; line-height:1.35; font-weight:500; opacity:.8; white-space:nowrap; }
 .hi-work__open, .hi-work__node { padding:10px 14px; }
-.hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:8px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, transparent); }
+/* A tile is the one pane whose contents are opaque, so it is frosted only where the picture
+   has not loaded — and it keeps the cards' corner so a rank of both still reads as one rank. */
+.hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:12px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, var(--work-pane)); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
@@ -1531,11 +1574,11 @@ const CSS = `
 /* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
    put a task's own results as far from it as the next task's were. Inheriting --rank-gap
    carries the tightest value on down, so a fourth rank is no looser than the third. */
-.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:2px solid var(--rail, var(--work-line)); }
+.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:2.6px solid var(--rail, var(--work-line)); }
 .hi-work__branch .hi-work__branch { --rank-gap:18px; margin-left:0; padding-left:12px; }
 .hi-work__branch .hi-work__branch .hi-work__branch { --rank-gap:10px; }
 .hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
-.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:2px solid var(--tick, var(--work-line)); }
+.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:2.6px solid var(--tick, var(--work-line)); }
 .hi-work__branch .hi-work__node { min-height:116px; }
 .hi-work__branch .hi-work__group { height:auto; min-height:28px; }
 .hi-work__branch .hi-work__tile { height:auto; aspect-ratio:16 / 9; max-width:240px; }

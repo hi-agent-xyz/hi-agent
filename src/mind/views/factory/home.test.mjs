@@ -431,7 +431,19 @@ test("a group is a label, and a card is still a card beneath it", () => {
   const card = placed.find((p) => p.node.kind === "task");
   assert.deepEqual([group.w, group.h], [144, 56], "a compact heading has room for two lines");
   assert.deepEqual([card.w, card.h], [240, 135]);
-  assert.equal(card.x - (group.x + group.w), 48, "a shorter gutter preserves the connector");
+  assert.equal(card.x - (group.x + group.w), 56, "a narrow heading still leaves the wire its bend");
+});
+
+test("the gutter off the core is the widest, because the whole fan bends in it", () => {
+  const model = project({ tasks: [task("kt8-046")],
+    groups: [{ label: "KTV", members: ["kt8-046"] }] });
+  const placed = arrange(model).placed;
+  const core = placed.find((p) => p.node.kind === "core");
+  const group = placed.find((p) => p.node.id === "group:KTV");
+  const card = placed.find((p) => p.node.id === "task:kt8-046");
+  const gutter = (from, to) => (to.dir > 0 ? to.x - (from.x + from.w) : from.x - (to.x + to.w));
+  assert.equal(gutter(core, group), 104, "every group parts from the core, so that gutter carries the whole fan");
+  assert.equal(gutter(group, card), 56, "a deeper rank fans two or three ways, and needs less");
 });
 
 test("a group wears the icon drawn for it, and the default until one is", () => {

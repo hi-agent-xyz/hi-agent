@@ -176,12 +176,22 @@ With the chart cut to the window first, the scale is a constant that was chosen 
 
 **Height and width are both spent on legibility, not on fitting.** One appearance per kind of
 record, so a picture is never a strip inside a card; air graded by rank, so a branch can be
-seen to be one; a picture drawn large enough to read, below; and a 48px gutter between
-ranks, because a wire runs from its parent's edge to the midpoint and arrives flat at its child,
-so a narrow gutter makes every curve the same near-vertical kink and a card can no longer be
-traced back to the branch that owns it. Each of these was once priced in scale, then in scroll.
-They are now priced in cards put away, which is the cheapest of the three: a press on the group
-gets them back, and the cards that are drawn are the ones most in hand.
+seen to be one; a picture drawn large enough to read, below; and a gutter between ranks wide
+enough for the wires to bend in, because a wire runs from its parent's edge to the midpoint and
+arrives flat at its child, so a narrow gutter makes every curve the same near-vertical kink and
+a card can no longer be traced back to the branch that owns it. Each of these was once priced
+in scale, then in scroll. They are now priced in cards put away, which is the cheapest of the
+three: a press on the group gets them back, and the cards that are drawn are the ones most in
+hand.
+
+**The gutter is the rank's, and the first one is not like the others.** It was one 48px run
+everywhere. But every group on the chart parts from the core, so that first gutter carries
+the entire fan — a dozen wires spreading over the full height of the drawing inside 48px of
+horizontal run, which draws them as a near-vertical bundle leaving one edge rather than as a
+branch each. A deeper rank fans two or three ways over about a card's height, where 48px is
+ample. So the gutter is indexed by the rank it leaves — 104px off the core, 56 off a
+first-level group, 48 below that. Width is the axis the chart is already long on, and this
+spends it once, at the one rank where the bend is the whole reading.
 
 **Air is graded by where two nodes' branches part, not by how deep either one sits.** One gap
 for every pair drew every rank as a flat column: a task's own pictures were exactly as far
@@ -204,11 +214,31 @@ line height, leaving the footer its own space instead of truncating over unused 
 Group headings occupy a narrower 144x56 box, wrap to two lines, and use stronger text
 contrast than metadata; they remain unframed labels, not cards.
 
-**Cards separate from the canvas.** A soft, broad warm-to-cool canvas wash sits behind
-near-opaque cards with neutral hairline borders, an inset edge highlight and layered soft
-shadows. The core carries a little more elevation and a faint warm-to-cool surface tint.
-Tasks, sessions and picture tiles share the same 8px corners; nothing adds a status-colored
-border or changes their sizes. Dark mode softens the highlight and deepens the shadow.
+**Cards separate from the canvas by material, not by being lighter than it.** The wash behind
+them is a real warm-to-cool colour — two corner radials over a diagonal sweep — and a card is
+a pane of frosted glass over it: a translucent, top-lit surface that blurs and saturates what
+is under it, with a neutral hairline border, an inset edge highlight and three shadow layers.
+
+**The three layers are what makes a card hover rather than rest, and which one is heaviest is
+the whole of it.** A contact shadow tight to the edge says an object is lying on the surface;
+height is said by the *distance* between a card and the dark under it. So the contact layer
+stays a hairline and the two below it are pushed down and pulled in — a large y-offset with a
+negative spread — leaving a lit gap under the card's lower edge and the weight further out.
+Depth is what the wash cost: colour under a translucent card narrows the contrast between
+card and canvas, and the shadow is where that contrast is bought back.
+The wash and the glass are one decision. Near-opaque cards over a hint of a wash was the same
+idea attempted with neither half doing its part: on a white theme the middle of the window —
+where the core and most of the cards sit — came out flat white, so a white card on it was
+separated by a hairline alone, and the wash, the one thing saying this is a canvas and not a
+page, stopped at every card's edge. Blur over colour separates by depth instead: the branch
+hue and the wash carry *through* a card, softened, so it reads as sitting above the canvas
+rather than as hiding a patch of it. The core is the same glass one step more solid and one
+step warmer, and carries a little more elevation — it holds the most text on the chart, so it
+is the one pane where the wash behind is a cost. Tasks, sessions and picture tiles share the
+same 12px corners; nothing adds a status-colored border or changes their sizes. Dark mode
+softens the highlight, deepens the shadow, dims the wash and leans the panes more opaque: a
+blur of a dark wash returns almost no colour, so transparency there costs legibility and buys
+nothing.
 Cards enter with a short fade and 10px rise, staggered at 28ms intervals capped at 224ms.
 Stable node identities keep live refreshes from replaying entry animations. Animation never
 owns layout or the canvas zoom transform, and releases opacity back to the model's emphasis
@@ -216,13 +246,23 @@ when finished. Pointer hover raises actionable cards 2px; keyboard focus has an 
 accent outline. Reduced-motion preferences disable entry and movement effects.
 Group headings pair their label with a 40px icon, and the label is drawn in its group's
 colour. The icon is the group's own when one has been drawn for it and a shared default until
-then — see § *Icons* below. Home never picks one from a label or from task text.
+then — see § *Icons* below. Home never picks one from a label or from task text. The icon is
+the one flat thing on a chart of glass, and it is kept that way deliberately: no shadow and no
+gradient under it, only a hairline ring in the group's own colour, which closes the hard square
+its own baked background would otherwise cut out of the wash and ties it to the label beside
+it.
 **A heading sits against the wire that reaches it**, since one box width for every group
 leaves a short label half a box of slack: on the chart's right the icon leads, on the left it
 trails, so both hug the wire from their parent and the slack falls outward where the
 children's wires bend. Siblings still line their icons up, because the flush edge is the same
 for all of them at a rank. A group taken as the centre is centred instead — it has no parent
 and its wires leave both ways, so packing it to a side drew the hub off its own spine.
+
+**A wire is drawn like structure, because that is what it is.** At a 1.8px stroke and 0.8
+opacity the branch hues came out as pastel threads that a card's own hairline border
+out-weighed, so the one thing a wire says — which branch a card belongs to — was the faintest
+mark on the chart. 2.6px at 0.95 is what makes a branch followable across a gutter; the narrow
+flow's rails and ticks take the same weight, since they are these wires on a list.
 
 **A wire's colour is its category's, and never a status.** Wires used to take the status of
 the node they pointed at: accent for in progress, accent-2 for on duty and for a picture, grey
@@ -493,14 +533,41 @@ every call and every model, and eight icons drawn that way do not look like a se
 one shared picture, keeping its background, palette, flat shapes and framing and changing only
 the object, does. So `hi_text_to_image` is never the way an icon is made.
 
+**The style is flat, one ink, filled, and the picture is what has to say so.** Two colours
+and no more — one background, one ink. The object is a solid silhouette in that ink rather
+than a line drawing of one, and where two of its parts overlap they are separated by a gap of
+the background colour, never by a second colour, an outline or a shade. No gradient, no
+shading, no highlight, no drop shadow, nothing suggesting a light source.
+
+Carrying that means the shipped picture must itself hold nothing to copy that the rule
+forbids. The first one was three sheets in three colours with a soft drop shadow under them:
+at 40px the shadow was invisible and the palette was a smudge, and at 1024 both were an
+invitation. It is now the same three sheets in the one ink, told apart by background-coloured
+gaps — which is the mono rule demonstrated rather than described, since the separation
+problem is the first one any object with parts will hit.
+
+It also means the words naming the style are there to *refuse* what the picture cannot: an
+image model reaches for depth and for a palette unasked, so the drawer is told to look at what
+came back and send it round again if it came out lit or coloured. One dimensional or
+many-coloured icon among eight flat ones is what breaks a set, and nothing downstream can
+flatten it after the fact — the write files an icon-sized copy, and a copy of a shaded picture
+is a shaded picture.
+
 - **An icon belongs to its label, not to a write.** The arrangement is replaced whole on every
   pass, and a writer that leaves `icon` out keeps the one that label already had. Rearranging
   is not redrawing, and a forgotten field must not cost a generation per group to put back. A
   renamed group is a new label and starts on the default unless the writer passes the old ref.
-- **What is recorded is an icon-sized copy.** A generation comes back at 1024px or more and a
-  megabyte or two, and Home draws every icon at 40px on every open. The write crops the offered
-  picture to its centred square, scales it to 120px (40px at 3x), files it under
-  `drive/home/icons/`, and records that ref. The original stays where it was made.
+- **What is recorded is an icon-sized copy, cut to the size it is ever drawn at.** A
+  generation comes back at 1024px or more and a megabyte or two. The write crops the offered
+  picture to its centred square, scales it to 360px, files it under `drive/home/icons/`, and
+  records that ref; the original stays where it was made. 360 is not the usual draw — a
+  heading's icon is 40px — it is the ceiling: **a group taken as the centre wears a 56px icon
+  and the chart zooms to 2**, so 56 × 2 × 3 = 336 device pixels on the densest screen. It was
+  120, "40px at 3x", which is the heading on a dense screen and nothing else, so the one act
+  that reaches in to look at an icon was the act that blurred it. That is the same rule the
+  picture tiles already hold and the icons were never held to — see *Every card and every
+  picture is one 240x135 box* above, where a 480x270 store was found to be 1:1 at 1x and an
+  upscale from there. The cost is about 21 KB an icon against 5.
 - **An icon that cannot be used is refused on its own.** It might not be a `drive/` ref,
   might name no file, or might not decode. The arrangement still lands, the label keeps what it
   had, and the answer says why.
