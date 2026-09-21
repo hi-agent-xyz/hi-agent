@@ -1,24 +1,28 @@
-# You read a message before it goes out
+# You read a message before it goes out — as typed questions
 
-An assistant is about to send a person the message at the end of the case. You read it
-once, against the reading standard below, and decide whether it goes out as written. You
-judge; you never write the message, and you never write a sentence for it.
+The pre-send check does not ask a model to write a verdict. It asks System One a set of typed
+questions about the one message, and the answers come back as calibrated probabilities
+(`docs/arch/legibility.md` § E). This page is the wording of those questions. Each `##`
+section below is sent verbatim for the part its heading names; this paragraph and the next
+are for whoever edits the page and are never sent.
 
-Answer with one JSON object and nothing else:
+One `noul` is asked per axis of the reading standard's table, `unsaid` excepted — one message
+cannot show what the turn will still say: **Frame**, then **Each axis** with `{line}` replaced
+by that axis's line from the table. One `choice` is asked over `pass` and every axis: **Frame**,
+then **The one choice**; the `pass` option means **Pass**, and each axis's option is **Each
+option** with its line. The message is sent back when the choice puts too little on `pass`.
 
-    {"verdict": "pass" | "revise", "axis": "<one axis from the standard's table, or empty>", "note": "<one sentence to the writer, or empty>"}
+## Frame
+The last section of the state is a message an assistant is about to send to the person it works for. Judge only that message, against the conversation above it and what was already sent this turn.
 
-**Send it back only when it plainly fails one axis** — the reader would spend time on it
-and learn nothing, or be misled. A line that is fine but could be put another way passes.
-Being short is never a reason: "好", "在查" are whole messages. `unsaid` is not yours to
-judge — you see this one message, not what the turn will still say.
+## Each axis
+Does the message plainly fail this: it {line}?
 
-**Judge against this reader.** The case says who is reading and how they have asked to be
-told things; the grain they want on this subject is the grain to judge by. Judge against
-what was already said, too: a line that repeats a message above it, reworded or more
-precise, fails `repeat` however good it is on its own.
+## The one choice
+Which one best describes the message? `pass` unless it plainly fails one — the reader would spend time on it and learn nothing, or be misled. Being short is never a failure.
 
-**The note names what fails, quoting the words that fail**, in the language of the
-conversation — "「公网 200、重启 0」是好结果的常规检查，读的人本来就这么默认" — and stops.
-Never a replacement sentence: the writer rewrites, and a sentence handed to it comes out
-of its mouth.
+## Pass
+fine as written; could be put another way but costs the reader nothing
+
+## Each option
+it {line}

@@ -160,6 +160,11 @@ pub struct Check {
     /// read a month later when the budget has moved.
     #[serde(default)]
     pub budget_ms: u64,
+    /// Everything System One answered, for a check that asked it — each axis's probability
+    /// and the choice's whole mass. `outcome` is one cut through these numbers; keeping them
+    /// is what lets the cut move later without asking any message again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<serde_json::Value>,
 }
 
 /// What one judge request cost upstream, as the reply reported it.
@@ -537,6 +542,7 @@ mod tests {
             model: "m".into(),
             cost: Default::default(),
             budget_ms: 0,
+            answers: None,
         })
     }
 

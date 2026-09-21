@@ -123,13 +123,14 @@ const READING: &str = include_str!("craft/reading.md");
 const READING_PAGE: &str = "reading.md";
 
 /// The rubrics the host's own judges run with (`docs/arch/legibility.md` § E, § G): each is
-/// one question asked of one model request, placed in front of the reading standard.
+/// one question asked of one model request, placed in front of the reading standard — except
+/// the speech check's, which is the wording of the typed questions System One is asked.
 ///
 /// **Here and not in the code that sends them**, because what counts as a failing line is
 /// judgment, and judgment lives in prose where it can be read whole. They are not roles —
 /// nothing opens a session on them — and not craft pages: no rung goes and reads them.
 pub mod judges {
-    /// Whether one message goes out as written.
+    /// Whether one message goes out as written — as typed questions, by [`super::rubric_section`].
     pub const CHECK: &str = include_str!("judges/check.md");
     /// The independent read of a whole spoken turn.
     pub const AUDIT: &str = include_str!("judges/audit.md");
@@ -155,6 +156,30 @@ pub fn reading_axes(standard: &str) -> &str {
         .find("## When a line fails")
         .map(|at| standard[at..].trim())
         .unwrap_or(standard)
+}
+
+/// Every axis of the table as `(name, line)`, in the table's order — the rows written
+/// ``| `name` | line |``. Empty when the table is gone, which a caller reads as nothing to ask.
+pub fn axis_lines(standard: &str) -> Vec<(String, String)> {
+    reading_axes(standard)
+        .lines()
+        .filter_map(|row| {
+            let mut cells = row.trim().strip_prefix('|')?.split('|');
+            let name = cells.next()?.trim().strip_prefix('`')?.strip_suffix('`')?.trim();
+            let line = cells.next()?.trim();
+            (!name.is_empty() && !line.is_empty()).then(|| (name.to_string(), line.to_string()))
+        })
+        .collect()
+}
+
+/// The text of a rubric's `## heading` section, through to the next `##` — for a rubric that
+/// is the wording of several questions rather than one.
+pub fn rubric_section<'a>(rubric: &'a str, heading: &str) -> Option<&'a str> {
+    let marker = format!("\n## {heading}\n");
+    let start = rubric.find(&marker)? + marker.len();
+    let rest = &rubric[start..];
+    let body = rest.find("\n## ").map_or(rest, |end| &rest[..end]).trim();
+    (!body.is_empty()).then_some(body)
 }
 
 /// The reading standard as installed, falling back to the embedded page — the text the
@@ -1015,6 +1040,33 @@ mod soul_tests {
         ] {
             assert!(READING.contains(axis), "reading.md lost the axis {axis}");
         }
+    }
+
+    /// The typed check asks one question per row of this table, so the rows have to come out
+    /// of it whole: every axis, in order, each with its line.
+    #[test]
+    fn the_axis_table_reads_back_as_names_and_lines() {
+        let axes = axis_lines(READING);
+        let names: Vec<&str> = axes.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["known", "machinery", "repeat", "hard", "defensive", "shape", "unsupported", "buried", "unsaid"]
+        );
+        assert!(axes.iter().all(|(_, line)| !line.is_empty() && !line.contains('|')));
+        assert!(axis_lines("no table here").is_empty());
+    }
+
+    /// Every part of the speech check's wording is a section of its rubric, and a missing one
+    /// reads as missing rather than as the next section's text.
+    #[test]
+    fn the_check_rubric_has_every_section_the_questions_are_built_from() {
+        for heading in ["Frame", "Each axis", "The one choice", "Pass", "Each option"] {
+            let body = rubric_section(judges::CHECK, heading).unwrap_or_else(|| panic!("no `## {heading}`"));
+            assert!(!body.contains("## "), "`## {heading}` ran into the next section");
+        }
+        assert!(rubric_section(judges::CHECK, "Each axis").unwrap().contains("{line}"));
+        assert!(rubric_section(judges::CHECK, "Each option").unwrap().contains("{line}"));
+        assert_eq!(rubric_section(judges::CHECK, "Nowhere"), None);
     }
 
     /// What Cognition sends Reaction is material: 32 of 96 such messages between 09-11 and

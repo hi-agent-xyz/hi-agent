@@ -467,6 +467,7 @@ mod tests {
                 model: "m".into(),
                 cost: Default::default(),
                 budget_ms: 0,
+                answers: None,
             })
         };
         let records = vec![check("update: a", quality::Outcome::Pass), check("update: c", quality::Outcome::Revise)];

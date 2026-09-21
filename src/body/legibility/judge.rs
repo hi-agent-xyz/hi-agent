@@ -1,7 +1,9 @@
 //! One model request from the host — no session, no memory, no tools of its own.
 //!
-//! The check, the audit, the reading of a reply and replay all ask a model the same kind
-//! of question: here is a fixed standard, here is a case, answer. None of them needs a
+//! The record and home gates, the audit, the reading of a reply and replay all ask a model
+//! the same kind of question: here is a fixed standard, here is a case, answer. (The speech
+//! check does not — it asks System One typed questions, in `reaction/legibility/check.rs`.)
+//! None of them needs a
 //! thread, so none of them opens one: a codex session would carry a tool surface, a
 //! compaction policy and a subprocess for what is a single Responses API call. The
 //! endpoint and key are the agent's own ([`AgentConfig`]); the model is a tunable per job,

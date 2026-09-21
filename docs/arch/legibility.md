@@ -189,19 +189,32 @@ than present in it. Measured 2026-09-20 on five days of this install: 154 messag
 115 were routed, so a quarter of the surface was outside every number being read off it — and
 on records, where the audit reads only the close, a skip is final.
 
-### E. Pre-send check — one model request
+### E. Pre-send check — typed questions to System One
 
-**What it is.** A single Responses API request from the host — no session, no memory — to the
-agent's own endpoint ([`judge.rs`](../../src/body/legibility/judge.rs)): the rubric
-([`judges/check.md`](../../src/identity/judges/check.md)) and the standard as a fixed,
-cacheable prefix; then who is reading (the conduct and words-earned blocks Reaction's window
-carries), the recent conversation, this turn's incoming signals, the messages already sent
-this turn, and the candidate. It returns `{verdict, axis, note}`. The model is the
-`speech_check_model` setting, and unset it is the model the agent runs on.
+**What it is.** One System One call from the host — no session, no memory — through the
+[decision capability](../../src/body/capabilities/decision.rs) `hi_system_one` also uses
+([`check.rs`](../../src/body/reaction/legibility/check.rs)). The state is the case: who is
+reading (the conduct and words-earned blocks Reaction's window carries), the recent
+conversation, what was on their screen, this turn's incoming signals, the messages already sent
+this turn and what it put on screen, then the candidate. The questions are one `noul` per axis
+of the standard's table — `unsaid` excepted, since one message cannot show what the turn will
+still say — and one `choice` over `pass` and those axes. Their wording is
+[`judges/check.md`](../../src/identity/judges/check.md) around each axis's line from the table
+as installed, so the table stays the only list of axes. The message is sent back when the
+choice puts less than `speech_check_pass_below` (**0.5**) on `pass`, on the axis the rest of
+the mass leans to most. **Every number the reply carried is recorded with the check**, so the
+cut can move without asking any message again.
+
+**Why not a model writing a verdict.** It did not answer. Five days of shadow on
+`deepseek-flash` kept 187 checks and 162 of them timed out, p50 22 s, because a verdict is ~50
+tokens behind 900–1,500 of thinking. Asked the same axes as typed questions, System One
+answered all 167 audited messages on this install at p50 0.53 s, p99 2.2 s. What that costs is
+the note: System One writes no words, so it cannot quote the ones that fail.
 
 **What it does with a revise.** `hi_say` answers `not sent — <note>`, the same kind of answer
 as *too long* or *they were still talking*. Reaction reads it inside the same turn and
-rewrites or drops the message; no new turn is woken.
+rewrites or drops the message; no new turn is woken. The note is the failing axis's own line
+from the table — the standard the writer already holds, not a sentence for it to repeat.
 
 **Limits that keep it from doing harm:**
 - **one send-back per turn** — whatever Reaction sends after reading one goes out as written,
@@ -210,12 +223,15 @@ rewrites or drops the message; no new turn is woken.
   latency;
 - **a timeout, and any error, sends the message** — silence is the worst failure, and a
   checker must not be able to produce it. Time spent queued behind an earlier message counts.
-  The budget is `speech_check_budget_ms`, **10 s**, and the record gate's is 20 s (§ M): nobody
-  waits on a line. It was 2.5 s for both until 2026-09-20, when five days of shadow turned out
-  to hold 131 verdicts and not one inside the budget — the judge spends 900–1,500 tokens
+  The budget is `speech_check_budget_ms`, **2.5 s**, and the record gate's is 20 s (§ M): nobody
+  waits on a line. Both were 2.5 s until 2026-09-20, when five days of shadow turned out to
+  hold 131 verdicts and not one inside the budget — a reasoning model spends 900–1,500 tokens
   thinking before ~50 tokens of verdict, so the cheapest real case on the fastest model this
-  install has takes 3.3 s, and both of its models are reasoning models. **A budget nothing can
-  meet records `timeout` for everything and teaches nothing**, which is what it did;
+  install has takes 3.3 s. **A budget nothing can meet records `timeout` for everything and
+  teaches nothing**, which is what it did; the speech check's went to 10 s for that judge and
+  came back to 2.5 s with System One, which went past it on 1 of 167. Its upstream was seen
+  unavailable for about a minute and a half on 2026-09-21 (503 and 529): what an outage costs
+  is messages that went out unread, never messages held;
 - **serial within a turn**, so order holds; a message that had already reached the mouth when
   an earlier one was sent back goes back with it, since it may depend on it — and one that
   arrives after the answer is the rewrite;
@@ -226,12 +242,16 @@ rewrites or drops the message; no new turn is woken.
   that what it measures — how far past the budget the answers that miss it land — is not
   censored by its own ceiling.
 
-**Catches:** relay, process narration, replaying the person, repeating an earlier message,
-claiming more than the report supports (09-15: "it's on screen" a minute before it was), a
-third same-shaped message that should be a table.
-**Misses:** measured on 91 labelled messages, a mid-size checker reached 57% precision and
-44% recall. It is a net, not a guarantee; and it cannot read messages later in the turn or
-problems that only exist across turns.
+**Catches:** what can be read off the words — a claim of something on screen with no show this
+turn (09-15: "it's on screen" a minute before it was), a message that announces it repeats.
+**Misses:** most of what the person means by a bad line. Against 20 messages they labelled on
+2026-09-21, its ranking of their send-backs was no better than chance (AUC 0.44–0.55): a
+read-back of their own instruction, a promise to report back, awkward or packed wording all
+mostly passed. The model it replaced reached 57% precision and 44% recall against the audit on
+91 messages and was never measured against the person. **It is taken for the number it
+produces, not for how well it judges** — a check that answers is one there is something to
+learn from and to build better logic on. It is a net, not a guarantee; and it cannot read
+messages later in the turn or problems that only exist across turns.
 
 **Does not:** write words for Reaction (that would be a second mouth), or block on anything
 the person must do.
@@ -568,7 +588,13 @@ because an arrangement the person asked for is not held back over its wording.
 - **Lines**: the triage length (120 characters), the message ceiling (400), the run between
   their messages (3), when a matter becomes a view — all starting values for the replay set
   and the person's corrections to settle. The record line's triage length is the same kind of
-  starting value, and the card draws roughly one line of it.
+  starting value, and the card draws roughly one line of it. So is the check's cut on `pass`
+  (0.5), with the difference that shadow keeps every number it would be cut from.
+- **What the check should ask.** § E asks the table's axes one by one, and that is what System
+  One reads worst: the person's own reasons on 2026-09-21 were "uncomfortable to read" and
+  "wordy — the last sentences add nothing", which the table spreads over `hard`, `known` and
+  `repeat` or does not name at all. Better questions over the same judge are the next work here,
+  not a different judge.
 - **The surface with no verb: a file handed over.** A weekly report, a deck, a page written
   into the drive for the person to open is read by them and passes through nothing. Whether
   the seam is a verb that hands a file over, or the delivering `hi_say` carrying the ref, is
@@ -580,7 +606,7 @@ because an arrangement the person asked for is not held back over its wording.
 - **Whether a full run should reach them some other way.** A `waiting` line written after the
   third message is on Home and the board, and neither pushes. If a need they miss that way
   shows up in the record, the answer is a channel that reaches them, not a fourth message.
-- **Which model and how much context Reaction runs with**, and which model the check uses.
+- **Which model and how much context Reaction runs with.**
 - **The grain for a subject with no signal** — coarse keeps attention, but a reader away from
   the window pays more to follow up.
 - **Calibrating the audit's *owed and left unsaid*** so it excludes what the reader already

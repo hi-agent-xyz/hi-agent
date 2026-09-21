@@ -895,6 +895,7 @@ mod frontier_tests {
             model: "m".into(),
             cost: Default::default(),
             budget_ms: 0,
+            answers: None,
         }));
         let both = render_reading(&with_record);
         assert!(both.contains("3 spoken messages") && both.contains("1 task-record lines"), "{both}");

@@ -620,6 +620,7 @@ async fn do_view_verdict(data_dir: &Path, reviewer: &str, args: &Value) -> Value
         model: reviewer.to_owned(),
         cost: Default::default(),
         budget_ms: 0,
+        answers: None,
     });
     match quality::append(data_dir, &record).await {
         Ok(()) => tool_ok("kept"),

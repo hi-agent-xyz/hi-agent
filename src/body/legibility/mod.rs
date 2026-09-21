@@ -337,6 +337,7 @@ impl Checked {
             model: self.model,
             cost,
             budget_ms: self.budget.as_millis() as u64,
+            answers: None,
         });
         if let Err(err) = quality::append(&self.data_dir, &record).await {
             tracing::warn!(error = %format!("{err:#}"), "could not record a gate's verdict");

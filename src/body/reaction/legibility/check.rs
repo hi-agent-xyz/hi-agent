@@ -1,9 +1,22 @@
-//! The pre-send check: host-code triage (§ D), then one model request (§ E).
+//! The pre-send check: host-code triage (§ D), then one System One call (§ E).
 //!
 //! **It reads a message between `hi_say` accepting it and the floor**, and it can do one of
 //! two things: let it through, or answer `not sent — <note>` so Reaction rewrites or drops
 //! it inside the same turn. It never writes words — a checker that edits is a second mouth
-//! (`docs/arch/arch.md` invariant 1).
+//! (`docs/arch/arch.md` invariant 1) — and its judge cannot: System One answers typed
+//! questions with probabilities, so a send-back's note is the failing axis's own line from
+//! the reading standard.
+//!
+//! **Why System One and not a model writing a verdict.** The model did not answer in time:
+//! five days of shadow on `deepseek-flash` kept 187 checks and 162 of them timed out, p50 22 s,
+//! because a verdict is ~50 tokens behind ~1,000 of thinking. Asked the same axes as typed
+//! questions, System One answered all 167 audited messages on this install in p50 0.53 s,
+//! p99 2.2 s. **What it reads well is the literal** — a claim of something on screen with no
+//! show this turn, a message that says it repeats — and on the person's own labels of 20 of
+//! those messages it ranked their send-backs no better than chance (AUC 0.44–0.55); the model
+//! it replaces was never measured against them at all. So this is the judge that produces a
+//! number to learn from, taken while the logic above it is still being worked out, not one
+//! shown to judge well. **Measured offline only; never watched on a live turn.**
 //!
 //! Every limit here is about not being able to do harm:
 //!
@@ -23,13 +36,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use serde_json::{Map, Value, json};
 use tokio::time::Instant;
 
+use crate::body::capabilities::decision;
 use crate::foundation::config::tunables;
 use crate::mind::memory::quality::{self, Outcome, Scope};
 
-use crate::body::legibility::judge::Judge;
-use crate::body::legibility::{Mode, read_verdict};
+use crate::body::legibility::Mode;
 
 /// Past this many characters a message is more than a short reply, and in scope. A
 /// starting value (`docs/arch/legibility.md` § Open), for the replay set to settle.
@@ -38,23 +52,105 @@ pub(crate) const TRIAGE_CHARS: usize = 120;
 /// How long a live check may hold a message, unless `speech_check_budget_ms` says otherwise.
 /// Past it the message goes out.
 ///
-/// **Ten seconds, and it used to be two and a half.** Someone is waiting on this one, so it is
-/// half the record gate's — but two and a half turned out to be a budget the judge could not
-/// meet at all: measured 2026-09-20, the cheapest real case on this install's fastest model ran
-/// 3.3 seconds, because ~90% of the tokens a verdict costs are spent thinking before it starts.
-/// Ten is long for a pause and short for a model; what it buys is verdicts that exist, which is
-/// what shadow has to have before any of this can be turned on.
-const CHECK_BUDGET_MS: u64 = 10_000;
+/// **Two and a half seconds, which is what it was first meant to be.** Someone is waiting on
+/// this one. It went to ten on 2026-09-20 because a model writing a verdict could not meet
+/// two and a half at all — ~90% of its tokens were thinking before the verdict began. System
+/// One writes no verdict: measured 2026-09-21 on the full case of every audited message on this
+/// install, p50 0.53 s, p99 2.2 s, one of 167 past two and a half.
+const CHECK_BUDGET_MS: u64 = 2_500;
 
-/// The `app_settings` key choosing the mode, the one choosing the model, and the one choosing
-/// how long a verdict may take.
+/// The `app_settings` keys choosing the mode, how long a verdict may take, and how little
+/// `pass` may carry before a message is sent back.
 pub(crate) const MODE_KEY: &str = "speech_check";
-pub(crate) const MODEL_KEY: &str = "speech_check_model";
 pub(crate) const BUDGET_KEY: &str = "speech_check_budget_ms";
+pub(crate) const PASS_BELOW_KEY: &str = "speech_check_pass_below";
+
+/// A message is sent back when the choice puts less than this on `pass`: more likely to fail
+/// an axis than not. A starting value (`docs/arch/legibility.md` § Open) — every answer's
+/// whole mass is recorded, so shadow can show where the cut should sit before it is `on`.
+const PASS_BELOW: f64 = 0.5;
 
 /// How long a live check may hold a message, from its setting.
 pub(crate) fn budget() -> Duration {
     crate::body::legibility::budget(BUDGET_KEY, CHECK_BUDGET_MS)
+}
+
+/// The cut, from its setting.
+fn pass_below() -> f64 {
+    tunables::get(PASS_BELOW_KEY)
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|p| (0.0..=1.0).contains(p))
+        .unwrap_or(PASS_BELOW)
+}
+
+/// The key the one `choice` is asked under; each axis's `noul` is `fails_<axis>`.
+const CHOICE: &str = "axis";
+
+/// What one message is asked, built once a turn from the rubric and the axis table as
+/// installed, with the table's lines kept for the note a send-back carries.
+struct Questions {
+    asked: Map<String, Value>,
+    lines: Vec<(String, String)>,
+}
+
+impl Questions {
+    /// The rubric's wording around the standard's axes (`src/identity/judges/check.md`). `None`
+    /// when a section or the table is missing — then nothing is asked, and the message goes out.
+    fn build(rubric: &str, standard: &str) -> Option<Self> {
+        let part = |heading: &str| crate::identity::rubric_section(rubric, heading);
+        let (frame, each_axis, choice, pass, each_option) =
+            (part("Frame")?, part("Each axis")?, part("The one choice")?, part("Pass")?, part("Each option")?);
+        // `unsaid` is what the turn has not said yet, and one message cannot show that.
+        let lines: Vec<(String, String)> =
+            crate::identity::axis_lines(standard).into_iter().filter(|(axis, _)| axis != "unsaid").collect();
+        if lines.is_empty() {
+            return None;
+        }
+        let mut asked = Map::new();
+        let mut options = Map::new();
+        options.insert("pass".into(), Value::from(pass));
+        for (axis, line) in &lines {
+            let question = each_axis.replace("{line}", line);
+            asked.insert(format!("fails_{axis}"), json!({ "type": "noul", "instructions": format!("{frame} {question}") }));
+            options.insert(axis.clone(), Value::from(each_option.replace("{line}", line)));
+        }
+        asked.insert(
+            CHOICE.into(),
+            json!({ "type": "choice", "instructions": format!("{frame} {choice}"), "criteria": options }),
+        );
+        Some(Self { asked, lines })
+    }
+
+    /// Ask them about one case, inside `limit`.
+    async fn ask(&self, case: String, limit: Duration) -> anyhow::Result<decision::Reply> {
+        tokio::time::timeout(limit, decision::ask(&Value::String(case), &self.asked, None))
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out"))?
+    }
+
+    /// A reply as an outcome, its axis and its note. Sent back when `pass` carries less than
+    /// `pass_below`, on the axis the rest of the mass leans to most, with that axis's line as
+    /// the note. A reply without the choice, or without `pass` in it, cannot be read — an error,
+    /// and an error passes.
+    fn verdict(&self, reply: &decision::Reply, pass_below: f64) -> (Outcome, Option<String>, Option<String>) {
+        let Some(decision::Answer::Choice { probabilities: Some(Value::Object(mass)), .. }) = reply.answers.get(CHOICE)
+        else {
+            return (Outcome::Error, None, None);
+        };
+        let Some(pass) = mass.get("pass").and_then(Value::as_f64) else { return (Outcome::Error, None, None) };
+        if pass >= pass_below {
+            return (Outcome::Pass, None, None);
+        }
+        let leaning = mass
+            .iter()
+            .filter(|(option, _)| option.as_str() != "pass")
+            .filter_map(|(option, p)| Some((option, p.as_f64()?)))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .and_then(|(option, _)| quality::axis(Some(option.as_str())));
+        let Some(axis) = leaning else { return (Outcome::Error, None, None) };
+        let note = self.lines.iter().find(|(a, _)| *a == axis).map(|(_, line)| format!("`{axis}` — it {line}"));
+        (Outcome::Revise, Some(axis), note)
+    }
 }
 
 /// The note a message gets when it was waiting behind one that was sent back.
@@ -115,8 +211,9 @@ impl Brief {
 struct Draft {
     key: String,
     brief: Brief,
-    judge: Option<Judge>,
-    instructions: Arc<String>,
+    /// `None` when there is nothing to ask with — System One is not configured, or the rubric
+    /// lost a section — and then every message goes out unread.
+    questions: Option<Arc<Questions>>,
     sent: Vec<String>,
     shown: Vec<String>,
     /// When this turn's one send-back was answered.
@@ -191,20 +288,16 @@ impl Speech {
     /// Open a turn. Returns its key, which every record about it carries.
     pub async fn begin(&self, brief: Brief) -> String {
         let key = uuid::Uuid::now_v7().to_string();
-        let (judge, instructions) = if self.mode == Mode::Off {
-            (None, String::new())
+        let questions = if self.mode == Mode::Off || !decision::available() {
+            None
         } else {
-            (
-                Judge::resolve(&self.data_dir, MODEL_KEY),
-                crate::identity::judge_instructions(&self.data_dir, crate::identity::judges::CHECK)
-                    .await,
-            )
+            let standard = crate::identity::reading_standard(&self.data_dir).await;
+            Questions::build(crate::identity::judges::CHECK, &standard).map(Arc::new)
         };
         *self.draft.lock().unwrap_or_else(|p| p.into_inner()) = Some(Draft {
             key: key.clone(),
             brief,
-            judge,
-            instructions: Arc::new(instructions),
+            questions,
             sent: Vec::new(),
             shown: Vec::new(),
             sent_back_at: None,
@@ -238,7 +331,7 @@ impl Speech {
         if self.mode == Mode::Off {
             return Review::Pass;
         }
-        let (scope, judge, instructions, case, key) = {
+        let (scope, questions, case, key) = {
             let guard = self.draft.lock().unwrap_or_else(|p| p.into_inner());
             // Outside a turn — the warm-up — nothing reaches anyone anyway.
             let Some(d) = guard.as_ref() else { return Review::Pass };
@@ -262,10 +355,10 @@ impl Speech {
                 );
                 return Review::Pass;
             };
-            let Some(judge) = d.judge.clone() else { return Review::Pass };
+            let Some(questions) = d.questions.clone() else { return Review::Pass };
             let case =
                 d.brief.case(&d.sent, &d.shown, &format!("## The message to judge\n{text}"));
-            (scope, judge, d.instructions.clone(), case, d.key.clone())
+            (scope, questions, case, d.key.clone())
         };
 
         let live = budget();
@@ -275,7 +368,6 @@ impl Speech {
             message: text.to_string(),
             scope,
             mode: self.mode,
-            model: judge.model().to_string(),
             budget: live,
         };
         match self.mode {
@@ -283,25 +375,16 @@ impl Speech {
             Mode::Shadow => {
                 tokio::spawn(async move {
                     let started = Instant::now();
-                    let answer =
-                        judge.ask(&instructions, &case, crate::body::legibility::shadow_limit(live)).await;
-                    record.write(answer, started.elapsed()).await;
+                    let answer = questions.ask(case, crate::body::legibility::shadow_limit(live)).await;
+                    record.write(&questions, answer, started.elapsed()).await;
                 });
                 Review::Pass
             }
             Mode::On => {
                 let started = Instant::now();
-                let answer = match tokio::time::timeout(
-                    live.saturating_sub(arrived.elapsed().min(live)),
-                    judge.ask(&instructions, &case, live),
-                )
-                .await
-                {
-                    Ok(answer) => answer,
-                    Err(_) => Err(anyhow::anyhow!("timed out")),
-                };
+                let answer = questions.ask(case, live.saturating_sub(arrived.elapsed().min(live))).await;
                 let elapsed = started.elapsed();
-                let verdict = record.write(answer, elapsed).await;
+                let verdict = record.write(&questions, answer, elapsed).await;
                 match verdict {
                     Some((Outcome::Revise, note)) => {
                         if let Some(d) =
@@ -337,20 +420,43 @@ struct CheckRecord {
     message: String,
     scope: Scope,
     mode: Mode,
-    model: String,
     budget: Duration,
 }
 
+/// What a check that got no reply records as its model: the capability, since no id came back.
+const NO_REPLY_MODEL: &str = "system-one";
+
 impl CheckRecord {
-    /// Read the answer, record it, and hand back the verdict and note. An answer that
-    /// cannot be read is an error, and an error passes.
+    /// Read the reply, record it with every number it carried, and hand back the verdict and
+    /// note. A reply that cannot be read is an error, and an error passes. A shadow reply slower
+    /// than the live budget is recorded as the timeout live would have been.
     async fn write(
         self,
-        answer: anyhow::Result<crate::body::legibility::judge::Answer>,
+        questions: &Questions,
+        answer: anyhow::Result<decision::Reply>,
         elapsed: Duration,
     ) -> Option<(Outcome, String)> {
-        let (outcome, axis, note) = read_verdict(&answer, elapsed, self.budget, self.mode);
-        let cost = answer.as_ref().map(|a| a.cost).unwrap_or_default();
+        let (outcome, axis, note) = match &answer {
+            Ok(reply) => questions.verdict(reply, pass_below()),
+            Err(err) if format!("{err:#}").contains("timed out") => (Outcome::Timeout, None, None),
+            Err(err) => {
+                tracing::debug!(error = %format!("{err:#}"), "a speech check failed; the message goes through");
+                (Outcome::Error, None, None)
+            }
+        };
+        let outcome = if outcome != Outcome::Timeout && elapsed > self.budget && self.mode == Mode::Shadow {
+            Outcome::Timeout
+        } else {
+            outcome
+        };
+        let (model, cost, answers) = match &answer {
+            Ok(reply) => (
+                reply.model.clone(),
+                quality::Cost { input: reply.usage.input_tokens, output: reply.usage.output_tokens, ..Default::default() },
+                Some(Value::Object(reply.answers.iter().map(|(k, a)| (k.clone(), a.to_json())).collect())),
+            ),
+            Err(_) => (NO_REPLY_MODEL.to_string(), quality::Cost::default(), None),
+        };
         tracing::info!(
             mode = self.mode.as_str(),
             scope = ?self.scope,
@@ -359,9 +465,8 @@ impl CheckRecord {
             latency_ms = elapsed.as_millis() as u64,
             budget_ms = self.budget.as_millis() as u64,
             tokens_in = cost.input,
-            tokens_cached = cost.cached,
             tokens_out = cost.output,
-            tokens_thinking = cost.thinking,
+            model = %model,
             "speech check"
         );
         let record = quality::Record::Check(quality::Check {
@@ -375,9 +480,10 @@ impl CheckRecord {
             axis,
             note: note.clone(),
             latency_ms: elapsed.as_millis() as u64,
-            model: self.model,
+            model,
             cost,
             budget_ms: self.budget.as_millis() as u64,
+            answers,
         });
         let data_dir = self.data_dir;
         tokio::spawn(async move {
@@ -428,7 +534,7 @@ mod tests {
         assert!(case.trim_end().ends_with("部署了，看过，正常"));
     }
 
-    /// A mouth under test must not reach for a model: off reads nothing and passes.
+    /// A mouth under test must not reach for a judge: off reads nothing and passes.
     #[tokio::test]
     async fn off_passes_everything_without_a_turn_or_a_model() {
         let speech = Speech::off();
@@ -463,36 +569,71 @@ mod tests {
         assert!(matches!(speech.review("the rewrite", Instant::now()).await, Review::Pass));
     }
 
+    async fn installed_questions(dir: &std::path::Path) -> Questions {
+        let standard = crate::identity::reading_standard(dir).await;
+        Questions::build(crate::identity::judges::CHECK, &standard).expect("the rubric and the table build")
+    }
+
+    /// One `noul` per axis of the table but `unsaid`, and one `choice` over `pass` and those
+    /// same axes — every one of them carrying its line, none of them a template left unfilled.
     #[tokio::test]
-    async fn a_revise_with_a_note_is_a_send_back_and_anything_unreadable_passes() {
+    async fn every_axis_but_unsaid_is_asked_once_and_offered_once() {
         let dir = tempfile::tempdir().unwrap();
+        let q = installed_questions(dir.path()).await;
+        let axes = ["known", "machinery", "repeat", "hard", "defensive", "shape", "unsupported", "buried"];
+        assert_eq!(q.asked.len(), axes.len() + 1);
+        for axis in axes {
+            let asked = q.asked[&format!("fails_{axis}")]["instructions"].as_str().unwrap();
+            let line = &q.lines.iter().find(|(a, _)| a == axis).unwrap().1;
+            assert!(asked.contains(line.as_str()) && asked.starts_with("The last section"), "{axis}: {asked}");
+        }
+        assert!(!q.asked.contains_key("fails_unsaid"));
+        let options = q.asked[CHOICE]["criteria"].as_object().unwrap();
+        assert_eq!(options.len(), axes.len() + 1);
+        assert!(options.contains_key("pass") && !options.contains_key("unsaid"));
+        assert!(!serde_json::to_string(&q.asked).unwrap().contains("{line}"));
+    }
+
+    fn reply(mass: Value) -> anyhow::Result<decision::Reply> {
+        let mut answers = std::collections::BTreeMap::new();
+        answers.insert(
+            CHOICE.to_string(),
+            decision::Answer::Choice { choice: "x".into(), probabilities: Some(mass), confidence: None },
+        );
+        answers.insert("fails_known".to_string(), decision::Answer::Noul { p: 0.2 });
+        Ok(decision::Reply {
+            model: "jev-1.13.0".into(),
+            answers,
+            usage: decision::Usage { input_tokens: 9000, output_tokens: 230 },
+        })
+    }
+
+    /// Too little on `pass` is a send-back on the axis the rest leans to, noted with that axis's
+    /// line; enough on `pass`, a reply that cannot be read, and no reply at all all pass.
+    #[tokio::test]
+    async fn too_little_on_pass_is_a_send_back_and_anything_unreadable_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let q = installed_questions(dir.path()).await;
         let record = |mode| CheckRecord {
             data_dir: dir.path().to_path_buf(),
             key: "t".into(),
             message: "m".into(),
             scope: Scope::Report,
             mode,
-            model: "judge".into(),
             budget: budget(),
         };
-        let said = |text: &str| {
-            Ok(crate::body::legibility::judge::Answer {
-                text: text.to_string(),
-                cost: Default::default(),
-            })
-        };
-        let revise = r#"{"verdict":"revise","axis":"known","note":"「还没读完」是读的人默认的"}"#;
-        assert_eq!(
-            record(Mode::On).write(said(revise), Duration::from_millis(900)).await,
-            Some((Outcome::Revise, "「还没读完」是读的人默认的".into()))
-        );
-        let bare = r#"{"verdict":"revise","axis":"known","note":""}"#;
-        assert_eq!(record(Mode::On).write(said(bare), Duration::from_millis(900)).await, None);
-        assert_eq!(record(Mode::On).write(said("not json"), Duration::ZERO).await, None);
-        assert_eq!(
-            record(Mode::On).write(Err(anyhow::anyhow!("timed out")), budget()).await,
-            None
-        );
+        let fast = Duration::from_millis(500);
+        let leaning = json!({ "pass": 0.08, "unsupported": 0.80, "known": 0.07, "repeat": 0.05 });
+        let (outcome, note) = record(Mode::On).write(&q, reply(leaning), fast).await.expect("sent back");
+        assert_eq!(outcome, Outcome::Revise);
+        assert!(note.starts_with("`unsupported` — it claims more than"), "{note}");
+
+        let fine = json!({ "pass": 0.84, "known": 0.10, "repeat": 0.06 });
+        assert_eq!(record(Mode::On).write(&q, reply(fine), fast).await, None);
+        let no_pass = json!({ "known": 0.9, "repeat": 0.1 });
+        assert_eq!(record(Mode::On).write(&q, reply(no_pass), fast).await, None);
+        assert_eq!(record(Mode::On).write(&q, Err(anyhow::anyhow!("timed out")), budget()).await, None);
+        assert_eq!(record(Mode::On).write(&q, Err(anyhow::anyhow!("503 no healthy upstream")), fast).await, None);
     }
 
     /// **The budget is a setting, and shadow gets room past it** — a ceiling equal to the
