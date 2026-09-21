@@ -50,7 +50,7 @@ every group from the core down, each one a way back; the whole chart has no trai
 the way it has no zoom control. Stepping in or out opens the new chart whole, cut on its own
 terms, so a branch the whole chart put away is drawn again with the window to itself. Escape is not
 the way out: the host already owns it for retreating the panel ([stage.md](stage.md)). A task
-is not a centre — a card's press is its handoff.
+is not a centre — pressing its card opens the task's own panel over Home (§ *Handing off*).
 
 **It opens whole.** The chart is drawn at the scale that puts all of it in the window — never above
 1x, and **never below the overview scale** below: when what may not be cut still does not fit (every
@@ -99,7 +99,7 @@ Cards are offered hottest first, each tried against the whole chart laid out afr
    took the whole window, and every group was left a bare label. And someone who has never
    grouped anything has nothing *but* ungrouped work, so nothing would ever be cut for them.
    What the core puts away it counts, *18 more on the task board*, and the count opens the board
-   that carries all of it — the same handoff, and the same named loan, as a card's.
+   that carries all of it.
 2. **Every branch with work in hand draws its hottest card that fits**, so a quiet branch still
    says something besides its count. An ungrouped card is a branch of its own. A branch holding
    nothing but history gets no such floor: it is drawn where there is room and not otherwise.
@@ -792,8 +792,25 @@ successful snapshot with a visible stale-source indication.
 
 ## Handing off
 
-A card is a glance and its whole surface is one handoff: a task opens `factory/tasks`,
-an activity opens `factory/workers`. Home owns no detail panel of its own.
+A card is a glance and its whole surface opens the detail — never a second copy of it.
+
+**A task opens its panel over Home.** It is the panel `factory/tasks` draws for a row on its
+board — the same component, which that view exports as `TaskPanel` — so the row is read,
+answered and moved without leaving Home, and a change to the panel is a change in both places.
+A view is compiled one file at a time with only its bare imports kept, so it cannot import a
+sibling by path: Home asks the core for the board's compiled module (`GET /api/views/module`)
+and `import()`s it, which is how the host mounts any view. That read moves no cursor and
+writes no journal line, because reading a module is not going somewhere. The panel's row is
+Home's own ledger row, so a status moved in the panel reaches the card by the read that
+already keeps the chart current.
+
+**An activity opens `factory/workers`**, and the core's count opens `factory/tasks`: *N more*
+is the board's to show, because the board is where all of them are.
+
+Home owns no detail panel of its own. Until 2026-09-21 a task card opened the board and the
+person found the row on it — the loan § *Open* carried as *a view-open carries no target*.
+Borrowing the panel takes that loan back without the targeted view-open it was waiting on,
+which would still have moved the screen off Home.
 
 Narrow views use a connected, recursively expandable flow of the same nodes and edges.
 
@@ -855,15 +872,12 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   would make position learnable, and it is not started. The cost is also paid on every update
   that tips the balance: on the measured one above, five of fifteen surviving nodes changed
   sides. The hop keeps that from sliding across the core; it does not make it happen less.
-- **A view-open carries no target.** `openRef(viewRef)` takes a view reference and
-  nothing else, and `factory/tasks` reads no incoming selection, so a card opens the
-  board rather than its own row on it and the person finds the row themselves. Giving
-  the view-open a target means changing the wire, the server and the view contract
-  together. That work takes this loan back; until it lands the handoff is imprecise.
-  **The panel's reply box makes the loan cost more**: a *Needs you* row can now be answered
-  in the panel it opens, and pressing its card still lands on the board, where the person has
-  to find the row before they can answer it. The conversation's mark on a reply typed on a task waits on the
-  same work, and opens the board too.
+- **A session's card still opens its board, not its row.** `factory/workers` exports no
+  detail and reads no incoming selection, so the person arrives at the board and finds the
+  session themselves. What takes this loan back is the move the task card made:
+  `factory/workers` exporting its detail for Home to draw. The conversation's mark on a reply
+  typed on a task also still opens the board; it is the host's, not a view's, and whether it
+  should draw the same panel is not decided.
 - **`direction` and `decision` have never existed.** This document used to list public
   direction and decisions-needed among what the core presents, and the copy table
   carried strings for both, but `buildHome` has only ever produced `context` and

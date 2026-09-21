@@ -91,7 +91,8 @@ const OPEN = new Set(["todo", "doing", "serving"]);
  * picture, are `factory/tasks`' to show — Home carries no count of them.
  */
 const RESULT_TILES = 6;
-/** Where a card hands off. Home owns no detail of its own. */
+/** Where a card hands off. Home owns no detail of its own: a task's panel is the board's, drawn
+ *  here (`loadTaskPanel`), and a session's is still its board. */
 const TASK_BOARD = "factory/tasks", SESSION_BOARD = "factory/workers";
 /** The status word's tone on a card. Only the word: no wire and no border carries status. */
 const TONE = { todo: "var(--fg-mute)",
@@ -1269,6 +1270,19 @@ export default function Home() {
     return answer.version;
   }, []);
   useWatched(readLedger);
+  // The open panel is held by subject, and its row read from this surface's own ledger on each
+  // render, so a status moved in the panel reaches the card and the panel by the one read. A row
+  // that leaves the ledger closes it.
+  const [openSubject, setOpenSubject] = useState(null);
+  const [TaskPanel, setTaskPanel] = useState(null);
+  // Fetched before anybody presses, so a press does not wait on a compile and a module.
+  useEffect(() => { loadTaskPanel().then((panel) => setTaskPanel(() => panel), () => {}); }, []);
+  const openTask = useCallback((subject) => {
+    loadTaskPanel().then((panel) => { setTaskPanel(() => panel); setOpenSubject(subject); },
+      (error) => console.warn("the task panel did not load", error));
+  }, []);
+  const closeTask = useCallback(() => setOpenSubject(null), []);
+  const openRow = openSubject ? source.tasks.find((task) => task.subject === openSubject) : null;
   const model = useMemo(() => buildHome({ ...source, messages }, now), [source, messages, now]);
   const children = useMemo(() => childIndex(model), [model]);
   const tones = useMemo(() => branchTones(model), [model]);
@@ -1397,7 +1411,7 @@ export default function Home() {
     return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, at: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } };
   };
   const branches = children.get("core")?.filter((n) => n.kind !== "overview") || [];
-  const common = { now, children, openRef, tones, centreOn };
+  const common = { now, children, openRef, openTask, tones, centreOn };
   // One step out from a focused group: the group holding it, or the whole chart.
   const up = path.length > 1 ? path[path.length - 2].id : null;
   return (
@@ -1481,8 +1495,31 @@ export default function Home() {
         </div>}
       </div>
       </div>
+      {/* Over the frame, not in it: the chart's pan and pinch are the viewport's, and a press in
+          the panel is not one of them. A roster that has not landed is not an empty one. */}
+      {openRow && TaskPanel && <TaskPanel task={openRow} onClose={closeTask}
+        workers={sourcesSettled && !errors.includes("workers") ? source.workers : undefined} />}
     </div>
   );
+}
+
+/**
+ * **A task opens the board's own panel, drawn here — not a copy of it.** `factory/tasks` exports
+ * it (`TaskPanel`), and a view is compiled one file at a time with only its bare imports kept, so
+ * it is reached the way the host mounts any view: ask the core for the compiled module
+ * (`GET /api/views/module`, which moves nothing) and `import()` it. Asked once per page; a
+ * failure is forgotten so the next press asks again.
+ */
+let taskPanel = null;
+function loadTaskPanel() {
+  taskPanel ??= getJson(`/api/views/module?ref=${encodeURIComponent(TASK_BOARD)}`)
+    .then(({ module_url }) => import(module_url))
+    .then(({ TaskPanel }) => {
+      if (typeof TaskPanel !== "function") throw new Error(`${TASK_BOARD} exports no TaskPanel`);
+      return TaskPanel;
+    })
+    .catch((error) => { taskPanel = null; throw error; });
+  return taskPanel;
 }
 
 /**
@@ -1680,18 +1717,21 @@ function Core({ node, model, now, more = 0, openRef }) {
  * status word carries the tone a coloured left edge used to, so no side of the border means
  * anything.
  *
- * **Named loan:** the handoff opens the board, not this row on it. `openRef(viewRef)` carries
- * a view ref and nothing else, and `factory/tasks` reads no incoming target, so there is no
- * way to say "open the board focused here" — giving the view-open a target means changing the
- * wire, the server and the view contract together, which is its own piece of work. Until that
- * lands you arrive at the board and find the row yourself. The item that takes this back is
- * a targeted view-open; see `docs/arch/home.md` § Open.
+ * **A task opens its own panel over this surface** — the board's, through `openTask`, so the
+ * row is read, answered and moved without leaving Home.
+ *
+ * **Named loan:** a session opens its board, not its row on it. `openRef(viewRef)` carries a
+ * view ref and nothing else, and `factory/workers` reads no incoming target and exports no
+ * panel, so you arrive at the board and find the session yourself. What takes this back is
+ * the same move the task made — `factory/workers` exporting its detail for this surface to
+ * draw; see `docs/arch/home.md` § Open.
  */
-function Node({ node, now, children, openRef, tones, centreOn, root = false, up = null, more = 0 }) {
+function Node({ node, now, children, openRef, openTask, tones, centreOn, root = false, up = null, more = 0 }) {
   const state = stateOf(node), time = nodeTime(node);
-  const board = node.kind === "task" ? TASK_BOARD : node.kind === "activity" ? SESSION_BOARD : null;
-  // A tile is the one handoff that lands exactly where it points: `openRef` takes a view ref
-  // natively, so this needs none of the targeting the board handoff is waiting on.
+  const open = node.kind === "task" ? () => openTask(node.data.task.subject)
+    : node.kind === "activity" ? () => openRef(SESSION_BOARD) : null;
+  // A tile lands exactly where it points: `openRef` takes a view ref natively, so it needs none
+  // of the targeting the session handoff is waiting on.
   if (node.kind === "result") return <article className="hi-work__tile" data-node-id={node.id} data-kind="result">
     <button onClick={() => openRef(node.data.viewRef)} title={node.title}>
       <img src={node.data.shot} alt={node.title} loading="lazy" />
@@ -1726,7 +1766,7 @@ function Node({ node, now, children, openRef, tones, centreOn, root = false, up 
   </>;
   return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}
     style={{ "--node-tone": TONE[state] || TONE.todo, opacity: emphasis(node, now) }}>
-    {board ? <button className="hi-work__open" onClick={() => openRef(board)}>{body}</button> : body}
+    {open ? <button className="hi-work__open" onClick={open}>{body}</button> : body}
   </article>;
 }
 
@@ -1764,8 +1804,11 @@ const CSS = `
    legibility is in. */
 .hi-work { --bg:var(--bg-0); --work-warm:#ff9393; --work-cool:#86c7ed; --work-ground-l:0.933; --work-ground:oklch(var(--work-ground-l) 0.002 82); --work-ground-warm:oklch(var(--work-ground-l) 0.030 19); --work-ground-cool:oklch(var(--work-ground-l) 0.030 232); --work-line:color-mix(in srgb, var(--fg-mute) 25%, var(--bg)); --work-glint:#ffffffd9; --work-shade:#343c502e; --work-shadow:inset 0 1px 0 var(--work-glint), 0 1px 1px #2028380f, 0 10px 20px -6px #20283826, 0 28px 44px -12px var(--work-shade); --work-shadow-raised:inset 0 1px 0 var(--work-glint), 0 1px 1px #20283812, 0 16px 28px -8px #2028382e, 0 40px 64px -16px var(--work-shade); --work-pane:color-mix(in srgb, var(--bg) 72%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 84%, transparent); --work-frost:blur(18px) saturate(150%); --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background-color:var(--work-ground); background-image:linear-gradient(115deg, var(--work-ground-warm), var(--work-ground-cool)); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
-.hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
-.hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+/* The reset stops at the task panel: it is the board's, drawn over this surface, and its buttons
+   are styled by the board's own rules, which one class each would lose to these. Under :where so
+   the reset weighs what it always did against this surface's own button rules. */
+.hi-work button:where(:not(.hi-tasks *)) { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
+.hi-work button:where(:not(.hi-tasks *)):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .hi-work__error { padding:8px 24px; color:var(--danger); font-size:13px; display:flex; align-items:center; gap:12px; }
 .hi-work__error button { text-decoration:underline; min-height:36px; }
 .hi-work__frame { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }

@@ -9,7 +9,8 @@ http://127.0.0.1:7788, press Run, listen to both takes, and reply ACCEPT or REJE
 
 ## Steps & expected UX
 
-1. **他打开这张卡**(看板上点卡,或者从首页的 *等你处理* 跳到看板再点)。面板顶上是
+1. **他打开这张卡**(看板上点卡,或者首页上点那张 *等你处理* 的卡——同一个面板直接盖在首页上,
+   不跳看板)。面板顶上是
    *等你处理* 那一行原话,链接可点;面板底部、状态按钮上面是一个回复框,占位字写
    "回复这个任务"。
 2. **他打字,回车。** 回车先让给输入法(拼音选字的那个回车不会把半截字母发出去);
@@ -73,4 +74,22 @@ http://127.0.0.1:7788, press Run, listen to both takes, and reply ACCEPT or REJE
 - **真输入法。** 拼音选字的回车、Esc 取消组字,只按 `inputMethodHasKey` 的逻辑推过,没在真
   IME 下按过。
 - **手机宽度**下面板底部回复框 + 按钮的排布。
-- **从首页过来的那一跳**仍然落在整块看板上,不是那一行(`home.md` § Open 记着的欠账)。
+- **macOS 应用的 WKWebView 里**首页上开面板;下面的复测只在 headless Chromium 里看过。
+
+## 复测 2026-09-21 · 从首页点卡,面板盖在首页上(本机,scratch data dir,release 构建,**没有模型**)
+
+首页的任务卡原来跳到整块看板,人再去找那一行。现在点卡是 `factory/tasks` 自己的面板
+(`TaskPanel`),首页经 `GET /api/views/module?ref=factory/tasks` 拿到编译好的模块再 `import()`,
+盖在首页上([`home.md`](../arch/home.md#handing-off) § Handing off)。headless Chrome 过 CDP,1400×900:
+
+- **点卡 → 面板在首页里打开**,看板没挂上;`/api/out/view` 前后都是 `factory/home`——屏幕没被挪走。
+  时间线、链接、主按钮的样式和看板上那个一样(首页的按钮重置没漏进面板)。
+- **在首页的面板里回一句**:*Needs you* 那张卡 → 打字、回车 → 框清空,时间线最上面 *you replied*,
+  记录文件末尾 `replied — the darker green`,日志 `POST /api/in/text … task="answer-the-question"`;
+  首页那张卡从 *Needs you* 变成 *In progress*。
+- **在首页的面板里改状态**:*Tidy the drive* 点 *Start* → 面板上的 chip 和首页卡片一起变成进行中。
+- **Esc 关面板,并且算"处理过了"**(`defaultPrevented`),宿主那边就不会顺手把对话面板也收回去;
+  点遮罩也关。
+- **顺带修掉的一个看板 bug**:回复框的焦点每隔几秒被面板抢走——面板的聚焦 effect 挂在 `onClose` 上,
+  调用方每次渲染都给一个新的箭头函数,看板每 8 秒读一次 roster 就重跑一次 effect。未改的构建
+  (同一份 data,看板上)聚焦回复框 17.5 秒后焦点已不在框里;改后看板和首页上都还在。

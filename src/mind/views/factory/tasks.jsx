@@ -322,10 +322,7 @@ export default function Tasks() {
   // replaces every task on each tick, and a held object would freeze the panel on
   // the version that was open when it was clicked.
   const [openSubject, setOpenSubject] = useState(null);
-  // The record behind the open panel, read separately from the list. Cleared the moment a
-  // different row is opened, so the panel shows a skeleton for a beat rather than the previous
-  // task's account under this task's title.
-  const [record, setRecord] = useState(null);
+  const [record, loadRecord] = useRecord(openSubject);
   // Subject -> the session on it, from the same poll. `null` until the first roster lands, so
   // the board can tell "nobody is on this" from "we have not asked yet" and say neither early.
   const [onIt, setOnIt] = useState(null);
@@ -376,30 +373,6 @@ export default function Tasks() {
     period: TEMPO.ledger,
     hold: () => busyRef.current || dragRef.current,
   });
-
-  // The open record re-reads for the same reason the list does — the agent writes into a task
-  // while somebody has it open, and a panel that froze on the version that was clicked is the
-  // stale reading that reads as authoritative. `subject` restarts it: opening another row is a
-  // fresh mount, not a wait for the next tick.
-  const loadRecord = useCallback(async () => {
-    if (!openSubject) return;
-    const answer = await api.record(openSubject).catch(() => null);
-    // A read that did not come back leaves what is on screen standing, and one that came back
-    // for a row the reader has since left is not this panel's answer.
-    if (answer?.task && answer.task.subject === openSubject) setRecord(answer.task);
-  }, [openSubject]);
-
-  useLive(loadRecord, { period: TEMPO.ledger, subject: openSubject || "" });
-
-  // Opening a row is two reads, and this is the one that has to be immediate.
-  //
-  // Cleared only when the subject really changes: `useLive` restarts on `subject`, so
-  // clearing for a row that is already open throws the record away and schedules nothing to
-  // fetch it again — the panel would sit on "reading" until the next tick came round.
-  const openTask = useCallback((subject) => {
-    setRecord((prev) => (prev?.subject === subject ? prev : null));
-    setOpenSubject(subject);
-  }, []);
 
   const setTaskStatus = async (subject, nextStatus) => {
     setBusy(subject);
@@ -463,13 +436,8 @@ export default function Tasks() {
     : tasks;
   // A task whose status changed out from under the panel keeps the panel open on it —
   // it is still the task someone was reading. Only a task that left the ledger closes it.
-  //
-  // The row is the base and the record lands on top: the row carries the roster join (`onIt`)
-  // and the freshest status, the record carries the account. Until the record arrives the
-  // panel draws from the row alone — every part of it that needs the account already guards
-  // for an absent one, so what is missing for that beat is the prose, not the panel.
   const row = openSubject ? rows.find((task) => task.subject === openSubject) || null : null;
-  const open = row && record?.subject === openSubject ? { ...record, ...row } : row;
+  const open = withRecord(row, record);
 
   return (
     <div className="hi-tasks">
@@ -485,7 +453,7 @@ export default function Tasks() {
             busy={busy}
             drag={drag}
             onStatus={setTaskStatus}
-            onOpen={openTask}
+            onOpen={setOpenSubject}
             onDragStart={startDrag}
             onDragEnd={endDrag}
             onDrop={dropOn}
@@ -495,7 +463,7 @@ export default function Tasks() {
           tasks={rows.filter((task) => CLOSED.includes(task.status))}
           busy={busy}
           drag={drag}
-          onOpen={openTask}
+          onOpen={setOpenSubject}
           onDrop={dropOn}
         />
       </div>
@@ -509,6 +477,75 @@ export default function Tasks() {
           onReplied={loadRecord}
         />
       )}
+    </div>
+  );
+}
+
+// **The record behind an open panel, read separately from the list, and re-read while it is
+// open** for the same reason the list is — the agent writes into a task while somebody has it
+// open, and a panel that froze on the version that was clicked is the stale reading that reads
+// as authoritative. `subject` restarts it: opening another row is a fresh mount, not a wait for
+// the next tick.
+//
+// Returns the record only while it is this subject's, so the panel shows a skeleton for a beat
+// rather than the previous task's account under this task's title — and a row opened twice
+// keeps the record it has, where clearing it would leave nothing scheduled to fetch it again.
+function useRecord(subject) {
+  const [record, setRecord] = useState(null);
+  const load = useCallback(async () => {
+    if (!subject) return;
+    const answer = await api.record(subject).catch(() => null);
+    // A read that did not come back leaves what is on screen standing, and one that came back
+    // for a row the reader has since left is not this panel's answer.
+    if (answer?.task && answer.task.subject === subject) setRecord(answer.task);
+  }, [subject]);
+  useLive(load, { period: TEMPO.ledger, subject: subject || "" });
+  return [subject && record?.subject === subject ? record : null, load];
+}
+
+// The row is the base and the record lands on top: the row carries the roster join (`onIt`)
+// and the freshest status, the record carries the account. Until the record arrives the panel
+// draws from the row alone — every part of it that needs the account already guards for an
+// absent one, so what is missing for that beat is the prose, not the panel.
+function withRecord(row, record) {
+  return row && record ? { ...record, ...row } : row;
+}
+
+/**
+ * **This board's panel, drawn over another surface.** Home opens a task here rather than
+ * handing off to the board: it loads this module by ref (`GET /api/views/module`) and draws
+ * this, so there is one panel and the board is one of two ways into it. See
+ * `docs/arch/home.md` § Handing off.
+ *
+ * `task` is the caller's own `/api/tasks` row, kept fresh by the caller's read of the ledger
+ * exactly as the board keeps its rows, and `workers` the caller's `/api/workers` roster when
+ * it reads one — absent is "not asked yet", which `onItMeta` does not answer. The record, the
+ * status writes and the reply are this panel's, as they are on the board.
+ *
+ * The caller draws it inside a positioned box and it covers that box: the scrim is absolute
+ * for the reason it is on the board.
+ */
+export function TaskPanel({ task, workers, onClose }) {
+  const [record, loadRecord] = useRecord(task.subject);
+  const [busy, setBusy] = useState(false);
+  const row = workers ? { ...task, onIt: bySubject(workers).get(task.subject) || null } : task;
+
+  const setTaskStatus = async (subject, nextStatus) => {
+    setBusy(true);
+    await api.patch(subject, { status: nextStatus }).catch(() => {});
+    setBusy(false);
+  };
+
+  return (
+    <div className="hi-tasks" data-over="">
+      <style>{CSS}</style>
+      <Detail
+        task={withRecord(row, record)}
+        busy={busy}
+        onStatus={setTaskStatus}
+        onClose={onClose}
+        onReplied={loadRecord}
+      />
     </div>
   );
 }
@@ -1784,6 +1821,14 @@ const CSS = `
     overflow: hidden;
     color: var(--fg);
     font-family: var(--font-display);
+  }
+
+  /* The panel alone, over another surface (TaskPanel): the box is only the frame the scrim
+     covers, laid over the whole of the box it is drawn in. */
+  .hi-tasks[data-over] {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
   }
 
   .hi-tasks button {
