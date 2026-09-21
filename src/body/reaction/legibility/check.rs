@@ -8,7 +8,7 @@
 //! the reading standard.
 //!
 //! **Why System One and not a model writing a verdict.** The model did not answer in time:
-//! five days of shadow on `deepseek-flash` kept 187 checks and 162 of them timed out, p50 22 s,
+//! five days of recorded checks on `deepseek-flash` kept 187 and 162 of them timed out, p50 22 s,
 //! because a verdict is ~50 tokens behind ~1,000 of thinking. Asked the same axes as typed
 //! questions, System One answered all 167 audited messages on this install in p50 0.53 s,
 //! p99 2.2 s. **What it reads well is the literal** — a claim of something on screen with no
@@ -28,8 +28,8 @@
 //! - **serial within a turn** — calls queue on one lock, so order holds, and a message that
 //!   was already waiting when an earlier one was sent back goes back with it, since it may
 //!   lean on the one that did not land;
-//! - **shadow by default** — the verdict is recorded and nothing is sent back until its
-//!   latency and its agreement with the audit are known ([`Mode`]).
+//! - **one switch** — `speech_check` = `off` reads nothing; otherwise every message in scope is
+//!   read, and one that fails is sent back.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,8 +42,6 @@ use tokio::time::Instant;
 use crate::body::capabilities::decision;
 use crate::foundation::config::tunables;
 use crate::mind::memory::quality::{self, Outcome, Scope};
-
-use crate::body::legibility::Mode;
 
 /// Past this many characters a message is more than a short reply, and in scope. A
 /// starting value (`docs/arch/legibility.md` § Open), for the replay set to settle.
@@ -59,15 +57,15 @@ pub(crate) const TRIAGE_CHARS: usize = 120;
 /// install, p50 0.53 s, p99 2.2 s, one of 167 past two and a half.
 const CHECK_BUDGET_MS: u64 = 2_500;
 
-/// The `app_settings` keys choosing the mode, how long a verdict may take, and how little
+/// The `app_settings` keys switching it off, choosing how long a verdict may take, and how little
 /// `pass` may carry before a message is sent back.
-pub(crate) const MODE_KEY: &str = "speech_check";
+pub(crate) const SWITCH_KEY: &str = "speech_check";
 pub(crate) const BUDGET_KEY: &str = "speech_check_budget_ms";
 pub(crate) const PASS_BELOW_KEY: &str = "speech_check_pass_below";
 
 /// A message is sent back when the choice puts less than this on `pass`: more likely to fail
 /// an axis than not. A starting value (`docs/arch/legibility.md` § Open) — every answer's
-/// whole mass is recorded, so shadow can show where the cut should sit before it is `on`.
+/// whole mass is recorded, so where the cut should sit is read off what the check actually did.
 const PASS_BELOW: f64 = 0.5;
 
 /// How long a live check may hold a message, from its setting.
@@ -157,9 +155,9 @@ impl Questions {
 const LEANS_ON_IT: &str = "a message sent in the same breath was sent back, and this one may \
 lean on it — read the note on that one first";
 
-/// The speech check's mode, from its setting.
-pub fn mode() -> Mode {
-    Mode::from_setting(tunables::get(MODE_KEY).as_deref())
+/// Whether the speech check reads at all, from its switch.
+pub fn enabled() -> bool {
+    crate::body::legibility::enabled(SWITCH_KEY)
 }
 
 /// What a turn gives its judges to read, gathered when the turn starts.
@@ -237,7 +235,7 @@ pub enum Review {
 /// mouth (which asks about each message).
 pub struct Speech {
     data_dir: PathBuf,
-    mode: Mode,
+    enabled: bool,
     draft: std::sync::Mutex<Option<Draft>>,
     /// The spoken turns since the person last wrote, waiting to be read against their next
     /// message ([`super::audit::on_reply`]).
@@ -248,10 +246,10 @@ pub struct Speech {
 }
 
 impl Speech {
-    pub fn new(data_dir: PathBuf, mode: Mode) -> Self {
+    pub fn new(data_dir: PathBuf, enabled: bool) -> Self {
         Self {
             data_dir,
-            mode,
+            enabled,
             draft: std::sync::Mutex::new(None),
             awaiting: std::sync::Mutex::new(Vec::new()),
             serial: tokio::sync::Mutex::new(()),
@@ -278,17 +276,17 @@ impl Speech {
 
     /// A check that reads nothing, for a mouth under test.
     pub fn off() -> Self {
-        Self::new(PathBuf::new(), Mode::Off)
+        Self::new(PathBuf::new(), false)
     }
 
-    pub fn mode(&self) -> Mode {
-        self.mode
+    pub fn enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Open a turn. Returns its key, which every record about it carries.
     pub async fn begin(&self, brief: Brief) -> String {
         let key = uuid::Uuid::now_v7().to_string();
-        let questions = if self.mode == Mode::Off || !decision::available() {
+        let questions = if !self.enabled || !decision::available() {
             None
         } else {
             let standard = crate::identity::reading_standard(&self.data_dir).await;
@@ -328,7 +326,7 @@ impl Speech {
     /// Decide whether `text` goes on to the floor. `arrived` is when it reached the mouth,
     /// before it queued behind anything.
     pub async fn review(&self, text: &str, arrived: Instant) -> Review {
-        if self.mode == Mode::Off {
+        if !self.enabled {
             return Review::Pass;
         }
         let (scope, questions, case, key) = {
@@ -338,7 +336,7 @@ impl Speech {
             if let Some(at) = d.sent_back_at {
                 // One send-back a turn. What was already waiting when it was answered goes
                 // back with it; what Reaction wrote after reading it goes out.
-                return if arrived < at && self.mode == Mode::On {
+                return if arrived < at {
                     Review::SendBack(LEANS_ON_IT.to_string())
                 } else {
                     Review::Pass
@@ -367,36 +365,18 @@ impl Speech {
             key,
             message: text.to_string(),
             scope,
-            mode: self.mode,
             budget: live,
         };
-        match self.mode {
-            Mode::Off => Review::Pass,
-            Mode::Shadow => {
-                tokio::spawn(async move {
-                    let started = Instant::now();
-                    let answer = questions.ask(case, crate::body::legibility::shadow_limit(live)).await;
-                    record.write(&questions, answer, started.elapsed()).await;
-                });
-                Review::Pass
-            }
-            Mode::On => {
-                let started = Instant::now();
-                let answer = questions.ask(case, live.saturating_sub(arrived.elapsed().min(live))).await;
-                let elapsed = started.elapsed();
-                let verdict = record.write(&questions, answer, elapsed).await;
-                match verdict {
-                    Some((Outcome::Revise, note)) => {
-                        if let Some(d) =
-                            self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_mut()
-                        {
-                            d.sent_back_at = Some(Instant::now());
-                        }
-                        Review::SendBack(note)
-                    }
-                    _ => Review::Pass,
+        let started = Instant::now();
+        let answer = questions.ask(case, live.saturating_sub(arrived.elapsed().min(live))).await;
+        match record.write(&questions, answer, started.elapsed()).await {
+            Some((Outcome::Revise, note)) => {
+                if let Some(d) = self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+                    d.sent_back_at = Some(Instant::now());
                 }
+                Review::SendBack(note)
             }
+            _ => Review::Pass,
         }
     }
 }
@@ -419,7 +399,6 @@ struct CheckRecord {
     key: String,
     message: String,
     scope: Scope,
-    mode: Mode,
     budget: Duration,
 }
 
@@ -428,8 +407,7 @@ const NO_REPLY_MODEL: &str = "system-one";
 
 impl CheckRecord {
     /// Read the reply, record it with every number it carried, and hand back the verdict and
-    /// note. A reply that cannot be read is an error, and an error passes. A shadow reply slower
-    /// than the live budget is recorded as the timeout live would have been.
+    /// note. A reply that cannot be read is an error, and an error passes.
     async fn write(
         self,
         questions: &Questions,
@@ -444,11 +422,6 @@ impl CheckRecord {
                 (Outcome::Error, None, None)
             }
         };
-        let outcome = if outcome != Outcome::Timeout && elapsed > self.budget && self.mode == Mode::Shadow {
-            Outcome::Timeout
-        } else {
-            outcome
-        };
         let (model, cost, answers) = match &answer {
             Ok(reply) => (
                 reply.model.clone(),
@@ -458,7 +431,6 @@ impl CheckRecord {
             Err(_) => (NO_REPLY_MODEL.to_string(), quality::Cost::default(), None),
         };
         tracing::info!(
-            mode = self.mode.as_str(),
             scope = ?self.scope,
             outcome = ?outcome,
             axis = axis.as_deref().unwrap_or(""),
@@ -475,7 +447,6 @@ impl CheckRecord {
             turn: self.key,
             message: self.message,
             scope: self.scope,
-            mode: self.mode.as_str().to_string(),
             outcome,
             axis,
             note: note.clone(),
@@ -509,14 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn the_mode_is_shadow_unless_it_is_set() {
-        assert_eq!(Mode::from_setting(None), Mode::Shadow);
-        assert_eq!(Mode::from_setting(Some(" ON ")), Mode::On);
-        assert_eq!(Mode::from_setting(Some("off")), Mode::Off);
-        assert_eq!(Mode::from_setting(Some("maybe")), Mode::Shadow);
-    }
-
-    #[test]
     fn the_case_puts_the_reader_first_and_the_message_last() {
         let brief = Brief {
             reader: "**赵力** — 简要汇报".into(),
@@ -547,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn an_unconfigured_install_sends_everything() {
         let dir = tempfile::tempdir().unwrap();
-        let speech = Speech::new(dir.path().to_path_buf(), Mode::On);
+        let speech = Speech::new(dir.path().to_path_buf(), true);
         speech.begin(Brief { carries_report: true, ..Brief::default() }).await;
         assert!(matches!(speech.review("部署了", Instant::now()).await, Review::Pass));
         speech.note_sent("部署了");
@@ -561,7 +524,7 @@ mod tests {
     #[tokio::test]
     async fn after_one_send_back_only_what_was_already_waiting_goes_back() {
         let dir = tempfile::tempdir().unwrap();
-        let speech = Speech::new(dir.path().to_path_buf(), Mode::On);
+        let speech = Speech::new(dir.path().to_path_buf(), true);
         let before = Instant::now();
         speech.begin(Brief::default()).await;
         speech.draft.lock().unwrap().as_mut().unwrap().sent_back_at = Some(Instant::now());
@@ -614,34 +577,32 @@ mod tests {
     async fn too_little_on_pass_is_a_send_back_and_anything_unreadable_passes() {
         let dir = tempfile::tempdir().unwrap();
         let q = installed_questions(dir.path()).await;
-        let record = |mode| CheckRecord {
+        let record = || CheckRecord {
             data_dir: dir.path().to_path_buf(),
             key: "t".into(),
             message: "m".into(),
             scope: Scope::Report,
-            mode,
             budget: budget(),
         };
         let fast = Duration::from_millis(500);
         let leaning = json!({ "pass": 0.08, "unsupported": 0.80, "known": 0.07, "repeat": 0.05 });
-        let (outcome, note) = record(Mode::On).write(&q, reply(leaning), fast).await.expect("sent back");
+        let (outcome, note) = record().write(&q, reply(leaning), fast).await.expect("sent back");
         assert_eq!(outcome, Outcome::Revise);
         assert!(note.starts_with("`unsupported` — it claims more than"), "{note}");
 
         let fine = json!({ "pass": 0.84, "known": 0.10, "repeat": 0.06 });
-        assert_eq!(record(Mode::On).write(&q, reply(fine), fast).await, None);
+        assert_eq!(record().write(&q, reply(fine), fast).await, None);
         let no_pass = json!({ "known": 0.9, "repeat": 0.1 });
-        assert_eq!(record(Mode::On).write(&q, reply(no_pass), fast).await, None);
-        assert_eq!(record(Mode::On).write(&q, Err(anyhow::anyhow!("timed out")), budget()).await, None);
-        assert_eq!(record(Mode::On).write(&q, Err(anyhow::anyhow!("503 no healthy upstream")), fast).await, None);
+        assert_eq!(record().write(&q, reply(no_pass), fast).await, None);
+        assert_eq!(record().write(&q, Err(anyhow::anyhow!("timed out")), budget()).await, None);
+        assert_eq!(record().write(&q, Err(anyhow::anyhow!("503 no healthy upstream")), fast).await, None);
     }
 
-    /// **The budget is a setting, and shadow gets room past it** — a ceiling equal to the
-    /// budget censors the one number five days of shadow were supposed to produce.
+    /// The budget is a setting, read per call, and unset it is the check's own.
     #[test]
-    fn the_budget_comes_from_its_setting_and_shadow_sees_past_it() {
-        use crate::body::legibility::{budget as read_budget, shadow_limit};
+    fn the_budget_comes_from_its_setting() {
+        use crate::body::legibility::budget as read_budget;
         assert_eq!(read_budget("nothing-is-set-here", 10_000), Duration::from_secs(10));
-        assert_eq!(shadow_limit(Duration::from_secs(10)), Duration::from_secs(20));
+        assert_eq!(budget(), Duration::from_millis(CHECK_BUDGET_MS));
     }
 }

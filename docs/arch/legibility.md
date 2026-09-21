@@ -205,8 +205,8 @@ choice puts less than `speech_check_pass_below` (**0.5**) on `pass`, on the axis
 the mass leans to most. **Every number the reply carried is recorded with the check**, so the
 cut can move without asking any message again.
 
-**Why not a model writing a verdict.** It did not answer. Five days of shadow on
-`deepseek-flash` kept 187 checks and 162 of them timed out, p50 22 s, because a verdict is ~50
+**Why not a model writing a verdict.** It did not answer. Five days on `deepseek-flash`
+recorded 187 checks and 162 of them timed out, p50 22 s, because a verdict is ~50
 tokens behind 900–1,500 of thinking. Asked the same axes as typed questions, System One
 answered all 167 audited messages on this install at p50 0.53 s, p99 2.2 s. What that costs is
 the note: System One writes no words, so it cannot quote the ones that fail.
@@ -224,8 +224,8 @@ from the table — the standard the writer already holds, not a sentence for it 
 - **a timeout, and any error, sends the message** — silence is the worst failure, and a
   checker must not be able to produce it. Time spent queued behind an earlier message counts.
   The budget is `speech_check_budget_ms`, **2.5 s**, and the record gate's is 20 s (§ M): nobody
-  waits on a line. Both were 2.5 s until 2026-09-20, when five days of shadow turned out to
-  hold 131 verdicts and not one inside the budget — a reasoning model spends 900–1,500 tokens
+  waits on a line. Both were 2.5 s until 2026-09-20, when five days of recorded checks held
+  131 verdicts and not one inside the budget — a reasoning model spends 900–1,500 tokens
   thinking before ~50 tokens of verdict, so the cheapest real case on the fastest model this
   install has takes 3.3 s. **A budget nothing can meet records `timeout` for everything and
   teaches nothing**, which is what it did; the speech check's went to 10 s for that judge and
@@ -235,12 +235,9 @@ from the table — the standard the writer already holds, not a sentence for it 
 - **serial within a turn**, so order holds; a message that had already reached the mouth when
   an earlier one was sent back goes back with it, since it may depend on it — and one that
   arrives after the answer is the rewrite;
-- **shadow first** — the `speech_check` setting is `shadow` unless set to `on` or `off`:
-  every in-scope message is judged on its own task and recorded, with what the check would
-  have cost, and nothing is sent back until that latency and the check's agreement with the
-  audit are known. A shadow read is given **twice the live budget** before it is abandoned, so
-  that what it measures — how far past the budget the answers that miss it land — is not
-  censored by its own ceiling.
+- **one switch** — `speech_check` set to `off` reads nothing; otherwise every in-scope message
+  is read, and one that fails is sent back. Every check is recorded with what it cost and what
+  it answered (§ I), so what a different cut would have done is read off the checks that ran.
 
 **Catches:** what can be read off the words — a claim of something on screen with no show this
 turn (09-15: "it's on screen" a minute before it was), a message that announces it repeats.
@@ -501,8 +498,8 @@ derived against the same problem:
 - **`not recorded — <note>`, once.** The worker rewrites, and the second attempt is written
   whatever it says. Speech can be dropped; a record cannot. An unrecorded fact is worse than
   an ugly one, and a gate able to lose facts would be a worse failure than the one it fixes.
-- **Fail open, shadow first** — `record_check`, the ladder `speech_check` is already on. A
-  timeout writes the line. Its budget is `record_check_budget_ms`, **20 s** — twice speech's,
+- **Fail open** — `record_check` set to `off` is its one switch, as `speech_check` is
+  speech's. A timeout writes the line. Its budget is `record_check_budget_ms`, **20 s** — twice speech's,
   because the only thing a record gate holds is the worker writing the line (§ E for why both
   moved off 2.5 s).
 - **What triage passes is recorded as a `skipped`** (§ D), and on this surface that matters
@@ -526,7 +523,7 @@ a line never written is invisible forever — worse than the long one it replace
 record's whole job is that somebody downstream was not in the room. Speech already carries
 this counterweight (*owed and left unsaid*, § I, so shorter never passes for better); the
 record surface needs its own or the gate will be measured as a success while making records
-thinner. It is the one number to watch first when the gate leaves shadow.
+thinner. It is the one number to watch first on this gate.
 
 The read's rubric is `judges/record_audit.md`; the `record_audit` setting turns it off and
 `record_audit_model` picks its model, as speech's audit does. What it writes is an audit like
@@ -552,7 +549,7 @@ written by one task manager in one call that replaces the whole arrangement — 
 the record's (§ M), pointed at names: every label or note that is new or changed since the
 standing arrangement is read, with `judges/home.md` and the reader's conduct, before it lands.
 A label is a name in the person's own words; a note is one line on what the grouping was based
-on. `home_check` is the ladder (shadow first) and `home_check_model` the model; a refused
+on. `home_check` is its switch and `home_check_model` the model; a refused
 arrangement is answered `not arranged — <note>` once, and the next one lands whatever it says,
 because an arrangement the person asked for is not held back over its wording.
 
@@ -565,6 +562,7 @@ because an arrangement the person asked for is not held back over its wording.
 | **The judges' rubrics are prose in `src/identity/judges/`** | What counts as a failing line is judgment, and judgment lives where it can be read whole; the code only sends it |
 | **The check can send back, never rewrite** | A checker that edits words is a second mouth ([invariant 1](arch.md#invariants)); `hi_say` already answers calls with refusals Reaction acts on |
 | **Fail open** | A timeout or error sends the message. The one failure nobody reports is silence |
+| **A gate is on or off; there is no recording-only stage** | Every gate was built to record what it would have done and send nothing back until its numbers were known. Five days of that on speech kept 187 checks, 162 of them timeouts, and no verdict ever reached anyone. The checks that run are recorded anyway, so a stage that only records is the same numbers plus a second path (2026-09-21) |
 | **Conduct: people present first, never cut** | Name order plus a shared 3,000-character cap delivered 3,023 of 16,425 characters and cut the owner's own section |
 | **Grain lives in the existing per-subject read** | Reflection already learns what the agent's words earn per subject; a second store would be structure with the same job |
 | **No derived load score** | The bar's float is judged from facts in the window; the host's presence estimate was deleted because nothing real could produce it ([`host.md`](host.md)) |
@@ -589,7 +587,7 @@ because an arrangement the person asked for is not held back over its wording.
   their messages (3), when a matter becomes a view — all starting values for the replay set
   and the person's corrections to settle. The record line's triage length is the same kind of
   starting value, and the card draws roughly one line of it. So is the check's cut on `pass`
-  (0.5), with the difference that shadow keeps every number it would be cut from.
+  (0.5), with the difference that every check keeps the numbers it was cut from.
 - **What the check should ask.** § E asks the table's axes one by one, and that is what System
   One reads worst: the person's own reasons on 2026-09-21 were "uncomfortable to read" and
   "wordy — the last sentences add nothing", which the table spreads over `hard`, `known` and

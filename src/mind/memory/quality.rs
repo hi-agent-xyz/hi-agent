@@ -4,7 +4,7 @@
 //! **One JSON line per judgment, a file per day, append-only**, under
 //! [`layout::quality_dir`]. Three kinds, each written by the moment that has the answer:
 //!
-//! - a **check** — the pre-send read of one message, in shadow or live, with what it cost;
+//! - a **check** — the pre-send read of one message, with what it cost;
 //! - an **audit** — the independent read of a whole spoken turn after it ended;
 //! - a **reception** — what the person's next message said about *how* the last turns were
 //!   put, which is the one judgment the reader makes rather than a model.
@@ -141,15 +141,12 @@ pub struct Check {
     pub turn: String,
     pub message: String,
     pub scope: Scope,
-    /// `shadow` (judged, never sent back) or `on`.
-    pub mode: String,
     pub outcome: Outcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub axis: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// From the moment the message reached the mouth to the verdict. In shadow this is
-    /// what the check *would* have cost.
+    /// From the moment the message reached the mouth to the verdict.
     pub latency_ms: u64,
     pub model: String,
     /// What the request cost upstream, which is the only thing that explains the latency
@@ -534,7 +531,6 @@ mod tests {
             turn: turn.into(),
             message: message.into(),
             scope: Scope::Report,
-            mode: "shadow".into(),
             outcome,
             axis: None,
             note: None,

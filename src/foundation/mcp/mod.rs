@@ -610,7 +610,6 @@ async fn do_view_verdict(data_dir: &Path, reviewer: &str, args: &Value) -> Value
         turn: view_ref.to_owned(),
         message: view_ref.to_owned(),
         scope: quality::Scope::Review,
-        mode: "on".into(),
         outcome,
         axis: quality::axis(arg_text(args, "axis")),
         note,

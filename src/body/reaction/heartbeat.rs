@@ -887,7 +887,6 @@ mod frontier_tests {
             turn: "resume".into(),
             message: "update: …".into(),
             scope: quality::Scope::Long,
-            mode: "shadow".into(),
             outcome: quality::Outcome::Revise,
             axis: Some("machinery".into()),
             note: Some("「写手」「挂屏」是我们的词".into()),

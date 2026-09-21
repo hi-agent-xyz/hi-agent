@@ -15,7 +15,7 @@
 //! write fewer lines rather than shorter ones, and a line never written is invisible forever. So
 //! the close reads the record against what the sessions that did the work reported, and what
 //! those reports say changed something for the person and the record never carries is *owed and
-//! left unsaid* — the number to watch before `record_check` leaves shadow.
+//! left unsaid* — the number that says whether the gate costs more than it catches.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

@@ -9,10 +9,10 @@ use super::{Gate, Review, gate};
 use crate::foundation::server::home::{Group, Grouping};
 use crate::mind::memory::quality::{Scope, Surface};
 
-/// The home screen's gate: `home_check` chooses its mode, `home_check_model` its model.
+/// The home screen's gate: `home_check` switches it off, `home_check_model` chooses its model.
 pub(crate) const GATE: Gate = Gate {
     surface: Surface::Home,
-    mode_key: "home_check",
+    switch_key: "home_check",
     model_key: "home_check_model",
     budget_key: "home_check_budget_ms",
     rubric: crate::identity::judges::HOME,

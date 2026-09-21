@@ -1202,7 +1202,7 @@ pub async fn start(
     let vendor = Arc::new(Vendor::new(vendor_down_after(), backoff_base()));
     let speech = Arc::new(legibility::Speech::new(
         memory.data_dir().to_path_buf(),
-        legibility::check::mode(),
+        legibility::check::enabled(),
     ));
     let reaction = Reaction {
         inner: Arc::new(ReactionInner {
@@ -2500,7 +2500,7 @@ const JUDGED_RECENT_CHARS: usize = 6_000;
 async fn open_speech(reaction: &Reaction, batch: &[LoopInput], on_screen: &str) {
     let speech = &reaction.inner.speech;
     let audited = legibility::audit::enabled();
-    if speech.mode() == legibility::Mode::Off && !audited {
+    if !speech.enabled() && !audited {
         return;
     }
     let data_dir = reaction.inner.memory.data_dir().to_path_buf();

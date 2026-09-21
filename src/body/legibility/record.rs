@@ -1,5 +1,5 @@
 //! The gate on a task's record (`docs/arch/legibility.md` § M): triage in code, one model
-//! request, `not recorded — <note>` once, fail open, shadow first.
+//! request, `not recorded — <note>` once, fail open.
 //!
 //! **It reads a line, not a record.** A line is short, the worker writes it holding
 //! everything it is about, and the card on the board draws one line of it — so a send-back
@@ -15,10 +15,10 @@ use super::{Gate, Review, gate};
 use crate::mind::memory::quality::{Scope, Surface};
 use crate::mind::memory::tasks::{Note, Task};
 
-/// The record's gate: `record_check` chooses its mode, `record_check_model` its model.
+/// The record's gate: `record_check` switches it off, `record_check_model` chooses its model.
 pub(crate) const GATE: Gate = Gate {
     surface: Surface::Record,
-    mode_key: "record_check",
+    switch_key: "record_check",
     model_key: "record_check_model",
     budget_key: "record_check_budget_ms",
     rubric: crate::identity::judges::RECORD,

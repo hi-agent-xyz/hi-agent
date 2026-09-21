@@ -459,7 +459,6 @@ mod tests {
                 turn: "s".into(),
                 message: message.into(),
                 scope: quality::Scope::Long,
-                mode: "shadow".into(),
                 outcome,
                 axis: None,
                 note: None,

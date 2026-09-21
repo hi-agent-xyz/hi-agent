@@ -3,7 +3,7 @@
 //! What a person reads is the product, and the writer cannot see its own defaults, so this
 //! is where what Reaction writes is read by something other than Reaction:
 //!
-//! - [`check`] — triage in code, then one model request, between `hi_say` and the floor
+//! - [`check`] — triage in code, then one System One call, between `hi_say` and the floor
 //!   (§ D, § E);
 //! - [`audit`] — every spoken turn read as it ends, and the person's next message read for
 //!   whether it corrects how things were put (§ G);
@@ -19,5 +19,4 @@ pub mod audit;
 pub mod check;
 pub mod replay;
 
-pub use crate::body::legibility::Mode;
 pub use check::{Brief, Speech};

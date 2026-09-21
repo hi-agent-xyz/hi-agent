@@ -3,11 +3,11 @@
 //!
 //! The standard is bound to what a person reads, never to a verb, so the machinery that
 //! holds it cannot live inside one rung. [`judge`] is one model request with the reading
-//! standard as its prefix; [`Mode`] is the ladder every gate climbs (off, shadow, on);
-//! [`read_verdict`] is how any judge's answer becomes an outcome. What stays with a surface
-//! is only what reads that surface's own facts: speech's triage reads a turn and lives with
-//! Reaction ([`crate::body::reaction::legibility`]); a record's reads a line and lives in
-//! [`record`].
+//! standard as its prefix; [`enabled`] is every gate's one switch — a gate reads, and sends
+//! back what fails, unless its setting is `off`; [`read_verdict`] is how any judge's answer
+//! becomes an outcome. What stays with a surface is only what reads that surface's own facts:
+//! speech's triage reads a turn and lives with Reaction ([`crate::body::reaction::legibility`]);
+//! a record's reads a line and lives in [`record`].
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -29,33 +29,14 @@ pub mod record_replay;
 
 use judge::json_object;
 
-/// How far a gate is allowed to go.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    /// Nothing is read.
-    Off,
-    /// Read and recorded; nothing is sent back. The default until the numbers say otherwise.
-    Shadow,
-    /// Read, recorded, and sent back when it fails.
-    On,
+/// Whether the gate whose switch is `key` reads at all: yes unless the setting is `off`. Read
+/// per call rather than at startup, so turning it costs no restart.
+pub fn enabled(key: &str) -> bool {
+    !is_off(tunables::get(key).as_deref())
 }
 
-impl Mode {
-    pub fn from_setting(value: Option<&str>) -> Self {
-        match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-            Some("off") => Mode::Off,
-            Some("on") => Mode::On,
-            _ => Mode::Shadow,
-        }
-    }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Mode::Off => "off",
-            Mode::Shadow => "shadow",
-            Mode::On => "on",
-        }
-    }
+fn is_off(value: Option<&str>) -> bool {
+    value.is_some_and(|v| v.trim().eq_ignore_ascii_case("off"))
 }
 
 #[derive(Deserialize)]
@@ -70,15 +51,9 @@ struct Verdict {
 
 /// A judge's answer as an outcome, its axis and its note. An answer that cannot be read is an
 /// error, and an error passes; a send-back with no note is not one, because there is nothing
-/// for the writer to act on. A shadow verdict slower than `live_limit` is recorded as the
-/// timeout live would have been.
-pub(crate) fn read_verdict(
-    answer: &anyhow::Result<judge::Answer>,
-    elapsed: Duration,
-    live_limit: Duration,
-    mode: Mode,
-) -> (Outcome, Option<String>, Option<String>) {
-    let (outcome, axis, note) = match answer {
+/// for the writer to act on.
+pub(crate) fn read_verdict(answer: &anyhow::Result<judge::Answer>) -> (Outcome, Option<String>, Option<String>) {
+    match answer {
         Ok(answer) => match json_object::<Verdict>(&answer.text) {
             Some(v) if v.verdict.trim().eq_ignore_ascii_case("revise") => {
                 let note = v.note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
@@ -104,13 +79,7 @@ pub(crate) fn read_verdict(
             tracing::debug!(error = %format!("{err:#}"), "a legibility check failed; the text goes through");
             (Outcome::Error, None, None)
         }
-    };
-    let outcome = if outcome != Outcome::Timeout && elapsed > live_limit && mode == Mode::Shadow {
-        Outcome::Timeout
-    } else {
-        outcome
-    };
-    (outcome, axis, note)
+    }
 }
 
 #[derive(Deserialize)]
@@ -159,11 +128,11 @@ pub(crate) fn read_audit(
 }
 
 /// One gate at one seam that is not speech's (`docs/arch/legibility.md` § M, § *Home*): which
-/// surface it judges, the settings that choose its mode and its model, and its rubric. Speech's
-/// check reads a turn and lives with Reaction; every other gate reads a write and is this.
+/// surface it judges, the settings that switch it off and choose its model, and its rubric.
+/// Speech's check reads a turn and lives with Reaction; every other gate reads a write and is this.
 pub(crate) struct Gate {
     pub surface: Surface,
-    pub mode_key: &'static str,
+    pub switch_key: &'static str,
     pub model_key: &'static str,
     pub budget_key: &'static str,
     pub rubric: &'static str,
@@ -190,22 +159,15 @@ pub(crate) fn budget(key: &str, fallback: u64) -> Duration {
     Duration::from_millis(ms)
 }
 
-/// How long a shadow run may take and still record a verdict: twice the live budget, so what
-/// shadow measures includes how far past the budget the answers that miss it actually land.
-/// A ceiling equal to the budget would censor exactly the number being looked for.
-pub(crate) fn shadow_limit(budget: Duration) -> Duration {
-    budget * 2
-}
-
 pub enum Review {
     Pass,
     SendBack(String),
 }
 
 impl Gate {
-    /// Its mode, from its setting. Shadow unless set otherwise.
-    pub fn mode(&self) -> Mode {
-        Mode::from_setting(tunables::get(self.mode_key).as_deref())
+    /// Whether it reads at all, from its switch.
+    pub fn enabled(&self) -> bool {
+        enabled(self.switch_key)
     }
 
     /// How long it may hold a write, from its setting.
@@ -236,8 +198,7 @@ pub(crate) async fn gate(
     case: String,
     message: String,
 ) -> Review {
-    let mode = gate.mode();
-    if mode == Mode::Off {
+    if !gate.enabled() {
         return Review::Pass;
     }
     let held = (gate.surface, writer.to_owned(), key.to_owned());
@@ -259,36 +220,22 @@ pub(crate) async fn gate(
         key: key.to_owned(),
         message,
         scope,
-        mode,
         model: judge.model().to_string(),
         budget: live,
     };
-    match mode {
-        Mode::Off => Review::Pass,
-        Mode::Shadow => {
-            tokio::spawn(async move {
-                let started = Instant::now();
-                let answer = judge.ask(&instructions, &case, shadow_limit(live)).await;
-                checked.write(answer, started.elapsed()).await;
-            });
-            Review::Pass
-        }
-        Mode::On => {
-            let started = Instant::now();
-            let answer = match tokio::time::timeout(live, judge.ask(&instructions, &case, live)).await {
-                Ok(answer) => answer,
-                Err(_) => Err(anyhow::anyhow!("timed out")),
-            };
-            match checked.write(answer, started.elapsed()).await {
-                (Outcome::Revise, Some(note)) => {
-                    if let Ok(mut s) = sent_back().lock() {
-                        s.insert(held);
-                    }
-                    Review::SendBack(note)
-                }
-                _ => Review::Pass,
+    let started = Instant::now();
+    let answer = match tokio::time::timeout(live, judge.ask(&instructions, &case, live)).await {
+        Ok(answer) => answer,
+        Err(_) => Err(anyhow::anyhow!("timed out")),
+    };
+    match checked.write(answer, started.elapsed()).await {
+        (Outcome::Revise, Some(note)) => {
+            if let Ok(mut s) = sent_back().lock() {
+                s.insert(held);
             }
+            Review::SendBack(note)
         }
+        _ => Review::Pass,
     }
 }
 
@@ -298,7 +245,6 @@ struct Checked {
     key: String,
     message: String,
     scope: Scope,
-    mode: Mode,
     model: String,
     budget: Duration,
 }
@@ -306,11 +252,10 @@ struct Checked {
 impl Checked {
     /// Read the answer, record it, and hand back the outcome and note.
     async fn write(self, answer: anyhow::Result<judge::Answer>, elapsed: Duration) -> (Outcome, Option<String>) {
-        let (outcome, axis, note) = read_verdict(&answer, elapsed, self.budget, self.mode);
+        let (outcome, axis, note) = read_verdict(&answer);
         let cost = answer.as_ref().map(|a| a.cost).unwrap_or_default();
         tracing::info!(
             surface = ?self.surface,
-            mode = self.mode.as_str(),
             scope = ?self.scope,
             outcome = ?outcome,
             axis = axis.as_deref().unwrap_or(""),
@@ -329,7 +274,6 @@ impl Checked {
             turn: self.key,
             message: self.message,
             scope: self.scope,
-            mode: self.mode.as_str().to_string(),
             outcome,
             axis,
             note: note.clone(),
@@ -376,4 +320,20 @@ pub(crate) fn hold_for_test(surface: Surface, writer: &str, key: &str) {
 #[cfg(test)]
 pub(crate) fn held_for_test(surface: Surface, writer: &str, key: &str) -> bool {
     sent_back().lock().unwrap().contains(&(surface, writer.to_owned(), key.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A gate has one switch: it reads unless the setting says `off`, and nothing else a
+    /// setting could say — `on`, `shadow`, a typo — turns it into anything but reading.
+    #[test]
+    fn a_gate_reads_unless_its_switch_is_off() {
+        assert!(!is_off(None));
+        assert!(is_off(Some("off")) && is_off(Some(" OFF ")));
+        for value in ["on", "shadow", "maybe", ""] {
+            assert!(!is_off(Some(value)), "{value:?} is not off");
+        }
+    }
 }
