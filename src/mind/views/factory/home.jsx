@@ -1442,14 +1442,28 @@ function Branch({ nodes, parent, ...props }) {
 }
 
 const CSS = `
-/* **The wash is what the cards are frosted against, so it has to be a colour and not a hint.**
-   It was one 115deg sweep mixing 9% and 12% of the two tints into the page colour, which on a
-   white theme left the middle of the window flat white — and the middle is where the core and
-   most of the cards sit, so the glass had nothing to pick up and read as plain white boxes on
-   plain white. Two corner-anchored radials over a gentler sweep put the colour where the
-   drawing is and keep it a wash: strong enough to see the blur bend it, far too soft to
-   compete with a title. */
-.hi-work { --bg:var(--bg-0); --work-warm:#ff9393; --work-cool:#86c7ed; --work-wash-warm:30%; --work-wash-cool:34%; --work-sweep-warm:8%; --work-sweep-cool:9%; --work-line:color-mix(in srgb, var(--fg-mute) 25%, var(--bg)); --work-glint:#ffffffd9; --work-shade:#343c502e; --work-shadow:inset 0 1px 0 var(--work-glint), 0 1px 1px #2028380f, 0 10px 20px -6px #20283826, 0 28px 44px -12px var(--work-shade); --work-shadow-raised:inset 0 1px 0 var(--work-glint), 0 1px 1px #20283812, 0 16px 28px -8px #2028382e, 0 40px 64px -16px var(--work-shade); --work-pane:color-mix(in srgb, var(--bg) 72%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 84%, transparent); --work-frost:blur(18px) saturate(150%); --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background:radial-gradient(78% 62% at 2% 0%, color-mix(in srgb, var(--work-warm) var(--work-wash-warm), transparent), transparent 72%), radial-gradient(80% 66% at 100% 100%, color-mix(in srgb, var(--work-cool) var(--work-wash-cool), transparent), transparent 72%), linear-gradient(115deg, color-mix(in srgb, var(--work-warm) var(--work-sweep-warm), var(--bg)), var(--bg) 52%, color-mix(in srgb, var(--work-cool) var(--work-sweep-cool), var(--bg))); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
+/* **The ground is a surface of its own, not the page colour with a hint of tint mixed in.**
+   A card is --bg at 84–90% opacity, so a card's lightness is pinned to --bg, and the whole
+   job of what lies behind it is therefore to *not be --bg* anywhere a card can land. The wash
+   this replaces was built the other way round: two corner radials and a 115deg sweep, every one
+   of them mixing a few percent of tint **into** --bg, and the sweep's own midpoint left at a
+   literal var(--bg). The radials are anchored top-left and bottom-right and fall to zero at
+   72%, the sweep runs the same diagonal — all three layers on one axis — so over the middle of
+   the drawing nothing reaches and the sweep is sitting on its midpoint. There the ground was
+   --bg, the card was --bg, and a card's contrast against what it sat on was exactly 0%.
+   Measured over the ten cards of a real arrangement: |Weber| ran 7% to 42%, one of ten over 40%.
+
+   So the two jobs are split, and that split is the whole of this. --work-ground is a colour
+   chosen to be a step away from --bg — away from the *card*, which means lighter on ink and
+   darker on paper — and it alone carries legibility. The sweep laid over it carries character
+   and nothing else: both its ends are the same oklch L as the ground, so hue swings while
+   lightness does not, and what a card gets is a constant instead of a function of where it sits.
+   Ten of ten clear 40% now, between -52% and -54% across the whole sweep.
+
+   Ground is the background-color and sweep is the background-image deliberately: if the
+   gradient ever fails to parse, what survives is the flat ground, which is the half that
+   legibility is in. */
+.hi-work { --bg:var(--bg-0); --work-warm:#ff9393; --work-cool:#86c7ed; --work-ground-l:0.933; --work-ground:oklch(var(--work-ground-l) 0.002 82); --work-ground-warm:oklch(var(--work-ground-l) 0.030 19); --work-ground-cool:oklch(var(--work-ground-l) 0.030 232); --work-line:color-mix(in srgb, var(--fg-mute) 25%, var(--bg)); --work-glint:#ffffffd9; --work-shade:#343c502e; --work-shadow:inset 0 1px 0 var(--work-glint), 0 1px 1px #2028380f, 0 10px 20px -6px #20283826, 0 28px 44px -12px var(--work-shade); --work-shadow-raised:inset 0 1px 0 var(--work-glint), 0 1px 1px #20283812, 0 16px 28px -8px #2028382e, 0 40px 64px -16px var(--work-shade); --work-pane:color-mix(in srgb, var(--bg) 72%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 84%, transparent); --work-frost:blur(18px) saturate(150%); --work-branch-l:0.62; --work-label-l:0.48; --work-branch-c:0.1; height:100%; min-height:0; position:relative; display:flex; flex-direction:column; color:var(--fg); background-color:var(--work-ground); background-image:linear-gradient(115deg, var(--work-ground-warm), var(--work-ground-cool)); padding-top:var(--hi-safe-top, 0px); font-family:var(--font-display, sans-serif); letter-spacing:0; }
 .hi-work *, .hi-work *::before, .hi-work *::after { box-sizing:border-box; }
 .hi-work button { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; text-align:left; }
 .hi-work button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -1463,12 +1477,15 @@ const CSS = `
 .hi-work__canvas img { -webkit-user-drag:none; }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
 .hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
-/* Dark mode softens the highlight, deepens the shadow, and leans the panes more opaque: a
-   blur of a dark wash returns almost no colour, so transparency there costs legibility and
-   buys nothing. The wash itself is dimmed for the same reason — the tints read far stronger
-   against ink than against paper. */
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000066; --work-pane:color-mix(in srgb, var(--bg) 84%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 90%, transparent); --work-wash-warm:14%; --work-wash-cool:16%; --work-sweep-warm:5%; --work-sweep-cool:6%; } }
-:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000066; --work-pane:color-mix(in srgb, var(--bg) 84%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 90%, transparent); --work-wash-warm:14%; --work-wash-cool:16%; --work-sweep-warm:5%; --work-sweep-cool:6%; }
+/* Dark mode softens the highlight, deepens the shadow, and leans the panes more opaque. That
+   last one used to be read as "transparency buys nothing against a dark wash"; with a ground
+   that is deliberately a different lightness from the card it is sharper than that, and points
+   the same way. A pane's opacity decides how much ground comes through, and every bit that does
+   drags the card *towards* the ground — so on this construction opacity **is** contrast, and 90%
+   is a floor to raise rather than a cost to apologise for. The ground's own L is per theme for
+   the same reason the panes are: a step away from the card is upward on ink, downward on paper. */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000066; --work-pane:color-mix(in srgb, var(--bg) 84%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 90%, transparent); --work-ground-l:0.330; --work-ground:oklch(var(--work-ground-l) 0.015 87); --work-ground-warm:oklch(var(--work-ground-l) 0.036 28); --work-ground-cool:oklch(var(--work-ground-l) 0.018 223); } }
+:root[data-theme="dark"] .hi-work { --work-branch-l:0.7; --work-label-l:0.8; --work-branch-c:0.09; --work-glint:#ffffff12; --work-shade:#00000066; --work-pane:color-mix(in srgb, var(--bg) 84%, transparent); --work-pane-top:color-mix(in srgb, var(--bg) 90%, transparent); --work-ground-l:0.330; --work-ground:oklch(var(--work-ground-l) 0.015 87); --work-ground-warm:oklch(var(--work-ground-l) 0.036 28); --work-ground-cool:oklch(var(--work-ground-l) 0.018 223); }
 /* **A wire is structure, so it is drawn like structure.** At 1.8px and 0.8 opacity the
    branch hues came out as pastel threads that a card's border out-weighed, and the one thing
    a wire says — which branch a card belongs to — was the faintest mark on the chart. */

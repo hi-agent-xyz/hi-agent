@@ -214,31 +214,45 @@ line height, leaving the footer its own space instead of truncating over unused 
 Group headings occupy a narrower 144x56 box, wrap to two lines, and use stronger text
 contrast than metadata; they remain unframed labels, not cards.
 
-**Cards separate from the canvas by material, not by being lighter than it.** The wash behind
-them is a real warm-to-cool colour — two corner radials over a diagonal sweep — and a card is
-a pane of frosted glass over it: a translucent, top-lit surface that blurs and saturates what
-is under it, with a neutral hairline border, an inset edge highlight and three shadow layers.
+**Cards separate from the canvas by value first and material second.** A card is `--bg` at
+84–90% opacity, so a card's lightness is pinned to `--bg`; the ground is therefore a colour
+chosen to be *a step away from `--bg`*, which means away from the card — lighter on ink, darker
+on paper. That step, and only it, carries legibility. Over it runs a diagonal warm-to-cool
+sweep whose two ends share the ground's oklch L, so hue swings across the drawing and lightness
+does not: character costs nothing that legibility needs. The ground is the `background-color`
+and the sweep the `background-image`, so a gradient that fails to parse leaves the flat ground
+standing. A ground that is a step off `--bg` is by construction a step off what every other
+view paints, so home reads a shade lighter than the rest of the app on ink and a shade darker
+on paper; that is accepted, because a canvas is not a page. A card is still a pane of frosted
+glass over that — translucent, top-lit, blurring
+and saturating what is under it, with a hairline border, an inset edge highlight and three
+shadow layers — but the glass is now what gives a card its *material*, not what gives it its
+edge.
 
 **The three layers are what makes a card hover rather than rest, and which one is heaviest is
 the whole of it.** A contact shadow tight to the edge says an object is lying on the surface;
 height is said by the *distance* between a card and the dark under it. So the contact layer
 stays a hairline and the two below it are pushed down and pulled in — a large y-offset with a
 negative spread — leaving a lit gap under the card's lower edge and the weight further out.
-Depth is what the wash cost: colour under a translucent card narrows the contrast between
-card and canvas, and the shadow is where that contrast is bought back.
-The wash and the glass are one decision. Near-opaque cards over a hint of a wash was the same
-idea attempted with neither half doing its part: on a white theme the middle of the window —
-where the core and most of the cards sit — came out flat white, so a white card on it was
-separated by a hairline alone, and the wash, the one thing saying this is a canvas and not a
-page, stopped at every card's edge. Blur over colour separates by depth instead: the branch
-hue and the wash carry *through* a card, softened, so it reads as sitting above the canvas
-rather than as hiding a patch of it. The core is the same glass one step more solid and one
+**A wash mixed into `--bg` cannot hold a card, and two goes at tuning one proved it.** The
+layer this replaces was two corner radials over a 115deg sweep, each mixing a few percent of
+tint *into* `--bg` — and the sweep's own midpoint left at a literal `var(--bg)`. All three
+layers ran one diagonal, so over the middle of the drawing the radials had fallen to zero and
+the sweep was sitting on its midpoint: ground was `--bg`, card was `--bg`, and a card's contrast
+against what it sat on was exactly 0%. Measured over the ten cards of a live arrangement,
+|Weber| ran 7% to 42% and **one of the ten** cleared 40%. Filling the uncovered corners lifted
+eight of them without touching the two that were already fine, and still left the weakest at
+26% — a patch on a construction whose floor is the card's own colour. Choosing a ground instead
+puts all ten between **-52% and -54%**, flat across the whole sweep, and makes the number a
+constant rather than a function of where a card sits. The core is the same glass one step more solid and one
 step warmer, and carries a little more elevation — it holds the most text on the chart, so it
 is the one pane where the wash behind is a cost. Tasks, sessions and picture tiles share the
 same 12px corners; nothing adds a status-colored border or changes their sizes. Dark mode
-softens the highlight, deepens the shadow, dims the wash and leans the panes more opaque: a
-blur of a dark wash returns almost no colour, so transparency there costs legibility and buys
-nothing.
+softens the highlight, deepens the shadow, and leans the panes more opaque. The last of those
+used to be argued as "a blur of a dark wash returns almost no colour"; against a ground that is
+deliberately a different lightness it is sharper and points the same way. A pane's opacity
+decides how much ground comes through, and every bit that does drags the card *towards* the
+ground — so here **opacity is contrast**, and 90% is a floor to raise rather than a cost.
 Cards enter with a short fade and 10px rise, staggered at 28ms intervals capped at 224ms.
 Stable node identities keep live refreshes from replaying entry animations. Animation never
 owns layout or the canvas zoom transform, and releases opacity back to the model's emphasis
@@ -746,6 +760,15 @@ an activity opens `factory/workers`. Home owns no detail panel of its own.
 Narrow views use a connected, recursively expandable flow of the same nodes and edges.
 
 ## Open
+
+- **The card border is a no-op at rest on the new ground, and it is not yet decided whether it
+  should be.** `--work-line` is `color-mix(in srgb, var(--fg-mute) 25%, var(--bg))`, which on
+  ink lands within 0.3% of the ground's own luminance — the hairline and the ground are the
+  same colour, and a card's edge is carried entirely by the -53% step in its fill. Hover (48%)
+  and keyboard focus (`--accent`) both still read, so what the border has become is a rim that
+  appears on interaction. That may be the better design; it was not the one chosen, it is what
+  lifting the ground did to a value tuned against the old one. Raising the rest state to 45%
+  puts it +70% over the ground.
 
 - **The grace has never been watched on a live instance.** An hour past collection
   was chosen because it made no difference to the measured board — 1 hour and 6 hours drew the
