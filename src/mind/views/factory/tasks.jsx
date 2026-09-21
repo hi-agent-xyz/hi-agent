@@ -763,15 +763,23 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
 // is nothing left for it to be confused with.
 function Detail({ task, busy, onStatus, onClose, onReplied }) {
   const panel = useRef(null);
+  // Read through a ref: every caller passes a fresh arrow, and an effect keyed on it re-ran on
+  // each re-render of the surface underneath — which on the board is every roster read — and
+  // took the focus back to the panel out of the reply line somebody was typing in.
+  const close = useRef(onClose);
+  close.current = onClose;
 
   useEffect(() => {
     panel.current?.focus();
     const onKey = (event) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // Handled here, so the host's Escape — which retreats the conversation panel — leaves it.
+      event.preventDefault();
+      close.current();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   const live = liveMoment(task);
   // One worry, not five — see `concernMeta`.
