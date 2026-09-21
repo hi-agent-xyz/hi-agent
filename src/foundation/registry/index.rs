@@ -229,6 +229,29 @@ pub struct Ended {
     /// It is not `interrupted`, which asks whether work was in flight. That one still matters,
     /// but only for what a reopened session is *handed*.
     pub by_host: bool,
+    /// Whether the host **vanished** under this session rather than stopping — only ever true
+    /// on a [`EndedHow::Restart`] row.
+    ///
+    /// A restart row says a session was never closed, and there are two ways that happens that
+    /// ask opposite things of whoever comes back. A host that was *asked* to stop — a quit, an
+    /// upgrade, `cargo watch` rebuilding — and was killed partway through its drain left work
+    /// half-done and nothing more. A host that vanished was never asked: the machine went down,
+    /// lost power, or the process was killed outright, and whatever was running at that moment
+    /// is a suspect, the reopened session's own last command among them. On 2026-09-19 an
+    /// errand the previous night's kernel panic had killed was reopened, told only that the host
+    /// had stopped, checked its state, and ran the same `predict.py` again; the machine panicked
+    /// a second time five minutes later.
+    ///
+    /// **Read off the rows, not recorded.** A stop is noted at the request
+    /// ([`Registry::note_stopping`](super::Registry::note_stopping)), and every session that
+    /// unregisters from then on writes `by_host: true` — so a run that began stopping has at
+    /// least one such `closed` line as soon as its first session goes, and a run with none never
+    /// began. On the forty runs before this was written that split every one correctly: 28
+    /// clean, 8 stopping and killed mid-drain, 4 vanished — three of them the three panics. What
+    /// it would misread is a stop killed before its first close reached the disk; that has not
+    /// been seen, and it would read as vanished, which is the side to be wrong on.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub vanished: bool,
     /// A task it was holding for energy when it stopped.
     ///
     /// A worker whose turn hits a 402 does not fail: the drive loop keeps that exact task and
@@ -328,6 +351,8 @@ fn fold_all(text: &str, current_run: &str) -> Vec<Ended> {
     let mut ends: Vec<Ended> = Vec::new();
     let mut opened: Vec<Ended> = Vec::new();
     let mut closed: HashSet<(String, SessionSlug)> = HashSet::new();
+    // Runs whose host began stopping — see [`Ended::vanished`].
+    let mut stopping: HashSet<String> = HashSet::new();
     // Threads are folded in a second pass rather than as they arrive: a `thread` line
     // always follows its `opened` (the thread cannot exist before the session that opens
     // it) but may precede or follow the `closed`, and a tail-read can begin between any
@@ -358,6 +383,9 @@ fn fold_all(text: &str, current_run: &str) -> Vec<Ended> {
                 held,
             } => {
                 closed.insert((run.clone(), session.clone()));
+                if by_host {
+                    stopping.insert(run.clone());
+                }
                 ends.push(Ended {
                     run,
                     session,
@@ -374,6 +402,7 @@ fn fold_all(text: &str, current_run: &str) -> Vec<Ended> {
                     interrupted,
                     by_host,
                     held,
+                    vanished: false,
                 });
             }
             Record::Thread { run, session, thread_id, .. } => {
@@ -405,6 +434,8 @@ fn fold_all(text: &str, current_run: &str) -> Vec<Ended> {
                     by_host: true,
                     // Nothing recorded a hold either; the session simply reads as unheld.
                     held: None,
+                    // Settled below, once every `closed` line has been seen.
+                    vanished: false,
                 });
             }
         }
@@ -416,9 +447,12 @@ fn fold_all(text: &str, current_run: &str) -> Vec<Ended> {
         opened.into_iter().filter(|e| !closed.contains(&(e.run.clone(), e.session.clone()))),
     );
 
-    // Attach each session's thread now that every line has been seen.
+    // Attach each session's thread now that every line has been seen, and say which restart
+    // rows the host vanished under. Both wait for the whole window: a run's `by_host` closes
+    // come at its end, after the `opened` lines they answer.
     for end in &mut ends {
         end.thread = threads.get(&(end.run.clone(), end.session.clone())).cloned();
+        end.vanished = end.how == EndedHow::Restart && !stopping.contains(&end.run);
     }
 
     // Most recent first, and stable on the id so two ends in the same second keep a
@@ -466,6 +500,7 @@ pub fn ended_now(
         interrupted,
         by_host,
         held,
+        vanished: false,
     }
 }
 
@@ -586,6 +621,17 @@ pub fn reopenable_workers(ends: &[Ended]) -> Vec<Ended> {
         .collect()
 }
 
+/// Whether the run before this one vanished rather than stopped — see [`Ended::vanished`].
+///
+/// "The run before this one" by the rule [`reopenable_workers`] uses, and with its requirement:
+/// call it with the ends as seeded at boot.
+pub fn previous_run_vanished(ends: &[Ended]) -> bool {
+    let Some(previous_run) = ends.first().map(|end| end.run.as_str()) else {
+        return false;
+    };
+    ends.iter().any(|end| end.run == previous_run && end.vanished)
+}
+
 /// Whether a row is a working session's, read off the role name the row was written with.
 ///
 /// Asked through [`Role`] rather than against a `"worker"` literal for the reason
@@ -657,6 +703,72 @@ mod tests {
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0].how, EndedHow::Restart);
         assert_eq!(ends[0].thread.as_deref(), Some("th-reaction"));
+    }
+
+    /// A `closed` line the host wrote on its way down, `at` the given minute.
+    fn host_closed(run: &str, session: &SessionSlug, role: Role, at: DateTime<Utc>) -> String {
+        let mut e = ended_now(run, session, role, None, "", None, 1, ts(1), None, false, true, None);
+        e.ended = Some(at);
+        line(&closed_record(&e))
+    }
+
+    /// **Whether the host stopped or vanished is read off the run's own closes.** A run that
+    /// began stopping has a session the host closed on the way down, and its unclosed rows are
+    /// ones it never finished tidying. A run with no such close was never asked to stop.
+    #[test]
+    fn a_restart_row_says_whether_the_host_vanished() {
+        let cognition = SessionSlug::from(1u64);
+        let worker = SessionSlug::from(2u64);
+        let errand = Role::Worker(WorkerType::General);
+        let mut text = String::new();
+        for run in ["stopped", "vanished"] {
+            text.push_str(&line(&opened_record(run, &cognition, Role::Cognition, None, "", None, ts(1))));
+            text.push_str(&line(&opened_record(run, &worker, errand, Some(cognition.clone()), "", None, ts(2))));
+        }
+        // The stop reached Cognition's close and was killed before the worker's.
+        text.push_str(&host_closed("stopped", &cognition, Role::Cognition, ts(3)));
+
+        let ends = fold(&text, "now");
+        let row = |run: &str, s: &SessionSlug| {
+            ends.iter().find(|e| e.run == run && &e.session == s).cloned().unwrap()
+        };
+        assert!(!row("stopped", &cognition).vanished, "a closed row never vanished");
+        assert_eq!(row("stopped", &worker).how, EndedHow::Restart);
+        assert!(!row("stopped", &worker).vanished, "killed mid-drain is still a stop");
+        assert!(row("vanished", &cognition).vanished);
+        assert!(row("vanished", &worker).vanished);
+    }
+
+    /// An owner closing its own worker mid-run says nothing about how the run ended. Only a
+    /// close the *host* made is evidence that it began to stop.
+    #[test]
+    fn an_owners_close_is_not_a_stop() {
+        let cognition = SessionSlug::from(1u64);
+        let worker = SessionSlug::from(2u64);
+        let mut text = line(&opened_record("run-a", &cognition, Role::Cognition, None, "", None, ts(1)));
+        text.push_str(&line(&closed_record(&ended_now(
+            "run-a", &worker, Role::Worker(WorkerType::General), Some(cognition.clone()), "", None, 1, ts(2), None, false, false, None,
+        ))));
+
+        let ends = fold(&text, "now");
+        let lost = ends.iter().find(|e| e.how == EndedHow::Restart).unwrap();
+        assert!(lost.vanished, "{lost:?}");
+    }
+
+    /// The run before this one, by the rule that picks which errands come back — not any run
+    /// that ever vanished, or one crash three weeks ago would colour every boot after it.
+    #[test]
+    fn only_the_previous_run_can_have_vanished() {
+        let cognition = SessionSlug::from(1u64);
+        let old = line(&opened_record("old", &cognition, Role::Cognition, None, "", None, ts(1)));
+        let old_stopped = host_closed("old", &cognition, Role::Cognition, ts(2));
+        let new = line(&opened_record("new", &cognition, Role::Cognition, None, "", None, ts(10)));
+        let new_stopped = host_closed("new", &cognition, Role::Cognition, ts(11));
+
+        assert!(previous_run_vanished(&fold(&format!("{old_stopped}{new}"), "now")));
+        assert!(!previous_run_vanished(&fold(&format!("{old}{new}{new_stopped}"), "now")));
+        assert!(!previous_run_vanished(&fold(&old_stopped, "now")));
+        assert!(!previous_run_vanished(&[]), "a fresh install has no previous run");
     }
 
     /// Only the resident rungs are resumed by themselves. A worker keeps its thread on

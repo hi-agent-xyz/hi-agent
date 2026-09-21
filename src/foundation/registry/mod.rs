@@ -784,6 +784,13 @@ pub struct Registry {
     /// moment a stop is requested, anything that unregisters is ending because the host is
     /// going down. See [`index::Ended::by_host`].
     stopping: std::sync::atomic::AtomicBool,
+    /// Whether the run before this one vanished rather than stopped, seeded once by
+    /// [`Registry::attach_index`] — see [`index::Ended::vanished`].
+    ///
+    /// Held beside the rows rather than asked of them, because the rungs read it when their
+    /// sessions open, and by then [`Registry::recent`](#structfield.recent) may already carry
+    /// this run's first close at its head.
+    previous_vanished: std::sync::atomic::AtomicBool,
     /// Sessions that are no longer live, newest first — seeded from the directory at boot
     /// and appended to as sessions close.
     ///
@@ -883,6 +890,7 @@ impl Default for Registry {
             index: std::sync::OnceLock::new(),
             mail_log: std::sync::OnceLock::new(),
             stopping: std::sync::atomic::AtomicBool::new(false),
+            previous_vanished: std::sync::atomic::AtomicBool::new(false),
             recent: Mutex::new(Vec::new()),
             resumable: Mutex::new(HashMap::new()),
             reopening: Mutex::new(Vec::new()),
@@ -1068,6 +1076,8 @@ impl Registry {
         // run was the previous one, and this run's first close would move that head.
         let reopenable = index::reopenable_workers(&seeded);
         let reopening = reopenable.len();
+        let vanished = index::previous_run_vanished(&seeded);
+        self.previous_vanished.store(vanished, std::sync::atomic::Ordering::Relaxed);
         *self.reopening.lock().unwrap() = reopenable;
         *self.resumable.lock().unwrap() = resumable;
         *self.recent.lock().unwrap() = seeded;
@@ -1088,8 +1098,27 @@ impl Registry {
             // for its session to be reopened.
             exchange = carried,
             owed,
+            vanished,
             "session directory attached"
         );
+        // The one server-side line that says a machine went down under us. The panics of
+        // 2026-09-18..20 were found by reading kernel panic logs by hand, because nothing here
+        // said that the host had not stopped.
+        if vanished {
+            tracing::warn!(
+                lost,
+                reopening,
+                "the previous run did not shut down — it vanished (the machine went down, lost \
+                 power, or the process was killed)"
+            );
+        }
+    }
+
+    /// Whether the run before this one vanished rather than stopped. False before
+    /// [`Registry::attach_index`] and wherever there is no index — see
+    /// [`index::Ended::vanished`].
+    pub fn previous_run_vanished(&self) -> bool {
+        self.previous_vanished.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Record the codex thread a session opened, in memory and in the directory.

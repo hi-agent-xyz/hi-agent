@@ -2869,22 +2869,44 @@ mod turn_context_tests {
             started: Some(now - chrono::Duration::minutes(62)),
             input: format!("## Working with them\n…\n\n{NEW_SIGNALS}>⟨voice: 赵力⟩ 球鞋研究怎么样了"),
         };
-        let note = cut_off_turn_note(&turn, NEW_SIGNALS, now).expect("a note");
+        let note = cut_off_turn_note(&turn, NEW_SIGNALS, false, now).expect("a note");
         assert!(note.ends_with(">⟨voice: 赵力⟩ 球鞋研究怎么样了"), "{note}");
         assert!(note.contains("1h ago"), "{note}");
         assert!(!note.contains("Working with them"), "the stale window is not re-handed: {note}");
 
         let no_signals = InterruptedTurn { started: None, input: "a seed, not a turn".into() };
-        assert_eq!(cut_off_turn_note(&no_signals, NEW_SIGNALS, now), None);
+        assert_eq!(cut_off_turn_note(&no_signals, NEW_SIGNALS, false, now), None);
 
         // Cut off again while answering the re-handed note: one note, not two.
         let again = InterruptedTurn {
             started: Some(now),
             input: format!("window\n\n{NEW_SIGNALS}{note}"),
         };
-        let second = cut_off_turn_note(&again, NEW_SIGNALS, now).expect("a note");
-        assert_eq!(second.matches(CUT_OFF_OPENING).count(), 1, "{second}");
+        let second = cut_off_turn_note(&again, NEW_SIGNALS, false, now).expect("a note");
+        assert_eq!(second.matches(CUT_OFF_STOPPED).count(), 1, "{second}");
         assert!(second.ends_with(">⟨voice: 赵力⟩ 球鞋研究怎么样了"), "{second}");
+    }
+
+    /// **A rung's cut-off turn says whether the host vanished**, in the words a reopened errand
+    /// hears — and a vanished note is still recognised, and dropped, when it is cut off again,
+    /// including by a boot that stopped properly.
+    #[test]
+    fn a_cut_off_turn_says_the_host_vanished() {
+        use crate::foundation::codex::process::InterruptedTurn;
+        let now = Utc::now();
+        let turn = InterruptedTurn {
+            started: Some(now - chrono::Duration::minutes(5)),
+            input: format!("window\n\n{NEW_SIGNALS}>⟨text: 赵力⟩ 跑一下 TrackNet"),
+        };
+        let note = cut_off_turn_note(&turn, NEW_SIGNALS, true, now).expect("a note");
+        assert!(note.starts_with(CUT_OFF_VANISHED), "{note}");
+        assert!(note.contains("anything this turn started included"), "{note}");
+
+        let again = InterruptedTurn { started: Some(now), input: format!("window\n\n{NEW_SIGNALS}{note}") };
+        let second = cut_off_turn_note(&again, NEW_SIGNALS, false, now).expect("a note");
+        assert!(!second.contains(CUT_OFF_VANISHED), "the earlier note is dropped: {second}");
+        assert_eq!(second.matches(CUT_OFF_STOPPED).count(), 1, "{second}");
+        assert!(second.ends_with(">⟨text: 赵力⟩ 跑一下 TrackNet"), "{second}");
     }
 
     /// The tail is a retelling of signals already in the thread, so it rides a cold
@@ -3206,9 +3228,13 @@ const NEW_SIGNALS: &str = "## New signals\n";
 /// Only that part, not the whole prompt: the rest was the window as it stood then, and the next
 /// turn re-projects it as it stands now. Posted into the rung's own inbox, so the loop takes it
 /// up as its next turn; Reaction and Cognition both call it where their session opens.
+///
+/// `vanished` is whether the host went down without being asked to — the same fact, and the
+/// same wording, a reopened errand's note carries ([`registry::index::Ended::vanished`]).
 fn cut_off_turn_note(
     turn: &crate::foundation::codex::process::InterruptedTurn,
     heading: &str,
+    vanished: bool,
     now: chrono::DateTime<Utc>,
 ) -> Option<String> {
     // A turn that was itself re-handed and cut off again carries the earlier note; drop it, so
@@ -3219,7 +3245,9 @@ fn cut_off_turn_note(
         .1
         .trim()
         .split("\n\n")
-        .filter(|paragraph| !paragraph.starts_with(CUT_OFF_OPENING))
+        .filter(|paragraph| {
+            !paragraph.starts_with(CUT_OFF_STOPPED) && !paragraph.starts_with(CUT_OFF_VANISHED)
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
     if handed.trim().is_empty() {
@@ -3229,16 +3257,27 @@ fn cut_off_turn_note(
         .started
         .map(|at| crate::mind::memory::tasks::ago(now, at))
         .unwrap_or_else(|| "some time ago".to_string());
+    let (opening, why) = if vanished {
+        (
+            CUT_OFF_VANISHED,
+            " It did not shut down: the machine went down, lost power, or the process was killed, \
+             so whatever was running at that moment is a suspect — anything this turn started \
+             included.",
+        )
+    } else {
+        (CUT_OFF_STOPPED, "")
+    };
     Some(format!(
-        "{CUT_OFF_OPENING}, started {when}, and has just come back up. That turn never \
-         finished. Anything it did before the stop may or may not have landed, so check before \
-         repeating it. This is what it had been handed; take it up against what is true now.\
-         \n\n{handed}"
+        "{opening}, started {when}, and has just come back up.{why} That turn never finished. \
+         Anything it did before then may or may not have landed, so check before repeating it. \
+         This is what it had been handed; take it up against what is true now.\n\n{handed}"
     ))
 }
 
-/// How [`cut_off_turn_note`] begins, so a note it wrote can be recognised inside a later one.
-const CUT_OFF_OPENING: &str = "(restart) The host process stopped in the middle of your turn";
+/// How [`cut_off_turn_note`] begins, so a note it wrote can be recognised inside a later one —
+/// one opening for each way the host can have gone.
+const CUT_OFF_STOPPED: &str = "(restart) The host process stopped in the middle of your turn";
+const CUT_OFF_VANISHED: &str = "(restart) The host process vanished in the middle of your turn";
 
 /// Open a fresh **reaction** session for `conversation`, carrying `reaction.md` as its system
 /// prompt (prepended to the first prompt). It speaks via plain message text and gets a
@@ -3292,9 +3331,9 @@ async fn open_reaction_session(
     // thread picks up idle: without this a person's question that reached the turn is simply
     // never answered, until they ask again. One place, because both the warm-up and a cold
     // first turn open the session here.
-    if let Some(note) =
-        session.take_interrupted().and_then(|turn| cut_off_turn_note(&turn, NEW_SIGNALS, Utc::now()))
-    {
+    if let Some(note) = session.take_interrupted().and_then(|turn| {
+        cut_off_turn_note(&turn, NEW_SIGNALS, registry::global().previous_run_vanished(), Utc::now())
+    }) {
         registry::global().post(reaction_id, note);
         tracing::info!("reaction resumed a thread the stop cut off mid-turn; re-handed its signals");
     }

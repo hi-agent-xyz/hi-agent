@@ -66,3 +66,30 @@
 ### 待实测(复跑项)
 
 按 [测试不要带witness](../../CLAUDE.md#testing-user-journeys-live-mac-mini) 的方法,在 Mac mini 上对真实实例跑:派一个有交付物的 worker → 中途杀进程 → 重启 → 看它醒来时那条欠账在不在窗口里、判断还要不要、不重复地接着干完(就用引发本特性的生词卡片场景)。当前全部 acts 标 🟡,等这次实测打分。
+
+## 实测 2026-09-18..20 · 宿主是"消失"的,不是"停下"的
+
+三天三次 macOS 内核 panic(`watchdog timeout: no checkins from watchdogd in 91 seconds`,`Compressor Info: … 100% of segments limit (BAD)`)。panic 日志里的进程快照、`raw/sessions/index.jsonl` 和各 session 的 frame 对得上:三次都是羽毛球那条线的 worker 在跑 TrackNetV3 `predict.py`。不带 `--large_video` 时它把 30 s 的 1080p 片段整段解码进内存(900 帧 ≈ 5.6 GB),再起 `min(batch_size, 16)` 个 DataLoader worker,macOS 下每个都 spawn 一份——panic 时 16~19 个 `python3.12` 合计 96~106 GB,机器 64 GB。
+
+| 重启时刻 | run | worker | 命令 |
+|---|---|---|---|
+| 09-18 22:28 | `89267923f20d` | `view-builder-server-side-badminton-video-unde` | 21:34 `predict.py`;21:39 的 jetsam 已见 14 个 `python3.12` 共 83 GB |
+| 09-19 09:27 | `97166fcb6ed0` | 同一个 worker,**boot 时被重开**(09:01:48) | 09:04 `nohup predict.py`,09:17 前台再跑一次 |
+| 09-20 21:21 | `a41cc1fc9622` | `general-badminton-ball-tracking-tracknet` | 20:37–20:38 两分钟内起了三次(nohup、setsid nohup、前台) |
+
+**本 journey 的机制把一次崩溃变成了两次。** 09-19 被重开的 worker 拿到的原话是 *"(restart) The host process stopped while you were mid-turn … Then either carry on from what you find"*——它查了状态,照做,接着跑。note 只说"停了",没说整台机器没了。
+
+**hi-agent 自己一个字都没说。** 三次都是事后靠人手读 `/Library/Logs/DiagnosticReports/Retired/panic-full-*.panic` 才找到的;server.log 和任何 rung 都不知道上一个 run 不是正常结束的。
+
+**区分所需的事实早就在盘上。** 停机在请求那一刻就记下,之后每个注销的 session 都写 `by_host: true`:一个 run 有这样的关闭行 = 开始停了,一行都没有 = 没人让它停。按这个读最近 40 个 run:28 干净、8 在停但排空中途被杀、4 消失——三次 panic 全在里面,第 4 个紧接着 23:10 的一次重启;8 次中途被杀的重启一个都没误判。
+
+**落法**(built,未实测):`Ended.vanished` 从 `by_host` 关闭行读出,不新记任何东西;被重开 errand 的 `(restart)` note 和 rung 被打断回合的 note 都说 stopped 还是 vanished,vanished 时说当时在跑的东西是嫌疑,包括它自己的;Cognition 的 boot wake 在上个 run 消失时即使 ledger 为空也醒一次;boot 时 server.log 打一条 warn。
+
+### 待实测(复跑项)
+
+- 在 Mac mini 上让一个 worker 跑到一半时对 host `kill -9`(不是 Ctrl-C),重启:被重开的 worker 拿到的是不是 vanished note,它会不会先查自己最后的命令再决定跑不跑;server.log 有没有那条 warn;Cognition 醒没醒、说了什么。
+- 再做一次 Ctrl-C 重启:拿到的仍是 stopped,Cognition 在 ledger 为空时没有多醒。
+
+### 已知缺口(未修,只记下)
+
+- 8/40 的重启留下了没关上的 session。它们读作 Restart,`interrupted` 恒为真,所以那几次每个被重开的 errand 都会拿到 mid-turn note、花一个 turn 去查——多数其实只是在等 owner。

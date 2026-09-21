@@ -480,20 +480,36 @@ async fn boot_note(reaction: &Reaction, span: Duration) -> Option<String> {
     reaction.ensure_up().await;
 
     let count = active.len();
-    let note = note_for(count, span);
-    tracing::info!(active = count, waking = note.is_some(), "cognition boot wake");
+    let vanished = registry::global().previous_run_vanished();
+    let note = note_for(count, span, vanished);
+    tracing::info!(active = count, vanished, waking = note.is_some(), "cognition boot wake");
     note
 }
 
-/// The pure half of [`boot_note`] — split out so the two things worth pinning can be
-/// tested without standing up a `Reaction`: that an empty ledger produces **no wake at
-/// all**, and that the note says a restart happened.
-fn note_for(active: usize, span: Duration) -> Option<String> {
-    if active == 0 {
+/// The pure half of [`boot_note`] — split out so the things worth pinning can be tested
+/// without standing up a `Reaction`: that an empty ledger after a stop produces **no wake at
+/// all**, that the note says a restart happened, and that a run which vanished rather than
+/// stopped is said — and woken for — whatever the ledger holds.
+///
+/// **Why a vanished run wakes on an empty ledger.** A reopened errand hears it in its own
+/// note, but only an errand caught mid-turn is reopened with one, and what took the machine
+/// down need not have been an errand: a process an errand detached, or this rung's own last
+/// command. A stop costs nothing here and a vanishing costs one turn — measured at 4 of the 40
+/// runs before this was written, three of them kernel panics.
+fn note_for(active: usize, span: Duration, vanished: bool) -> Option<String> {
+    if active == 0 && !vanished {
         return None;
     }
     let m = span.as_secs() / 60;
-    Some(unasked(&format!("you've just come back up (host process started {m}m ago)")))
+    let back = format!("you've just come back up (host process started {m}m ago)");
+    Some(unasked(&if vanished {
+        format!(
+            "{back}, and the run before did not shut down — it vanished: the machine went down, \
+             lost power, or the process was killed"
+        )
+    } else {
+        back
+    }))
 }
 
 /// The marker a turn nobody asked for arrives under, and **this rung's alone**.
@@ -515,8 +531,8 @@ mod tests {
     /// empty ledger is empty. Nothing owed, nothing to come back to.
     #[test]
     fn an_empty_ledger_is_not_worth_waking_for() {
-        assert_eq!(note_for(0, Duration::from_secs(0)), None);
-        assert_eq!(note_for(0, Duration::from_secs(9_999)), None);
+        assert_eq!(note_for(0, Duration::from_secs(0), false), None);
+        assert_eq!(note_for(0, Duration::from_secs(9_999), false), None);
     }
 
     /// A bare situational fact under the `(unasked)` marker — `cognition.md` keys on that
@@ -524,10 +540,22 @@ mod tests {
     /// asked for this turn.
     #[test]
     fn the_boot_note_says_a_restart_happened() {
-        let boot = note_for(3, Duration::from_secs(120)).unwrap();
+        let boot = note_for(3, Duration::from_secs(120), false).unwrap();
         assert!(boot.starts_with("(unasked) "), "{boot}");
         assert!(boot.contains("just come back up"), "{boot}");
         assert!(boot.contains("2m ago"), "{boot}");
+        assert!(!boot.contains("vanished"), "a stop is not said to be anything more: {boot}");
+    }
+
+    /// **A run that vanished is worth a turn with nothing owed**, and the note says it did —
+    /// the one boot that is not routine, and the only one that costs anything when the ledger
+    /// is empty.
+    #[test]
+    fn a_vanished_run_wakes_even_with_nothing_owed() {
+        let boot = note_for(0, Duration::from_secs(60), true).expect("a wake");
+        assert!(boot.starts_with("(unasked) "), "{boot}");
+        assert!(boot.contains("come back up"), "{boot}");
+        assert!(boot.contains("did not shut down — it vanished"), "{boot}");
     }
 
     /// **There is no recurring wake to test, and that is the change.** The timer arm fires
@@ -535,7 +563,7 @@ mod tests {
     /// is not a thing this rung can produce any more.
     #[test]
     fn the_only_self_given_wake_is_the_boot_one() {
-        assert!(note_for(3, Duration::from_secs(1_800)).unwrap().contains("come back up"));
+        assert!(note_for(3, Duration::from_secs(1_800), false).unwrap().contains("come back up"));
     }
 }
 
@@ -617,10 +645,10 @@ async fn open_session(
 
     // What a stop cut off comes back as mail, as it does for Reaction ([`super::cut_off_turn_note`]):
     // the messages that turn was handling lived in this loop's `pending` and died with it.
-    if let Some(note) = opened
-        .take_interrupted()
-        .and_then(|turn| super::cut_off_turn_note(&turn, NEW_MESSAGES, chrono::Utc::now()))
-    {
+    if let Some(note) = opened.take_interrupted().and_then(|turn| {
+        let vanished = registry::global().previous_run_vanished();
+        super::cut_off_turn_note(&turn, NEW_MESSAGES, vanished, chrono::Utc::now())
+    }) {
         registry::global().post(&slug, note);
         tracing::info!(cognition = %slug, "resumed a thread the stop cut off mid-turn; re-handed its messages");
     }

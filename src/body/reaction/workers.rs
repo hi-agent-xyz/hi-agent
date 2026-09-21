@@ -1162,8 +1162,11 @@ mod reopen_tests {
         let note = restart_note(
             "deploy KUT on gz-02 with Caddy",
             Some(chrono::Utc::now() - chrono::Duration::minutes(40)),
+            false,
         );
         assert!(note.starts_with("(restart) "), "{note}");
+        assert!(note.contains("process stopped"), "{note}");
+        assert!(!note.contains("suspect"), "a stop accuses nothing: {note}");
         assert!(note.contains("deploy KUT on gz-02 with Caddy"), "it says which errand: {note}");
         assert!(note.contains("40m ago"), "and how long ago it started: {note}");
         assert!(note.contains("may have landed"), "the half-landed case is named: {note}");
@@ -1176,9 +1179,32 @@ mod reopen_tests {
     /// tail-read can arrive without one.
     #[test]
     fn a_row_with_no_start_time_still_reads() {
-        let note = restart_note("finish the build", None);
+        let note = restart_note("finish the build", None, false);
         assert!(note.contains("some time ago"), "{note}");
         assert!(!note.contains("None"), "{note}");
+    }
+
+    /// **A host that vanished makes what was running a suspect, and the note says so.** On
+    /// 2026-09-19 an errand the night's kernel panic had killed was told only "the host process
+    /// stopped", checked its state, carried on — and re-ran the `predict.py` that had exhausted
+    /// the machine's memory. The note states the fact; what to make of it stays the errand's.
+    #[test]
+    fn a_vanished_host_makes_the_last_command_a_suspect() {
+        let note = restart_note("用 TrackNet 标球、出一段标注视频", None, true);
+        assert!(note.starts_with("(restart) The host process vanished"), "{note}");
+        assert!(note.contains("did not shut down"), "{note}");
+        assert!(note.contains("what you were running included"), "{note}");
+        assert!(note.contains("Do not redo a step that already took"), "the rest still holds: {note}");
+    }
+
+    /// The idle and held cases say the same fact in the one line they get.
+    #[test]
+    fn the_gap_line_says_stopped_or_vanished() {
+        let ten_ago = Some(chrono::Utc::now() - chrono::Duration::minutes(10));
+        assert!(gap_line(ten_ago, false).contains("stopped 10m ago"));
+        assert!(gap_line(None, false).contains("stopped and has just come back up"));
+        let vanished = gap_line(None, true);
+        assert!(vanished.contains("vanished") && vanished.contains("did not shut down"), "{vanished}");
     }
 }
 
@@ -1236,7 +1262,7 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
         };
 
         let title = end.title.clone().unwrap_or_else(|| slug.to_string());
-        let gap = gap_line(end.ended);
+        let gap = gap_line(end.ended, end.vanished);
         // **What it is handed, and one of the answers is nothing at all.**
         //
         // A session caught mid-turn is the only one with a question to answer — whether its
@@ -1249,7 +1275,7 @@ pub async fn reopen_interrupted(tools: super::tools::ToolRegistry) {
         // The one middle case is a task held through a 402: idle, but holding work nothing
         // else knows about — so it is re-handed, with the gap said out loud.
         let handed = match (end.interrupted, end.held.clone()) {
-            (true, _) => Some(restart_note(&title, end.started)),
+            (true, _) => Some(restart_note(&title, end.started, end.vanished)),
             (false, Some(held)) => Some(format!("{gap}\n\nYou were holding this when it \
                 stopped, waiting for energy to come back. Here it is again:\n\n{held}")),
             (false, None) => None,
@@ -1365,32 +1391,59 @@ fn restore_inbox(slug: &SessionSlug, gap: String) {
     tracing::info!(session = %slug, messages = n, "restored an inbox the stop would have dropped");
 }
 
-/// How long the host was away, said the way every other elapsed quantity here is said.
-fn gap_line(ended: Option<chrono::DateTime<chrono::Utc>>) -> String {
-    match ended {
-        Some(at) => format!(
+/// How long the host was away, said the way every other elapsed quantity here is said — and
+/// whether it stopped or vanished, see [`registry::index::Ended::vanished`].
+fn gap_line(ended: Option<chrono::DateTime<chrono::Utc>>, vanished: bool) -> String {
+    match (ended, vanished) {
+        // A vanished run recorded no end, so there is no length to give.
+        (_, true) => {
+            "(restart) The host process vanished — it did not shut down — and has just come back \
+             up."
+                .to_string()
+        }
+        (Some(at), false) => format!(
             "(restart) The host process stopped {} and has just come back up.",
             crate::mind::memory::tasks::ago(chrono::Utc::now(), at)
         ),
         // A crash records no end. "Some time" is the honest answer, and inventing a number
         // from the session's *start* would report the errand's age as the outage's length.
-        None => "(restart) The host process stopped and has just come back up.".to_string(),
+        (None, false) => "(restart) The host process stopped and has just come back up.".to_string(),
     }
 }
 
-/// The one thing the host can tell a reopened errand: that it was interrupted.
+/// The one thing the host can tell a reopened errand: that it was interrupted, and how.
 ///
 /// Cognition wrote the brief the first time and there is nobody to write a second one, so this
 /// carries the fact and stops. What it must not do is imply the work should carry on from
 /// where it stopped — the session's own last tool call may have landed, may have half-landed,
 /// or may never have gone out, and it is the only party that can find out which.
-fn restart_note(title: &str, started: Option<chrono::DateTime<chrono::Utc>>) -> String {
+///
+/// **How is part of the fact.** A host that stopped was asked to; one that vanished was not,
+/// and then whatever was running at that moment is a suspect, this errand's own last command
+/// included. The note says which and leaves the judgment where the evidence is — see
+/// [`registry::index::Ended::vanished`] for the errand that was told only "stopped" and ran the
+/// command that had just taken the machine down.
+fn restart_note(
+    title: &str,
+    started: Option<chrono::DateTime<chrono::Utc>>,
+    vanished: bool,
+) -> String {
     let ago = started
         .map(|at| crate::mind::memory::tasks::ago(chrono::Utc::now(), at))
         .unwrap_or_else(|| "some time ago".to_string());
+    let (how, why) = if vanished {
+        (
+            "vanished",
+            " It did not shut down: the machine went down, lost power, or the process was killed, \
+             so whatever was running at that moment is a suspect — what you were running \
+             included.",
+        )
+    } else {
+        ("stopped", "")
+    };
     format!(
-        "(restart) The host process stopped while you were mid-turn on this errand — \"{title}\" \
-         — and has just come back up. You started it {ago}. Nothing has been done about it \
+        "(restart) The host process {how} while you were mid-turn on this errand — \"{title}\" \
+         — and has just come back up.{why} You started it {ago}. Nothing has been done about it \
          since.\n\nYour own last actions may have landed, half-landed, or never gone out at \
          all, and you are the only one who can tell which. So before doing anything further, \
          go and establish what is actually true now: check the files, the processes, the \

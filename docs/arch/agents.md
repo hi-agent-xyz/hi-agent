@@ -691,14 +691,36 @@ nothing at all.**
 
 - **Caught mid-turn** — a turn started and never finished. The host has no brief to give it
   (Cognition wrote the first one and there is nobody to write a second), so the opening prompt
-  carries the fact and stops: the host restarted, this much time has passed, and its own last
-  actions may or may not have taken effect — establish what actually landed before doing anything
-  further, and say so if the work is now stale. Judging it stale is a fine outcome. Redoing
-  something that already happened is not, and neither is dropping it without looking.
+  carries the fact and stops: the host stopped or vanished, this much time has passed, and its own
+  last actions may or may not have taken effect — establish what actually landed before doing
+  anything further, and say so if the work is now stale. Judging it stale is a fine outcome.
+  Redoing something that already happened is not, and neither is dropping it without looking.
 - **Idle, waiting on its owner** — it is handed **no prompt**, and goes straight back to waiting
   for mail. It was not doing anything; a "the host restarted" turn would be a model turn spent
   on nothing, and the one thing worse than that is a session inventing work to justify having
   been woken. Its owner does not have to know it went away.
+
+**Whether the host stopped or vanished is part of the fact, and every `(restart)` note says
+which.** A host asked to stop — a quit, an upgrade, a rebuild — and killed partway through its
+drain has left work half-done and nothing more. A host that vanished was never asked: the machine
+went down, lost power, or the process was killed, and whatever was running at that moment is a
+suspect, the reopened session's own last command among them. The note states that and leaves the
+judgment where the evidence is, like the rest of it. The rungs' cut-off turns say the same thing
+in the same words, and a vanished run is the one boot Cognition wakes for with nothing owed
+([host.md](host.md#glancing-up)).
+
+**Nothing new is recorded to tell them apart.** A stop is noted at the request, so every session
+that unregisters after it is closed `by_host`; a run that began stopping has at least one such
+close, and a run with none never began. Read that way, the forty runs before this was written
+split into 28 clean, 8 stopping and killed mid-drain, and 4 vanished — the three kernel panics of
+2026-09-18..20 and a reboot. What it would misread is a stop killed before its first close
+reached the disk, which would read as vanished: the side to be wrong on.
+
+**What a note that says only "stopped" does.** On 2026-09-19 the errand the previous night's panic had
+killed — a worker running a ball-tracking model over a 1080p clip — was reopened, told *"the host
+process stopped while you were mid-turn … carry on from what you find"*, found its state, carried
+on, and ran the same `predict.py` that had exhausted the machine's memory. The machine went down
+again five minutes later.
 
 **Its inbox comes back with it.** Mail delivered and not yet read is *not* lost to the stop — it
 is restored to the reopened session ahead of anything else, because the sender was told

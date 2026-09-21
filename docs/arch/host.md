@@ -422,7 +422,9 @@ to [`data/`](data.md); it appears here because it sits on the hot path.
 **The host has almost no timing surface, and what is left is not a cadence.** One loop
 paces itself — the **reflection backoff** for consolidation, which is memory settling rather
 than attention. Beside it sits a single wake: **Cognition, once, shortly after the process
-starts**, which is restart recovery.
+starts**, which is restart recovery. It fires when the ledger holds active work, or when the run
+before vanished rather than stopped ([agents.md](agents.md#across-a-restart)) — so a clean restart
+with nothing owed costs no turn, and the one boot that is not routine always gets one.
 
 **There is no recurring glance-up, and it was removed rather than tuned.** A fixed period is
 what a design reaches for when it has no event for something, and the events exist: input,
