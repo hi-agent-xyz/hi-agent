@@ -64,6 +64,8 @@ const FADE_MS = 24 * 3600000;
  *  row. Both belong to `keepsClosed`, which is where what they mean is written down. */
 const GRACE_MS = 1 * 3600000;
 const CEILING_MS = 7 * 24 * 3600000;
+/** How long a cancellation is on Home at all. It belongs to `onHome`. */
+const CANCELLED_MS = 1 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition"]);
 /**
  * **The agent's own upkeep is a group of its own, and code draws it.** Reflection, a sweep of the
@@ -181,9 +183,10 @@ function groupIcon(ref) {
  * object without duplicating it. Nodes have no x/y or selected properties.
  *
  * Internal mappings:
- * 1. TaskDto (/api/tasks) -> task:<subject>, EVERY row, whatever its status and age. Status
- *    and time are copied, not inferred from sessions. What the clock decides is `inHand` — a
- *    tier, read by the window's cut — never whether the node exists.
+ * 1. TaskDto (/api/tasks) -> task:<subject>, EVERY row whatever its age, and whatever its
+ *    status but one: a cancellation is a node for an hour (`onHome`). Status and time are
+ *    copied, not inferred from sessions. For everything else what the clock decides is
+ *    `inHand` — a tier, read by the window's cut — never whether the node exists.
  * 2. Registry Status (/api/workers) -> session:<run>:<id>. running means busy; waiting
  *    means QUEUED WORK, not waiting for the user; idle is still a LIVE session. Only live
  *    sessions are here at all — a session that has ended is `factory/workers`' subject.
@@ -267,7 +270,8 @@ const collectedAt = (end, inbound) => {
  * Whether a closed row is still **in hand**, given its innermost group's own open work.
  *
  * **This decides rank, never existence.** Every row the ledger has is a node with its whole
- * branch — its groups, its pictures, its sessions — and what this answers is whether the row
+ * branch — its groups, its pictures, its sessions — but a spent cancellation, which `onHome`
+ * takes out before this is asked; and what this answers is whether the row
  * is part of what is going on right now or part of what the thread has been through. `heat`
  * turns that into a tier, `budgeted` fills the window from the top, and what is left over
  * is drawn where there is room for it. It used to be an admission gate in `buildHome`: a row
@@ -279,9 +283,8 @@ const collectedAt = (end, inbound) => {
  * branch is not: the merged-video row sat in `北控视频` with nothing else open while `KNQ` above
  * it was busy, and testing the branch would have kept it.
  *
- * **A cancellation is never kept by a thread.** It has nothing to come back to — what it made
- * on the way is process, and the row's own word says the work is not happening — so it is a
- * notice whatever else is running beside it.
+ * **A cancellation is never kept by a thread**, and only ever reaches here inside its hour —
+ * see `onHome` — where it is a notice whatever else is running beside it.
  */
 function keepsClosed(task, end, { threadLive, inbound }, now) {
   if (!recent(end, now)) return false;
@@ -289,6 +292,20 @@ function keepsClosed(task, end, { threadLive, inbound }, now) {
   const collected = collectedAt(end, inbound);
   return collected === null || now - collected < GRACE_MS;
 }
+/**
+ * **A cancellation is on Home for an hour, and then it is not on Home at all.** This is the one
+ * rule here that decides existence rather than rank, and it goes by what the row is, not by how
+ * full the window is. Ranking it as history is what failed: a group of five duties drew two
+ * cancellations three days closed because the window had room, and the person's word for them
+ * was *pure interference — even with few nodes, nobody wants to see them*. It has nothing to
+ * come back to — what it made on the way is process, and the row's own word says the work is
+ * not happening — so neither a live sibling, nor nobody being back yet, nor room to spare keeps
+ * it. The hour runs from the closure, not from the person's next message the way a notice's
+ * grace does: it is long enough to see the ask landed, and nothing after it is worth the window.
+ * After it the row is `factory/tasks`' alone, and a missing closure time reads as past it.
+ */
+const onHome = (task, now) => task.status !== "cancelled"
+  || (instant(taskEnd(task)) ?? -Infinity) >= now - CANCELLED_MS;
 const taskKey = (subject) => `task:${subject}`;
 const sessionKey = (s) => `session:${s.run}:${s.id || s.session}`;
 const plain = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -433,6 +450,10 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     //
     // It is still the one thing that separates the work in hand from the record of it, so it
     // is also what the core's updates are built from and what a group's *N more* counts.
+    //
+    // The one row that is not a node is a cancellation past its hour, and it takes its
+    // pictures with it: a group left holding nothing else is never added.
+    if (!onHome(task, now)) continue;
     const chain = grouped.get(task.subject);
     const threadLive = !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
     const inHand = OPEN.has(task.status)
@@ -925,9 +946,10 @@ const inHand = (node) => heat(node)[0] >= 1;
  * **The model is the whole graph; this picks what the window draws of it**, in `frame` at
  * `OVERVIEW`, and counts what a group holds in hand that did not fit.
  *
- * Nothing is kept out of the model, so this is the only place a card is ever left off the
- * chart. Cards are offered hottest first — the tier in `heat`, so every card in hand is
- * offered before any history — and each is tried against the whole chart laid out afresh:
+ * Nothing but a spent cancellation is kept out of the model (`onHome`), so this is the only
+ * place any other card is ever left off the chart. Cards are offered hottest first — the tier
+ * in `heat`, so every card in hand is offered before any history — and each is tried against
+ * the whole chart laid out afresh:
  *
  * 1. **In a group taken as the centre, everything it holds in hand is drawn**, at any depth
  *    below it, inner groups included: the person pressed in to see this thread. It is the one

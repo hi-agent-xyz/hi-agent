@@ -27,9 +27,9 @@ const list = (values) => [...values];
 const titles = (model, kind) => list(ofKind(model, kind).map((n) => n.title)).sort();
 /**
  * The rows this model calls **in hand** — what is going on now, as against what a branch has
- * been through. Every row in the ledger is a node whatever its answer here (`titles` is the
- * whole of them); this is the tier that decides which ones fill the window first, which ones
- * a group counts as *N more*, and which closures are news on the core.
+ * been through. Every row in the ledger but a spent cancellation is a node whatever its answer
+ * here (`titles` is the whole of them); this is the tier that decides which ones fill the
+ * window first, which ones a group counts as *N more*, and which closures are news on the core.
  */
 const handed = (model) => list(ofKind(model, "task").filter((n) => n.data.inHand).map((n) => n.title)).sort();
 const handCount = (model) => ofKind(model, "task").filter((n) => n.data.inHand).length;
@@ -115,13 +115,34 @@ test("a thread still in hand keeps its closed rows; a finished one does not", ()
   assertConnected(model);
 });
 
-test("a cancellation is a notice whatever is running beside it", () => {
+test("a cancellation is on Home for an hour, and then not on Home at all", () => {
   // It has nothing to come back to: what it made on the way is process, and the row's own word
-  // says the work is not happening. Two of these, closed in one sweep, are what started this.
-  const groups = [{ label: "duties", members: ["dropped", "on-duty"] }];
-  const model = project({ groups, tasks: [task("on-duty", "serving", 1), task("dropped", "cancelled", 13)],
-    messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(11) }] });
-  assert.deepEqual(handed(model), ["on-duty"]);
+  // says the work is not happening. Ranked as history, two of these three days closed were
+  // drawn in a group of five duties because the window had room, and read as pure interference.
+  const cancelled = (subject, minutesAgo, extra = {}) => ({ ...task(subject, "cancelled", 0),
+    cancelledAt: new Date(NOW - minutesAgo * 60000).toISOString(), refs: [`shot-${subject}`], ...extra });
+  const groups = [{ label: "duties", members: ["on-duty", "just-dropped", "dropped"] },
+    { label: "gone", members: ["dropped-too"] }];
+  const model = project({ groups,
+    views: ["just-dropped", "dropped"].map((s) => ({ view_ref: `shot-${s}`, label: s, shot_url: `/${s}.png` })),
+    workers: [worker("still-on-it", "worker", { subject: "dropped" })],
+    tasks: [task("on-duty", "serving", 1), cancelled("just-dropped", 50), cancelled("dropped", 70),
+      cancelled("dropped-too", 3 * 24 * 60), { ...task("no-stamp", "cancelled", 0), statusSince: null }] });
+  // Inside its hour it is a notice: in hand beside a live sibling, and news on the core.
+  assert.deepEqual(titles(model, "task"), ["just-dropped", "on-duty"]);
+  assert.deepEqual(handed(model), ["just-dropped", "on-duty"]);
+  assert.ok(model.nodes.some((n) => n.id === "overview:task:task:just-dropped"));
+  // Past it, gone — not history. A live sibling, nobody being back yet and a picture of its own
+  // keep nothing; a group holding nothing else is not added; a missing time reads as past it.
+  assert.deepEqual(ids(model, "result"), ["result:shot-just-dropped"]);
+  assert.ok(!model.nodes.some((n) => n.id === "group:gone"));
+  // A live session on it is still live work: it stands on the core under its own title.
+  const hand = ofKind(model, "activity")[0];
+  assert.equal(model.edges.find((e) => e.primary && e.to === hand.id).from, "core");
+  // And pressed into the group, with the window to itself, it is still not drawn.
+  assert.deepEqual(ids(budgeted(focusOn(model, "group:duties"), LAPTOP).model, "task").sort(),
+    ["task:just-dropped", "task:on-duty"]);
+  assertConnected(model);
 });
 
 test("a thread keeps a closed row past the fade, and the fade no longer decides retention", () => {
@@ -812,7 +833,7 @@ test("history fills the room a branch's live work leaves, and no more", () => {
   const model = project({ groups, messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(0.5) }],
     tasks: [task("compare", "doing", 1), task("insoles", "doing", 2),
       { ...task("research", "done", 300), completedAt: hoursAgo(300) },
-      { ...task("pick", "cancelled", 400), cancelledAt: hoursAgo(400) }] });
+      { ...task("pick", "done", 400), completedAt: hoursAgo(400) }] });
   assert.deepEqual(handed(model), ["compare", "insoles"], "the finished pair is history");
   // Pressed in, with the window to itself: both hands, at both depths, and the history after.
   assert.deepEqual(ids(budgeted(focusOn(model, "group:Shoes"), LAPTOP).model, "task").sort(),

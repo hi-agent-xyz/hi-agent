@@ -5,9 +5,10 @@ It is a read projection of existing records, not another task ledger or session
 lifecycle store. It remains a normal factory view.
 
 **The model is complete; the chart is not.** The projection holds every row the ledger has
-with the whole of its structure — the groups it sits in, the pictures it made, the hands on
-it — and the window then draws as much of that as fits, work in hand first. What this surface
-refuses is not the record but the claim that all of it is worth the window. `factory/tasks`
+but a cancellation past its first hour (§ *In hand, and history*), with the whole of its
+structure — the groups it sits in, the pictures it made, the hands on it — and the window
+then draws as much of that as fits, work in hand first. What this surface refuses is not the
+record but the claim that all of it is worth the window. `factory/tasks`
 still carries the ledger to *read*, `factory/workers` every session, and a card's press hands
 off to whichever owns it.
 
@@ -681,9 +682,10 @@ overview content. A previous response is earlier context after a new user messag
 
 ## In hand, and history
 
-**These rules decide rank, never existence.** Every row the ledger has is a node with its whole
-branch; what follows is how the surface tells what is going on right now from what a thread has
-been through. The tier feeds three readers and nothing else: which cards fill the window first,
+**These rules decide rank, never existence — with one exception, and it is by kind.** Every
+row the ledger has is a node with its whole branch, except a cancellation once its hour is
+up (its own rule below); what follows is how the surface tells what is going on right now from
+what a thread has been through. The tier feeds three readers and nothing else: which cards fill the window first,
 which undrawn ones a group counts as *N more*, and which closures are news on the core.
 
 **What puts a closed card in hand is the work it belongs to, not the clock. An unknown age reads
@@ -717,9 +719,18 @@ old. The clock had no way to tell those apart.
     own inbound timestamps, which `buildHome` already holds for the overview. No client
     identity, no cursor, no acknowledgement — the text channel carries none of those and never
     will ([text-transcript.md](text-transcript.md)).
-- **A cancellation is a notice whatever is running beside it.** It has nothing to come back
-  to — what it made on the way is process, and the row's own word says the work is not
-  happening — so a live sibling never keeps one.
+- **A cancellation is on Home for an hour, and then it is not on Home at all** — not in hand,
+  not history, not in *N more*, not drawn in a branch's spare room. It is the one row these
+  rules take out of the model rather than rank, and it goes by what it is, not by how full the
+  window is. It has nothing to come back to: what it made on the way is process, and the row's
+  own word says the work is not happening. So a live sibling never keeps one, nobody being back
+  yet never keeps one, and room to spare never draws one. Ranking it as history was tried and is
+  what failed: in a group of five duties, two were cancellations three days closed, drawn because
+  the window had room, and the person's word for them was *pure interference — even with few
+  nodes, nobody wants to see them*. The hour runs from the closure, not from the person's next
+  message the way a notice's grace does: it is long enough to see the ask landed, and nothing
+  after it is worth the window. Past it the row is `factory/tasks`' to show, and a missing
+  closure time reads as past it, like any other.
 - **Seven days is the ceiling, and it is a backstop rather than a window.** Nothing else
   bounds a thread that stays open, and the arrangement record cannot be the bound: it still
   named 17 closed members, the oldest 45 hours past its closure, and
