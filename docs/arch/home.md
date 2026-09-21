@@ -255,10 +255,28 @@ deliberately a different lightness it is sharper and points the same way. A pane
 decides how much ground comes through, and every bit that does drags the card *towards* the
 ground — so here **opacity is contrast**, and 90% is a floor to raise rather than a cost.
 Cards enter with a short fade and 10px rise, staggered at 28ms intervals capped at 224ms.
-Stable node identities keep live refreshes from replaying entry animations. Animation never
-owns layout or the canvas zoom transform, and releases opacity back to the model's emphasis
-when finished. Pointer hover raises actionable cards 2px; keyboard focus has an explicit
-accent outline. Reduced-motion preferences disable entry and movement effects.
+**An update moves the chart; it does not redraw it.** A card that leaves fades out where it
+stood (220ms), a card that stays glides from where it was on screen to where it now is
+(420ms), and a card that arrives fades in 160ms later, into the room the other two made; its
+wire fades in with it. An update used to be a redraw, and it read as a flash: dropping one
+group's seven tasks on a live arrangement took its five headings off in a single frame,
+jumped all fifteen survivors to their new places in the next — one of them 956px — and faded
+nine of those fifteen to nothing and back in. The last was a claim this paragraph made and
+the page did not keep: node identities were stable, but rows were drawn in layout order, and
+a row that changed places in it was re-inserted, which restarts an entry animation. Rows and
+wires are drawn in id order now, which no update changes. **A glide starts from the screen,
+not the chart:** a drawing is measured from its own corner and a refit changes the scale under
+all of it, so the same card sits at different chart coordinates in two drawings without
+having moved, and the scale change is part of the glide rather than a jump in front of it.
+**A card that changes sides hops instead of travelling** — fades out, changes sides unseen,
+fades in — because glided, a branch moved by the balance slid across the core card and
+through the branches it passed. The same motion carries a group into the centre when it is
+pressed. Only an update somebody was looking at moves this way: the first drawing, the one
+the sources answer into, a resize, and the narrow flow draw at once, and the narrow flow has
+the entry fade and nothing else. Animation never owns layout or the canvas zoom transform: a
+glide is a transform on the row that comes off when it ends, and opacity is released back to
+the model's emphasis. Pointer hover raises actionable cards 2px; keyboard focus has an
+explicit accent outline. Reduced-motion preferences disable entry and movement effects.
 Group headings pair their label with a 40px icon, and the label is drawn in its group's
 colour. The icon is the group's own when one has been drawn for it and a shared default until
 then — see § *Icons* below. Home never picks one from a label or from task text. The icon is
@@ -825,7 +843,9 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   tasks are fed to the layout in the order the record gives, and the two-sided balance then
   takes them alternately as weight allows, so "first in the file" means near the core rather
   than a place a person can predict. Making a branch's side its own property is the work that
-  would make position learnable, and it is not started.
+  would make position learnable, and it is not started. The cost is also paid on every update
+  that tips the balance: on the measured one above, five of fifteen surviving nodes changed
+  sides. The hop keeps that from sliding across the core; it does not make it happen less.
 - **A view-open carries no target.** `openRef(viewRef)` takes a view reference and
   nothing else, and `factory/tasks` reads no incoming selection, so a card opens the
   board rather than its own row on it and the person finds the row themselves. Giving

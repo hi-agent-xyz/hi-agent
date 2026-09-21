@@ -10,8 +10,8 @@ const require = createRequire(new URL("../../../appearance/web/package.json", im
 const { flextree } = require("d3-flextree");
 const source = readFileSync(new URL("./home.jsx", import.meta.url), "utf8");
 const pure = source.slice(0, source.indexOf("export default function Home")).replace(/^import .*;$/gm, "");
-const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, runningHand, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat } = runInNewContext(
-  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, runningHand, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat });`,
+const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, runningHand, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat, carry, drawn, glide, boxAt } = runInNewContext(
+  `${pure}\n;({ buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, runningHand, nodeTime, childIndex, normalizeSession, emphasis, groupIcon, branchHues, branchTones, branchPaint, focusOn, trail, budgeted, opening, heat, carry, drawn, glide, boxAt });`,
   { flextree, document: { documentElement: { lang: "en" } }, navigator: { language: "en" } },
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
@@ -627,6 +627,58 @@ test("a zoom keeps the point under the pointer where it was, fitted or overflowi
   assert.equal(clampZoom(0.01), 0.25);
   assert.equal(clampZoom(9), 2);
   assert.equal(clampZoom(1), 1);
+});
+
+test("an update glides what stays from where it was on screen, and fades what goes where it stood", () => {
+  const frame = { w: 1400, h: 780 };
+  // Where a box is on screen: the one thing a glide has to keep continuous.
+  const screen = (box, at) => [at.offset.x + box.x * at.scale - at.scroll.left,
+    at.offset.y + box.y * at.scale - at.scroll.top, box.w * at.scale, box.h * at.scale];
+  const near = (a, b, why) => assert.ok(a.every((v, i) => Math.abs(v - b[i]) < 1e-6), `${why}: ${a} vs ${b}`);
+  // Any two stages: a carried box sits exactly where it sat, at the new scale and scroll.
+  const box = { x: 120, y: 48, w: 240, h: 135, dir: 1 };
+  const from = { scale: 0.83, offset: { x: 700, y: 390 }, scroll: { left: 610, top: 222 } };
+  const to = { scale: 1, offset: { x: 700, y: 390 }, scroll: { left: 480, top: 300 } };
+  near(screen(carry(box, from, to), to), screen(box, from), "carried");
+  // A real update: one group's only task goes, and Home refits and recentres around what is left.
+  const groups = [{ label: "A", members: ["a1", "a2"] }, { label: "B", members: ["b1"] }];
+  const tasks = ["a1", "a2", "b1", "loose1", "loose2"].map((s) => task(s));
+  const before = arrange(project({ tasks, groups }));
+  const after = arrange(project({ tasks: tasks.filter((t) => t.subject !== "b1"), groups }));
+  const centred = (chart, scale) => ({ scale, offset: stage(chart, frame, scale).offset,
+    scroll: { left: (chart.width * scale) / 2, top: (chart.height * scale) / 2 } });
+  const a = centred(before, 0.9), b = centred(after, 1);
+  const was = new Map(before.placed.map((row) => [row.node.id, { row, box: row }]));
+  const plan = glide(was, a, b, after);
+  assert.deepEqual(list(plan.leaving.keys()).sort(), ["group:B", "task:b1"]);
+  for (const [id, gone] of plan.leaving) {
+    near(screen(gone.box, b), screen(was.get(id).box, a), `${id} fades where it stood`);
+    assert.equal(gone.row, was.get(id).row, `${id} keeps the row it is rendered at`);
+  }
+  assert.ok(plan.moves.size > 0, "a refit moves what stays");
+  for (const [id, move] of plan.moves) {
+    near(screen(move.from, b), screen(was.get(id).box, a), `${id} starts where it was`);
+    assert.equal(move.to, after.placed.find((row) => row.node.id === id), `${id} ends on its new row`);
+  }
+  // Nothing moved, nothing left: an update that changes nothing on screen plans nothing.
+  const still = glide(new Map(after.placed.map((row) => [row.node.id, { row, box: row }])), b, b, after);
+  assert.equal(still.moves.size + still.leaving.size, 0);
+  // A card that changes sides hops: on its old side until halfway, on its new one after, never
+  // anywhere between — between is across the core. One that stays on its side glides.
+  const [crosser, stayer] = after.placed.filter((row) => row.dir !== 0);
+  const moved = (row, dir) => [row.node.id, { row: { ...row, dir }, box: { ...row, y: row.y + 300, dir } }];
+  const sides = glide(new Map([moved(crosser, -crosser.dir), moved(stayer, stayer.dir)]), b, b, after);
+  const hop = sides.moves.get(crosser.node.id);
+  assert.equal(hop.hop, true);
+  assert.equal(sides.moves.get(stayer.node.id).hop, false);
+  assert.equal(boxAt(hop, 0.49), hop.from);
+  assert.equal(boxAt(hop, 0.51), hop.to);
+  assert.equal(boxAt(sides.moves.get(stayer.node.id), 0.5).y, stayer.y + 150);
+  // A glide keeps a card's shape: a same-shaped box is drawn exactly, and a group growing into the
+  // centre is scaled alike on both axes about the box it is growing into.
+  near(Object.values(drawn(box, { ...box, x: 0, w: 480, h: 270 })).slice(0, 5), [0, 48, 480, 270, 2], "same shape");
+  const grown = drawn({ x: 0, y: 0, w: 144, h: 56 }, { x: 0, y: 0, w: 240, h: 80 });
+  near([grown.w / grown.h, grown.x + grown.w / 2, grown.y + grown.h / 2], [144 / 56, 120, 40], "shape and centre");
 });
 
 test("layout supports deeper nodes, rather than flattening every row into a hub child", () => {

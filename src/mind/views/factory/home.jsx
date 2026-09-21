@@ -882,13 +882,20 @@ function arrange(model, tones = branchTones(model)) {
   const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + MARGIN;
   for (const row of placed) { row.x -= x0; row.y -= y0; }
   const byId = new Map(placed.map((p) => [p.node.id, p]));
-  const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) => {
-    const from = byId.get(edge.from), to = byId.get(edge.to), right = to.dir > 0;
-    const sx = from.x + (right ? from.w : 0), sy = from.y + from.h / 2;
-    const ex = to.x + (right ? 0 : to.w), ey = to.y + to.h / 2, mid = (sx + ex) / 2;
-    return { ...edge, paint: branchPaint(tones.get(edge.to)), d: `M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ey}, ${ex} ${ey}` };
-  });
+  const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) =>
+    ({ ...edge, paint: branchPaint(tones.get(edge.to)), d: wirePath(byId.get(edge.from), byId.get(edge.to)) }));
   return { placed, wires, width, height };
+}
+
+/**
+ * A wire leaves its parent's edge, runs to the midpoint and arrives flat at its child. Any two
+ * boxes will do, which is what lets the glide draw one between two cards that are mid-flight.
+ */
+function wirePath(from, to) {
+  const right = to.dir > 0;
+  const sx = from.x + (right ? from.w : 0), sy = from.y + from.h / 2;
+  const ex = to.x + (right ? 0 : to.w), ey = to.y + to.h / 2, mid = (sx + ex) / 2;
+  return `M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ey}, ${ex} ${ey}`;
 }
 
 /**
@@ -1050,6 +1057,105 @@ function opening(chart, frame) {
   return clampZoom(Math.max(OVERVIEW, Math.min(frame.w / chart.width, frame.h / chart.height, 1)));
 }
 
+/**
+ * **An update moves the chart; it does not redraw it.** A card that leaves fades out where it
+ * stood, a card that stays glides from where it was on screen to where it now is, and a card
+ * that arrives fades in after them, into the room the other two made.
+ *
+ * An update used to be a redraw, and it read as a flash. Measured on a live arrangement by
+ * dropping one group's seven tasks from the ledger: the group's five headings went in a single
+ * frame, every one of the fifteen that stayed jumped to its new place in the next — one 956px,
+ * across the core, because the balance moved it to the other side — and **nine of those fifteen
+ * faded to nothing and back in.** That last one was not a choice anybody made: the rows were
+ * drawn in layout order, a row that changed places in it was re-inserted, and a re-inserted
+ * element starts its entry animation over. So what is drawn is now in id order, which no update
+ * changes, and nothing that stays is ever re-inserted.
+ *
+ * **A glide is from the screen, not from the chart.** The same card sits at different chart
+ * coordinates in two drawings even when it has not moved, because a drawing is measured from
+ * its own top-left, and a refit changes the scale under all of it at once (`opening`). So where
+ * a card starts is where it *was on screen*, carried into the new drawing's units (`carry`),
+ * and the scale change is part of the same glide instead of a jump in front of it.
+ *
+ * **A card that changes sides does not travel; it hops.** The balance can move a whole branch
+ * to the other side of the core (`arrange`), and glided, every card of it slid across the core
+ * card and through the branches it passed, trailing a wire drawn edge to edge through its own
+ * label. So a card whose side changed fades out where it was, changes sides while it cannot be
+ * seen, and fades in where it now is — a branch leaving one side and arriving on the other,
+ * which is what happened. Its wires fade with it.
+ *
+ * Only an update the person was looking at glides. The first drawing, the one the sources
+ * answer into, a resize, and the narrow flow are drawn the way they always were, and a reader
+ * who asked for reduced motion gets none of this.
+ */
+const GLIDE_MS = 420, EXIT_MS = 220;
+/** A hop's opacity over the glide: out, a moment of nothing while it changes sides, back in. */
+const HOP_FADE = [{ opacity: 0, offset: 0.4 }, { opacity: 0, offset: 0.6 }];
+/** An arriving card waits most of the way through the leaving ones' fade before it starts its own. */
+const ENTER_AFTER = 160;
+/** Cards that arrive together come in one after another: 28ms apart, the eighth and later together. */
+const STAGGER_MS = 28, STAGGER_CAP = 8;
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+const lerpBox = (a, b, e) => ({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e,
+  w: a.w + (b.w - a.w) * e, h: a.h + (b.h - a.h) * e, dir: b.dir });
+const sameBox = (a, b) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5
+  && Math.abs(a.w - b.w) < 0.5 && Math.abs(a.h - b.h) < 0.5;
+/** Where a move is at eased progress `e`. A hop is on its old side until halfway, then its new. */
+const boxAt = (move, e) => (move.hop ? (e < 0.5 ? move.from : move.to) : lerpBox(move.from, move.to, e));
+
+/**
+ * The box on stage `to` that sits exactly where `box` sat on stage `from`. A stage is what puts
+ * chart units on screen: `{ scale, offset, scroll }`, the same three `stage` and the viewport
+ * already hold.
+ */
+function carry(box, from, to) {
+  const k = from.scale / to.scale;
+  return {
+    x: (from.offset.x + box.x * from.scale - from.scroll.left + to.scroll.left - to.offset.x) / to.scale,
+    y: (from.offset.y + box.y * from.scale - from.scroll.top + to.scroll.top - to.offset.y) / to.scale,
+    w: box.w * k, h: box.h * k, dir: box.dir,
+  };
+}
+
+/**
+ * Where an element rendered at `rendered` is drawn when it is made to stand for `box`: scaled
+ * alike on both axes, about the box's centre. A card that glides keeps its shape; only a group
+ * taken as the centre changes it, and there squashing its label would be the one thing wrong.
+ * `k` is the scale, and the wires run between these boxes rather than the targets.
+ */
+function drawn(rendered, box) {
+  const k = Math.sqrt((box.w / rendered.w) * (box.h / rendered.h));
+  const w = rendered.w * k, h = rendered.h * k;
+  return { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h, k, dir: box.dir };
+}
+
+/**
+ * What an update does on screen. `was` is every box on screen just before it, by node id, as
+ * `{ row, box }`: the row the element is rendered at and the box it is drawn at, in the
+ * previous drawing's units. Returns the new drawing's units throughout:
+ *
+ * - `moves`: a node in both drawings whose box changed on screen, `{ from, to, hop }` — `to` is
+ *   its new row, so a node that stayed exactly where it was is not a move at all, and `hop` is
+ *   whether it changed sides of the core.
+ * - `leaving`: a node the new drawing does not have, `{ row, box }` — still rendered at its old
+ *   row and drawn where it was on screen, for as long as it takes to fade.
+ *
+ * A node only in the new drawing is in neither: it arrives, which is the entry animation's.
+ */
+function glide(was, before, after, chart) {
+  const moves = new Map(), leaving = new Map(), ids = new Set();
+  for (const row of chart.placed) {
+    ids.add(row.node.id);
+    const prior = was.get(row.node.id);
+    if (!prior) continue;
+    const from = carry(prior.box, before, after);
+    const hop = !!prior.row.dir && !!row.dir && prior.row.dir !== row.dir;
+    if (!sameBox(from, row)) moves.set(row.node.id, { from, to: row, hop });
+  }
+  for (const [id, prior] of was) if (!ids.has(id)) leaving.set(id, { row: prior.row, box: carry(prior.box, before, after) });
+  return { moves, leaving };
+}
+
 async function getJson(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${response.status}`);
@@ -1089,7 +1195,7 @@ export default function Home() {
   const [errors, setErrors] = useState([]);
   const [now, setNow] = useState(Date.now);
   const [frame, setFrame] = useState({ w: 1200, h: 760 });
-  const viewport = useRef(null), inFlight = useRef(false);
+  const viewport = useRef(null), stageRef = useRef(null), inFlight = useRef(false);
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -1218,6 +1324,11 @@ export default function Home() {
     if (held !== null || mobile || !frameMeasured || !viewport.current) return;
     scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
   }, [held, mobile, frameMeasured, chart, frame, scale, offset.x, offset.y]);
+  // After the centring above, never before it: a glide starts from where a card was on screen,
+  // and needs the scroll this drawing ends up at to say where that is now.
+  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const glide = useGlide({ chart, scale, offset, frame, viewport, stage: stageRef,
+    ready: loaded && frameMeasured && !mobile && !still });
   // Another centre is another chart, and it opens whole.
   const centreOn = useCallback((next) => {
     if (next === live.current.focus) return;
@@ -1293,7 +1404,7 @@ export default function Home() {
         </span>)}
       </nav>}
       <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
-        onPointerDown={(e) => {
+        onScroll={glide.onScroll} onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
         const el = e.currentTarget;
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1333,17 +1444,21 @@ export default function Home() {
             : <Core node={model.nodes[0]} model={model} now={now} />}
           <Branch nodes={focused ? children.get(focus) || [] : branches} parent={shown.rootId} {...common} />
         </div> : <div className="hi-work__canvas" style={{ width: canvas.w, height: canvas.h }}>
-          <div className="hi-work__stage" style={{ left: offset.x, top: offset.y, width: chart.width, height: chart.height,
+          <div className="hi-work__stage" ref={stageRef} style={{ left: offset.x, top: offset.y, width: chart.width, height: chart.height,
             transform: `scale(${scale})` }}>
             <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
-              {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} style={{ stroke: wire.paint }} />)}
+              {glide.wires.map(({ wire, leaving, delay }) => <path key={wire.id} data-edge={wire.id}
+                data-leaving={leaving ? "" : undefined} d={wire.d}
+                style={{ stroke: wire.paint, "--enter-delay": `${delay}ms` }} />)}
             </svg>
             {/* The side a node sits on is on the node, because a group's icon takes the end
-                of its heading that faces the core — see `.hi-work__group > button` in the CSS. */}
-            {chart.placed.map((row, index) => <div key={row.node.id} className="hi-work__position"
-              data-dir={row.dir}
+                of its heading that faces the core — see `.hi-work__group > button` in the CSS.
+                A row on its way out is still a row, so its card keeps its element and its
+                picture while it fades; it just cannot be pressed. */}
+            {glide.rows.map(({ row, leaving, delay }) => <div key={row.node.id} className="hi-work__position"
+              data-row={row.node.id} data-dir={row.dir} data-leaving={leaving ? "" : undefined} inert={leaving}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
-                "--enter-delay": `${Math.min(index, 8) * 28}ms` }}>
+                "--enter-delay": `${delay}ms` }}>
               {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now}
                 more={overview.hidden.get(row.node.id)} openRef={openRef} />
                 : <Node node={row.node} root={row.node.id === shown.rootId} up={up}
@@ -1355,6 +1470,155 @@ export default function Home() {
       </div>
     </div>
   );
+}
+
+/**
+ * The chart's motion from one drawing to the next — `GLIDE_MS` says what it is and why.
+ *
+ * It returns what to render: the drawing's rows and wires plus whatever is still on its way out,
+ * in id order, each with the delay its entry animation was given when it first appeared.
+ * Everything after that is the element's own: a transform on the row and a path on the wire,
+ * written straight onto the DOM for the length of the glide and taken off again at the end.
+ * **Layout stays the drawing's**: `left`/`top` are always the new rows, the stage's zoom is
+ * never touched, and a glide cut short by the next update starts that one from wherever the
+ * cards had got to.
+ *
+ * `ready` is whether this drawing is one the person has been looking at.
+ */
+function useGlide({ chart, scale, offset, frame, viewport, stage, ready }) {
+  const ref = useRef(null);
+  if (ref.current === null) ref.current = { chart: null, stage: null, scroll: null, frame: null, ready: false,
+    moves: new Map(), started: 0, leaving: new Map(), wires: new Map(), delays: new Map(), hops: [], raf: 0 };
+  const s = ref.current;
+  const [, settle] = useState(0);
+  const same = s.chart === chart;
+  const glides = ready && s.ready && !!s.chart && !same && s.frame?.w === frame.w && s.frame?.h === frame.h;
+  // What stays on screen past this drawing: whatever was already on its way out and, when this
+  // update glides, whatever the last drawing had and this one does not. Anything else drops.
+  const ids = new Set(chart.placed.map((row) => row.node.id));
+  const going = new Map();
+  if (same || glides) for (const [id, l] of s.leaving) if (!ids.has(id)) going.set(id, l.row);
+  if (glides) for (const row of s.chart.placed) if (!ids.has(row.node.id) && !going.has(row.node.id)) going.set(row.node.id, row);
+  const shown = new Set([...ids, ...going.keys()]);
+  const edges = new Set(chart.wires.map((w) => w.id));
+  const fading = new Map();
+  if (same || glides) for (const [id, w] of s.wires) if (!edges.has(id)) fading.set(id, w);
+  if (glides) for (const w of s.chart.wires) if (!edges.has(w.id) && !fading.has(w.id)) fading.set(w.id, w);
+  for (const [id, w] of fading) if (!shown.has(w.from) || !shown.has(w.to)) fading.delete(id);
+  // A row's entry delay is fixed when it first appears. Changing it later would move an entry
+  // that is still waiting to start.
+  const fresh = new Map();
+  let k = 0;
+  for (const row of chart.placed) {
+    if (s.delays.has(row.node.id)) continue;
+    fresh.set(row.node.id, (glides ? ENTER_AFTER : 0) + Math.min(k++, STAGGER_CAP) * STAGGER_MS);
+  }
+  const delay = (id) => s.delays.get(id) ?? fresh.get(id) ?? 0;
+  const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const rows = [...chart.placed.map((row) => ({ id: row.node.id, row, leaving: false })),
+    ...[...going].map(([id, row]) => ({ id, row, leaving: true }))].sort(byId)
+    .map((r) => ({ ...r, delay: delay(r.id) }));
+  const wires = [...chart.wires.map((wire) => ({ id: wire.id, wire, leaving: false })),
+    ...[...fading].map(([id, wire]) => ({ id, wire, leaving: true }))].sort(byId)
+    .map((w) => ({ ...w, delay: w.leaving ? 0 : delay(w.wire.to) }));
+
+  // One frame of the glide: every row and wire as it stands at this instant, and the next frame
+  // asked for while anything is still in flight.
+  const paint = useCallback(() => {
+    const s = ref.current, root = stage.current;
+    cancelAnimationFrame(s.raf);
+    s.raf = 0;
+    if (!root || !s.chart) return;
+    const now = performance.now();
+    const e = s.moves.size ? ease(Math.min(1, (now - s.started) / GLIDE_MS)) : 1;
+    const els = new Map([...root.querySelectorAll("[data-row]")].map((el) => [el.dataset.row, el]));
+    const at = new Map(s.chart.placed.map((row) => [row.node.id, row]));
+    const place = (id, rendered, box) => {
+      const d = drawn(rendered, box), el = els.get(id);
+      at.set(id, d);
+      if (el) el.style.transform = `translate(${d.x - rendered.x}px, ${d.y - rendered.y}px) scale(${d.k})`;
+    };
+    for (const [id, m] of s.moves) place(id, m.to, boxAt(m, e));
+    for (const [id, l] of s.leaving) place(id, l.row, l.box);
+    const finals = new Map(s.chart.wires.map((w) => [w.id, w]));
+    const done = s.moves.size > 0 && e >= 1;
+    if (s.moves.size || s.wires.size) {
+      for (const path of root.querySelectorAll("path[data-edge]")) {
+        const wire = finals.get(path.dataset.edge) || s.wires.get(path.dataset.edge);
+        const from = wire && at.get(wire.from), to = wire && at.get(wire.to);
+        if (from && to) path.setAttribute("d", done && finals.has(wire.id) ? wire.d : wirePath(from, to));
+      }
+    }
+    if (done) {
+      for (const id of s.moves.keys()) if (els.get(id)) els.get(id).style.transform = "";
+      s.moves = new Map();
+    }
+    let gone = false;
+    for (const [id, l] of s.leaving) if (now - l.since >= EXIT_MS) { s.leaving.delete(id); gone = true; }
+    for (const [id, w] of s.wires) if (now - w.since >= EXIT_MS) { s.wires.delete(id); gone = true; }
+    if (gone) settle((n) => n + 1);
+    if (s.moves.size || s.leaving.size || s.wires.size) s.raf = requestAnimationFrame(paint);
+  }, [stage]);
+
+  useLayoutEffect(() => {
+    const s = ref.current, el = viewport.current;
+    const scroll = el ? { left: el.scrollLeft, top: el.scrollTop } : { left: 0, top: 0 };
+    if (!same) {
+      const now = performance.now(), root = stage.current;
+      // A hop cut short is at whatever opacity it had got to; the next update starts from full.
+      for (const fade of s.hops) fade.cancel();
+      s.hops = [];
+      if (glides) {
+        // Where everything was on screen the instant before this drawing — mid-glide or not.
+        const e = s.moves.size ? ease(Math.min(1, (now - s.started) / GLIDE_MS)) : 1;
+        const was = new Map();
+        for (const row of s.chart.placed) {
+          const m = s.moves.get(row.node.id);
+          was.set(row.node.id, { row, box: m ? drawn(row, boxAt(m, e)) : row });
+        }
+        for (const [id, l] of s.leaving) if (!was.has(id)) was.set(id, l);
+        const plan = glide(was, { ...s.stage, scroll: s.scroll }, { scale, offset, scroll }, chart);
+        for (const [id, l] of plan.leaving) l.since = s.leaving.get(id)?.since ?? now;
+        s.moves = plan.moves; s.started = now; s.leaving = plan.leaving;
+        s.wires = new Map([...fading].map(([id, w]) => [id, { ...w, since: s.wires.get(id)?.since ?? now }]));
+        // The fade is the card's own pane, for the reason the exit's is (see the CSS), and every
+        // wire with a hopping end goes with it. Its ends are left implicit, so it dips from and
+        // back to whatever the card's emphasis is.
+        const hops = new Set([...plan.moves].filter(([, m]) => m.hop).map(([id]) => id));
+        if (root && hops.size) {
+          for (const el of root.querySelectorAll("[data-row]")) {
+            if (hops.has(el.dataset.row) && el.firstElementChild) s.hops.push(el.firstElementChild.animate(HOP_FADE, GLIDE_MS));
+          }
+          const ends = new Map([...chart.wires, ...fading.values()].map((w) => [w.id, w]));
+          for (const path of root.querySelectorAll("path[data-edge]")) {
+            const w = ends.get(path.dataset.edge);
+            if (w && (hops.has(w.from) || hops.has(w.to))) s.hops.push(path.animate(HOP_FADE, GLIDE_MS));
+          }
+        }
+      } else {
+        // Not an update anyone was watching: the new drawing, exactly as it lays out.
+        s.moves = new Map(); s.leaving = new Map(); s.wires = new Map();
+        if (root) {
+          for (const row of root.querySelectorAll("[data-row]")) row.style.transform = "";
+          const finals = new Map(chart.wires.map((w) => [w.id, w.d]));
+          for (const path of root.querySelectorAll("path[data-edge]")) if (finals.has(path.dataset.edge)) path.setAttribute("d", finals.get(path.dataset.edge));
+        }
+      }
+      s.chart = chart;
+    }
+    s.stage = { scale, offset }; s.scroll = scroll; s.frame = frame; s.ready = ready;
+    for (const [id, d] of fresh) s.delays.set(id, d);
+    for (const id of s.delays.keys()) if (!shown.has(id)) s.delays.delete(id);
+    // Written before the browser paints, so no frame ever shows the new drawing un-glided.
+    paint();
+  });
+  useEffect(() => () => cancelAnimationFrame(ref.current.raf), []);
+  // The scroll the next update starts from. Every commit records it once the centring has moved
+  // it; this is what keeps it true while the person scrolls in between.
+  const onScroll = useCallback((event) => {
+    ref.current.scroll = { left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop };
+  }, []);
+  return { rows, wires, onScroll };
 }
 
 /**
@@ -1457,7 +1721,7 @@ function Node({ node, now, children, openRef, tones, centreOn, root = false, up 
 function Branch({ nodes, parent, ...props }) {
   return <ul className="hi-work__branch" style={{ "--rail": branchPaint(props.tones.get(parent)) }}>
     {nodes.map((node, index) => <li key={node.id} style={{ "--tick": branchPaint(props.tones.get(node.id)),
-      "--enter-delay": `${Math.min(index, 8) * 28}ms` }}>
+      "--enter-delay": `${Math.min(index, STAGGER_CAP) * STAGGER_MS}ms` }}>
       <Node node={node} {...props} />
       {props.children.get(node.id)?.length > 0 && <Branch nodes={props.children.get(node.id)} parent={node.id} {...props} />}
     </li>)}</ul>;
@@ -1498,7 +1762,9 @@ const CSS = `
 .hi-work__canvas { position:relative; user-select:none; -webkit-user-select:none; }
 .hi-work__canvas img { -webkit-user-drag:none; }
 .hi-work__stage { position:absolute; transform-origin:0 0; }
-.hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; }
+/* Visible overflow because a card on its way out is drawn where it stood, which after a refit
+   can be outside the new drawing's box, and its wire goes with it. */
+.hi-work__wires { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
 /* Dark mode softens the highlight, deepens the shadow, and leans the panes more opaque. That
    last one used to be read as "transparency buys nothing against a dark wash"; with a ground
    that is deliberately a different lightness from the card it is sharper than that, and points
@@ -1511,8 +1777,9 @@ const CSS = `
 /* **A wire is structure, so it is drawn like structure.** At 1.8px and 0.8 opacity the
    branch hues came out as pastel threads that a card's border out-weighed, and the one thing
    a wire says — which branch a card belongs to — was the faintest mark on the chart. */
-.hi-work__wires path { fill:none; stroke-width:2.6; stroke-linecap:round; opacity:0.95; }
-.hi-work__position { position:absolute; }
+.hi-work__wires path { fill:none; stroke-width:2.6; stroke-linecap:round; opacity:0.95; animation:hi-work-wire-enter 380ms ease var(--enter-delay, 0ms) backwards; }
+/* A glide is a transform on the row, from its top-left corner — see useGlide. */
+.hi-work__position { position:absolute; transform-origin:0 0; }
 /* The core is the same glass one step more solid and one step warmer: it holds the most text
    of anything on the chart, so it is the one pane where the wash behind is a cost. */
 .hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:linear-gradient(145deg, color-mix(in srgb, var(--work-warm) 7%, var(--work-pane-top)), var(--work-pane-top) 45%, color-mix(in srgb, var(--work-cool) 6%, var(--work-pane-top))); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:14px; }
@@ -1540,11 +1807,19 @@ const CSS = `
    top-lit gradient is what keeps it a pane and not a smear. */
 .hi-work__node { height:100%; background:linear-gradient(155deg, var(--work-pane-top), var(--work-pane)); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:12px; display:flex; flex-direction:column; }
 .hi-work__node, .hi-work__core, .hi-work__tile { box-shadow:var(--work-shadow); }
-/* Animate the contents, never the positioned chart or its zoom transform. Backwards fill
-   releases opacity afterwards so the model's emphasis still owns the settled card. */
+/* Entry and exit animate the contents; a glide moves the row by a transform useGlide writes and
+   takes off again. None of them touches left/top or the zoom transform. Backwards fill releases
+   opacity afterwards so the model's emphasis still owns the settled card. */
 .hi-work__node, .hi-work__core, .hi-work__tile, .hi-work__group { animation:hi-work-enter 380ms cubic-bezier(.2,.7,.2,1) var(--enter-delay, 0ms) backwards; }
 .hi-work__core { --enter-delay:0ms; box-shadow:var(--work-shadow-raised); }
 @keyframes hi-work-enter { from { opacity:0; transform:translateY(10px) scale(.985); } }
+/* **A card on its way out fades its own pane, never the row around it.** Opacity below 1 on
+   an ancestor makes that ancestor the backdrop root, and the frosted pane inside would blur
+   nothing but the row: the card would turn to clear glass for the whole of its exit. */
+.hi-work__position[data-leaving] > * { animation:hi-work-exit ${EXIT_MS}ms ease forwards; }
+.hi-work__wires path[data-leaving] { animation:hi-work-exit ${EXIT_MS}ms ease forwards; }
+@keyframes hi-work-exit { to { opacity:0; } }
+@keyframes hi-work-wire-enter { from { opacity:0; } }
 /* A heading, not a card: no border and no background, because it is a name over the cards
    below it rather than a thing beside them. */
 .hi-work__group { height:100%; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; }
@@ -1597,7 +1872,7 @@ const CSS = `
 }
 .hi-work__node:has(button:active), .hi-work__tile:has(button:active) { transform:translateY(0); box-shadow:var(--work-shadow); }
 @media (prefers-reduced-motion:reduce) {
-  .hi-work__node, .hi-work__core, .hi-work__tile, .hi-work__group { animation:none; transition:none; }
+  .hi-work__node, .hi-work__core, .hi-work__tile, .hi-work__group, .hi-work__wires path { animation:none; transition:none; }
   .hi-work__node:has(button:hover), .hi-work__tile:has(button:hover) { transform:none; }
   .hi-work__group > button { transition:none; }
 }
