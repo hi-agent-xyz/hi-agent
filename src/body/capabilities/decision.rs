@@ -15,10 +15,10 @@
 //! second vendor is asking for. The types below mirror the reply
 //! ([`crate::foundation::vendors::typesafe_system_one`] documents the wire).
 //!
-//! **No engine-internal caller yet.** The one entrance is the `hi_system_one` tool, held
-//! by the worker and cognition rungs. Episode boundaries and forgetting are the obvious
-//! internal call sites and are deliberately not wired: landing the layer first is the
-//! staging rule, and wiring a caller later is purely additive.
+//! **Two entrances.** The `hi_system_one` tool, held by the worker and cognition rungs, and
+//! the pre-send speech check ([`crate::body::reaction::legibility::check`]), which asks every
+//! message in its scope the reading standard's axes as typed questions. Episode boundaries and
+//! forgetting are the next obvious internal call sites and are not wired.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
