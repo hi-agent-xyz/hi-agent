@@ -744,6 +744,34 @@ where fix-forward genuinely does not apply.
   the backend hook is dead: `Floor::mark_flush` ([`floor.rs`](../../src/body/reaction/floor.rs))
   has no caller outside its own tests. Wire it or delete it; leaving it is the third option that
   keeps being taken.
+- **The host knowing what it consumes, and pacing itself on it.** Two kinds of consumption: the
+  machine — memory, disk, processor, everything the sessions' commands start — and tokens. The
+  intent is that hi-agent watches both and adjusts its own pace to the situation, the way a person
+  slows down on a machine that is struggling or a month whose budget is nearly spent. Neither half
+  exists. Tokens are metered and enforced at the gateway and said plainly when they run out
+  ([foundation.md § Energy](foundation.md#energy)), which is running out, not pacing. The machine
+  is not watched at all: nothing in `src/` reads a process's footprint, `rusage` or memory
+  pressure.
+
+  *The evidence.* On 2026-09-18..20 a worker's TrackNet `predict.py` decoded a whole 1080p clip
+  into each of sixteen DataLoader workers, about 100 GB on a 64 GB machine. The machine panicked
+  three times, and rebooted a fourth time minutes after the same command ran again. Nothing in the
+  host noticed. A person found it by reading kernel panic logs,
+  and the host now says it after the fact ([agents.md § Across a restart](agents.md#across-a-restart)).
+
+  *What the design already has to meet:*
+  - **Watching must not cost a turn; only what it finds may.** The same test the upkeep sweep
+    passes ([§ Glancing up](#glancing-up)).
+  - **macOS's own memory-pressure signal is not a trigger.** `memoryPressure` was `false` in all
+    three panic logs. The kernel ran out of compressor segments first.
+  - **Pacing only helps a host that is still running.** A job that exhausts the machine kills
+    the watcher with it. Whether some bound has to be *enforced* rather than judged is part of
+    the question. Linux (cgroup v2) and Windows (job objects) enforce one for every resource at
+    once. macOS has no equivalent.
+  - **Who adjusts.** The host can measure and hold a number. What to slow down is judgment:
+    reflection's backoff, work taken ahead of being asked, how many errands run at once, which
+    model a turn uses. That points at the host giving the agent its consumption as a situational
+    fact and the agent deciding what to slow, rather than at a host-side policy.
 
 
 ## See also
