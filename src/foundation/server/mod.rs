@@ -664,6 +664,9 @@ pub fn build(
         // — see `view::open_view`.
         .route("/api/views", get(view::list_views))
         .route("/api/views/open", post(view::open_view))
+        // A named view's compiled module, for another view to `import()` — how Home draws
+        // the task board's own panel. Moves nothing; see `view::view_module`.
+        .route("/api/views/module", get(view::view_module))
         .route("/api/views/bookmarks", post(view::bookmark_view))
         .route("/api/views/share", post(view::share_view))
         // Vision is an input channel that is also observable: the camera streams

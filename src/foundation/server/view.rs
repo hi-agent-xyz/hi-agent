@@ -539,50 +539,92 @@ pub async fn open_view(
     }
 
     let view_ref = view_ref.unwrap_or_default().to_string();
+    let module_url = match compile_ref(&state, &view_ref).await {
+        Ok(module_url) => module_url,
+        Err(refused) => return refused,
+    };
+    let dest = view_bus::RetainedView {
+        id: view_ref.clone(),
+        module_url: module_url.clone(),
+        view_ref: Some(view_ref.clone()),
+    };
+    if state.views.go_to(Some(dest)).await {
+        record_move(&state, &format!("went to \"{view_ref}\""), sender).await;
+    }
+    // Going somewhere is the moment its picture is worth re-taking: the person
+    // is looking at the board right now, so whatever the browser sees a second
+    // later is what they saw. Off the response path — this returns before the
+    // capture starts, and the band picks the picture up on its next read.
+    let bus = state.views.clone();
+    super::view_shots::capture_ref(
+        state.data_dir.clone(),
+        view_ref.clone(),
+        module_url.clone(),
+        move || {
+            tokio::spawn(async move { bus.note_shot().await });
+        },
+    );
+    axum::Json(OpenedView { id: view_ref, module_url }).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct ModuleQuery {
+    #[serde(rename = "ref")]
+    view_ref: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ViewModule {
+    pub module_url: String,
+}
+
+/// `GET /api/views/module?ref=` — a named view's compiled module, and nothing else.
+///
+/// **This is how one view borrows a part of another.** A view is compiled one file at a
+/// time and only its bare imports survive, so it cannot import a sibling by path; it asks
+/// here and `import()`s the answer, the way the view slot mounts a view. Home is the one
+/// borrower: it draws `factory/tasks`' own panel over itself (`TaskPanel`) rather than
+/// handing off to the board — `docs/arch/home.md` § Handing off.
+///
+/// Resolved and compiled as `open_view` does it, so the borrower gets today's source and
+/// the same content-addressed module the board mounts. **Unlike `open_view` it moves
+/// nothing** — no cursor, no journal line, no picture: reading a module is not going
+/// somewhere.
+pub async fn view_module(
+    State(state): State<Arc<AppState>>,
+    AuthBearer(auth): AuthBearer,
+    Query(query): Query<ModuleQuery>,
+) -> impl IntoResponse {
+    let view_ref = query.view_ref.trim();
+    tracing::debug!(auth = ?auth, view_ref, "GET /api/views/module");
+    match compile_ref(&state, view_ref).await {
+        Ok(module_url) => axum::Json(ViewModule { module_url }).into_response(),
+        Err(refused) => refused,
+    }
+}
+
+/// Resolve a named view and compile it, or the response that says why not.
+async fn compile_ref(
+    state: &Arc<AppState>,
+    view_ref: &str,
+) -> Result<String, axum::response::Response> {
     let Some(render) = crate::mind::views::render_context() else {
-        return (
+        return Err((
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             "the view compiler is not up yet".to_string(),
         )
-            .into_response();
+            .into_response());
     };
-    let source = match crate::mind::views::resolve_ref(&state.data_dir, &view_ref).await {
-        Ok(source) => source,
-        Err(error) => {
-            return (axum::http::StatusCode::NOT_FOUND, error).into_response();
-        }
-    };
-    match render.compiler.compile(&source).await {
-        Ok(module_url) => {
-            let dest = view_bus::RetainedView {
-                id: view_ref.clone(),
-                module_url: module_url.clone(),
-                view_ref: Some(view_ref.clone()),
-            };
-            if state.views.go_to(Some(dest)).await {
-                record_move(&state, &format!("went to \"{view_ref}\""), sender).await;
-            }
-            // Going somewhere is the moment its picture is worth re-taking: the person
-            // is looking at the board right now, so whatever the browser sees a second
-            // later is what they saw. Off the response path — this returns before the
-            // capture starts, and the band picks the picture up on its next read.
-            let bus = state.views.clone();
-            super::view_shots::capture_ref(
-                state.data_dir.clone(),
-                view_ref.clone(),
-                module_url.clone(),
-                move || {
-                    tokio::spawn(async move { bus.note_shot().await });
-                },
-            );
-            axum::Json(OpenedView { id: view_ref, module_url }).into_response()
-        }
-        Err(error) => (
+    let source = crate::mind::views::resolve_ref(&state.data_dir, view_ref)
+        .await
+        .map_err(|error| (axum::http::StatusCode::NOT_FOUND, error).into_response())?;
+    render.compiler.compile(&source).await.map_err(|error| {
+        (
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,
             format!("view does not compile: {error}"),
         )
-            .into_response(),
-    }
+            .into_response()
+    })
 }
 
 /// Journal one move of the screen, and echo it to the channel inspector.

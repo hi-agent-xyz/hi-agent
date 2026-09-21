@@ -1448,7 +1448,10 @@ view.
 no way to reach any of them except asking, which is the interaction cost of a chatbot
 sitting on top of what is otherwise an app. `GET /api/views` is the inventory and
 `POST /api/views/open` mounts one — *and moves the screen, since September 1, 2026; it
-used to be "deliberately not a third writer of the appearance"*. The condition view is not
+used to be "deliberately not a third writer of the appearance"*. `GET /api/views/module`
+compiles a named view and answers its module URL **without moving anything**, which is how one
+view borrows a part of another — Home draws the task board's own panel over itself
+([home.md](home.md#handing-off)). The condition view is not
 in the inventory: it is the host's, and offering it would let a person summon an outage
 that isn't happening.
 
