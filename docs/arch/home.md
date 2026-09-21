@@ -308,19 +308,28 @@ wire, gave accent-2 two unrelated meanings, and drew "on duty" and "to do" as ne
 grey. None of it said what a wire is for, which is the branch a card belongs to. Status is the
 status word's, and only the word's.
 
-- **Each group on the core takes one of eight hues**, evenly spaced around OKLCH at one
-  lightness and one chroma, so any set of them sits together. The label picks its slot by
-  hash, and a taken slot moves to the next free one: up to eight groups never share a colour,
-  and a group appended to the record moves none that are already drawn. Past eight, a colour
-  is reused.
-- **Everything below a first-level group is that one colour, at any depth**: its tasks, the
-  groups inside it, their tasks, sessions and pictures. A group inside a group never has a
-  colour of its own. Shades were tried first — siblings spread across a band of hue and
+- **Each branch on the core takes one of eight hues**, evenly spaced around OKLCH at one
+  lightness and one chroma, so any set of them sits together. The key picks its slot by hash
+  (a group's label, a card's id), and a taken slot moves to the next free one: up to eight
+  branches never share a colour. Past eight, a colour is reused.
+- **A card in no group is a branch of its own, and is coloured like one.** Having no group is
+  not having no meaning — it is only work nobody has filed yet. It was drawn neutral once, in
+  the card's hairline colour, and that made the unfiled work the faintest thing on the chart:
+  the hairline is a step off the *card*, and once the ground was lifted clear of `--bg` it
+  landed on the ground's own lightness (0.919 on 0.933 light, 0.330 on 0.330 dark).
+- **Groups are handed their hues first**, in the record's order, so a group appended to the
+  record moves none already drawn, and an ungrouped card coming or going moves none at all.
+  Ungrouped cards take what is left, work in hand before history, so the free hues go to what
+  the window draws rather than to rows it will not reach. An ungrouped card's colour can move
+  when a group is added; that is the price of no group's ever moving for a card.
+- **Everything below a branch is that one colour, at any depth**: a group's tasks, the groups
+  inside it, their tasks, and every card's sessions and pictures. A group inside a group never
+  has a colour of its own. Shades were tried first — siblings spread across a band of hue and
   lightness around their parent, an only child taking its parent's colour — and lost on the
   first real nested arrangement: they read as a scatter of near-colours instead of as one
   branch, and telling siblings apart is what the cards are for.
-- **What is in no group is neutral** all the way down: it has no category to show.
-- Wires are 2.2px, and the narrow flow's rails and ticks 2px, so a colour reads as a line.
+- **Only the core's own trunk is uncoloured**: the narrow flow's rail down from the core, which
+  is no branch. It is the branch lightness at zero chroma, the same weight of line.
 
 **A card says what it is without a label, and no side of its border means anything.** There
 are two kinds of card, a task and a live session, and each used to open with a line naming

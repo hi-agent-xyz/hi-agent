@@ -490,7 +490,7 @@ test("every group up to eight has a hue of its own, and a group appended later m
   assert.equal(new Set(branchHues([...labels, "8", "9"]).values()).size, 8);
 });
 
-test("a wire is its first-level group's one colour at every depth, and never the status", () => {
+test("a wire is its branch's one colour at every depth, a card in no group included, and never the status", () => {
   const views = [{ view_ref: "views/one", label: "One", shot_url: "/one.png" }];
   const input = {
     tasks: [task("rollup", "serving"), task("horse", "todo"), { ...task("court", "doing"), refs: ["views/one"] },
@@ -510,9 +510,14 @@ test("a wire is its first-level group's one colour at every depth, and never the
   for (const id of under) assert.equal(tones.get(id), knq, `${id} wears KNQ's colour`);
   for (const wire of arrange(model).wires.filter((w) => under.includes(w.to))) assert.equal(wire.paint, branchPaint(knq));
 
-  // Nothing in no group has a category to show.
-  assert.equal(tones.get("task:loose"), undefined);
-  assert.equal(arrange(model).wires.find((w) => w.to === "task:loose").paint, "var(--work-line)");
+  // A card in no group is a branch of its own: a hue of its own, and none of a group's.
+  const loose = tones.get("task:loose");
+  assert.notEqual(loose, undefined);
+  assert.ok(![knq, tones.get("group:学习类")].includes(loose), "no group's colour");
+  assert.equal(arrange(model).wires.find((w) => w.to === "task:loose").paint, branchPaint(loose));
+  // Groups are handed theirs first, so ungrouped cards coming and going move none of them.
+  const busier = branchTones(project({ ...input, tasks: [...input.tasks, ...["a", "b", "c", "d", "e", "f", "g"].map((s) => task(s))] }));
+  for (const id of ["group:KNQ", "group:学习类"]) assert.equal(busier.get(id), tones.get(id), `${id} keeps its hue`);
 
   // Status changes nothing.
   const flipped = project({ ...input, tasks: input.tasks.map((t) => ({ ...t, status: t.status === "doing" ? "todo" : "doing" })) });

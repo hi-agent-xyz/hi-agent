@@ -107,52 +107,65 @@ const TONE = { todo: "var(--fg-mute)",
  * accent-2 two unrelated meanings, and at 70% opacity drew "on duty" and "to do" as nearly
  * the same grey. None of it said what the wires are for: which branch a card belongs to.
  *
- * - **A group on the core takes one of eight hues**, evenly spaced around OKLCH at one
- *   lightness and one chroma, so any set of them sits together. The label picks its slot by
- *   hash and a taken slot moves on to the next free one: eight groups never share a colour,
- *   and a group appended later moves none that is already drawn.
- * - **Everything below it is that one colour, at any depth** — its tasks, the groups inside
- *   it, their tasks, sessions and pictures. Shades of the group per sibling and per rank were
- *   tried and lost: on a real nested arrangement they read as a scatter of near-colours rather
- *   than as one branch, and telling siblings apart is what the cards are already for.
- * - **What is in no group is neutral**, all the way down: it has no category to show.
+ * - **Every branch on the core takes one of eight hues**, evenly spaced around OKLCH at one
+ *   lightness and one chroma, so any set of them sits together. The key picks its slot by
+ *   hash and a taken slot moves on to the next free one: eight branches never share a colour.
+ * - **A card in no group is a branch of its own, and is coloured like one.** Having no group
+ *   is not having no meaning. It was drawn neutral once, in `--work-line`, the card's hairline,
+ *   and that is a step off the *card*: once the ground was lifted clear of --bg the hairline
+ *   landed on the ground's own lightness (0.919 on 0.933 light, 0.330 on 0.330 dark) and the
+ *   wire of exactly the work nobody had filed yet could not be seen.
+ * - **Groups are handed their hues first**, in the record's order, so a group appended later
+ *   moves no group already drawn, and a card coming or going moves none. Ungrouped cards take
+ *   what is left, work in hand before history, so the free hues go to what the window draws.
+ * - **Everything below a branch is that one colour, at any depth** — its tasks, the groups
+ *   inside it, their tasks, sessions and pictures. Shades of the group per sibling and per rank
+ *   were tried and lost: on a real nested arrangement they read as a scatter of near-colours
+ *   rather than as one branch, and telling siblings apart is what the cards are already for.
+ * - **Only the core's own trunk is uncoloured** — the narrow flow's rail down from the core,
+ *   which is no branch. It is the branch lightness at no chroma, the same weight of line.
  *
  * Lightness and chroma are theme tokens (`--work-branch-*`); only the hue is computed here,
  * which keeps this section testable without a stylesheet.
  */
 const BRANCH_HUES = [40, 85, 130, 175, 220, 265, 310, 355];
-function branchHues(labels) {
+function branchHues(keys) {
   const taken = new Set(), hues = new Map();
-  for (const label of labels) {
+  for (const key of keys) {
     let hash = 2166136261;
-    for (const char of label) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
+    for (const char of key) hash = Math.imul(hash ^ char.codePointAt(0), 16777619) >>> 0;
     hash = (hash ^ (hash >>> 16)) >>> 0;
-    // Past eight groups every slot is taken and the probe comes back round to the label's own.
+    // Past eight branches every slot is taken and the probe comes back round to the key's own.
     let slot = hash % BRANCH_HUES.length;
     for (let i = 0; i < BRANCH_HUES.length && taken.has(slot); i++) slot = (slot + 1) % BRANCH_HUES.length;
     taken.add(slot);
-    hues.set(label, BRANCH_HUES[slot]);
+    hues.set(key, BRANCH_HUES[slot]);
   }
   return hues;
 }
-/** Node id → the hue of the first-level group it sits under. Absent means in no group. */
+/** Node id → the hue of the branch on the core it sits under. Only the core has none. */
 function branchTones(model) {
   const children = childIndex(model);
-  // Only a group on the core is first-level; a group inside a group wears its holder's colour.
-  const groups = (children.get("core") || []).filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
-  // By label, not title: the upkeep group's title is in the reader's language, its label is not.
-  const hues = branchHues(groups.map((g) => g.data.label));
+  // A group inside a group, or a card inside one, wears its holder's colour.
+  const first = (children.get("core") || []).filter((n) => n.kind !== "overview");
+  const groups = first.filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
+  const loose = first.filter((n) => n.kind !== "group")
+    .sort((a, b) => Number(inHand(b)) - Number(inHand(a)) || a.id.localeCompare(b.id));
+  // A group by label, not title: the upkeep group's title is in the reader's language, its
+  // label is not. A card by id, which is what holds it still between updates.
+  const hues = branchHues([...groups.map((g) => g.data.label), ...loose.map((n) => n.id)]);
   const tones = new Map();
   const paint = (node, hue) => {
     tones.set(node.id, hue);
     for (const kid of children.get(node.id) || []) paint(kid, hue);
   };
   for (const group of groups) paint(group, hues.get(group.data.label));
+  for (const node of loose) paint(node, hues.get(node.id));
   return tones;
 }
-/** A hue as CSS: the wire's lightness, or the label's darker one for text. Neutral without one. */
+/** A hue as CSS: the wire's lightness, or the label's darker one for text. The core's trunk has none. */
 function branchPaint(hue, part = "wire") {
-  if (hue === undefined) return part === "label" ? "var(--fg)" : "var(--work-line)";
+  if (hue === undefined) return part === "label" ? "var(--fg)" : "oklch(var(--work-branch-l) 0 0)";
   return `oklch(${part === "label" ? "var(--work-label-l)" : "var(--work-branch-l)"} var(--work-branch-c) ${hue})`;
 }
 
@@ -1885,11 +1898,11 @@ const CSS = `
 /* The narrow flow grades its air by rank for the same reason the chart does: nesting alone
    put a task's own results as far from it as the next task's were. Inheriting --rank-gap
    carries the tightest value on down, so a fourth rank is no looser than the third. */
-.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:2.6px solid var(--rail, var(--work-line)); }
+.hi-work__branch { --rank-gap:30px; list-style:none; padding:0 0 0 18px; margin:0 0 0 8px; border-left:2.6px solid var(--rail, oklch(var(--work-branch-l) 0 0)); }
 .hi-work__branch .hi-work__branch { --rank-gap:18px; margin-left:0; padding-left:12px; }
 .hi-work__branch .hi-work__branch .hi-work__branch { --rank-gap:10px; }
 .hi-work__branch li { position:relative; padding-top:var(--rank-gap); min-width:0; }
-.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:2.6px solid var(--tick, var(--work-line)); }
+.hi-work__branch li::before { content:''; position:absolute; width:18px; left:-18px; top:calc(var(--rank-gap) + 32px); border-top:2.6px solid var(--tick, oklch(var(--work-branch-l) 0 0)); }
 .hi-work__branch .hi-work__node { min-height:116px; }
 .hi-work__branch .hi-work__group { height:auto; min-height:28px; }
 .hi-work__branch .hi-work__tile { height:auto; aspect-ratio:16 / 9; max-width:240px; }
