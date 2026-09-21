@@ -75,7 +75,7 @@ mod tests {
     use super::*;
 
     fn group(label: &str, note: Option<&str>, inner: Vec<Group>) -> Group {
-        Group { label: label.into(), note: note.map(Into::into), icon: None, members: vec![], groups: inner }
+        Group { label: label.into(), note: note.map(Into::into), icon: None, members: vec![], groups: inner, upkeep: false }
     }
 
     /// **Only what is new or reads differently is read**, at every depth; moving a group or its

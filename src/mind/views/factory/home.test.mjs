@@ -244,33 +244,47 @@ test("the clock is the age of whatever the word says", () => {
   assert.equal(runningHand(of("serving", [on("idle")])), null);
 });
 
-test("the agent's own upkeep is a group code draws: Reflection and every session with no subject", () => {
-  // Dispatch refuses a subject to the kinds that serve no one task and to anything Reflection
-  // starts, so no subject means upkeep by construction — nothing here reads a title or a kind.
+test("code draws no group of its own: a session on no drawn task is a card on the core", () => {
+  // The only groups are the arrangement's. A built-in one for the agent's own upkeep drew one
+  // category under two headings for a person whose arrangement already had a group for it.
   const model = project({ tasks: [task("a")], groups: [{ label: "Work", members: ["a"] }],
     workers: [worker("reflection", "reflection"), worker("sweep", "worker", { type: "task-manager", owner: "cognition" }),
-      worker("reader", "worker", { owner: "reflection" }), worker("builder", "worker", { subject: "a" }),
-      worker("orphan", "worker", { subject: "aged-out" })] });
+      worker("builder", "worker", { subject: "a" }), worker("orphan", "worker", { subject: "aged-out" })] });
   const kids = childIndex(model);
-  const upkeep = model.nodes.find((n) => n.id === "upkeep");
-  assert.equal(upkeep.kind, "group");
-  assert.equal(upkeep.title, "Upkeep");
-  assert.deepEqual(list(ofKind(model, "task")[0].data.sessions.map((s) => s.slug)), ["builder"], "a session on a drawn task is not in here");
-  assert.deepEqual(list(kids.get("upkeep").map((n) => n.id)).sort(),
-    ["session:0123456789ab:reader", "session:0123456789ab:reflection", "session:0123456789ab:sweep"]);
-  assert.equal(kids.get("upkeep").find((n) => n.data.session.role === "reflection").title, "Review");
-  // One whose task is not drawn is still somebody's work, and stays a card on the core.
-  assert.ok(kids.get("core").some((n) => n.id === "session:0123456789ab:orphan"));
-  // It comes after the person's own groups, takes a hue of its own, and can be taken as the centre.
-  assert.deepEqual(list(kids.get("core").filter((n) => n.kind === "group").map((n) => n.id)), ["group:Work", "upkeep"]);
+  assert.deepEqual(list(ofKind(model, "group").map((n) => n.id)), ["group:Work"]);
+  assert.deepEqual(list(ofKind(model, "task")[0].data.sessions.map((s) => s.slug)), ["builder"], "a session on a drawn task is the task's");
+  assert.deepEqual(list(kids.get("core").filter((n) => n.kind === "activity").map((n) => n.id)).sort(),
+    ["session:0123456789ab:orphan", "session:0123456789ab:reflection", "session:0123456789ab:sweep"]);
+  assert.equal(model.nodes.find((n) => n.id === "session:0123456789ab:reflection").title, "Review");
+  // Each is a branch of its own, coloured like any card in no group.
   const tones = branchTones(model);
   assert.notEqual(tones.get("session:0123456789ab:sweep"), undefined);
-  assert.notEqual(tones.get("upkeep"), tones.get("group:Work"));
-  assert.equal(focusOn(model, "upkeep").nodes.length, 4);
-  assert.deepEqual(list(focusOn(model, "group:Work").nodes.map((n) => n.id)), ["group:Work", "task:a"]);
+  assert.notEqual(tones.get("session:0123456789ab:sweep"), tones.get("group:Work"));
   assertConnected(model);
-  // Nothing live that is upkeep draws no heading.
-  assert.equal(project({ workers: [worker("builder", "worker", { subject: "a" })], tasks: [task("a")] }).nodes.some((n) => n.id === "upkeep"), false);
+});
+
+test("the group the arrangement marks for the agent's own upkeep holds it, beside its own tasks", () => {
+  // One category, one heading: the person's group for hi-agent's own upkeep holds both the
+  // changes to hi-agent they asked for and the sessions nobody asked for.
+  const workers = [worker("reflection", "reflection"), worker("sweep", "worker", { type: "task-manager" }),
+    worker("orphan", "worker", { subject: "aged-out" })];
+  const model = project({ tasks: [task("a"), task("icons")], workers, groups: [
+    { label: "Work", members: ["a"] },
+    { label: "自身维护", members: ["icons"], upkeep: true },
+  ] });
+  const kids = childIndex(model);
+  assert.deepEqual(list(ofKind(model, "group").map((n) => n.id)), ["group:Work", "group:自身维护"]);
+  assert.deepEqual(list(kids.get("group:自身维护").map((n) => n.id)),
+    ["task:icons", "session:0123456789ab:reflection", "session:0123456789ab:sweep"]);
+  assert.ok(kids.get("core").some((n) => n.id === "session:0123456789ab:orphan"), "somebody's aged-out work is not upkeep");
+  assert.equal(branchTones(model).get("session:0123456789ab:sweep"), branchTones(model).get("group:自身维护"));
+  assertConnected(model);
+  // With none of its tasks drawn it is still drawn on the way to the upkeep it holds, and not
+  // at all once nothing it holds is live.
+  const alone = (live) => project({ tasks: [], workers: live, groups: [{ label: "自身维护", members: ["gone"], upkeep: true }] });
+  assert.deepEqual(list(childIndex(alone(workers)).get("group:自身维护").map((n) => n.id)),
+    ["session:0123456789ab:reflection", "session:0123456789ab:sweep"]);
+  assert.equal(alone([]).nodes.some((n) => n.kind === "group"), false);
 });
 
 test("subject decides which card a session lands on, never its technical owner", () => {

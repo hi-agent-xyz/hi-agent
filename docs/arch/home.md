@@ -363,8 +363,8 @@ and that was false: *In progress* is where the ledger row got to, not what is ha
 On one day's record, *买鞋：把之前那几份合成一页综合对比* had been `doing` for two days with no
 live session at all and *游戏截图→结构化数据 POC* had a worker mid-turn, and the two cards read
 the same word — the only difference on the chart was the age of the row's status, which says
-nothing about whether anybody is on it. The one place *Working* appeared was Upkeep, the agent's
-own housekeeping, whose sessions are activity cards of their own.
+nothing about whether anybody is on it. The one place *Working* appeared was on a session's own
+card.
 
 **So an open row with a hand in a turn says *Working*, and its clock is that turn's.** The word
 is the same one that hand would wear on a card, and the time beside it is how long the turn has
@@ -426,8 +426,9 @@ theirs.
   visible activity.
 - A session's `subject` joins it to a task. A subject whose task is not drawn connects the
   session to the core, where it keeps its own title. **A session with no subject, and
-  Reflection, are the agent's own upkeep** and sit in the built-in group § *Grouping*
-  describes. Its technical `owner` remains inspectable but does not determine semantic
+  Reflection, are the agent's own upkeep**: they sit in the group the arrangement marks
+  `upkeep`, and on the core when none is (§ *What the surface does with it*). Its technical
+  `owner` remains inspectable but does not determine semantic
   placement or create a new task grouping.
 - **A task sits in a group when the grouping record puts it in one — under every group that
   group is inside — and otherwise hangs off the core.** See § *Grouping* below. Nothing about a task's own record decides this: there
@@ -549,7 +550,10 @@ moment of grouping rather than kept — a stored copy is a second ledger, going 
                 "note": "<when and what the person said makes these one thing>",
                 "icon": "drive/home/icons/0199568a….png",
                 "members": ["<task subject>", "<task subject>"],
-                "groups": [ { "label": "<project>", "members": ["<task subject>"] } ] } ] }
+                "groups": [ { "label": "<project>", "members": ["<task subject>"] } ] },
+              { "label": "<their group for hi-agent itself>",
+                "members": ["<task subject>"],
+                "upkeep": true } ] }
 ```
 
 Array order is draw order: groups outward from the core, members top to bottom, and inside a
@@ -560,7 +564,10 @@ and labels must be unique across every depth. A task claimed twice stays where i
 first claimed, reading a group's own members before the groups inside it. `note` is one line
 saying why this group exists; it is optional and it is read, as the label's hover text, so a
 person reviewing the arrangement can see what it was based on. `icon` is optional too, and
-belongs to its label at whatever depth the label sits; see § *Icons*. There is no `version`
+belongs to its label at whatever depth the label sits; see § *Icons*. `upkeep` is optional
+and omitted when false: the group carrying it also holds the agent's own upkeep, which has no
+row a member could name, and a group holding that and nothing else is still kept. Where two
+carry it, the first read — in the order members are claimed — holds it. There is no `version`
 and no `updated_at`: the writer and the reader ship in one binary, and the file's mtime is
 already the time it was written.
 
@@ -633,32 +640,33 @@ is a shaded picture.
 - A task named by a group is drawn under it, and a group inside another is drawn under that
   one: core, group, inner group, card. A task in no group hangs off the core, beside the
   groups, and that is an ordinary state rather than a fault.
-- **A group is drawn only on the way to a drawn task.** One whose tasks have all aged out
-  draws nothing, and neither does a group holding nothing else — at any depth.
+- **A group is drawn only on the way to a drawn task, or to live upkeep it holds.** One whose
+  tasks have all aged out draws nothing, and neither does a group holding nothing else — at
+  any depth.
 - **A member that names no drawn task is ignored.** Tasks close and age out while the record
   stands; the record is not the ledger and never resurrects one.
 - **Activities are not grouped, they follow.** A live session joined to a task is already
   inside that task's branch, so it is in the task's group. One whose task is not drawn stays
   at the core: its identity is run-scoped, so a durable record naming it would be a dangling
   reference by the next restart.
-- **The agent's own upkeep is one more group, and code draws it.** Reflection, a
-  `task-manager` sweeping the ledger, a `person-reader` reading a person's record, a
-  `skills-manager` keeping the shelf: nobody asked for any of it, so the ledger holds no row for
-  it ([data.md](data.md#tasks)) and dispatch refuses it a `subject` ([agents.md](agents.md)).
-  That refusal is what lets code draw the group without inferring anything: a live session with
-  no subject is upkeep by construction, and Reflection is upkeep by role. So Reflection is a
-  card here rather than a role in the core's strip, and the core is the conversation and the
-  coordination. The group is titled in the reader's language (「自身维护」, *Upkeep*), sits
-  after the person's own groups, takes a hue like any first-level group, and is drawn only
-  while something in it is live. It is not in the arrangement record, and no mind places
-  anything in it — **nor does any mind make a group of its own for the agent's own work**:
-  every ledger row is something a person asked for, a change to hi-agent they asked for
-  included, so it is grouped along their axis like the rest of their work.
-  - *Why it exists.* Before it, upkeep sessions hung off the core beside the person's work.
-    Asked to organise "the rest", the grouping mind coined 「自己身上的毛病」 for the agent's
-    own faults — a phrase this document and its prompt had quoted as if a person had said it —
-    and then filed a person's own open-source project there, because they had called its
-    code "ours".
+- **Code draws no group of its own; the agent's own upkeep goes where the arrangement puts
+  it.** Reflection, a `task-manager` sweeping the ledger, a `person-reader` reading a person's
+  record: none of it has a row ([data.md](data.md#tasks)) and dispatch refuses it a `subject`
+  ([agents.md](agents.md)), so no `members` entry can name it. A group carrying `upkeep: true`
+  draws those sessions after its own tasks; with none carrying it they are cards on the core.
+  Reflection is one of those cards rather than a role in the core's strip: the core is the
+  conversation and the coordination.
+  - *Why code has none.* It had one: 「自身维护」, holding every live session with no subject.
+    Its rule was exact about which sessions it held, and it was still wrong. A person whose
+    arrangement had its own group for hi-agent's upkeep saw one category under two headings,
+    and nothing they said could merge them, because one heading was the code's. Which group
+    the agent's own upkeep belongs in is the same kind of call as where any task goes.
+  - **Nor does a mind coin a group for the agent's own work.** Every ledger row is something a
+    person asked for, a change to hi-agent included, so it is grouped along their axis like
+    the rest of their work. Asked to organise "the rest", a grouping mind once coined
+    「自己身上的毛病」 for the agent's own faults — a phrase this document and its prompt had
+    quoted as if a person had said it — and then filed a person's own open-source project
+    there, because they had called its code "ours".
 - **A record that cannot be read leaves no groups.** A missing file, malformed JSON, or an
   unusable shape degrades to every task on the core — the surface as it was — with the fault
   in the server's log and nothing about it on screen.

@@ -123,6 +123,11 @@ pub struct Group {
     /// every depth, and no depth limit: how finely a person divides their work is theirs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<Group>,
+    /// **This group also holds the agent's own upkeep** — Reflection and the sessions dispatch
+    /// gave no subject. They have no row, so no `members` entry can name them, and Home draws no
+    /// group of its own for them: without a group marked here they are loose on the core.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upkeep: bool,
 }
 
 /// What stands right now, or nothing at all.
@@ -177,8 +182,8 @@ pub struct Written {
 ///
 /// Normalising, in order: labels and members are trimmed; a member that names no task
 /// directory is dropped; a member claimed twice stays where it was first claimed, reading a
-/// group's own members before the groups inside it; a group left with no members and no
-/// groups is dropped. Two groups sharing a label — at any depth — is the one hard error: the
+/// group's own members before the groups inside it; a group left with no members, no groups
+/// and no upkeep is dropped. Two groups sharing a label — at any depth — is the one hard error: the
 /// label is the group's identity, so a duplicate makes the arrangement ambiguous rather than
 /// merely untidy, and nothing is written.
 ///
@@ -345,11 +350,11 @@ impl Normalise<'_> {
                 members.push(member);
             }
             let inner = self.groups(group.groups)?;
-            if members.is_empty() && inner.is_empty() {
+            if members.is_empty() && inner.is_empty() && !group.upkeep {
                 continue;
             }
             let note = group.note.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
-            groups.push(Group { label, note, icon: group.icon, members, groups: inner });
+            groups.push(Group { label, note, icon: group.icon, members, groups: inner, upkeep: group.upkeep });
         }
         Ok(groups)
     }
@@ -429,6 +434,7 @@ mod tests {
             icon: None,
             members: members.iter().map(|m| (*m).into()).collect(),
             groups: Vec::new(),
+            upkeep: false,
         }
     }
 
@@ -487,6 +493,7 @@ mod tests {
                     icon: None,
                     members: vec!["kt8-046".into(), " cantonese-table ".into()],
                     groups: Vec::new(),
+                    upkeep: false,
                 }],
             },
         )
@@ -545,6 +552,25 @@ mod tests {
         .unwrap();
         assert_eq!(written.grouping.groups.len(), 1);
         assert_eq!(written.grouping.groups[0].label, "KTV");
+    }
+
+    /// **The agent's own upkeep is content.** A group marked to hold it is drawn on the way to
+    /// those sessions, so it is kept with no task of its own — and unmarked is not written out,
+    /// so a record that never held it reads as it always did.
+    #[tokio::test]
+    async fn a_group_holding_the_upkeep_is_kept_with_no_members() {
+        let dir = tempfile::tempdir().unwrap();
+        let written =
+            write(dir.path(), Grouping { groups: vec![Group { upkeep: true, ..group("自身维护", &["gone"]) }] })
+                .await
+                .unwrap();
+        assert!(written.grouping.groups[0].upkeep);
+        assert_eq!(read(dir.path()).await, written.grouping);
+
+        task(dir.path(), "kt8-046").await;
+        write(dir.path(), Grouping { groups: vec![group("KTV", &["kt8-046"])] }).await.unwrap();
+        let raw = tokio::fs::read_to_string(groups_path(dir.path())).await.unwrap();
+        assert!(!raw.contains("upkeep"), "{raw}");
     }
 
     /// The one hard error. Everything else normalises, because everything else has an

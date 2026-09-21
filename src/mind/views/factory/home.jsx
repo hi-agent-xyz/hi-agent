@@ -29,7 +29,6 @@ const COPY = {
     roles: { reaction: "Conversation", cognition: "Coordination", reflection: "Review" },
     source: { tasks: "tasks", workers: "live sessions", views: "results", groups: "grouping" },
     trail: "Where this branch sits", back: "Step back out",
-    upkeep: "Upkeep", upkeepNote: "The agent keeping its own house: nobody asked for this work, so no task holds it",
     ago: (n, unit) => `${n}${unit} ago`,
     more: (n) => `${n} more`,
     onBoard: (n) => `${n} more on the task board`,
@@ -45,7 +44,6 @@ const COPY = {
     roles: { reaction: "交流", cognition: "协调", reflection: "回顾" },
     source: { tasks: "任务", workers: "在线会话", views: "成果", groups: "分组" },
     trail: "这一支所在的位置", back: "退回上一层",
-    upkeep: "自身维护", upkeepNote: "Hi Agent 在打理自己：没有人要过这些活，所以没有任务行承载它们",
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
     more: (n) => `还有 ${n} 项`,
     onBoard: (n) => `还有 ${n} 项，在任务板上`,
@@ -67,19 +65,6 @@ const CEILING_MS = 7 * 24 * 3600000;
 /** How long a cancellation is on Home at all. It belongs to `onHome`. */
 const CANCELLED_MS = 1 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition"]);
-/**
- * **The agent's own upkeep is a group of its own, and code draws it.** Reflection, a sweep of the
- * ledger, a read of a person's record, a tidy of the workshop: none of that is anything a person
- * asked for, so the ledger holds no row for it (`docs/arch/data.md#tasks`) and dispatch refuses
- * it a `subject` (`hi_create_worker`). That refusal is what makes this a fact rather than a guess:
- * a live session with no subject is upkeep by construction, and Reflection is upkeep by role.
- *
- * It used to hang off the core, beside the person's work, and Reflection sat in the core's role
- * strip. With nothing drawing it, a grouping mind asked to place "the rest" coined a group for the
- * agent's own faults and then filed a person's project under it because the person had said
- * "our code". The group is not in the arrangement record and no mind places anything in it.
- */
-const UPKEEP = "upkeep";
 const OPEN = new Set(["todo", "doing", "serving"]);
 /**
  * How many pictures a task hangs below itself.
@@ -152,8 +137,7 @@ function branchTones(model) {
   const groups = first.filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
   const loose = first.filter((n) => n.kind !== "group")
     .sort((a, b) => Number(inHand(b)) - Number(inHand(a)) || a.id.localeCompare(b.id));
-  // A group by label, not title: the upkeep group's title is in the reader's language, its
-  // label is not. A card by id, which is what holds it still between updates.
+  // A group by label, a card by id, which is what holds each still between updates.
   const hues = branchHues([...groups.map((g) => g.data.label), ...loose.map((n) => n.id)]);
   const tones = new Map();
   const paint = (node, hue) => {
@@ -206,9 +190,9 @@ function groupIcon(ref) {
  *    sessions are here at all — a session that has ended is `factory/workers`' subject.
  * 3. Reaction/Cognition sessions compose the one core. A session working on a drawn task is
  *    that task's `data.sessions`, and is drawn only where there is more than one of them: a
- *    card on the task's branch (`works-on`). The rest are activity cards: Reflection and every
- *    session with no subject in the built-in upkeep group, and a session whose task is not
- *    drawn on the core.
+ *    card on the task's branch (`works-on`). The rest are activity cards: Reflection and a
+ *    session with no subject in the group the arrangement marks `upkeep`, or on the core when
+ *    none is; a session whose task is not drawn on the core. Code has no group of its own.
  * 4. subject is the authoritative session -> task join. owner is a technical session
  *    relationship only; it must not pretend that two independent tasks are one piece of work.
  * 5. Overview uses useMessages()'s USER-VISIBLE transcript and factual task transitions.
@@ -401,10 +385,14 @@ function taskResults(task, views) {
  * agree about a record written before a rule existed: a group's own members are claimed
  * before the groups inside it, the first claim wins, and a label is one group — a second
  * group carrying a label already seen is left out whole, rather than hung under two parents.
+ *
+ * `upkeep` is the chain to the group the record marks as holding the agent's own upkeep —
+ * sessions with no row, so no member can name them — read the same way, or null.
  */
 function groupIndex(groups) {
   const byTask = new Map();
   const labels = new Set();
+  let upkeep = null;
   const walk = (list, chain) => (Array.isArray(list) ? list : []).forEach((group, index) => {
     const label = plain(group?.label);
     if (!label || labels.has(label)) return;
@@ -414,10 +402,11 @@ function groupIndex(groups) {
       const key = plain(subject);
       if (key && !byTask.has(key)) byTask.set(key, here);
     }
+    if (group.upkeep === true && !upkeep) upkeep = here;
     walk(group.groups, here);
   });
   walk(groups, []);
-  return byTask;
+  return { byTask, upkeep };
 }
 
 function buildHome({ tasks = [], workers = [], views = [], messages = [], groups = [] }, now = Date.now()) {
@@ -439,7 +428,20 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
   const activities = [...sessions.values()].filter((s) => !CORE_ROLES.has(s.role));
   const core = add({ id: "core", kind: "core", title: L.core,
     sourceRefs: coreSessions.map((s) => ref("session", s.id)), data: { sessions: coreSessions, overviewIds: [] } });
-  const grouped = groupIndex(groups);
+  const { byTask: grouped, upkeep: upkeepChain } = groupIndex(groups);
+  // Every group on the way to a card, each once however many cards pass through it — `add` and
+  // `link` both dedupe by id. Answers the innermost, which is the card's parent.
+  const hang = (chain) => {
+    let parent = "core";
+    for (const group of chain || []) {
+      const id = `group:${group.label}`;
+      add({ id, kind: "group", title: group.label, sourceRefs: [],
+        data: { label: group.label, note: group.note, icon: group.icon, index: group.index } });
+      link(parent, id);
+      parent = id;
+    }
+    return parent;
+  };
   // The person's own presence, oldest first, for `keepsClosed`. The transcript is already a
   // parameter here — the overview below reads the same list — so a closed card's fate costs no
   // record, no endpoint and no client identity that the text channel has refused to carry.
@@ -478,17 +480,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     // A task hangs off its group when the arrangement puts it in one, and off the core when
     // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
     // here invents a group for a task the person has not placed.
-    // A task inside an inner group draws every group on the way to it, each once however
-    // many tasks pass through it — `add` and `link` both dedupe by id.
-    let parent = "core";
-    for (const group of chain || []) {
-      const id = `group:${group.label}`;
-      add({ id, kind: "group", title: group.label, sourceRefs: [],
-        data: { label: group.label, note: group.note, icon: group.icon, index: group.index } });
-      link(parent, id);
-      parent = id;
-    }
-    link(parent, node.id);
+    link(hang(chain), node.id);
     // Pictures are second-level, the way a sub-step or a sub-result is — all of them, so that
     // one kind of record has one appearance. A task mid-flight often has process pictures and
     // no deliverable yet, and nothing here claims to know which of them is which.
@@ -518,17 +510,15 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
       task.sourceRefs.push(ref("session", session.id));
       continue;
     }
-    // A subject whose task is not drawn stays on the core: that is somebody's work, aged out.
+    // **The agent's own upkeep — Reflection, and a session dispatch gave no subject — goes where
+    // the arrangement puts it, and code draws no group of its own for it.** It drew one once,
+    // and a person whose arrangement already had a group for that saw one category under two
+    // headings. With no group marked for it, it is on the core like somebody's aged-out work.
     const upkeep = session.role === "reflection" || !session.subject;
-    if (upkeep) {
-      add({ id: UPKEEP, kind: "group", title: L.upkeep, sourceRefs: [],
-        data: { label: UPKEEP, note: L.upkeepNote, icon: "", index: Number.MAX_SAFE_INTEGER, builtin: true } });
-      link("core", UPKEEP);
-    }
     add({ id: session.id, kind: "activity", title: session.role === "reflection" ? L.roles.reflection : session.title,
       sourceRefs: [ref("session", session.id)],
       data: { session, taskId: null, ownerSessionId: session.ownerSessionId, currentAction: session.currentAction } });
-    link(upkeep ? UPKEEP : "core", session.id, "contains");
+    link(upkeep ? hang(upkeepChain) : "core", session.id, "contains");
   }
   // **More than one hand on a task draws them; one hand draws nothing.** They were dots on the
   // task's status line, filled while running — three at most and a `+1` past that — and the dot
@@ -663,7 +653,7 @@ function stateOf(node) {
  * session at all and `game-screenshot-parse-poc-20260920` had a worker mid-turn, and the two
  * cards read the same *In progress* — the only difference on the chart was the age of the row's
  * status, which says nothing about whether anybody is on it. The one place *Working* appeared
- * was Upkeep, whose sessions are activity cards of their own.
+ * was on a session's own card.
  *
  * **A mark was tried here and is the wrong instrument twice over.** This status line used to
  * carry a dot per hand, and `A mark is a poor way to say a thing a word can say` is why they

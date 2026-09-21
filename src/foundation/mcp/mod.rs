@@ -723,7 +723,9 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                  the records. A task you cannot place belongs in no group: leave it out rather \
                  than inventing a home for it. Pass `groups: []` to clear the arrangement. A \
                  group's `icon` is the ref of one you drew for it; leave it out to keep the icon \
-                 that label already has. The answer says what landed, what named no task, what two \
+                 that label already has. `upkeep: true` on a group puts the agent's own upkeep \
+                 (Reflection, and sessions on no task) in it; with none marked, those are loose \
+                 cards on the core. The answer says what landed, what named no task, what two \
                  groups both claimed, which open work is in no group, and which groups still wear \
                  the default icon.",
                 json!({
@@ -739,7 +741,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                                     "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
                                     "icon": { "type": "string", "description": "Optional: the ⟨ref: drive/…⟩ of an icon you drew for this group. Omit to keep the one the label already has." },
                                     "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
-                                    "groups": { "type": "array", "items": { "type": "object" }, "description": "Groups inside this one — each a group of this same shape (label, note, icon, members, groups). Omit when there are none." },
+                                    "groups": { "type": "array", "items": { "type": "object" }, "description": "Groups inside this one — each a group of this same shape (label, note, icon, members, groups, upkeep). Omit when there are none." },
+                                    "upkeep": { "type": "boolean", "description": "True on the group that also holds the agent's own upkeep. Omit elsewhere." },
                                 },
                                 "required": ["label"],
                             },
@@ -2803,9 +2806,12 @@ async fn do_task_set(data_dir: &Path, served: Option<&str>, args: &Value) -> Val
 fn group_shape(groups: &[crate::foundation::server::home::Group]) -> String {
     groups
         .iter()
-        .map(|g| match g.groups.as_slice() {
-            [] => format!("{} ({})", g.label, g.members.len()),
-            inner => format!("{} ({}: {})", g.label, g.members.len(), group_shape(inner)),
+        .map(|g| {
+            let count = if g.upkeep { format!("{} + upkeep", g.members.len()) } else { g.members.len().to_string() };
+            match g.groups.as_slice() {
+                [] => format!("{} ({count})", g.label),
+                inner => format!("{} ({count}: {})", g.label, group_shape(inner)),
+            }
         })
         .collect::<Vec<_>>()
         .join(", ")

@@ -552,14 +552,18 @@ out**. Ungrouped is an ordinary place for a card to be; a group invented to avoi
 is a claim nobody can back. Before coining a name, look at `{facets_dir}/projects/` and reuse
 the one that is already there, so one thing is not on screen twice under two spellings.
 
-**Every row is theirs, so no group you write is about the agent itself.** The ledger holds only
-what a person asked for. The agent's own upkeep — Reflection, a sweep like yours, a read of
-someone's record — is never a row, and Home already draws it in a group of its own that no
-arrangement writes. So a group you name for the agent's own work can only ever hold their work
-under the wrong heading, and it has: one coined for "our own faults" took in a person's own
+**Every row is theirs, so no group you coin is about the agent itself.** The ledger holds only
+what a person asked for, so a group you name for the agent's own work can only ever hold their
+work under the wrong heading, and it has: one coined for "our own faults" took in a person's own
 open-source project, because they had called its code "ours". "Our" in their mouth is them and
 their team. A change to hi-agent they asked for is their errand like any other, and goes where
-the rest of their work goes.
+the rest of their work goes — into a group they keep for hi-agent itself, if they keep one.
+
+**That group is also where the agent's own upkeep goes.** Reflection, a sweep like yours, a
+read of someone's record — none of it is a row, so no `members` entry can name it. Put
+`upkeep: true` on the group they keep for hi-agent itself and those sessions are drawn in it
+too: one category, one heading. Where they keep none, leave it off, and those sessions are
+loose cards on the core.
 
 The call answers with what landed, what named no task, what two groups both claimed, and
 **which open rows are in no group** — the last one is the one to read, because it is the
