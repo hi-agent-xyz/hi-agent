@@ -251,12 +251,16 @@ the one flat thing on a chart of glass, and it is kept that way deliberately: no
 gradient under it, only a hairline ring in the group's own colour, which closes the hard square
 its own baked background would otherwise cut out of the wash and ties it to the label beside
 it.
-**A heading sits against the wire that reaches it**, since one box width for every group
-leaves a short label half a box of slack: on the chart's right the icon leads, on the left it
-trails, so both hug the wire from their parent and the slack falls outward where the
-children's wires bend. Siblings still line their icons up, because the flush edge is the same
-for all of them at a rank. A group taken as the centre is centred instead — it has no parent
-and its wires leave both ways, so packing it to a side drew the hub off its own spine.
+**A heading's content is centred in its box**, and the side it sits on decides only which
+end its icon takes: leading on the chart's right, trailing on its left, so the icon is always
+in the half of the heading that faces the core. One box width for every group leaves a short
+label some 50px of slack, and that slack is split evenly rather than pushed outward. What
+that gives up is exactness the eye was getting for free. A wire lands on the box edge, and the
+icon it points at now sits 6-30px inside that edge where it sat 5px in for every group, so the
+wire stops short of the thing it reaches. And siblings no longer line their icons up: across
+labels of three to five characters the column spreads about 24px, each icon moved by half of
+its own label's slack. A group taken as the centre follows the same rule, rather than being
+the one exception to a rule about sides.
 
 **A wire is drawn like structure, because that is what it is.** At a 1.8px stroke and 0.8
 opacity the branch hues came out as pastel threads that a card's own hairline border

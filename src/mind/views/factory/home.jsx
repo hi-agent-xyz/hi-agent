@@ -1316,8 +1316,8 @@ export default function Home() {
             <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
               {chart.wires.map((wire) => <path key={wire.id} data-edge={wire.id} d={wire.d} style={{ stroke: wire.paint }} />)}
             </svg>
-            {/* The side a node sits on is on the node, because a group's label is laid out
-                against the wire that reaches it — see `.hi-work__group > button` in the CSS. */}
+            {/* The side a node sits on is on the node, because a group's icon takes the end
+                of its heading that faces the core — see `.hi-work__group > button` in the CSS. */}
             {chart.placed.map((row, index) => <div key={row.node.id} className="hi-work__position"
               data-dir={row.dir}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
@@ -1509,20 +1509,18 @@ const CSS = `
 /* A heading, not a card: no border and no background, because it is a name over the cards
    below it rather than a thing beside them. */
 .hi-work__group { height:100%; font-size:17px; line-height:1.4; font-weight:600; color:var(--group-tone); letter-spacing:0; }
-.hi-work__group > button { width:100%; height:100%; display:flex; align-items:center; gap:8px; padding:0 4px; border-radius:10px; overflow:hidden; overflow-wrap:anywhere; transition:background-color 160ms ease; }
+.hi-work__group > button { width:100%; height:100%; display:flex; align-items:center; justify-content:center; gap:8px; padding:0 4px; border-radius:10px; overflow:hidden; overflow-wrap:anywhere; text-align:center; transition:background-color 160ms ease; }
 .hi-work__group > button:hover { background:color-mix(in srgb, var(--group-tone) 10%, transparent); }
-/* **A label sits against the wire that reaches it.** The box is one width for every group,
-   so a two-character label leaves half of it empty — and packed to the left, that slack fell
-   on whichever side the box happened to have. On the chart's left the icon ended up flush
-   against the wires leaving for its own children while the wire from its parent arrived a
-   half-box away, which is the one wire that says where the label belongs. So a group on the
-   left draws its icon on its right edge: both sides now hug their parent, the slack always
-   falls outward where the children's wires have room to bend, and siblings still line their
-   icons up in a column because the flush edge is the same for all of them. The centre has no
-   parent and wires leave it both ways, so it is centred — the one place packing to a side
-   drew the hub off its own spine. */
-.hi-work__position[data-dir="-1"] .hi-work__group > button { flex-direction:row-reverse; text-align:right; }
-.hi-work__position[data-dir="0"] .hi-work__group > button { justify-content:center; }
+/* **A heading's content is centred, and its icon still faces its parent.** The box is one
+   width for every group, so a three-character label leaves some 50px of slack, and that slack
+   is split evenly instead of being pushed outward. The side a group sits on still decides
+   which end the icon takes — leading on the chart's right, trailing on its left — so the icon
+   is always in the half of the heading nearest the wire that reaches it, though it no longer
+   meets it: the wire lands on the box edge, and the icon is now 6-30px inside that edge where
+   it was 5px for every group. So siblings no longer line their icons up — across labels of
+   three to five characters the column spreads about 24px, each icon moved by half of its own
+   label's slack. The centre is centred by this rule now, not as the exception it used to be. */
+.hi-work__position[data-dir="-1"] .hi-work__group > button { flex-direction:row-reverse; }
 /* **An icon is flat, so nothing around it is not.** The picture carries a background of its
    own, which against the canvas wash cut a hard square out of it; a hairline ring in the
    group's own colour closes that edge and joins the icon to the label beside it. No shadow
@@ -1538,8 +1536,7 @@ const CSS = `
 .hi-work__trail button { color:var(--fg-mute); }
 .hi-work__trail button:hover { color:var(--fg); text-decoration:underline; text-underline-offset:3px; }
 .hi-work__trail strong { color:var(--fg); font-weight:600; }
-.hi-work__group-text { min-width:0; display:flex; flex-direction:column; }
-.hi-work__position[data-dir="-1"] .hi-work__group-text { align-items:flex-end; }
+.hi-work__group-text { min-width:0; display:flex; flex-direction:column; align-items:center; }
 .hi-work__group-title { min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-wrap:balance; }
 /* The count takes the second line a long title would have had: 56px holds one line of each. */
 .hi-work__group[data-more] .hi-work__group-title { -webkit-line-clamp:1; }
