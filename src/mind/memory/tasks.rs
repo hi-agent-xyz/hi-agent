@@ -2431,6 +2431,78 @@ fn render_timeline(entries: &[TimelineEntry]) -> String {
     out
 }
 
+/// What the ledger says about evidence reaching the record, over the lines written since
+/// `since` (`docs/arch/showing.md` § *Measurement*). Read from the records whenever asked,
+/// because a counter kept beside them would be free to drift.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct Evidence {
+    /// Lines a mind wrote on a row — `update`, `delivered`, `waiting`.
+    pub lines: u32,
+    /// Of those, the lines that carry an attachment.
+    pub lines_carrying: u32,
+    /// Attachments, by the kind of line that carried them: what they have now, how the work is
+    /// going, or what they are asked to judge.
+    pub carried_by_line: std::collections::BTreeMap<String, u32>,
+    /// Lines whose words spell a picture or a clip by file name — the failure a line carrying
+    /// it replaces. The target is zero.
+    pub lines_naming_a_file: u32,
+    /// Rows with a line in the window, and of those, rows where one carried something.
+    pub tasks: u32,
+    pub tasks_with_evidence: u32,
+    /// From a row's first line in the window to its first line carrying something, at the
+    /// median over the rows that have one.
+    pub hours_to_first_evidence_p50: Option<f64>,
+}
+
+/// [`Evidence`] over every row the ledger holds.
+pub async fn evidence(data_dir: &Path, since: DateTime<Utc>) -> anyhow::Result<Evidence> {
+    let mut out = Evidence::default();
+    let mut waits: Vec<f64> = Vec::new();
+    for task in scan(data_dir).await? {
+        let mut first: Option<DateTime<Utc>> = None;
+        let mut first_carrying: Option<DateTime<Utc>> = None;
+        for entry in &task.timeline {
+            let Some(at) = entry.at.filter(|at| *at >= since) else { continue };
+            if !matches!(entry.kind, TimelineKind::Update | TimelineKind::Delivered | TimelineKind::Waiting) {
+                continue;
+            }
+            out.lines += 1;
+            first.get_or_insert(at);
+            let carried = entry.attached();
+            if !carried.is_empty() {
+                out.lines_carrying += 1;
+                *out.carried_by_line.entry(entry.kind.as_str().to_owned()).or_default() += carried.len() as u32;
+                first_carrying.get_or_insert(at);
+            }
+            if names_a_media_file(entry.said()) {
+                out.lines_naming_a_file += 1;
+            }
+        }
+        if let Some(first) = first {
+            out.tasks += 1;
+            if let Some(carrying) = first_carrying {
+                out.tasks_with_evidence += 1;
+                waits.push((carrying - first).num_seconds() as f64 / 3600.0);
+            }
+        }
+    }
+    waits.sort_by(|a, b| a.total_cmp(b));
+    out.hours_to_first_evidence_p50 = (!waits.is_empty()).then(|| waits[waits.len() / 2]);
+    Ok(out)
+}
+
+/// Whether `text` spells a picture or a clip by its file name — `pose_899.png`,
+/// `out/court-lines.mp4`. A fact about the words, for a number; nothing is ever attached or
+/// shown because of it.
+fn names_a_media_file(text: &str) -> bool {
+    const EXTS: [&str; 8] = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov", ".webm"];
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || "._-/~".contains(c)))
+        .any(|token| {
+            let token = token.to_ascii_lowercase();
+            EXTS.iter().any(|ext| token.len() > ext.len() && token.ends_with(ext))
+        })
+}
+
 fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_owned();
@@ -3888,6 +3960,31 @@ mod verb_tests {
             note(dir.path(), "court", Note::Title, "场地标定", &ids, at).await.unwrap(),
             Some(Err(Refused::TitleCarries))
         );
+    }
+
+    /// **What reached the record is counted from the record**: lines, the ones carrying
+    /// something by kind, the ones still naming a file, and how long a row went before its
+    /// first evidence.
+    #[tokio::test]
+    async fn evidence_is_read_off_the_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("court")).await.unwrap().unwrap();
+        let t0 = Utc::now();
+        let at = |h: i64| t0 + chrono::Duration::hours(h);
+        note(dir.path(), "court", Note::Update, "图在 work/figures/pose_899.png", &[], at(1)).await.unwrap().unwrap().unwrap();
+        note(dir.path(), "court", Note::Update, "线压在线上", &["3f9a0c11d2e4b5a6".to_owned()], at(3)).await.unwrap().unwrap().unwrap();
+        note(dir.path(), "court", Note::Delivered, "片子好了", &["0123456789abcdef".to_owned(), "fedcba9876543210".to_owned()], at(5))
+            .await.unwrap().unwrap().unwrap();
+        let got = evidence(dir.path(), t0).await.unwrap();
+        assert_eq!(got.lines, 3);
+        assert_eq!(got.lines_carrying, 2);
+        assert_eq!(got.carried_by_line.get("update"), Some(&1));
+        assert_eq!(got.carried_by_line.get("delivered"), Some(&2));
+        assert_eq!(got.lines_naming_a_file, 1);
+        assert_eq!((got.tasks, got.tasks_with_evidence), (1, 1));
+        assert_eq!(got.hours_to_first_evidence_p50, Some(2.0));
+        assert!(!names_a_media_file("场地线已按模型画回画面"));
+        assert!(names_a_media_file("成片在 `out/court-lines.MP4`"));
     }
 
     /// **The person's own words are never read as carrying anything.**

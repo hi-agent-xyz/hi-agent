@@ -109,6 +109,9 @@ struct ReceptionAnswer {
     axis: Option<String>,
     #[serde(default)]
     quote: Option<String>,
+    /// They asked to be shown what was only described (`docs/arch/showing.md` § *Measurement*).
+    #[serde(default)]
+    asks_to_see: bool,
 }
 
 /// Read the person's message against what was said since their last one, on its own task.
@@ -134,6 +137,12 @@ pub fn on_reply(data_dir: PathBuf, said: Vec<(String, Vec<String>)>, theirs: Str
                     axis = record.axis.as_deref().unwrap_or(""),
                     quote = record.quote.as_deref().unwrap_or(""),
                     "the person corrected how something was said"
+                );
+            }
+            if record.asks_to_see {
+                tracing::info!(
+                    quote = record.quote.as_deref().unwrap_or(""),
+                    "the person asked to be shown what was only described"
                 );
             }
             write(&data_dir, quality::Record::Reception(record)).await;
@@ -173,8 +182,8 @@ pub(crate) async fn reception(
         model: judge.model().to_string(),
         corrects: answer.corrects,
         axis: answer.corrects.then(|| quality::axis(answer.axis.as_deref())).flatten(),
-        quote: answer
-            .corrects
+        asks_to_see: answer.asks_to_see,
+        quote: (answer.corrects || answer.asks_to_see)
             .then(|| answer.quote.map(|q| q.trim().to_string()).filter(|q| !q.is_empty()))
             .flatten(),
     })

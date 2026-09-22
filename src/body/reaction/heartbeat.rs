@@ -869,6 +869,7 @@ mod frontier_tests {
                 model: "m".into(),
                 corrects: true,
                 axis: Some("machinery".into()),
+                asks_to_see: false,
                 quote: Some("不用说这么细".into()),
             }),
         ];

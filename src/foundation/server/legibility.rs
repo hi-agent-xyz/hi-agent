@@ -31,6 +31,17 @@ pub async fn get_legibility(
     Query(query): Query<LegibilityQuery>,
 ) -> Response {
     let days = query.days.unwrap_or(DEFAULT_DAYS).clamp(1, 366);
-    let records = quality::read_since(&state.data_dir, Utc::now() - Duration::days(days)).await;
-    Json(quality::legibility(&records)).into_response()
+    let since = Utc::now() - Duration::days(days);
+    let records = quality::read_since(&state.data_dir, since).await;
+    let mut numbers = quality::legibility(&records);
+    // The ledger's half of whether what the agent made reaches the person, read off the same
+    // window of lines (`docs/arch/showing.md` § *Measurement*).
+    numbers.showing.evidence = match crate::mind::memory::tasks::evidence(&state.data_dir, since).await {
+        Ok(evidence) => Some(evidence),
+        Err(error) => {
+            tracing::warn!(%error, "the ledger could not be read for the showing numbers");
+            None
+        }
+    };
+    Json(numbers).into_response()
 }

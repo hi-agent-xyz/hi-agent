@@ -279,6 +279,12 @@ pub struct Reception {
     pub corrects: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub axis: Option<String>,
+    /// Whether they asked to be shown what was only described — the picture, the clip, the
+    /// page rather than the account of it. Its own question, answered whatever `corrects` is:
+    /// the primary number for how what the agent made reaches them (`docs/arch/showing.md`
+    /// § *Measurement*). False on every reception recorded before it was asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asks_to_see: bool,
     /// Their words, as said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<String>,
@@ -346,10 +352,44 @@ pub struct Legibility {
     pub record: Numbers,
     pub view: Numbers,
     pub home: Numbers,
+    /// Whether what the agent made reaches the person without their asking for it
+    /// (`docs/arch/showing.md` § *Measurement*).
+    pub showing: Showing,
+}
+
+/// How what the agent made reaches the person. The primary is theirs: how often they asked to
+/// be shown what was only described. What the ledger says about evidence reaching the record is
+/// read from the records by whoever serves these numbers, and joined here as `evidence`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Showing {
+    /// **The primary.** Messages in which they asked to see the thing rather than the account of
+    /// it, by day. The target is zero: what exists should already be where they look.
+    pub show_me_per_day: BTreeMap<NaiveDate, u32>,
+    pub show_me: u32,
+    /// Replies read in the window. One recorded before 2026-09-22 was never asked the question
+    /// and reads as not asking, so a window reaching back past that undercounts.
+    pub receptions: u32,
+    /// What the ledger says about evidence reaching the record — see [`super::tasks::Evidence`].
+    pub evidence: Option<super::tasks::Evidence>,
+}
+
+fn showing(records: &[Record]) -> Showing {
+    let mut out = Showing::default();
+    for record in records {
+        if let Record::Reception(r) = record {
+            out.receptions += 1;
+            if r.asks_to_see {
+                out.show_me += 1;
+                *out.show_me_per_day.entry(r.ts.date_naive()).or_default() += 1;
+            }
+        }
+    }
+    out
 }
 
 pub fn legibility(records: &[Record]) -> Legibility {
     Legibility {
+        showing: showing(records),
         speech: numbers(records, Surface::Speech),
         record: numbers(records, Surface::Record),
         view: numbers(records, Surface::View),
@@ -589,6 +629,7 @@ mod tests {
             model: "m".into(),
             corrects: true,
             axis: Some("machinery".into()),
+            asks_to_see: false,
             quote: Some("不用说这么细".into()),
         });
         let early = check("t1", "部署了", Outcome::Pass, 900);
@@ -630,6 +671,7 @@ mod tests {
                 model: "m".into(),
                 corrects: true,
                 axis: Some("machinery".into()),
+                asks_to_see: false,
                 quote: Some("不用说这么细".into()),
             }),
         ];

@@ -339,7 +339,10 @@ Both reach Reaction through A. Nothing new is stored beside them.
 ### I. The number
 
 Server-side, beside the logs; no card in the face. `GET /api/legibility?days=7` computes them,
-one set per surface — `speech`, `record`, `view` and `home` — from the records on read.
+one set per surface — `speech`, `record`, `view` and `home` — from the records on read, and a
+`showing` set beside them: how often the person asked to be shown what was only described,
+counted by the reception read, and what the ledger's lines say about evidence reaching the
+record ([showing.md](showing.md#measurement)).
 
 | Measure | Why |
 |---|---|
