@@ -205,6 +205,12 @@ block2 = "0.6"
 # right-Control attention key and distinguishes it from the left one, which
 # `RegisterHotKey` and `WM_KEYDOWN` respectively cannot do. windows-sys rather than
 # `windows` because this needs raw Win32 calls and no COM/WinRT projection.
+# Reaping a headless browser a dead run left behind: `kill(pid, 0)` to ask whether a pid is
+# alive, `SIGKILL` to put one down. Unix only — see `vendors::chrome_headless::reap_strays`,
+# and the Windows shell owns the engine's lifetime through a job object instead.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

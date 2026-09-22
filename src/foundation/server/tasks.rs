@@ -451,8 +451,8 @@ fn dto(task: &Task, malformed: bool, showing: &Showing<'_>) -> TaskDto {
 /// What it does carry out of them is what a chart draws — one line and the views it made.
 ///
 /// **No files.** They came back onto the row once so Home could count them under each task,
-/// at a `stat` per named file per task per ledger read; Home no longer counts anything it does
-/// not draw, and the one other reader, the board's file links, reads them off the record.
+/// at a `stat` per named file per task per ledger read. Nothing counts them now, and nothing
+/// resolves a file a line merely spells: what a row carries is what its lines handed over.
 fn row(task: &Task, malformed: bool, showing: &Showing<'_>) -> RowDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     RowDto {

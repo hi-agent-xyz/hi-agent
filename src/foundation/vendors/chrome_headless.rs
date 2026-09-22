@@ -145,8 +145,67 @@ impl Running {
     }
 }
 
+/// The file inside a profile dir holding the browser's own pid, so a later run can put down
+/// what an abrupt exit left behind.
+const PID_FILE: &str = "hi-agent-browser.pid";
+
+/// Kill and remove what previous runs left behind.
+///
+/// **A held browser outlives a process that dies abruptly.** `kill_on_drop` covers an
+/// ordinary drop, and nothing covers `kill -9`, a crash or a test binary exiting while the
+/// browser is still in its idle window — and each of those leaks a Chrome of tens of
+/// megabytes until the machine is rebooted. Each profile dir is named for the hi-agent that
+/// made it and holds the browser's own pid, so a start can tell a stray from a sibling: a
+/// profile whose maker is gone is reaped, a live one is left alone.
+///
+/// Best-effort throughout. Nothing here may stop a render from starting. Unix only: the
+/// Windows shell owns the engine's lifetime through a job object, and nothing there has ever
+/// run a browser.
+#[cfg(unix)]
+async fn reap_strays() {
+    let Ok(mut entries) = tokio::fs::read_dir(std::env::temp_dir()).await else { return };
+    let mine = std::process::id();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(rest) = name.strip_prefix("hi-render-") else { continue };
+        let Some((made_by, _)) = rest.split_once('-') else { continue };
+        let Ok(made_by) = made_by.parse::<u32>() else { continue };
+        if made_by == mine || alive(made_by).await {
+            continue;
+        }
+        if let Ok(raw) = tokio::fs::read_to_string(entry.path().join(PID_FILE)).await
+            && let Ok(pid) = raw.trim().parse::<i32>()
+            && alive(pid as u32).await
+        {
+            // Only a browser: a pid is reused, and killing whatever now holds it would be
+            // this process reaching outside itself.
+            let comm = tokio::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "comm="])
+                .output()
+                .await
+                .map(|out| String::from_utf8_lossy(&out.stdout).to_lowercase())
+                .unwrap_or_default();
+            if comm.contains("chrome") || comm.contains("chromium") || comm.contains("edge") {
+                tracing::debug!(pid, profile = %name, "putting down a browser a dead run left");
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+        }
+        let _ = tokio::fs::remove_dir_all(entry.path()).await;
+    }
+}
+
+/// Whether `pid` is a live process this user could signal.
+#[cfg(unix)]
+async fn alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+async fn reap_strays() {}
+
 /// Start a browser and wait until it will answer.
 pub async fn launch(browser: &ResolvedBrowser) -> anyhow::Result<Running> {
+    reap_strays().await;
     let profile = std::env::temp_dir().join(format!(
         "hi-render-{}-{}",
         std::process::id(),
@@ -157,6 +216,10 @@ pub async fn launch(browser: &ResolvedBrowser) -> anyhow::Result<Running> {
         .with_context(|| format!("creating the browser profile dir {}", profile.display()))?;
 
     let mut child = spawn(browser, &profile)?;
+    // Written before anything else can fail: it is what a later run reaps this browser by.
+    if let Some(pid) = child.id() {
+        let _ = tokio::fs::write(profile.join(PID_FILE), pid.to_string()).await;
+    }
 
     // Drain stderr into a buffer rather than letting it fill the pipe (a full
     // pipe would block the browser mid-render). It is also the only diagnostic
