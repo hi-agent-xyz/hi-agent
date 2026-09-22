@@ -73,7 +73,10 @@ terms that survive an unknown microphone gain: a difference of two levels from o
 capture, or this speaker measured against the others in the same room. They are
 **evidence for the mind and never a gate in the channel** — perception stays mechanical
 and hands up everything it heard
-([`31-hear-the-room`](../user-journeys/31-hear-the-room.md)).
+([`31-hear-the-room`](../user-journeys/31-hear-the-room.md)). What the host does decide is
+narrower and comes later: whether a batch that is *only* room wakes Reaction now, or waits for
+the next turn something else drives. Nothing is dropped either way — see
+[host.md § The room screen](host.md#the-room-screen).
 
 ### Why a ref and not the bytes
 

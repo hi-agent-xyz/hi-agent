@@ -79,6 +79,7 @@ pub(crate) use duties::DUTY_BRIEF_TAIL;
 pub(crate) use heartbeat::{CONSOLIDATION_TOOLS, PROACTIVITY_HEADING};
 mod reflection;
 mod interleave;
+mod room;
 mod floor;
 pub mod legibility;
 pub mod outbound;
@@ -1904,6 +1905,12 @@ async fn reaction_loop(
     // still owed and still here; it just waits for the gate or for a fresh signal
     // rather than for us to try again immediately.
     let mut failed_attempts: u32 = 0;
+    // Room that did not wake Reaction ([`room`]): kept, in order, until a turn runs and
+    // carries it under its own heading. Cleared by that turn succeeding, like the batch.
+    let mut aside = room::Aside::new();
+    // The room screen's question about the batch as it settles, asked again whenever the
+    // batch grows, so its answer is usually back by the time the settle closes.
+    let mut screen: Option<room::Pending> = None;
 
     loop {
         // Wait for a turn-driving reason. The process-wide gate wakes this loop when
@@ -2066,9 +2073,14 @@ async fn reaction_loop(
             // Where the window may not be held open past, however long they keep
             // going. See [`BATCH_WHILE_COMPOSING`].
             let hold_until = Instant::now() + BATCH_WHILE_COMPOSING;
+            // A batch the loop is retrying already woke Reaction once; it is not re-asked.
+            let screened = failed_attempts == 0;
             let closed = loop {
                 while let Ok(extra) = inbound.try_recv() {
                     enqueue(&reaction, &mut workers, &mut batch, extra).await;
+                }
+                if screened {
+                    room::ask(&mut screen, &reaction.inner.memory, &batch);
                 }
                 match timeout(RESPONSE_SETTLE, inbound.recv()).await {
                     // another utterance — keep collecting
@@ -2097,7 +2109,16 @@ async fn reaction_loop(
                 tracing::info!("reaction inbound closed; exiting loop");
                 return;
             }
+            // Room that nobody in it is talking with the agent about waits for the next turn
+            // something else drives, instead of driving one. See [`room`].
+            if screened && !room::wakes(&mut screen, &reaction.inner.memory, &batch).await {
+                room::set_aside(&mut aside, &render_batch(&batch));
+                batch.clear();
+                registry::global().abandon_turn(&reaction_id);
+                continue;
+            }
         }
+        screen = None;
 
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
@@ -2106,6 +2127,7 @@ async fn reaction_loop(
         let turn_result = run_reaction_turn(
             &reaction,
             &batch,
+            &room::render_aside(&aside, Instant::now()),
             &mut reaction_session,
             &mut window_memo,
             &reaction_id,
@@ -2128,6 +2150,7 @@ async fn reaction_loop(
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
                 batch.clear();
+                aside.clear();
                 failed_attempts = 0;
                 // Report what the session has accumulated, for the dashboard only.
                 // **Nothing thresholds on this.** Bounding a session's context is the
@@ -2323,6 +2346,7 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 async fn run_reaction_turn(
     reaction: &Reaction,
     batch: &[LoopInput],
+    aside: &str,
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
     reaction_id: &registry::SessionSlug,
@@ -2389,6 +2413,7 @@ async fn run_reaction_turn(
         &worker_status,
         &on_screen,
         &interrupted,
+        aside,
         &new_signals,
     )
     .await;
@@ -2565,6 +2590,7 @@ async fn turn_context(
     worker_status: &str,
     on_screen: &str,
     interrupted: &str,
+    aside: &str,
     new_signals: &str,
 ) -> String {
     let mut blocks = snapshot::window(memory, reaction_id).await;
@@ -2583,9 +2609,10 @@ async fn turn_context(
         compare_as: None,
     });
     let carried = memo.take(blocks);
-    // Neither of these is state. A barge-in note is consumed when it is read, and the
-    // signals *are* the turn — they go every time, unconditionally.
-    join_sections(&[carried.as_str(), interrupted, new_signals])
+    // None of these is state. A barge-in note is consumed when it is read, room that was set
+    // aside goes once with the turn that finally runs, and the signals *are* the turn — they go
+    // every time, unconditionally, and last.
+    join_sections(&[carried.as_str(), interrupted, aside, new_signals])
 }
 
 /// What this thread has already been told, so a turn carries only what it hasn't.
@@ -2682,7 +2709,7 @@ mod turn_context_tests {
 
         // Turn one, on a session opened just now: nothing written yet.
         let first =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(!first.contains("mid-migration"), "{first}");
 
         // Mid-conversation, the state moves under the live session.
@@ -2697,7 +2724,7 @@ mod turn_context_tests {
 
         // Turn two, same session — no re-open, no rotation.
         let second =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>那卡片呢").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>那卡片呢").await;
         assert!(second.contains("mid-migration"), "{second}");
         assert!(second.contains("- [doing] Ship the flash cards"), "{second}");
         assert!(second.contains("## New signals"), "{second}");
@@ -2825,13 +2852,17 @@ mod turn_context_tests {
             "## Workers\nbuilding a view",
             "## On screen now\ntasks",
             "",
+            "## Heard around you\n>/audio 吃饭了",
             "## New signals\n>好了没",
         )
         .await;
         let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing {needle}: {text}"));
         assert!(at("## Recent (last 30 minutes)") < at("## Workers"));
         assert!(at("## Workers") < at("## On screen now"));
-        assert!(at("## On screen now") < at("## New signals"));
+        assert!(at("## On screen now") < at("## Heard around you"));
+        // Set-aside room came before what woke the turn, and the signals stay last: a stop
+        // that cuts the turn off finds them again by their heading ([`cut_off_turn_note`]).
+        assert!(at("## Heard around you") < at("## New signals"));
         assert!(text.trim_end().ends_with("好了没"), "{text}");
         assert!(!text.contains("## Presence"), "the presence projection is gone: {text}");
     }
@@ -2849,11 +2880,11 @@ mod turn_context_tests {
         let mut memo = WindowMemo::default();
 
         let first =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(first.contains("mid-migration"), "{first}");
 
         let second =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>还在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>还在吗").await;
         assert!(!second.contains("mid-migration"), "said once is said: {second}");
         assert!(second.contains("还在吗"), "the turn itself always rides: {second}");
         assert!(second.len() < first.len() / 2, "{} vs {}", second.len(), first.len());
@@ -2918,10 +2949,10 @@ mod turn_context_tests {
         heard(&memory, "把周报发我").await;
         let mut memo = WindowMemo::default();
 
-        let cold = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let cold = turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(cold.contains("## Recent (last 30 minutes)"), "{cold}");
 
-        let warm = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let warm = turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(!warm.contains("## Recent (last 30 minutes)"), "{warm}");
     }
 
@@ -2939,12 +2970,12 @@ mod turn_context_tests {
         tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
         let mut memo = WindowMemo::default();
 
-        let first = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
-        let quiet = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let first = turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
+        let quiet = turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(!quiet.contains("mid-migration"), "{quiet}");
 
         memo.forget();
-        let after = turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+        let after = turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(after.contains("mid-migration"), "{after}");
         assert!(after.contains("## Recent (last 30 minutes)"), "{after}");
         assert_eq!(after.len(), first.len(), "a cold turn carries what the first one did");
@@ -2963,13 +2994,13 @@ mod turn_context_tests {
         tokio::fs::write(&path, "He is mid-migration this week.").await.unwrap();
         let mut memo = WindowMemo::default();
 
-        let seed = turn_context(&memory, &0.into(), &mut memo, "", "", "", "").await;
+        let seed = turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "").await;
         assert!(seed.contains("mid-migration"), "{seed}");
         assert!(seed.contains("## Recent (last 30 minutes)"), "{seed}");
         assert!(!seed.contains("## New signals"), "a seed is not a turn: {seed}");
 
         let first_turn =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(!first_turn.contains("mid-migration"), "the seed already said it: {first_turn}");
         assert!(!first_turn.contains("## Recent (last 30 minutes)"), "{first_turn}");
         assert!(first_turn.contains("在吗"), "{first_turn}");
@@ -2989,7 +3020,7 @@ mod turn_context_tests {
         let mut memo = WindowMemo::default();
 
         let first =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>在吗").await;
         assert!(first.contains("Watch the ops group"), "{first}");
 
         // Age it a day. The line changes — `open 3d` becomes `open 4d` — and nothing about
@@ -2997,14 +3028,14 @@ mod turn_context_tests {
         owed.created_at = Some(chrono::Utc::now() - chrono::Duration::days(4));
         write_task(dir.path(), &owed).await.unwrap();
         let aged =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>还在吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>还在吗").await;
         assert!(!aged.contains("Watch the ops group"), "only the clock moved: {aged}");
 
         // Close it, and it must be told at once.
         owed.status = TaskStatus::Done;
         write_task(dir.path(), &owed).await.unwrap();
         let closed =
-            turn_context(&memory, &0.into(), &mut memo, "", "", "", "## New signals\n>好了吗").await;
+            turn_context(&memory, &0.into(), &mut memo, "", "", "", "", "## New signals\n>好了吗").await;
         assert!(closed.contains("# Active tasks"), "a duty leaving the ledger is news: {closed}");
     }
 
@@ -3168,7 +3199,7 @@ async fn seed_session(
 ) {
     memo.forget();
     let window =
-        turn_context(&reaction.inner.memory, reaction_id, memo, "", "", "", "").await;
+        turn_context(&reaction.inner.memory, reaction_id, memo, "", "", "", "", "").await;
     if window.trim().is_empty() {
         tracing::info!("reaction seed: nothing to carry in yet");
         return;

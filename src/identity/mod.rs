@@ -124,7 +124,9 @@ const READING_PAGE: &str = "reading.md";
 
 /// The rubrics the host's own judges run with (`docs/arch/legibility.md` § E, § G): each is
 /// one question asked of one model request, placed in front of the reading standard — except
-/// the speech check's, which is the wording of the typed questions System One is asked.
+/// the speech check's and the room screen's, which are the wording of typed questions System
+/// One is asked (the room screen's reads no standard at all: it is about who is talking, not
+/// how anything was put).
 ///
 /// **Here and not in the code that sends them**, because what counts as a failing line is
 /// judgment, and judgment lives in prose where it can be read whole. They are not roles —
@@ -142,6 +144,9 @@ pub mod judges {
     pub const RECORD_AUDIT: &str = include_str!("judges/record_audit.md");
     /// Whether the labels and notes about to go on the home screen go up as written.
     pub const HOME: &str = include_str!("judges/home.md");
+    /// Whether a batch that is only room is anyone talking with the agent — one typed question,
+    /// by [`super::rubric_section`].
+    pub const ROOM: &str = include_str!("judges/room.md");
 }
 
 /// A judge's whole instructions: its rubric, then the reading standard it judges against.

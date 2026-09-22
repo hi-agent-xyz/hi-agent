@@ -7,8 +7,12 @@ signals into the one conversation, decide *when* the agent may speak, own every 
 the cadence that [opens the agent's eyes](#glancing-up), and write everything down before
 anyone reacts to it.
 
-Nothing here consults a model. That is the point — the host has to keep working while the
-thinking layers are slow, confused, or dead.
+Nothing here waits on a model to keep working. That is the point — the host has to keep working
+while the thinking layers are slow, confused, or dead. Where it does ask one — the
+[room screen](#the-room-screen) and the pre-send check
+([`legibility.md`](legibility.md#e-pre-send-check--typed-questions-to-system-one)) — it asks
+System One a typed question on a budget, and a timeout or an error is what the host did before
+it asked.
 
 ## Decisions
 
@@ -152,6 +156,44 @@ generation refuses every reply, and total silence is a worse failure than a slig
 line — so after a few refusals in a row, one goes through. That is the mechanical form of
 what a person does as the wait grows: stop holding out for a clean opening and take a small
 one.
+
+### The room screen
+
+**A batch that is only room wakes Reaction only if someone in it is talking with the agent.**
+A microphone in a room hears the whole room, and until this existed every line it finalized
+drove a turn: side talk, a child, a phone call, the car's navigation, a face crossing the camera.
+Perception still hands all of it up and nothing is dropped
+([`surfaces.md`](surfaces.md#channels)). What moves is the wake.
+
+| | |
+|---|---|
+| **What is screened** | a batch made only of `audio` and `vision` — the [ambient](signal-attribution.md) channels. Anything typed, handed, mailed or reported in the batch wakes Reaction as before, and so does a batch the loop is retrying |
+| **The question** | one System One `noul`: is someone in the new lines talking *with* the assistant — asking, answering, dictating, reviewing its work, playing a game it is in — even without naming it. It reads the last twenty-five lines before the batch with each one's age in seconds, and when the agent last spoke. The wording is `src/identity/judges/room.md` |
+| **When it is asked** | at every arrival that changes a room-only batch, while the batch [settles](surfaces.md#batching). By the time the settle closes, the answer for exactly that batch has usually been in flight for the whole window |
+| **What a no does** | the batch does not start a turn. Its lines wait, in order, and ride into the next turn something else drives, under `## Heard around you` ahead of `## New signals` — so a line that *was* for the agent is still in front of it, and *"did you hear me?"* wakes it with the original right there |
+| **What anything else does** | wakes. Off (`room_screen`), unconfigured, over `room_screen_budget_ms` (1.5 s from the question), an error, or an answer that is not a probability — the batch goes to Reaction as it always did |
+
+**Why the cut is 0.30** (`room_screen_wake_at`). Measured offline on 2026-09-21 over the 650
+room-only batches in the frame log from 08-15 to 09-20, each labelled blind by a model reader —
+not by the person. 297 were someone talking with the agent and 322 were not. At 0.30 the
+screen set aside 164 of the 322 and 1 of the 297, the opening line of a review (*"I'm looking at
+this summary now"*), which the next line would have brought back. At 0.40 it set aside 71% of
+the side talk and 11 of the 297. The cut was chosen on the set it was scored on. The first
+wording, which asked one question per line with no timing, could not tell a dictation from side
+talk at all — a request to lay out a poster scored 0.10–0.15, the same as a family at dinner —
+and the difference was the lines' ages and when the agent last spoke.
+
+**What it costs.** One call per arrival in a room-only batch, about 1.6K input tokens. Measured
+one call at a time from a dev machine through the managed gateway: p50 580 ms, p90 1.06 s.
+Asked during a 700 ms settle, the median call adds nothing a person would hear; the slow tail
+adds up to the budget.
+
+**What it does not do: un-count a line at the mouth.** A room line that lands while a turn is
+generating still makes that turn's words [out of date](#the-floor), because it is screened only
+when it becomes the next batch — after the refusal it caused. That was the larger half of the
+harm measured in the one crowded scene looked at closely (on 08-30, five of eight replies were
+refused because of side talk). Fixing it means asking about each arrival on its own, which is a
+different question from the one measured here. See [Open](#open).
 
 ### Attachment
 
@@ -751,6 +793,14 @@ where fix-forward genuinely does not apply.
   the backend hook is dead: `Floor::mark_flush` ([`floor.rs`](../../src/body/reaction/floor.rs))
   has no caller outside its own tests. Wire it or delete it; leaving it is the third option that
   keeps being taken.
+- **Side talk still refuses a reply at the mouth.** The [room screen](#the-room-screen) decides
+  whether room wakes Reaction; it does not decide whether a room line that lands *during* a
+  generation makes that generation's words out of date. `Floor::note_heard` counts every accepted
+  line, so a remark at the next table refuses a reply to the person as surely as their own next
+  sentence does — on 08-30, five of eight replies in the photo scene. The exchange-only count
+  needs an answer per arrival before the mouth asks, which is a smaller unit than the batch the
+  screen was measured on and has not been measured. `Speaking` is a different matter and stays
+  as it is: talking over anyone is rude, whoever they are talking to.
 - **The host knowing what it consumes, and pacing itself on it.** Two kinds of consumption: the
   machine — memory, disk, processor, everything the sessions' commands start — and tokens. The
   intent is that hi-agent watches both and adjusts its own pace to the situation, the way a person
