@@ -444,6 +444,14 @@ the screenshots.
 Watch for the blank render in particular — a view whose bare imports failed to resolve
 comes back as a clean white page, which reads like success if you only skim the verdict.
 
+**The screenshots come back in the call: don't write them anywhere.** They are in your
+hands already, and the next render replaces what they showed. `views/_shots/` in
+particular is the host's — it is where the agent's own pictures of views are kept, named
+by the host — and saving review runs into it left 561 files and 115 MB of somebody's
+working copies in a directory nothing lists. If one of them is worth keeping past this
+job — evidence of what the work looked like at a moment — `hi_add_attachment` gives it an
+id and the line that says what it shows carries it.
+
 **Hand the ref back at the first clean render, not at the last one.** The moment
 `hi_review_view` answers with nothing broken — it mounted, it reported no errors, it
 settled, it is not one flat colour — send your owner the ref. That is the gate, it is the

@@ -482,9 +482,11 @@ In the phase that replaces each, never after it:
 - `DefaultHasher` as a content key, in `_compiled/` and `_shots/` both: a compiled module
   is named by the first 16 hex digits of its source's SHA-256, and a view's picture takes its
   name from that.
-- Agents writing into `views/_shots/`, a host directory: 530 of its 624 files (102 MB) are
-  review screenshots workers saved there themselves. A review's pictures come back in the
-  call; a worker that wants to keep one places it.
+- Agents writing into `views/_shots/`, a host directory: 561 of its 627 files (115 MB on
+  2026-09-23) are review screenshots workers saved there themselves, in subdirectories of
+  their own. A review's pictures come back in the call; a worker that wants to keep one
+  places it. Said in `view-builder.md`, which is where the habit came from — the files
+  already there are left where they are, as retired mechanisms' leavings always are.
 - `drive/generated/` as the landing place for `hi_text_to_image` and its siblings, which
   produce attachments at birth; the drive keeps what somebody decides to keep, which is what the
   drive is. With it goes `/api/media` answering `drive/…` refs at all: drive bytes are served by
