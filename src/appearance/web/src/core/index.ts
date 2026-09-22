@@ -10,6 +10,16 @@ export {
   useSendText,
 } from "./session";
 export { ViewsProvider, useViews, type ActiveView } from "./views";
+// One way to draw what the agent put in front of the person — a tile, a viewer, the stage — for
+// the host and every view alike. See `core/attachments.tsx`.
+export {
+  AttachmentPreview,
+  AttachmentViewer,
+  AttachmentStage,
+  attachmentOf,
+  clock,
+  type AttachmentItem,
+} from "./attachments";
 // The clock a surface re-reads on. Any view showing state the agent changes on its own
 // initiative needs one, because re-showing a view does not remount it and so cannot
 // refresh it — see `core/live.ts`.

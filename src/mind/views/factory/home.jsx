@@ -14,7 +14,7 @@
 // carries every session. Home does not repeat them. It shows what is open, what is live,
 // and what we are talking about, and hands off for anything else.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useLive, useWatched, useMessages, useViews, TEMPO } from "@hi/core";
+import { useLive, useWatched, useMessages, useViews, TEMPO, AttachmentPreview } from "@hi/core";
 import { flextree } from "d3-flextree";
 
 const COPY = {
@@ -1737,31 +1737,6 @@ function Core({ node, model, now, more = 0, openRef }) {
  * the same move the task made — `factory/workers` exporting its detail for this surface to
  * draw; see `docs/arch/home.md` § Open.
  */
-/**
- * What a result tile draws: its preview, or — while there is none, or it will not load — what it
- * is in words, and a clip's length either way. The words are the floor a view's tile drew
- * before pictures existed, and they are what a view that has not been pictured yet still draws
- * until the server's warm-up lands one.
- */
-function TilePicture({ data, title }) {
-  const [failed, setFailed] = useState(false);
-  const length = data.kind === "clip" && data.durationMs != null ? clock(data.durationMs) : null;
-  if (!data.preview || failed) {
-    return <span className="hi-work__tile-word">{length ? `${title} · ${length}` : title}</span>;
-  }
-  return <>
-    <img src={data.preview} alt={title} loading="lazy" onError={() => setFailed(true)} />
-    {length && <span className="hi-work__tile-length">{length}</span>}
-  </>;
-}
-
-/** `0:30`, `12:04`, `1:02:09`. */
-function clock(ms) {
-  const s = Math.round(ms / 1000);
-  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, r = String(s % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${r}` : `${m}:${r}`;
-}
-
 function Node({ node, now, children, openRef, openTask, tones, centreOn, unopened = new Set(), root = false, up = null, more = 0 }) {
   const state = stateOf(node), time = nodeTime(node);
   // A dot for something this task made that was put up while they were on another page and
@@ -1780,7 +1755,7 @@ function Node({ node, now, children, openRef, openTask, tones, centreOn, unopene
     data-kind="result" data-shows={node.data.kind}>
     <button onClick={() => (node.data.viewRef ? openRef(node.data.viewRef)
       : openTask(node.data.subject, { at: node.data.at, ref: node.data.id }))} title={node.title}>
-      <TilePicture data={node.data} title={node.title} />
+      <AttachmentPreview item={{ ...node.data, ref: node.data.id }} title={node.title} />
     </button>
     {fresh && <i className="hi-work__unopened" role="img" aria-label={L.unopened} />}
   </article>;
@@ -1972,9 +1947,6 @@ const CSS = `
 /* A view's shot is taken at the tile's own 16:9 and fills it; a picture or a clip is whatever
    shape the work made it, so it is fitted whole rather than cropped to the box. */
 .hi-work__tile[data-shows="picture"] img, .hi-work__tile[data-shows="clip"] img { object-fit:contain; object-position:center; background:color-mix(in srgb, var(--fg) 6%, transparent); }
-.hi-work__tile button { position:relative; }
-.hi-work__tile-word { display:grid; place-items:center; height:100%; padding:10px; color:var(--fg-dim); font-size:13px; font-weight:620; text-align:center; }
-.hi-work__tile-length { position:absolute; right:7px; bottom:6px; padding:1px 6px; border-radius:5px; background:rgb(0 0 0 / .58); color:#fff; font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
 .hi-work__node-title { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.4; overflow-wrap:anywhere; font-weight:500; }
 .hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:12px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }
