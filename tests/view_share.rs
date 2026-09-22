@@ -29,6 +29,24 @@ export default function Probe() {
 }
 "#;
 
+/// A view that draws an attachment: the picture is fetched from the attachment route, which a
+/// share check lets through and records, where it refuses the rest of `/api/*`.
+const DRAWING: &str = r#"
+import { jsx } from "react/jsx-runtime";
+export default function Drawing() {
+  return jsx("img", { src: "/api/attachments/__ID__/preview.v1", alt: "" });
+}
+"#;
+
+/// The same view, reading the API while it renders — refused, however it is drawn.
+const READING: &str = r#"
+import { jsx } from "react/jsx-runtime";
+export default function Reading() {
+  fetch("/api/tasks");
+  return jsx("img", { src: "/api/attachments/__ID__/preview.v1", alt: "" });
+}
+"#;
+
 /// The failure the check exists for: a view that reads a file which is not its own.
 const REACHING: &str = r#"
 import { jsx } from "react/jsx-runtime";
@@ -88,7 +106,7 @@ async fn a_share_check_passes_a_view_and_still_refuses_one_that_reads_outside_it
         format!("http://{addr}"),
     );
 
-    let checked = server::view_share::check("probe-view", "/views/_compiled/probe.mjs")
+    let checked = server::share::check("probe-view", "/views/_compiled/probe.mjs")
         .await
         .expect("the check runs");
     assert!(checked.ok, "the check refused a view it should pass: {:?}", checked.refusals);
@@ -99,7 +117,32 @@ async fn a_share_check_passes_a_view_and_still_refuses_one_that_reads_outside_it
          for /favicon.ico — a request this scope refuses and no view made"
     );
 
-    let refused = server::view_share::check("probe-view", "/views/_compiled/reaching.mjs")
+    // An attachment it draws passes, and is what the share's scope grows by.
+    let work = tempdir().expect("tempdir");
+    let figure = work.path().join("pose_899.png");
+    // Two colours, not one: the render page fills the frame with a lone picture, and one flat
+    // colour corner to corner is exactly what the check calls blank.
+    image::RgbImage::from_fn(64, 36, |x, _| if x < 32 { image::Rgb([30, 140, 60]) } else { image::Rgb([240, 240, 240]) })
+        .save(&figure)
+        .expect("figure");
+    let placed = hi_agent::foundation::attachments::place(dir.path(), &figure).await.expect("placed");
+    std::fs::write(compiled.join("drawing.mjs"), DRAWING.replace("__ID__", &placed.id)).expect("drawing");
+    std::fs::write(compiled.join("reading.mjs"), READING.replace("__ID__", &placed.id)).expect("reading");
+    let drawn = server::share::check("court/review", "/views/_compiled/drawing.mjs")
+        .await
+        .expect("the check runs");
+    assert!(drawn.ok, "a view drawing an attachment was refused: {:?}", drawn.refusals);
+    assert_eq!(drawn.attachments, vec![placed.id.clone()]);
+    let reading = server::share::check("court/review", "/views/_compiled/reading.mjs")
+        .await
+        .expect("the check runs");
+    assert!(
+        !reading.ok && reading.refusals.iter().any(|r| r.contains("/api/tasks")),
+        "the API stays refused beside an attachment: {:?}",
+        reading.refusals
+    );
+
+    let refused = server::share::check("probe-view", "/views/_compiled/reaching.mjs")
         .await
         .expect("the check runs");
     assert!(!refused.ok, "a view reading another view's file must be refused");

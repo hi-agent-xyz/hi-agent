@@ -344,12 +344,13 @@ log's, with the log's retention — and are drawn by the same viewer.
 
 ### On a share
 
-    hi_share(att:id | view:ref, …)                                       workers
+    hi_share(ref: att:id | view:ref, …)                                  workers
 
-A shared attachment is its bytes and a page that is the bundled viewer, with `og:image` the
-preview at an absolute URL. It needs none of a view's share check: it fetches nothing, so there
-is nothing that could render half-empty. A shared page's scope grows by exactly the attachments
-its check saw it request.
+A shared attachment is its bytes and a page that is the bundled viewer, at `/att/<id>`, with
+`og:image` the preview at an absolute URL. It needs none of a view's share check: it fetches
+nothing, so there is nothing that could render half-empty. A shared page's scope grows by exactly
+the attachments its check saw it request — the check lets the attachment routes through while it
+refuses the rest of `/api/*`, and records each id it saw. [sharing.md](sharing.md) has the rest.
 
 ### Through an app
 

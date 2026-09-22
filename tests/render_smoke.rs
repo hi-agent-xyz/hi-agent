@@ -60,6 +60,7 @@ async fn a_real_browser_launches_attaches_and_screenshots() {
             scale: 2.0,
             settle_timeout: Duration::from_secs(10),
             blocked: Vec::new(),
+            allowed: Vec::new(),
             want_html: false,
         },
     )
@@ -102,6 +103,7 @@ async fn a_page_that_never_reports_times_out_and_reads_blank() {
             scale: 1.0,
             settle_timeout: Duration::from_secs(2),
             blocked: Vec::new(),
+            allowed: Vec::new(),
             want_html: false,
         },
     )

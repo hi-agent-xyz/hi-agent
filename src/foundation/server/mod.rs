@@ -58,7 +58,7 @@ pub mod transcript;
 pub mod tools;
 pub mod view;
 pub mod view_bus;
-pub mod view_share;
+pub mod share;
 pub mod view_shots;
 pub mod view_watch;
 pub mod vision;
@@ -673,7 +673,8 @@ pub fn build(
         // the task board's own panel. Moves nothing; see `view::view_module`.
         .route("/api/views/module", get(view::view_module))
         .route("/api/views/bookmarks", post(view::bookmark_view))
-        .route("/api/views/share", post(view::share_view))
+        // Publish a view or an attachment as a page somebody with no credential can open.
+        .route("/api/shares", post(share::post_share))
         // Vision is an input channel that is also observable: the camera streams
         // WebM over the WS, GET plays the live video; POST persists a still frame.
         .route("/api/in/vision", post(vision::post_vision).get(vision::get_vision))
@@ -839,11 +840,11 @@ pub fn build(
         )
         // A shared view is answered here rather than from a route of its own, so a
         // published name can never shadow something this core serves — whatever is
-        // added to the router later wins by existing. `view_share::RESERVED` refuses
+        // added to the router later wins by existing. `share::RESERVED` refuses
         // those names at creation as well; this is the half that cannot go stale.
         //
         // Before `with_state`, because it is the one fallback that needs the state.
-        .fallback(view_share::serve)
+        .fallback(share::serve)
         .with_state(state.clone())
         .merge(crate::appearance::router());
 

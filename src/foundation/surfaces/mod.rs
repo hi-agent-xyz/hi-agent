@@ -630,11 +630,11 @@ pub async fn gate(
         return next.run(req).await;
     }
 
-    // A published view, and the files that view needs to render. Read before the
+    // A published view or attachment, and the files its page needs. Read before the
     // throttle so a visitor who was never asked for a credential cannot spend one
     // person's failure budget, and only for `GET`: a share is something to look at.
     if method == axum::http::Method::GET
-        && crate::foundation::server::view_share::grants(
+        && crate::foundation::server::share::grants(
             surfaces.data_dir(),
             req.uri(),
             req.headers(),

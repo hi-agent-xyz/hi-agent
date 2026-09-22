@@ -111,12 +111,20 @@ impl Probe {
         crate::mind::memory::media::content_type(&format!("x.{}", self.ext))
     }
 
-    /// What a mind is told it attached, in one line: `picture 1920×1080`, `clip 1920×1080 · 0:30 · 30 fps`.
-    pub fn describe(&self) -> String {
+    /// What it is, for a reader: `picture 1920×1080`, `clip 1920×1080 · 0:30`. The frame rate
+    /// and the note about a copy are machinery, so they stay in [`Probe::describe`] — a page
+    /// somebody outside opens carries this.
+    pub fn what(&self) -> String {
         let mut out = format!("{} {}×{}", self.kind.as_str(), self.width, self.height);
         if let Some(ms) = self.duration_ms {
             out.push_str(&format!(" · {}", clock(ms)));
         }
+        out
+    }
+
+    /// What a mind is told it attached, in one line: `picture 1920×1080`, `clip 1920×1080 · 0:30 · 30 fps`.
+    pub fn describe(&self) -> String {
+        let mut out = self.what();
         if let Some(fps) = self.fps {
             out.push_str(&format!(" · {} fps", trim_float(fps)));
         }

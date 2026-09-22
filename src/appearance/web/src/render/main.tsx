@@ -78,7 +78,13 @@ console.error = (...args: unknown[]) => {
 };
 
 const params = new URLSearchParams(window.location.search);
-const moduleUrl = params.get("module") ?? "";
+// A shared page is at the share's own address, not at `/render/view?module=…`, so the host
+// names the module in a `<meta>` instead (`foundation/server/share.rs`). Without it the live
+// view mounted nothing over the page's static content, and the page went blank.
+const moduleUrl =
+  params.get("module") ??
+  document.querySelector<HTMLMetaElement>('meta[name="hi-view-module"]')?.content ??
+  "";
 
 const theme = params.get("theme");
 const lang = params.get("lang");

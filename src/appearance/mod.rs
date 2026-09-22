@@ -252,11 +252,8 @@ async fn asset(Path(path): Path<String>) -> Response {
 /// The query string is read client-side (`src/render/main.tsx`), so the HTML is
 /// identical for every render and needs no state here.
 async fn render_view() -> Response {
-    match embed::get("render.html") {
-        Some(file) => {
-            let html = String::from_utf8_lossy(file.data.as_ref()).into_owned();
-            html_response(inject_importmap(html), StatusCode::OK)
-        }
+    match render_page() {
+        Some(html) => html_response(html, StatusCode::OK),
         // Debug builds before `npm run build`: there is no built page and no
         // import map, so a render could only produce a misleading blank. Say so.
         None => html_response(
@@ -268,6 +265,15 @@ async fn render_view() -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
         ),
     }
+}
+
+/// The render page with its import map: what `/render/view` serves, and what a shared
+/// attachment's page is written on (`foundation::server::share`) — one page that mounts one
+/// module, so a picture shared is drawn by the same viewer that draws it on the stage. `None`
+/// before the web bundle is built.
+pub(crate) fn render_page() -> Option<String> {
+    let file = embed::get("render.html")?;
+    Some(inject_importmap(String::from_utf8_lossy(file.data.as_ref()).into_owned()))
 }
 
 /// Inject the build's `importmap.json` (if embedded) as a `<script type=

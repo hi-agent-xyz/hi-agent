@@ -187,6 +187,9 @@ pub struct RenderRequest {
     /// URL patterns refused for this render. Empty for a review, which is the owner
     /// looking at their own view with everything this core would give it.
     pub blocked: Vec<String>,
+    /// Patterns let through ahead of `blocked` — see
+    /// [`crate::foundation::vendors::chrome_headless::PageRequest::allowed`].
+    pub allowed: Vec<String>,
     /// Read the settled DOM back as well as the pixels.
     pub want_html: bool,
 }
@@ -222,6 +225,7 @@ impl RenderRequest {
             lang: None,
             viewport: stage_frame(),
             blocked: Vec::new(),
+            allowed: Vec::new(),
             want_html: false,
         }
     }
@@ -242,7 +246,10 @@ impl RenderRequest {
     pub fn for_share(base_url: impl Into<String>, module_url: impl Into<String>) -> Self {
         Self {
             viewport: Viewport::default(),
-            blocked: vec!["*/api/*".to_string()],
+            blocked: vec!["*://*:*/api/*".to_string()],
+            // What a view embeds with `<Attachment>` is drawn, not read, and the share grants
+            // exactly the ones asked for here (`foundation::server::share`).
+            allowed: vec!["*://*:*/api/attachments/*".to_string()],
             want_html: true,
             ..Self::new(base_url, module_url)
         }
@@ -367,6 +374,7 @@ pub async fn render(req: &RenderRequest) -> anyhow::Result<RenderedView> {
             // A review is the owner looking at their own view, so it renders with
             // everything this core would give it and needs no page back.
             blocked: req.blocked.clone(),
+            allowed: req.allowed.clone(),
             want_html: req.want_html,
         },
     )

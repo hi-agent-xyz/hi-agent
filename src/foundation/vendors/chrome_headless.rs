@@ -66,8 +66,8 @@ pub struct PageRequest {
     pub scale: f64,
     /// Upper bound on waiting for the page to declare itself settled.
     pub settle_timeout: Duration,
-    /// URL patterns refused for the duration of this render, as
-    /// `Network.setBlockedURLs` takes them (`*/api/*`).
+    /// URL patterns refused for the duration of this render, in the URL Pattern syntax
+    /// `Network.setBlockedURLs` takes (`*://*:*/api/*`).
     ///
     /// **This is how a render is made to see what somebody else will see.** A share
     /// check renders with the core's API blocked, because a view that fetches its own
@@ -75,6 +75,11 @@ pub struct PageRequest {
     /// not the one who finds that out. Blocking at the browser rather than trusting
     /// the view not to ask is the difference between a check and a hope.
     pub blocked: Vec<String>,
+    /// Patterns let through ahead of [`PageRequest::blocked`] — the first that matches a
+    /// request decides it. A share check refuses the core's API and lets the attachment
+    /// routes through, because a view that embeds an attachment is drawing it, not reading
+    /// the API, and the share serves exactly those.
+    pub allowed: Vec<String>,
     /// Also read the settled DOM back, for a render whose output is a page rather
     /// than a picture.
     pub want_html: bool,
@@ -209,15 +214,14 @@ async fn drive(profile: &Path, req: &PageRequest) -> anyhow::Result<PageCapture>
     for domain in ["Runtime", "Log", "Page", "Network"] {
         session.call(&mut socket, &format!("{domain}.enable"), json!({})).await?;
     }
-    // Before navigating, so the very first request is already subject to it.
+    // Before navigating, so the very first request is already subject to it. **Fails closed**:
+    // a browser that does not take `urlPatterns` fails the render rather than rendering with
+    // nothing refused, which would pass a check it was meant to fail.
     if !req.blocked.is_empty() {
         session
-            .call(
-                &mut socket,
-                "Network.setBlockedURLs",
-                json!({ "urls": req.blocked }),
-            )
-            .await?;
+            .call(&mut socket, "Network.setBlockedURLs", block_rules(&req.allowed, &req.blocked))
+            .await
+            .context("this browser cannot refuse requests by pattern (Network.setBlockedURLs urlPatterns)")?;
     }
     session
         .call(
@@ -299,6 +303,17 @@ async fn drive(profile: &Path, req: &PageRequest) -> anyhow::Result<PageCapture>
         html,
         requested: session.requested,
     })
+}
+
+/// `Network.setBlockedURLs` for `allowed` then `blocked`: the first pattern that matches a
+/// request decides it, so an allowed pattern is an exception to a blocked one it overlaps.
+fn block_rules(allowed: &[String], blocked: &[String]) -> Value {
+    let rules: Vec<Value> = allowed
+        .iter()
+        .map(|p| json!({ "urlPattern": p, "block": false }))
+        .chain(blocked.iter().map(|p| json!({ "urlPattern": p, "block": true })))
+        .collect();
+    json!({ "urlPatterns": rules })
 }
 
 /// The JS the page is asked to run: resolve once `window.__hiRender.ready`, or
@@ -584,8 +599,27 @@ impl Session {
                 });
             }
             "Network.loadingFailed" => {
-                let err = p.get("errorText").and_then(Value::as_str).unwrap_or("load failed");
+                // **A request the page cancelled is not a failure.** A `<video preload="metadata">`
+                // asks for the file, reads the header and aborts the rest — every clip a view
+                // embeds does it, and reported as an error it fails the review and refuses the
+                // share of a view that is drawing exactly what it should. A request refused by
+                // this render is `canceled: false` with a `blockedReason`, so the check still
+                // sees the one it is for.
+                if p.get("canceled").and_then(Value::as_bool).unwrap_or(false) {
+                    return;
+                }
                 let kind = p.get("type").and_then(Value::as_str).unwrap_or("resource");
+                let err = p
+                    .get("errorText")
+                    .and_then(Value::as_str)
+                    .filter(|e| !e.is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        p.get("blockedReason")
+                            .and_then(Value::as_str)
+                            .map(|why| format!("refused by this render ({why})"))
+                    })
+                    .unwrap_or_else(|| "load failed".to_string());
                 self.note(format!("{kind} failed to load: {err}"));
             }
             "Network.responseReceived" => {
@@ -657,6 +691,25 @@ mod tests {
         assert!(s.problems.is_empty(), "{:?}", s.problems);
     }
 
+    /// The clip a view embeds cancels its own request once it has the header. Reported as a
+    /// failure it refuses a view for drawing what it was asked to draw; a request this render
+    /// refused says so instead, and is kept.
+    #[test]
+    fn a_request_the_page_cancelled_is_not_a_failure_but_a_refused_one_is() {
+        let mut s = session();
+        s.absorb_event(&json!({
+            "method": "Network.loadingFailed",
+            "params": { "type": "Media", "errorText": "net::ERR_ABORTED", "canceled": true }
+        }));
+        assert!(s.problems.is_empty(), "{:?}", s.problems);
+
+        s.absorb_event(&json!({
+            "method": "Network.loadingFailed",
+            "params": { "type": "Fetch", "errorText": "", "canceled": false, "blockedReason": "inspector" }
+        }));
+        assert_eq!(s.problems, vec!["Fetch failed to load: refused by this render (inspector)"]);
+    }
+
     #[test]
     fn healthy_traffic_is_not_a_problem() {
         let mut s = session();
@@ -720,6 +773,19 @@ mod tests {
         let (failed, _, errors) = read_report(&json!({ "result": {} }));
         assert!(failed);
         assert!(!errors.is_empty());
+    }
+
+    /// The exceptions go first, because the browser takes the first pattern that matches.
+    #[test]
+    fn an_allowed_pattern_is_read_before_the_block_it_is_an_exception_to() {
+        let rules = block_rules(&["*://*:*/api/attachments/*".into()], &["*://*:*/api/*".into()]);
+        assert_eq!(
+            rules,
+            json!({ "urlPatterns": [
+                { "urlPattern": "*://*:*/api/attachments/*", "block": false },
+                { "urlPattern": "*://*:*/api/*", "block": true },
+            ]})
+        );
     }
 
     #[test]
