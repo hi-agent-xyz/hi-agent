@@ -57,6 +57,14 @@ impl Unanswered {
         self.run.load(Ordering::Acquire) >= MAX_UNANSWERED
     }
 
+    /// Whether `n` more messages fit under the cap. A message and each thing it hands over are
+    /// one each — a picture in the conversation is read like a message
+    /// (`docs/arch/showing.md` § *In the conversation*) — so the words and their files go
+    /// together or not at all.
+    pub(super) fn fits(&self, n: u64) -> bool {
+        self.run.load(Ordering::Acquire) + n <= MAX_UNANSWERED
+    }
+
     /// One message was accepted into the conversation.
     pub(super) fn note_sent(&self) {
         self.run.fetch_add(1, Ordering::AcqRel);

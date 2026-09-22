@@ -3592,6 +3592,25 @@ async fn emit_message(reaction: &Reaction, text: String) {
     let _ = reaction.inner.out.send(OutboundSignal::Say { message }).await;
 }
 
+/// Append one file the agent hands over to the conversation — `From::Agent` with
+/// `Content::File`, a message like any other (`docs/arch/message.md` § *Both ends can hand over
+/// a file*). Journalled on the file channel, as a file the person hands over is, so the
+/// conversation seeded from the journal after a restart has it where it was.
+async fn emit_file(reaction: &Reaction, file: crate::types::FileRef) {
+    let message = crate::types::Message {
+        id: Uuid::now_v7().to_string(),
+        ts: Utc::now(),
+        from: crate::types::Author::Agent,
+        content: crate::types::Content::File(file),
+        task: None,
+    };
+    let entry = JournalEntry::Message { channel: Channel::File, message: message.clone() };
+    if let Err(err) = reaction.inner.memory.journal.append(entry).await {
+        tracing::error!(error = %format!("{err:#}"), "journal append failed for a file handed over");
+    }
+    let _ = reaction.inner.out.send(OutboundSignal::Say { message }).await;
+}
+
 /// Carry one release action to its wire carrier: speech to TTS, a view to
 /// /view. Thought mirroring and the once-per-turn reply log are handled inline
 /// by the caller, since they track the raw spoken chunk rather than the paced

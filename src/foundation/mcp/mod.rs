@@ -85,11 +85,19 @@ fn say_tool() -> Value {
          silent, don't call it at all. An accepted call is delivered and final — the \
          message is appended to the conversation and keeps, whether or not anyone is at \
          the window right now, so a call that came back sent is never worth making \
-         again in the same turn.",
+         again in the same turn. To hand them a picture or a clip the work already has, \
+         pass its `att:` id in `attach`: it lands in the conversation right after the \
+         words, where they keep it, and each one counts as a message toward the three.",
         json!({
             "type": "object",
             "properties": {
                 "text": { "type": "string", "description": "What to say, as natural spoken language — plain text, no markdown; line breaks between paragraphs are kept." },
+                "attach": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 4,
+                    "description": "Attachments to hand over with these words, by `att:` id — from a task line (your Active tasks block) or a report."
+                },
             },
             "required": ["text"],
         }),
@@ -2266,7 +2274,11 @@ async fn dispatch_tool(
             // that always reads "spoken" answers nothing. It also confirms the check-in
             // this call armed, so a promise the host is now holding is never something
             // Reaction has to assume it made.
-            sink.say(text)
+            let hands = match handed_over(data_dir, args).await {
+                Ok(hands) => hands,
+                Err(refused) => return tool_error(&format!("not sent — {refused}")),
+            };
+            sink.say(text, hands)
                 .await
                 .map(|said| said.ack())
         }
@@ -2950,6 +2962,46 @@ async fn attach_all(
         if !out.iter().any(|seen| seen.id == placed.id) {
             out.push(placed);
         }
+    }
+    Ok(out)
+}
+
+/// What a `hi_say` hands over: attachments already placed, named by their `att:` ids — the
+/// newest one each task line carries is in Reaction's Active tasks block, and a report names
+/// the rest. Reaction reads no files, so it passes ids and never paths
+/// (`docs/arch/showing.md` § *In the conversation*).
+async fn handed_over(data_dir: &Path, args: &Value) -> Result<Vec<crate::types::FileRef>, String> {
+    use crate::foundation::attachments::{self, Refusal};
+    const MOST: usize = 4;
+    let Some(list) = args.get("attach").filter(|v| !v.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = list.as_array() else {
+        return Err("`attach` is a list of att: ids".to_owned());
+    };
+    if items.len() > MOST {
+        return Err(format!("a message hands over at most {MOST} things"));
+    }
+    let mut out: Vec<crate::types::FileRef> = Vec::new();
+    for item in items {
+        let raw = item.as_str().map(str::trim).unwrap_or_default();
+        let Some(id) = attachments::ref_id(raw) else {
+            return Err(format!("`{raw}` is not an att: id — a message hands over what a task line already carries"));
+        };
+        let Some(probe) = attachments::probe(data_dir, id).await else {
+            return Err(Refusal::UnknownId(id.to_owned()).to_string());
+        };
+        let reff = format!("{}{id}", attachments::PREFIX);
+        if out.iter().any(|seen| seen.reff == reff) {
+            continue;
+        }
+        out.push(crate::types::FileRef {
+            reff,
+            mime: probe.mime().to_owned(),
+            name: probe.describe(),
+            bytes: Some(probe.bytes),
+            peek: None,
+        });
     }
     Ok(out)
 }

@@ -35,7 +35,10 @@ thing.
 `op=replace` to evolve a view in place (a rough draft now, the polished one later);
 `op=dismiss` takes one down. **A picture or a clip the work already has goes up as
 itself**: its `att:` id is the `ref` — your `Active tasks` block names the newest one a task
-line carries, and a report names the rest — and nothing is built for it.
+line carries, and a report names the rest — and nothing is built for it. The same id in
+`hi_say`'s `attach` hands it over instead: it lands in the conversation under your words and
+stays there, where a show points at the screen and the next show takes it back. Which one a
+moment wants is yours; the thing is the same either way.
 
 **`hi_prepare` gets you a step ahead of their next message.** It says and shows nothing now:
 it sets what you would do if their next message goes where you expect, so that if it does,

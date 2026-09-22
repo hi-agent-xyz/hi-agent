@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -25,6 +26,7 @@ import type {
 import { ReplyIcon } from "lucide-react";
 import { splitSpeechLinks } from "../lib/links";
 import { useViews } from "../core/views";
+import { AttachmentViewer, attachmentOf } from "../core/attachments";
 import { SenderAvatar } from "./Avatar";
 
 /**
@@ -207,29 +209,48 @@ function SaidOnTask({ task }: { task: NonNullable<ChatMessage["task"]> }) {
   );
 }
 
-/** A file the person handed over, shown as the thing they sent. */
+/**
+ * A file handed over — by the person, or by the agent — shown as the thing that was sent. A
+ * picture opens whole in the face's own viewer, the same one a task's panel and the stage draw
+ * with; a clip plays where it is. The agent's files are attachments (`att:` refs, served from
+ * their own route); the person's are signals, served by `/api/media` as they always were
+ * (`docs/arch/showing.md` § *In the conversation*).
+ */
 function AttachmentView({ attachment }: { attachment: NonNullable<ChatMessage["attachment"]> }) {
-  const src = `/api/media/${attachment.ref}`;
-  if (attachment.mime.startsWith("image/")) {
+  const item = attachmentOf(attachment.ref, attachment.mime);
+  const [open, setOpen] = useState(false);
+  if (item.kind === "picture") {
     return (
-      <img
-        src={src}
-        alt=""
-        className="max-h-80 w-auto max-w-full rounded-[10px] object-contain"
-        loading="lazy"
+      <>
+        <button type="button" className="block cursor-zoom-in" onClick={() => setOpen(true)}>
+          <img
+            src={item.preview ?? item.url ?? ""}
+            alt=""
+            className="max-h-80 w-auto max-w-full rounded-[10px] object-contain"
+            loading="lazy"
+          />
+        </button>
+        {open && <AttachmentViewer item={item} onClose={() => setOpen(false)} />}
+      </>
+    );
+  }
+  if (item.kind === "clip") {
+    // `playsInline` for the same reason the self-view carries it: without it an iPhone
+    // takes any playing video to its own fullscreen player, and an attachment is part of
+    // the message it arrived in, not a place to be sent.
+    return (
+      <video
+        src={item.url ?? ""}
+        poster={attachment.ref.startsWith("att:") ? (item.preview ?? undefined) : undefined}
+        controls
+        playsInline
+        preload="metadata"
+        className="max-h-80 w-auto max-w-full rounded-[10px]"
       />
     );
   }
-  if (attachment.mime.startsWith("video/")) {
-    // `playsInline` for the same reason the self-view carries it: without it an
-    // iPhone takes any playing video to its own fullscreen player, and an
-    // attachment is part of the message it arrived in, not a place to be sent.
-    return (
-      <video src={src} controls playsInline className="max-h-80 w-auto max-w-full rounded-[10px]" />
-    );
-  }
   return (
-    <a href={src} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+    <a href={item.url ?? ""} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
       Open file
     </a>
   );

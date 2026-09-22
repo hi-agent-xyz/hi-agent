@@ -14,7 +14,9 @@ import { readNdjson } from "../ndjson";
 
 export type Role = "user" | "agent";
 
-/** A file that came with a message. `ref` fetches from `/api/media/<ref>`. */
+/** A file that came with a message: a signal ref the person handed over, fetched from
+ * `/api/media/<ref>`, or an `att:<id>` the agent handed over, from `/api/attachments/<id>`
+ * (`core/attachments.tsx` § `attachmentOf`). */
 export interface Attachment {
   ref: string;
   mime: string;

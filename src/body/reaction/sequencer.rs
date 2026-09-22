@@ -42,6 +42,9 @@ pub(super) enum Beat {
         turn: u64,
     },
     Say(String),
+    /// A file the message just said hands over — an attachment, appended to the conversation
+    /// as a message of its own right behind the words it came with.
+    Hand(crate::types::FileRef),
     Show {
         id: Option<String>,
         op: String,
@@ -134,6 +137,15 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 // The whole utterance becomes one message; TTS gets coalesced sentences (above).
                 super::emit_message(&reaction, text).await;
                 quiet_deadline = Some(tokio::time::Instant::now() + UTTERANCE_QUIET_CLOSE);
+            }
+            Beat::Hand(file) => {
+                // The same two drops the words take: nothing before the first turn, and nothing
+                // from a turn they barged in on — a picture outliving the sentence it was handed
+                // over with would be a picture with no words.
+                if !armed || reaction.inner.floor.should_skip(turn).await {
+                    continue;
+                }
+                super::emit_file(&reaction, file).await;
             }
             Beat::Show {
                 id,

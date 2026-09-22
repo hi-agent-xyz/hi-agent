@@ -239,6 +239,9 @@ pub enum Spoken {
     /// Rejected: [`MAX_UNANSWERED`](super::unanswered::MAX_UNANSWERED) messages have gone out
     /// since the person last sent one ([`super::unanswered`]). Nothing was sent.
     Unanswered,
+    /// Rejected: the words fit under the cap and the files handed over with them do not —
+    /// each is a message of its own. Nothing was sent. Carries how many were attached.
+    UnansweredWith(usize),
     /// Sent back by the pre-send check, with its note on where the line fails
     /// ([`super::legibility::check`]). Nothing was sent, and nothing about the room moved.
     NotSent(String),
@@ -261,6 +264,12 @@ impl Spoken {
             Spoken::TooLong => "too long for one message — nothing was sent".into(),
             Spoken::Unanswered => format!(
                 "not sent — {} messages have already gone out since their last one",
+                super::unanswered::MAX_UNANSWERED
+            ),
+            Spoken::UnansweredWith(files) => format!(
+                "not sent — with the {files} it hands over this would be {} messages, and at \
+                 most {} go out since their last one; each thing handed over is a message",
+                files + 1,
                 super::unanswered::MAX_UNANSWERED
             ),
             Spoken::NotSent(note) => format!("not sent — {note}"),
@@ -325,7 +334,11 @@ impl ToolSink {
     /// silence, held as a wake — and that was the last timer in the host. It fired a median
     /// 1.2 minutes before the work reported anyway, so what it produced was "still going,
     /// another five minutes" just ahead of the real answer.
-    pub async fn say(&self, text: String) -> anyhow::Result<Said> {
+    ///
+    /// `hands` is what the message hands over — attachments, each one message of its own after
+    /// the words, enqueued together as one arrival (`docs/arch/message.md` § *Both ends can hand
+    /// over a file*). Empty for an ordinary message.
+    pub async fn say(&self, text: String, hands: Vec<crate::types::FileRef>) -> anyhow::Result<Said> {
         let mouth = self
             .mouth
             .as_ref()
@@ -342,6 +355,10 @@ impl ToolSink {
         if mouth.unanswered.is_full() {
             tracing::info!("not sent — the run since their last message is full");
             return Ok(Said { spoken: Spoken::Unanswered });
+        }
+        if !mouth.unanswered.fits(1 + hands.len() as u64) {
+            tracing::info!(files = hands.len(), "not sent — the words fit the run and their files do not");
+            return Ok(Said { spoken: Spoken::UnansweredWith(hands.len()) });
         }
         // **Before the floor, not after.** The check can take seconds, and whether the room
         // is free is a property of the moment the words are actually ready to go.
@@ -371,6 +388,16 @@ impl ToolSink {
         // sent) does not read as speech.
         mouth.said.fetch_add(1, Ordering::Relaxed);
         mouth.unanswered.note_sent();
+        // What it hands over follows the words on the same beat queue, nothing awaited between,
+        // so the sequencer appends them in order right behind the message they belong to.
+        for file in hands {
+            mouth
+                .beats
+                .send(Beat::Hand(file))
+                .await
+                .map_err(|_| anyhow::anyhow!("sequencer gone; hand-over dropped"))?;
+            mouth.unanswered.note_sent();
+        }
         // Branches prepared before this line were prepared for a moment that is no longer
         // the last thing said.
         mouth.prepared.void("a message was sent after the one they follow").await;
@@ -601,12 +628,12 @@ mod tests {
         let said = sink.mouth.as_ref().unwrap().said.clone();
 
         assert_eq!(
-            sink.say("x".repeat(SAY_MAX_CHARS + 1)).await.unwrap().spoken,
+            sink.say("x".repeat(SAY_MAX_CHARS + 1), Vec::new()).await.unwrap().spoken,
             Spoken::TooLong
         );
         assert_eq!(said.load(Ordering::Relaxed), 0, "a rejected call said nothing");
 
-        sink.say("hi".into()).await.unwrap();
+        sink.say("hi".into(), Vec::new()).await.unwrap();
         assert_eq!(said.load(Ordering::Relaxed), 1);
     }
 
@@ -618,7 +645,7 @@ mod tests {
         let mouth = sink.mouth.as_ref().unwrap();
         mouth.floor.note_speech(Instant::now()).await;
 
-        let said = sink.say("their turn".into()).await.unwrap();
+        let said = sink.say("their turn".into(), Vec::new()).await.unwrap();
         assert_eq!(said.spoken, Spoken::NotSaid(crate::body::reaction::Busy::Speaking));
         assert_eq!(mouth.said.load(Ordering::Relaxed), 0, "nothing was said");
         assert!(rx.try_recv().is_err(), "no beat reached the sequencer");
@@ -630,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn an_accepted_message_is_simply_sent() {
         let (sink, _rx) = mouth();
-        assert_eq!(sink.say("hi".into()).await.unwrap().spoken, Spoken::Sent);
+        assert_eq!(sink.say("hi".into(), Vec::new()).await.unwrap().spoken, Spoken::Sent);
         assert!(Spoken::Sent.ack().starts_with("sent"), "{}", Spoken::Sent.ack());
     }
 
@@ -695,7 +722,7 @@ mod tests {
         let (sink, mut rx) = mouth();
         let text = "x".repeat(SAY_MAX_CHARS + 1);
 
-        assert_eq!(sink.say(text).await.unwrap().spoken, Spoken::TooLong);
+        assert_eq!(sink.say(text, Vec::new()).await.unwrap().spoken, Spoken::TooLong);
         assert!(rx.try_recv().is_err());
     }
 
@@ -704,7 +731,7 @@ mod tests {
         // The gate is about voice, never about dropping the utterance: text is
         // retained and keeps, so the beat goes out even to nobody.
         let (sink, mut rx) = mouth();
-        sink.say("hi".into()).await.unwrap();
+        sink.say("hi".into(), Vec::new()).await.unwrap();
         assert!(matches!(rx.try_recv(), Ok(Beat::Say(t)) if t == "hi"));
     }
 
@@ -712,7 +739,7 @@ mod tests {
     async fn a_rung_with_no_mouth_cannot_say() {
         let (control, _ctl) = mpsc::channel(8);
         let sink = ToolSink { control, mouth: None };
-        assert!(sink.say("hi".into()).await.is_err());
+        assert!(sink.say("hi".into(), Vec::new()).await.is_err());
     }
 
     /// **`say` carries no timer, and this is the assertion that keeps one from growing
@@ -724,7 +751,7 @@ mod tests {
     #[tokio::test]
     async fn saying_something_arms_nothing() {
         let (sink, _rx) = mouth();
-        let said = sink.say("give me ten minutes".into()).await.unwrap();
+        let said = sink.say("give me ten minutes".into(), Vec::new()).await.unwrap();
 
         assert_eq!(said.spoken, Spoken::Sent);
         // The whole of the return: what happened to the utterance, and nothing about time.
@@ -766,27 +793,52 @@ mod tests {
         let mouth = sink.mouth.as_ref().unwrap();
 
         for _ in 0..MAX_UNANSWERED {
-            assert_eq!(sink.say("progress".into()).await.unwrap().spoken, Spoken::Sent);
+            assert_eq!(sink.say("progress".into(), Vec::new()).await.unwrap().spoken, Spoken::Sent);
             assert!(rx.try_recv().is_ok());
         }
         for _ in 0..5 {
-            assert_eq!(sink.say("more".into()).await.unwrap().spoken, Spoken::Unanswered);
+            assert_eq!(sink.say("more".into(), Vec::new()).await.unwrap().spoken, Spoken::Unanswered);
         }
         assert!(rx.try_recv().is_err(), "a refused message reached the sequencer");
         assert_eq!(mouth.said.load(Ordering::Relaxed), MAX_UNANSWERED);
 
         mouth.unanswered.note_person();
-        assert_eq!(sink.say("answer".into()).await.unwrap().spoken, Spoken::Sent);
+        assert_eq!(sink.say("answer".into(), Vec::new()).await.unwrap().spoken, Spoken::Sent);
+    }
+
+    /// **What a message hands over follows its words, and each thing is a message toward the
+    /// cap** — so the words and their files go together or not at all.
+    #[tokio::test]
+    async fn a_message_hands_over_its_files_right_behind_it_and_each_counts() {
+        let (sink, mut rx) = mouth();
+        let file = |id: &str| crate::types::FileRef {
+            reff: format!("att:{id}"),
+            mime: "image/jpeg".into(),
+            name: "picture 1920×1080".into(),
+            bytes: Some(1),
+            peek: None,
+        };
+        let said = sink.say("场地线压在线上".into(), vec![file("3f9a0c11d2e4b5a6")]).await.unwrap();
+        assert_eq!(said.spoken, Spoken::Sent);
+        assert!(matches!(rx.try_recv(), Ok(Beat::Say(t)) if t == "场地线压在线上"));
+        assert!(matches!(rx.try_recv(), Ok(Beat::Hand(f)) if f.reff == "att:3f9a0c11d2e4b5a6"));
+
+        // Two of three are gone; one more message with a file would be four.
+        let refused = sink.say("还有这张".into(), vec![file("0123456789abcdef")]).await.unwrap();
+        assert_eq!(refused.spoken, Spoken::UnansweredWith(1));
+        assert!(refused.ack().contains("each thing handed over is a message"), "{}", refused.ack());
+        assert!(rx.try_recv().is_err(), "neither the words nor the file went out");
+        assert_eq!(sink.say("就这些".into(), Vec::new()).await.unwrap().spoken, Spoken::Sent);
     }
 
     /// A message that was never sent does not use up the run.
     #[tokio::test]
     async fn a_rejected_message_does_not_count_toward_the_run() {
         let (sink, _rx) = mouth();
-        sink.say("x".repeat(SAY_MAX_CHARS + 1)).await.unwrap();
+        sink.say("x".repeat(SAY_MAX_CHARS + 1), Vec::new()).await.unwrap();
         assert!(!sink.mouth.as_ref().unwrap().unanswered.is_full());
         for _ in 0..super::super::unanswered::MAX_UNANSWERED {
-            assert_eq!(sink.say("hi".into()).await.unwrap().spoken, Spoken::Sent);
+            assert_eq!(sink.say("hi".into(), Vec::new()).await.unwrap().spoken, Spoken::Sent);
         }
     }
 }

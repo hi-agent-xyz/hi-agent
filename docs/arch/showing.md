@@ -321,7 +321,7 @@ projection; putting it up needs no worker, no view and no review.
 
 ### In the conversation
 
-    hi_say(text, attach?: [att:id | view:ref, …])                 Reaction
+    hi_say(text, attach?: [att:id, …])                            Reaction
 
 [message.md](message.md#both-ends-can-hand-over-a-file) has said since it was written that
 `From::Agent` with `Content::File` is a message like any other, and nothing has ever minted
@@ -331,6 +331,8 @@ three messages between one of theirs and the next** ([legibility.md § F](legibi
 a picture in the conversation is read like one. A show points at something and takes it back;
 a hand-over is kept in the conversation; which one a moment wants is Reaction's call, and the
 object is the same either way.
+
+**A view is shown, not handed over**: it is live, and there are no bytes in it to keep.
 
 `FileRef.ref` takes either name; the face resolves `att:` to the attachment route and anything
 else to `/api/media` as today. **The person's own handed files stay signals** — they are the
