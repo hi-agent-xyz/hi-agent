@@ -1,16 +1,20 @@
 //! Signing a URL the edge will accept: EdgeOne token authentication, type A.
 //!
-//! `<base><path>?<param>=<ts>-<rand>-<uid>-<md5("<path>-<ts>-<rand>-<uid>-<key>")>`,
+//! `<path>?<param>=<ts>-<rand>-<uid>-<md5("<path>-<ts>-<rand>-<uid>-<key>")>`,
 //! where `ts` is when the URL was signed and the edge accepts it until
 //! `ts + valid`. The edge strips the parameter before it looks in its cache, so
 //! every signature for one path shares one cached object.
+//!
+//! **Root-relative, with no host at all**: the edge answers `/cache/*` on the
+//! core's own origin, so a redirect never leaves it (`docs/arch/topology.md`
+//! § *Content*).
 
 use std::time::Duration;
 
 use md5::{Digest as _, Md5};
 
-/// The read half of what the broker hands a core: where the edge is, and the key
-/// it checks signatures against.
+/// The read half of what the broker hands a core: the key the edge checks
+/// signatures against, and how.
 ///
 /// **One key for the whole domain, and that is a named loan** — every core holds a
 /// key that can sign a URL for any path, and the key layout is public. What takes
@@ -18,8 +22,6 @@ use md5::{Digest as _, Md5};
 /// the second user. See `docs/arch/topology.md` § *Content*.
 #[derive(Clone)]
 pub struct ReadKey {
-    /// `https://media.hi-agent.xyz`, no trailing slash.
-    pub base_url: String,
     /// The query parameter the edge reads the token from.
     pub param: String,
     pub key: String,
@@ -30,7 +32,6 @@ pub struct ReadKey {
 impl std::fmt::Debug for ReadKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReadKey")
-            .field("base_url", &self.base_url)
             .field("param", &self.param)
             .field("valid", &self.valid)
             .finish_non_exhaustive()
@@ -38,8 +39,8 @@ impl std::fmt::Debug for ReadKey {
 }
 
 impl ReadKey {
-    /// The URL for `object_path` — the path at the edge, leading slash included —
-    /// signed at `now` (unix seconds).
+    /// The root-relative URL for `object_path` — the path at the edge, leading slash
+    /// included — signed at `now` (unix seconds).
     ///
     /// **The signing time is rounded down to a quarter of the validity**, and the
     /// random part is a constant. Both are there so that one path yields one URL
@@ -50,12 +51,7 @@ impl ReadKey {
     pub fn signed_url(&self, object_path: &str, now: i64) -> String {
         let window = (self.valid.as_secs() as i64 / 4).max(1);
         let ts = now - now.rem_euclid(window);
-        format!(
-            "{}{object_path}?{}={}",
-            self.base_url,
-            self.param,
-            token(object_path, ts, "0", "0", &self.key)
-        )
+        format!("{object_path}?{}={}", self.param, token(object_path, ts, "0", "0", &self.key))
     }
 
     /// How long a browser may keep the redirect to a signed URL.
@@ -90,7 +86,6 @@ mod tests {
 
     fn key() -> ReadKey {
         ReadKey {
-            base_url: "https://media.example".into(),
             param: "auth_key".into(),
             key: "k".into(),
             valid: Duration::from_secs(86_400),
@@ -102,10 +97,10 @@ mod tests {
     #[test]
     fn a_path_signs_to_one_url_within_a_window() {
         let k = key();
-        let a = k.signed_url("/ana/api/media/file/x.jpg", 1_800_000_000);
-        let b = k.signed_url("/ana/api/media/file/x.jpg", 1_800_000_000 + 60);
+        let a = k.signed_url("/cache/ana/api/media/file/x.jpg", 1_800_000_000);
+        let b = k.signed_url("/cache/ana/api/media/file/x.jpg", 1_800_000_000 + 60);
         assert_eq!(a, b);
-        assert!(a.starts_with("https://media.example/ana/api/media/file/x.jpg?auth_key="));
+        assert!(a.starts_with("/cache/ana/api/media/file/x.jpg?auth_key="));
     }
 
     /// Whatever the rounding, a redirect replayed at the very end of its cache life

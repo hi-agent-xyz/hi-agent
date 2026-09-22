@@ -8,6 +8,12 @@
 //! uplink that is otherwise idle, and fetched by the app from the edge in front of
 //! that bucket.
 //!
+//! **On this core's own origin.** The edge already fronts `<handle>.hi-agent.xyz`;
+//! it answers `/cache/*` there from the bucket and passes everything else to the
+//! relay. So the redirect is root-relative — `/cache/<handle>/<path>?auth_key=…`,
+//! whose path is the object's key exactly — and the page never meets a second
+//! origin: no CORS, no second name, nothing a view has to know.
+//!
 //! ## What may be mirrored: the response already says
 //!
 //! **A response whose `Cache-Control` says `immutable` may be mirrored, and nothing
@@ -38,7 +44,7 @@
 //!
 //! For a relayed `GET`, the route runs as it always did, and then:
 //!
-//! - mirrored → the body is dropped and a `302` to a signed edge URL goes back;
+//! - mirrored → the body is dropped and a `302` to `/cache/…`, signed, goes back;
 //! - not yet → the bytes go back, as today, and the path is queued for upload.
 //!
 //! **The second branch is a degradation, not an error**: an object that is not
@@ -607,7 +613,7 @@ mod tests {
             handle: "ana".into(),
             bucket: "cache-1".into(),
             region: "ap-beijing".into(),
-            prefix: "ana/".into(),
+            prefix: "cache/ana/".into(),
             write: cos::WriteKey {
                 secret_id: "id".into(),
                 secret_key: "k".into(),
@@ -615,7 +621,6 @@ mod tests {
                 expires_at: chrono::Utc::now(),
             },
             read: edge::ReadKey {
-                base_url: "https://media.example".into(),
                 param: "auth_key".into(),
                 key: "k".into(),
                 valid: Duration::from_secs(86_400),
@@ -625,7 +630,7 @@ mod tests {
     }
 
     fn row(len: u64, uploaded_at: i64) -> Row {
-        Row { target: "cache-1/ana/".into(), len, uploaded_at, changed: false }
+        Row { target: "cache-1/cache/ana/".into(), len, uploaded_at, changed: false }
     }
 
     const P: &str = "/api/media/file/2026-09-22/14/03-22.jpg";
@@ -636,8 +641,9 @@ mod tests {
         let g = grant();
         match decide(P, &seen(200, true, Some(10)), Some(&row(10, NOW)), Some(&g), NOW) {
             Verdict::Redirect { url, max_age } => {
+                // Root-relative: the edge answers `/cache/*` on this core's own origin.
                 assert!(url.starts_with(
-                    "https://media.example/ana/api/media/file/2026-09-22/14/03-22.jpg?auth_key="
+                    "/cache/ana/api/media/file/2026-09-22/14/03-22.jpg?auth_key="
                 ));
                 assert_eq!(max_age, 43_200);
             }
@@ -700,7 +706,7 @@ mod tests {
     #[test]
     fn a_row_for_another_target_or_near_its_expiry_is_uploaded_again() {
         let mut other = row(10, NOW);
-        other.target = "cache-1/bob/".into();
+        other.target = "cache-1/cache/bob/".into();
         assert_eq!(decide(P, &seen(200, true, Some(10)), Some(&other), Some(&grant()), NOW), Verdict::Enqueue);
         // 30-day lifecycle, 1-day signatures: a row vouches for 28 days.
         let old = row(10, NOW - 28 * 86_400);

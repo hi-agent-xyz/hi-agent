@@ -21,7 +21,8 @@ pub struct Grant {
     pub handle: String,
     pub bucket: String,
     pub region: String,
-    /// `<handle>/` — every key written and every path signed starts with it.
+    /// `cache/<handle>/` — every key written starts with it, and every key is also
+    /// the path the edge answers it at on this core's own origin.
     pub prefix: String,
     pub write: WriteKey,
     pub read: ReadKey,
@@ -59,7 +60,6 @@ struct WriteDto {
 
 #[derive(Deserialize)]
 struct ReadDto {
-    base_url: String,
     param: String,
     key: String,
     valid_secs: u64,
@@ -116,7 +116,6 @@ pub async fn fetch(data_dir: &Path, handle: &str) -> anyhow::Result<Answer> {
                 expires_at: g.write.expires_at,
             },
             read: ReadKey {
-                base_url: g.read.base_url.trim_end_matches('/').to_string(),
                 param: g.read.param,
                 key: g.read.key,
                 valid: Duration::from_secs(g.read.valid_secs),

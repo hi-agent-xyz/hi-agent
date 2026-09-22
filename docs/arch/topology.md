@@ -524,16 +524,23 @@ what a person opens is what just happened.
 
 ### The core is the truth; the cache holds a subset of it
 
-The bucket may be emptied at any moment with nothing lost. It is not storage and nothing is
+The cache may be emptied at any moment with nothing lost. It is not storage and nothing is
 ever only there. Eviction is not a failure mode — it returns an object to the state every
 object starts in, and the next request puts it back.
 
-**Its lifecycle rule empties it continually, and that is the eviction a core can see**: the
+**It is a prefix, `cache/`, not a bucket of its own.** It may share a bucket with things that
+must never be emptied — the community's release downloads share one today — because nothing
+else about them is shared: a core's write key reaches only `cache/<handle>/`, the edge serves
+each by its own path rule, and the one hazard is the lifecycle rule, which must be filtered to
+`cache/`.
+
+**That lifecycle rule empties it continually, and that is the eviction a core can see**: the
 rule's length comes with the core's credentials and the core stops vouching for an object
-before the rule reaches it. **Emptying it by hand means replacing it.** A new bucket is a new
-target, and a core stops redirecting into the old one the first time it is asked for anything
-after its hour-long write key runs out — it re-asks for its keys then, on a read as much as on
-a write. Emptied in place, the edge would answer for objects the core still believes are there.
+before the rule reaches it. **Emptying it by hand is the eviction a core cannot see** — the edge
+would answer for objects the core still believes are there. So it is done by first withdrawing
+the grants: a refused core stops redirecting, and it re-asks for its keys the first time it is
+asked for anything after its hour-long write key runs out, on a read as much as on a write. A
+new bucket is a new target the same way, and reads as "not mirrored" without anything cleared.
 
 ### What may be mirrored: the response already says
 
@@ -596,11 +603,11 @@ below), so the whole object's length is in hand for free — the body's for a `2
 the path is logged and never mirrored again, because the edge may still hold the old bytes
 under that key and a re-upload would not reach them. The cure is still at the route.
 
-**Two narrower conditions ride on top, and both are about being served from another origin,
+**Two narrower conditions ride on top, and both are about being served from another path,
 not about the bytes.**
 
 - **The content type cannot resolve anything against its own URL** — pictures, sound, video,
-  fonts, PDF. The redirect changes the URL a response is read from and the signature lives in
+  fonts, PDF. The redirect changes the path a response is read from and the signature lives in
   its query, so a module's `import "./chunk.js"` or a stylesheet's `url(./font.woff2)` would
   resolve beside it at the edge *without* a signature and be refused. Script, style and markup
   stay on the tunnel however immutable they are. The list is an allow-list, so a type nobody
@@ -613,7 +620,15 @@ not about the bytes.**
 The thing cached is an HTTP response, not a file, so the object key is the URL:
 
     GET  <core>/api/media/file/2026-09-22/14/03-22.jpg
-      →  <bucket>/<handle>/api/media/file/2026-09-22/14/03-22.jpg
+      →  <bucket>/cache/<handle>/api/media/file/2026-09-22/14/03-22.jpg
+      ←  served at <core>/cache/<handle>/api/media/file/2026-09-22/14/03-22.jpg
+
+**And the key is also where the edge serves it, on the core's own origin.** The edge already
+fronts every `<handle>.hi-agent.xyz`; one rule has it answer `/cache/*` from the bucket and
+pass everything else to the relay. The URL path at the edge *is* the object's key, so the rule
+rewrites nothing. The handle is in the path as well as the host because the key needs it, a
+rule that built keys from hostnames would be a translation to keep in agreement, and it is
+what a per-handle signature will check against the host (Open 1).
 
 The redirect target is derived mechanically from the request; neither side holds a translation
 table. **The disk layout stops mattering**, which is the point — a core may write wherever it
@@ -629,7 +644,8 @@ there is nothing to rebase and no repeat of the prefix class of bug — `<img sr
     GET /api/media/{ref}          ← unchanged, relayed, carries the cookie
       → cookie invalid            → 401, as today
       → the route answers         → as today; then, if it is immutable and mirrorable:
-          → object is in the cache    → drop the body, 302 to the signed URL,
+          → object is in the cache    → drop the body,
+                                        302 /cache/<handle>/<path>?auth_key=…,
                                         Cache-Control: private, max-age=TTL
           → object is not             → send the bytes, and enqueue the upload
 
@@ -654,10 +670,13 @@ rounds its expiry — so a redirect never names one that is gone. The lifecycle'
 with the credentials, so the two cannot disagree. A new bucket
 or a renamed handle reads as "not mirrored" without anything being cleared.
 
-**The edge answers every object with `Access-Control-Allow-Origin: *`.** A font, and a picture
-a view reads back through a canvas, are fetched in CORS mode, and after a cross-origin redirect
-their `Origin` is `null`. Nothing is exposed by it: the signature is the access, and the header
-only lets a page that already holds one read what it fetched.
+**The redirect never leaves the core's origin.** It is root-relative, so there is no second
+name to register, certify or keep in agreement, no CORS for a font or a picture a view draws
+to a canvas, and nothing above the core — a view, a page, an app — ever learns the cache
+exists. Invariant 8 holds with one addition: the community answers one path of each core's
+origin, `/cache/`, and only with bytes that core put there. So **`/cache/` is reserved on every
+core**: it serves nothing there itself, and no view may be shared under that name — it could
+never be opened, because the edge answers first.
 
 **The second branch is a degradation, not an error.** An object that has not been mirrored is
 exactly as slow as it is today and no slower, so there is no flag day, no migration script and
@@ -712,8 +731,8 @@ neither is whatever periodically cuts that connection.
 
 Both arrive in one answer to `POST <community>/api/cache/credential {handle}`, presented with
 the account's token for a handle the account owns — the same check the tunnel makes, because
-the prefix a core may write is the name it answers to. With them come the bucket, the edge's
-address and signature validity, and the bucket's lifecycle. A core asks only when it has
+the prefix a core may write is the name it answers to. With them come the bucket, the prefix
+(`cache/<handle>/`), the signature's parameter and validity, and the bucket's lifecycle. A core asks only when it has
 something to upload, or once its write key has run out and something is asked for — never on
 a clock — and keeps nothing of it on disk. **A refusal
 withdraws both halves**: the core stops redirecting, not only uploading, so declining to mint
@@ -741,6 +760,7 @@ latency. The loan expires on the second user, not on a date.
 | **`immutable` is the rule, not a directory list** | A list is maintained by hand, goes stale as the agent grows new places to write, and fails towards including something it should not. The annotation already asserts exactly the property a cache needs |
 | **The key is the request path, not the disk path** | What is cached is a response. Deriving the key from the URL means no translation table, and a core may write wherever it likes |
 | **The view's URL does not change** | The redirect keeps authorization at the core and the signature invisible to everything above it. A view that had to know about a second origin is the prefix bug rebuilt |
+| **The cache answers on the core's own origin, at `/cache/`** | The edge already fronts every handle's hostname, so one path rule is the whole of it: no second domain, certificate or DNS name, no CORS, and a root-relative redirect. The key is the path at the edge, so the rule rewrites nothing |
 | **The unmirrored branch is today's behaviour** | Migration with no flag day, and a failure shape of "this one is as slow as last week" rather than a broken image |
 | **Only a relayed request is redirected** | The tunnel is the bottleneck this exists for. A LAN or public-bind client has none, and would be sent from a local link to a remote edge |
 | **The route runs before the redirect is decided** | A `stat` buys a redirect that is never to a deleted, faded or changed object — and the length check that backs up `immutable` |
@@ -749,7 +769,8 @@ latency. The loan expires on the second user, not on a date.
 
 ### Open
 
-1. **Per-handle read keys via an edge function** — what repays the loan above.
+1. **Per-handle read keys via an edge function** — what repays the loan above. On the core's
+   own origin it can also refuse a `/cache/<handle>/` path whose handle is not the host's.
 2. **A size floor for mirroring.** Below some size the redirect's round trip costs more than
    the bytes it saves. That number has to be measured, not chosen, and the rule must skip
    *small* objects: a rule that skips large ones would silently exclude exactly the files this
@@ -774,9 +795,11 @@ latency. The loan expires on the second user, not on a date.
    signed path cannot carry it at all**, which narrows the question: the bundle is script and
    style whose chunks import one another by relative path, and a relative import from a URL
    signed in its query arrives at the edge unsigned. So it is a public, path-addressed copy
-   uploaded once per release, or it stays on the tunnel. The same constraint holds compiled
-   views off the cache today, though each is a single module whose imports resolve through the
-   page's import map — whether that survives being loaded from another origin is unverified.
+   uploaded once per release, or it stays on the tunnel. Compiled views are held off by the
+   type allow-list rather than by that constraint: each is a single module whose imports
+   resolve through the page's import map, on the same origin, so nothing but the allow-list
+   stops one being mirrored — whether script known to import nothing relatively may pass is
+   the open half.
 
 **One decision elsewhere inverts because of this.** `VIEW_PRELOAD_SPECIFIERS` excludes
 `motion/react` deliberately, reasoning that preloading 183 kB would "trade a round trip for
@@ -917,7 +940,9 @@ Each is testable, and each has a real failure behind it.
 8. **A core's origin is its own.** One handle, one origin, root-relative throughout; no core
    emits a prefixed path and no cookie sets `Domain=`. The failure behind it is a browser
    holding two people at once, where the only thing between them is a cookie `Path` — which
-   is a delivery rule and was never a boundary.
+   is a delivery rule and was never a boundary. The one path the community answers on it,
+   `/cache/`, holds only bytes that core mirrored, and only pictures, sound, video, fonts
+   and documents — never anything that runs.
 
 ---
 

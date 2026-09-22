@@ -237,10 +237,15 @@ pub fn find(data_dir: &std::path::Path, view_ref: &str) -> Option<Share> {
 /// handle, so this need not be as absolute as the registry's list — but a link already
 /// sent cannot be un-sent, which is why it is checked when the share is made and not
 /// when it is served.
+///
+/// `cache` is here though no route of this core serves it: relayed, the edge answers
+/// `/cache/*` on this origin from the community's cache before a request ever
+/// reaches the core (`docs/arch/topology.md` § *Content*), so a view shared there
+/// could never be opened.
 const RESERVED: &[&str] = &[
     "api", "views", "assets", "generated", "up", "render", "auth", "account", "inspect",
     "healthz", "mcp", "favicon.ico", "robots.txt", "index.html", "static", "well-known",
-    ".well-known", "sw.js", "manifest.json",
+    ".well-known", "sw.js", "manifest.json", "cache",
 ];
 
 /// Why `view_ref` cannot be a share's address, or `None` if it can.
