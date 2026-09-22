@@ -136,6 +136,26 @@ def pair(msgs, rxn):
 # --------------------------------------------------------------------------
 
 
+def branch_events(root):
+    """The prepared-branch events from the observatory's own log, `<data>/sessions.jsonl`.
+
+    Read there rather than from the wire: what a reading decided — and how long after
+    their message the first action ran — is the host's, not any session's."""
+    path = os.path.join(root, "sessions.jsonl")
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if str(e.get("event", "")).startswith("branches_"):
+                out.append(e)
+    return out
+
+
 def q(xs, p):
     xs = sorted(xs)
     return xs[min(len(xs) - 1, int(round(p * (len(xs) - 1))))]
@@ -200,6 +220,28 @@ def main(root):
     pct("你开口时它正在跑（对话轮次重叠）", len(blocked), len(paired))
     row("  等那一轮跑完", blocked)
     row("  没在跑时的 A（settle 窗口本身）", free)
+
+    # -- Prepared branches: the reply that skipped the turn ---------------
+    events = branch_events(root)
+    if events:
+        print("\n备好的分支 · hi_prepare")
+        sets = [e for e in events if e["event"] == "branches_prepared" and e.get("directions")]
+        read = [e for e in events if e["event"] == "branches_resolved"]
+        voided = [e for e in events if e["event"] == "branches_voided"]
+        pct("备下的组 → 被他的下一句读到", len(read), len(sets))
+        outcomes = {}
+        for e in read:
+            outcomes[e.get("outcome", "?")] = outcomes.get(e.get("outcome", "?"), 0) + 1
+        for name, n in sorted(outcomes.items(), key=lambda kv: -kv[1]):
+            pct(f"  {name}", n, len(read))
+        row("他的话 → 分支第一个动作",
+            [e["first_action_ms"] / 1000 for e in read if e.get("first_action_ms") is not None])
+        row("他的话 → 读出结果", [e["decided_ms"] / 1000 for e in read if "decided_ms" in e])
+        reasons = {}
+        for e in voided:
+            reasons[e.get("reason", "?")] = reasons.get(e.get("reason", "?"), 0) + 1
+        for name, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            pct(f"  作废: {name}", n, len(sets))
 
     # -- The floor: what one turn costs ------------------------------------
     print("\n地板 · 一轮的成本")

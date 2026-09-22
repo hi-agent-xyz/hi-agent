@@ -214,18 +214,19 @@ whole, in the turn that can still fix it, not discovered at the reply. It answer
 from them landed after the turn began, read off the counter that refuses a stale `hi_say` as
 unheard.
 
-**Its lines are a seam of the speech surface.** The pre-send check
-([`legibility.md`](legibility.md) § E) reads every `hi_say` action when the branch is
-prepared, **off the mouth's serial lock** — nobody is waiting on these, and they must not put
-seconds in front of a line somebody is. A branch whose line the check sends back
-**loses all of its actions and keeps its condition**, and that is recorded. All of them,
-because a branch's actions are one decision and half of it is not what was decided — the view
-without the sentence that introduces it. The condition stays, because it is still a direction
-the set is choosing between; taking it out would let a message headed there be read as one of
-the others. Meeting it then means think. With the check in shadow, branches are ready at
-once. `legibility.md`'s table of surfaces gains `hi_prepare` beside
-`hi_say` in the change that adds the verb: that table is held by a test against the tools the
-rungs actually hold, so it cannot name the verb first.
+**Its lines are a seam of the speech surface** ([`legibility.md`](legibility.md), the table of
+surfaces). The pre-send check (§ E) reads every `hi_say` action when the branch is prepared —
+all of them at once, **before the call answers and off the mouth's serial lock**: nobody is
+waiting on these, and they must not put seconds in front of a line somebody is. That costs
+the turn's tail about half a second (System One, p50 0.53 s), and it buys the answer arriving
+inside the turn that can still act on it. A branch whose line the check sends back **loses
+all of its actions and keeps its condition**, the answer says which and why, and preparing
+again is how Reaction changes it. All of the actions, because a branch's actions are one
+decision and half of it is not what was decided — the view without the sentence that
+introduces it. The condition stays, because it is still a direction the set is choosing
+between; taking it out would let a message headed there be read as one of the others. Meeting
+it then means think. **A prepared line does not spend the turn's one send-back**: that limit
+bounds how long a person waits, and a prepared line holds up nobody.
 
 **Prepared after the reply, never before it.** The `hi_say` that answers this moment goes out
 first, and the branches are prepared while the person reads or hears it. The order is
@@ -258,6 +259,17 @@ agrees and *continues*: the branch runs, and the turn after it takes up the rest
 turn reads the whole message. On this install, the agreeing replies that came within 30 s of
 an agent line were mostly the second shape — which is why the turn after a branch exists, and
 why `qualified` asks only about the first.
+
+**Room is not their next message.** A microphone hears the whole room, and 行，就这样 said across
+the dinner table must neither run a branch nor use the set up. So a batch that is only room —
+speech the microphone caught, nothing typed or handed — is also asked the
+[room screen](host.md#the-room-screen)'s own question, beside these two and at every arrival.
+Under its cut the batch is side talk: nothing runs, the set is put back for the message that
+is theirs, and the reading is recorded as `side talk`. It cannot wait for the loop's own
+screen, because while a turn runs the loop screens nothing, and that is when a spoken reply
+lands. And where the two answers to one question disagree — the loop would set a batch aside
+that a branch already ran on — the branch wins and the batch wakes Reaction: a branch with no
+turn after it is never allowed.
 
 ##### Running it
 
@@ -329,9 +341,15 @@ gone either way. Anything that happens first voids it, recorded with the reason:
   if the branches still hold, that turn can prepare them again (a `hi_prepare` in the same
   turn simply replaces the set, and is not a void);
 - **a message is sent after the one the set follows** — that is no longer the last thing said;
-- **a barge-in on the message the set follows** — the branches assumed it was heard;
 - **a restart** — the set lives in memory, and is written to the log when prepared and when
   resolved.
+
+**A barge-in does not void it**, though this read otherwise until the change that built it.
+The floor infers a barge-in from an estimate — the line's length at 200 ms a character, plus
+two seconds of slack — so a quick spoken answer to a line that has just finished reads as one,
+and voiding on it would have voided the very case this is for. It is not needed either: a
+message that cuts in is read against the conditions like any other. Cutting in with 不对，等等
+goes to `rest` and runs nothing; cutting in with 行，就 A is agreeing.
 
 None of these is a timer. [Nothing in this host fires at a named time](host.md#there-is-no-timer-and-the-last-one-to-go-was-the-agents-own),
 and this adds nothing that does.
@@ -347,32 +365,34 @@ is the narrowest case: of 548 first replies from the person to an agent line on 
 (06-14 → 09-21), 36 followed a line ending in a question or proposal, the median reply was 32
 characters, and 3 were a bare confirmation — most were a new instruction, a correction, or a
 turn elsewhere. Whether those were *predictable* directions no count over text can say; the
-shadow below is what measures it. The case must be free where it misses, and it is — a turn
+count below is what measures it, once it runs. The case must be free where it misses, and it is — a turn
 that prepares nothing costs nothing.
 
 ##### Where it lives
 
 The set is Reaction's, and the host keeps it beside the floor, the way it keeps the counters
-`hi_say` is judged by. The reading is a model call, so it is not the host's —
-[the host consults no model](host.md#goal). It is Reaction's recognition carried out by a
-faculty fast enough to be on time for it: where the conversation might go, what to do there,
-and whether to prepare at all are Reaction's; the decision call says only which branch the
-message met.
+`hi_say` is judged by. The reading is one of the host's typed questions to System One on a
+budget, like the room screen and the pre-send check — and, [as for those](host.md#goal), a
+timeout or an error is what the host did before it asked: no branch runs. What it asks is
+Reaction's: where the conversation might go, what to do there, and whether to prepare at all
+are Reaction's; the decision call says only which branch the message met.
 
-##### Shadow first, the way the pre-send check went
+##### One switch, and two readers
 
-`prepared_branches` is `shadow` unless set to `on` or `off`. In shadow everything runs except
-the actions: every message that meets a branch records the verdict, its numbers, and what
-would have run, and the turn runs as it does today. **What Reaction then does, having read the
-message, is the ground truth** — a would-be branch was right when Reaction, with the message
-in hand, took those actions or their substance. That agreement, per τ, is the number that
-turns it on. It is inflated by one thing, stated here so nobody reads it at face value: in
-shadow the turn can see the branches it prepared, so it can anchor on its own guess; a sample
-is read by a person before the number is trusted. Once on, two readers, as in
-[Working ahead](#working-ahead): the count — prepared, met, voided by reason, each with its
-numbers — for the person tuning it; and the conversation for
-[Reflection](#reflection--background), where a branch the next turn had to take back is an
-exchange it can read.
+`prepared_branches` is on unless it is `off`, like every gate since the shadow stage was
+deleted (`efa0c512`). This section once asked for a shadow — read everything, run nothing,
+and score the would-be branch against what Reaction then did. That argument for a shadow was
+stronger here than for a check, because a branch that runs changes what the next turn does,
+so the agreement can only be measured while nothing runs. It was still not worth a second
+path: the agreement was inflated by the turn anchoring on the guess it could see, and the cost
+it proxied — a wrong branch — is measured directly with the switch on, as a branch the next
+turn had to take back. The cut, τ (`prepared_branches_threshold`, 0.9), is where the caution
+lives instead.
+
+Two readers, as in [Working ahead](#working-ahead): **the count** — prepared, met, voided by
+reason, each with its numbers, in the observatory's event log — for the person tuning it; and
+**the conversation** for [Reflection](#reflection--background), where a branch the next turn
+had to take back is an exchange it can read.
 
 ##### Blind spots, named
 

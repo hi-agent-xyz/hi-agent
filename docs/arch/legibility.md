@@ -57,7 +57,7 @@ A new human-facing surface ships with its seam or it does not ship
 
 | What the person reads | Who writes it | Seam | Judged |
 |---|---|---|---|
-| A spoken message | Reaction | `hi_say` | at the seam, gated — § A–K |
+| A spoken message | Reaction | `hi_say`, and a line prepared for their next message through `hi_prepare` | at the seam, gated — § A–K; a prepared line when it is prepared, not when it runs ([agents.md § *Prepared branches*](agents.md#prepared-branches)) |
 | A task's title and its `created` line | Cognition | `hi_task_open` | at the seam, gated — § L–M |
 | A task's timeline line | any worker | `hi_task_note` | at the seam, gated — § L–M |
 | A view on screen | a view builder | `hi_view_verdict` — the view reviewer's | by the view reviewer, its verdict kept — § *Views* |

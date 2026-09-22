@@ -96,7 +96,8 @@ async fn tools_list_is_role_gated() {
     .expect("json");
     let names = tool_names(&reaction);
     // The reaction is the fast conversational rung: its two expression channels, both
-    // calls, plus the one verb that reaches another agent. Nothing that reads or fetches.
+    // calls, what they will do if the next message goes where it expects, plus the one
+    // verb that reaches another agent. Nothing that reads or fetches.
     // This asserted one tool while `hi_say` sat in the unreachable fallback arm and
     // Reaction fell back to plain message text — the test agreed with the code and both
     // were wrong about the design.
@@ -104,7 +105,12 @@ async fn tools_list_is_role_gated() {
     names.sort();
     assert_eq!(
         names,
-        vec!["hi_say".to_string(), "hi_send_message".to_string(), "hi_show".to_string()],
+        vec![
+            "hi_prepare".to_string(),
+            "hi_say".to_string(),
+            "hi_send_message".to_string(),
+            "hi_show".to_string()
+        ],
         "got {names:?}"
     );
 

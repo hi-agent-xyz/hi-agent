@@ -147,6 +147,9 @@ pub mod judges {
     /// Whether a batch that is only room is anyone talking with the agent — one typed question,
     /// by [`super::rubric_section`].
     pub const ROOM: &str = include_str!("judges/room.md");
+    /// Where the person's next message went, against the branches Reaction prepared for it
+    /// — as typed questions, by [`super::rubric_section`].
+    pub const PREPARED: &str = include_str!("judges/prepared.md");
 }
 
 /// A judge's whole instructions: its rubric, then the reading standard it judges against.
@@ -771,9 +774,9 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// named for the rung that reads it (`docs/arch/arch.md#character`: a file per role)
 /// rather than for the activity, which is what `speaking.md` was.
 ///
-/// Its surface is `hi_say` · `hi_show` · `hi_send_message`
+/// Its surface is `hi_say` · `hi_show` · `hi_prepare` · `hi_send_message`
 /// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name all
-/// three: the file once said "you have exactly two", then told Reaction to "hand it
+/// four: the file once said "you have exactly two", then told Reaction to "hand it
 /// onward" without naming the verb that does it.
 ///
 /// Read from `<data_dir>/prompts/reaction.md`, falling back to the embedded

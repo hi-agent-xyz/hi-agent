@@ -323,6 +323,23 @@ impl Speech {
         }
     }
 
+    /// Everything the agent has said since the person last wrote, oldest first: the spoken
+    /// turns held for their reply, then this turn's. What a branch prepared now will be
+    /// read against, because it is what their next message answers ([`super::super::prepared`]).
+    pub fn said_since_their_last(&self) -> Vec<String> {
+        let mut said: Vec<String> = self
+            .awaiting
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .flat_map(|(_, sent)| sent.iter().cloned())
+            .collect();
+        if let Some(d) = self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            said.extend(d.sent.iter().cloned());
+        }
+        said
+    }
+
     /// Decide whether `text` goes on to the floor. `arrived` is when it reached the mouth,
     /// before it queued behind anything.
     pub async fn review(&self, text: &str, arrived: Instant) -> Review {
@@ -376,6 +393,54 @@ impl Speech {
                 }
                 Review::SendBack(note)
             }
+            _ => Review::Pass,
+        }
+    }
+}
+
+impl Speech {
+    /// Read a line prepared for the person's next message (`hi_prepare`), before it is held.
+    ///
+    /// **The same questions, asked about the moment the line is for.** The case is this
+    /// turn's — the conversation, what went out, what is on screen — with the condition that
+    /// would release the line stated above it, since that is when it would be read.
+    ///
+    /// Two things differ from [`review`](Self::review), and both follow from nobody waiting on
+    /// it. **It does not take the mouth's serial lock**: a line that may never be said must not
+    /// put seconds in front of one somebody is waiting for. **It does not spend the turn's one
+    /// send-back**: that limit bounds how long a person waits, and a prepared line holds up
+    /// nobody. A send-back here drops the branch's actions — its condition stays in the set —
+    /// and the caller says so in the tool's answer, so Reaction can prepare again.
+    ///
+    /// Recorded under [`Scope::Later`], which is true — a prepared line is written after the
+    /// turn's first message — though it does not tell a prepared line from a spoken one; the
+    /// message text says which.
+    pub async fn review_prepared(&self, condition: &str, text: &str) -> Review {
+        if !self.enabled {
+            return Review::Pass;
+        }
+        let (questions, case, key) = {
+            let guard = self.draft.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(d) = guard.as_ref() else { return Review::Pass };
+            let Some(questions) = d.questions.clone() else { return Review::Pass };
+            let then = format!(
+                "## Prepared for the person's next message — said only if it is: {condition}\n\n\
+                 ## The message to judge\n{text}"
+            );
+            (questions, d.brief.case(&d.sent, &d.shown, &then), d.key.clone())
+        };
+        let live = budget();
+        let record = CheckRecord {
+            data_dir: self.data_dir.clone(),
+            key,
+            message: text.to_string(),
+            scope: Scope::Later,
+            budget: live,
+        };
+        let started = Instant::now();
+        let answer = questions.ask(case, live).await;
+        match record.write(&questions, answer, started.elapsed()).await {
+            Some((Outcome::Revise, note)) => Review::SendBack(note),
             _ => Review::Pass,
         }
     }

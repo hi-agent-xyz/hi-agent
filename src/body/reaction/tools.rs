@@ -184,6 +184,10 @@ pub(super) struct Mouth {
     pub(super) speech: Arc<super::legibility::Speech>,
     /// The messages sent since the person last sent one ([`super::unanswered`]).
     pub(super) unanswered: Arc<super::unanswered::Unanswered>,
+    /// Where the conversation may go next, as Reaction last prepared it
+    /// ([`super::prepared`]). On the mouth because both halves of it are here: `prepare`
+    /// sets it, and a line `say` sends after it voids it.
+    pub(super) prepared: Arc<super::prepared::Prepared>,
 }
 
 
@@ -362,7 +366,86 @@ impl ToolSink {
         // sent) does not read as speech.
         mouth.said.fetch_add(1, Ordering::Relaxed);
         mouth.unanswered.note_sent();
+        // Branches prepared before this line were prepared for a moment that is no longer
+        // the last thing said.
+        mouth.prepared.void("a message was sent after the one they follow").await;
         Ok(Said { spoken: Spoken::Sent })
+    }
+
+    /// Prepare for where the conversation may go next (the `prepare` tool): `args` carries the
+    /// whole set, which is read and checked action by action ([`super::prepared::parse`]) and
+    /// replaces whatever was set. Returns the literal the tool answers with; a set that does
+    /// not parse is an error, naming where, and nothing is set.
+    ///
+    /// Refused, with nothing set, when they have already replied since this turn began —
+    /// branches are for their *next* message, and that one has come. Each branch's lines are
+    /// then read by the pre-send check ([`super::legibility::Speech::review_prepared`]),
+    /// together and off the serial lock; a branch whose line is sent back keeps its condition
+    /// and loses its actions, and the answer says which and why.
+    pub async fn prepare(&self, args: &serde_json::Value, data_dir: &std::path::Path) -> anyhow::Result<String> {
+        let mouth = self
+            .mouth
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("this rung has no mouth; there is nothing to prepare"))?;
+        let mut branches = super::prepared::parse(args, data_dir, SAY_MAX_CHARS)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        const ALREADY: &str = "not prepared — they have already replied since this turn began; \
+                               their message drives your next turn";
+        if branches.is_empty() {
+            mouth.prepared.set(branches, Vec::new()).await;
+            return Ok("cleared — nothing is prepared".into());
+        }
+        if !super::prepared::enabled() {
+            return Ok("not prepared — prepared branches are switched off on this install".into());
+        }
+        if !crate::body::capabilities::decision::available() {
+            return Ok("not prepared — nothing is configured to read their next message against \
+                       these, so none of them could run"
+                .into());
+        }
+        if mouth.floor.unheard() {
+            return Ok(ALREADY.into());
+        }
+        let reads = branches.iter().enumerate().flat_map(|(i, b)| {
+            b.actions.iter().filter_map(move |a| match a {
+                super::prepared::Action::Say { text } => Some((i, b.condition.clone(), text.clone())),
+                _ => None,
+            })
+        });
+        let reads = futures::future::join_all(reads.map(|(i, condition, text)| {
+            let speech = mouth.speech.clone();
+            async move { (i, speech.review_prepared(&condition, &text).await) }
+        }))
+        .await;
+        let mut sent_back = Vec::new();
+        for (i, review) in reads {
+            if let super::legibility::check::Review::SendBack(note) = review
+                && !branches[i].actions.is_empty()
+            {
+                branches[i].actions.clear();
+                sent_back.push(format!("the line for \"{}\" was sent back ({note})", branches[i].condition));
+            }
+        }
+        // The reads take time, and they may have replied during it.
+        if mouth.floor.unheard() {
+            return Ok(ALREADY.into());
+        }
+        let (directions, ready) =
+            (branches.len(), branches.iter().filter(|b| !b.actions.is_empty()).count());
+        mouth.prepared.set(branches, mouth.speech.said_since_their_last()).await;
+        let mut ack = format!(
+            "prepared — {directions} direction{}, {ready} with actions; their next message runs \
+             at most one, and your next turn is told what ran",
+            if directions == 1 { "" } else { "s" }
+        );
+        if !sent_back.is_empty() {
+            ack.push_str(&format!(
+                ". {} — so that direction runs nothing; prepare again to change it",
+                sent_back.join("; ")
+            ));
+        }
+        Ok(ack)
     }
 
     /// Show a view (the `show` tool): queue it onto the sequencer, which
@@ -458,6 +541,9 @@ mod tests {
                 floor: crate::body::reaction::Floor::new(),
                 speech: Arc::new(crate::body::reaction::legibility::Speech::off()),
                 unanswered: Arc::new(super::super::unanswered::Unanswered::default()),
+                prepared: Arc::new(super::super::prepared::Prepared::new(
+                    crate::foundation::observatory::Observatory::new(None),
+                )),
             }),
         };
         (sink, rx)

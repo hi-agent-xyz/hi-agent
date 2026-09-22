@@ -94,6 +94,20 @@
 Cognition(listener 144 条里 134 条是心跳),以及 Reaction 能不能被打断
 (`features.steer` 每个 rung 都开着,只有 Cognition 在用)。
 
+## 备好的分支([43](43-the-next-line-is-ready.md))
+
+命中一个 `hi_prepare` 分支的回复不经过一轮 Reaction,所以上面的 A/B 量不到它。它另有一段,读的是
+observatory 自己的事件日志 `data/sessions.jsonl` 里的 `branches_*` 事件,不读线帧:
+
+- **备下的组 → 被他的下一句读到**:多少组分支活到了他开口(其余的被作废,原因各列一行)。
+- **outcome 分布**:`met`(跑了)、`rest`、`below`(没过阈值)、`qualified`(同意但加了条件)、
+  `timeout` / `error` / `unavailable`、`still going`(读完时他还在说或还在打字)。
+- **他的话 → 分支第一个动作**:从他的消息进 host 到第一个动作,host 自己的时钟。这是 A+B 在命中时的
+  替代数,对比的是上面那条中位 29 秒。
+
+这份报告量不到的,是**跑错了的那部分**:命中之后紧接着那一轮不得不收回(改口、叫停交下去的活)。
+那要读对话,和上面"该一轮答完的有没有一轮答完"一样,逐条读,按 `p` 分档。
+
 ## 注意
 
 - **`raw/sessions/` 会长到 GB 级**(一次实测是 11G)。脚本流式读,不整个装进内存,但第一次跑

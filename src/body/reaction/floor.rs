@@ -286,6 +286,14 @@ impl Floor {
         self.heard.fetch_add(1, Ordering::Release);
     }
 
+    /// Has a line from them landed that the running turn has not seen? The same exact
+    /// counter [`may_speak`](Self::may_speak) refuses on, read without the refusal — for
+    /// `hi_prepare`, whose branches are for their *next* message and are out of date the
+    /// moment it has already come.
+    pub fn unheard(&self) -> bool {
+        self.heard.load(Ordering::Acquire) > self.seen.load(Ordering::Acquire)
+    }
+
     /// Are they mid-breath right now?
     ///
     /// Read by two callers with different stakes. The mouth

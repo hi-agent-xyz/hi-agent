@@ -83,6 +83,7 @@ mod room;
 mod floor;
 pub mod legibility;
 pub mod outbound;
+mod prepared;
 mod sequencer;
 mod tools;
 mod unanswered;
@@ -1104,6 +1105,10 @@ struct ReactionInner {
     /// counted and capped by the mouth, seeded from the journal as a loop stands up. See
     /// [`unanswered`].
     unanswered: Arc<unanswered::Unanswered>,
+    /// Where the conversation may go next, as Reaction last prepared it: set by the mouth's
+    /// `prepare`, read against the person's next message in [`Reaction::deliver`], waited
+    /// for by the loop before the turn that message drives. See [`prepared`].
+    prepared: Arc<prepared::Prepared>,
     /// Shared, process-wide LLM-vendor reachability + recovery policy. Read by every
     /// reaction loop (via [`Vendor::turn_gate`]) to decide whether and when to drive a
     /// turn; managed energy is written by the global vendor gate, while turn failures
@@ -1205,10 +1210,12 @@ pub async fn start(
         memory.data_dir().to_path_buf(),
         legibility::check::enabled(),
     ));
+    let prepared = Arc::new(prepared::Prepared::new(observatory.clone()));
     let reaction = Reaction {
         inner: Arc::new(ReactionInner {
             speech,
             unanswered: Arc::new(unanswered::Unanswered::default()),
+            prepared,
             memory,
             agent,
             out,
@@ -1637,6 +1644,9 @@ impl Reaction {
             && !m.from.is_agent()
         {
             self.inner.unanswered.note_person();
+            // Read against what Reaction prepared for it, if anything — begun **before** the
+            // message is queued, so the loop's wait for the reading cannot miss it.
+            prepared::on_message(self, m).await;
         }
         let queued = match input {
             crate::types::Inbound::Message(m) => LoopInput::Message(m),
@@ -1736,10 +1746,14 @@ impl Reaction {
                         floor: self.inner.floor.clone(),
                         speech: self.inner.speech.clone(),
                         unanswered: self.inner.unanswered.clone(),
+                        prepared: self.inner.prepared.clone(),
                     }),
                 },
             )
             .await;
+        // A met branch runs through this same mouth: its sequencer, its count, and this
+        // conversation's address for anything it hands on.
+        self.inner.prepared.attach(beats_tx.clone(), said.clone(), reaction_id.clone());
 
         let task_reaction = self.clone();
         // The worker registry posts its reports back into this same queue, so
@@ -2112,10 +2126,17 @@ async fn reaction_loop(
             // Room that nobody in it is talking with the agent about waits for the next turn
             // something else drives, instead of driving one. See [`room`].
             if screened && !room::wakes(&mut screen, &reaction.inner.memory, &batch).await {
-                room::set_aside(&mut aside, &render_batch(&batch));
-                batch.clear();
-                registry::global().abandon_turn(&reaction_id);
-                continue;
+                // Unless a prepared branch already ran on it: its own reading, which asked the
+                // same question, found someone talking with the agent, and the turn that is
+                // told what ran has to follow it. A disagreement between two answers to one
+                // question is rare; a branch with no turn after it is not a thing to allow.
+                reaction.inner.prepared.settled().await;
+                if !reaction.inner.prepared.ran_waiting() {
+                    room::set_aside(&mut aside, &render_batch(&batch));
+                    batch.clear();
+                    registry::global().abandon_turn(&reaction_id);
+                    continue;
+                }
             }
         }
         screen = None;
@@ -2123,6 +2144,9 @@ async fn reaction_loop(
         // Forget any workers that have finished, so the registry doesn't grow.
         workers.reap();
 
+        // The turn a message drives starts after that message's reading against the
+        // prepared branches — never beside it — so it knows what already ran.
+        reaction.inner.prepared.settled().await;
 
         let turn_result = run_reaction_turn(
             &reaction,
@@ -2354,6 +2378,11 @@ async fn run_reaction_turn(
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
     reaction.inner.floor.note_turn_started(turn_id);
+    // Branches still set now were prepared for a message that has not come, and something
+    // else is driving this turn: the moment they were for has moved. The ones a message
+    // resolved were taken by its reading, and what that ran is this turn's to be told.
+    reaction.inner.prepared.void("another turn started before their next message").await;
+    let branch_ran = reaction.inner.prepared.take_ran();
 
     // This turn's delta: whether the conversation's own thinking is still running (so
     // Reaction can say "still on it" rather than guess), any barge-in note, and the new
@@ -2372,7 +2401,11 @@ async fn run_reaction_turn(
         .await
         .map(|i| floor::render_interruption(&i))
         .unwrap_or_default();
-    let new_signals = format!("{NEW_SIGNALS}{}", render_batch(batch));
+    let new_signals = format!(
+        "{NEW_SIGNALS}{}{}",
+        render_batch(batch),
+        branch_ran.as_ref().map(prepared::Ran::for_reaction).unwrap_or_default()
+    );
     // What the agent has on screen right now — its own presentation surface. Read
     // fresh every turn (it's a current fact, not durable memory), so a view dismissed
     // last turn is gone from this list now: the agent can see what's up and dismiss by
@@ -2501,6 +2534,12 @@ async fn run_reaction_turn(
         // anyway. Nothing to hand off on a turn nobody spoke into — a report, a check-in.
         let task = render_human_from_batch(batch);
         if !task.trim().is_empty() {
+            // A branch that ran for this message may have handed it on already, seconds ago;
+            // saying so is what keeps one request from reading as two.
+            let task = match &branch_ran {
+                Some(ran) => format!("{task}{}", ran.for_cognition()),
+                None => task,
+            };
             hand_down_to_cognition(reaction, task).await;
         }
     }

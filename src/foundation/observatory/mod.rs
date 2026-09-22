@@ -188,6 +188,43 @@ pub enum EventKind {
         delivery: crate::foundation::registry::Delivery,
         message: String,
     },
+    /// Reaction prepared for where the conversation may go next (`hi_prepare`): the whole
+    /// set, which replaces whatever was set before. An empty `directions` is a clear.
+    ///
+    /// These three events are the count `docs/arch/agents.md` § *Prepared branches* names
+    /// for the person tuning it — prepared, met, voided by reason — so each carries its
+    /// content whole, like `MessageSent`: a number you cannot open is not a number you can
+    /// tune against.
+    BranchesPrepared { directions: Vec<BranchDirection> },
+    /// The person's next message was read against the set. `outcome` is what became of it
+    /// — `met` (and ran), `met, nothing prepared`, `rest`, `below`, `qualified`, `timeout`,
+    /// `error`, `unavailable`, `still going`, `a line landed after the batch`, `no mouth`, or
+    /// `side talk` (room nobody spoke to the agent, which leaves the set in place) —
+    /// and the numbers are System One's, kept whole so the cut can move without asking
+    /// again. `decided_ms` runs from their message reaching the host to the verdict;
+    /// `first_action_ms` to the first action, when one ran.
+    BranchesResolved {
+        message: String,
+        outcome: String,
+        direction: Option<String>,
+        p: Option<f64>,
+        qualified: Option<f64>,
+        mass: Option<serde_json::Value>,
+        model: Option<String>,
+        decided_ms: u64,
+        first_action_ms: Option<u64>,
+        ran: Vec<String>,
+    },
+    /// A set was voided before the person's next message came, and why.
+    BranchesVoided { reason: String },
+}
+
+/// One prepared direction as the event log shows it: the condition as Reaction wrote it,
+/// and each action as one line.
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchDirection {
+    pub condition: String,
+    pub actions: Vec<String>,
 }
 
 /// Cloneable handle over the shared observatory state.
@@ -357,6 +394,11 @@ impl Observatory {
             // mistake — one slot fed by two different events, each overwriting the
             // other — and `docs/arch/foundation.md#debug-surfaces` forbids it.
             EventKind::MessageSent { .. } => {}
+            // What Reaction prepared, and what the next message made of it, is history: a
+            // set lives for one message, so there is no standing state to mirror.
+            EventKind::BranchesPrepared { .. }
+            | EventKind::BranchesResolved { .. }
+            | EventKind::BranchesVoided { .. } => {}
         }
     }
 
