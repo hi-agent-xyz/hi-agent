@@ -16,7 +16,12 @@ const { buildHome, arrange, stage, zoomAround, clampZoom, TONE, stateOf, running
 );
 const NOW = Date.parse("2026-09-11T12:00:00Z");
 const hoursAgo = (h) => new Date(NOW - h * 3600000).toISOString();
-const task = (subject, status = "doing", hours = 1) => ({ subject, title: subject, status, statusSince: hoursAgo(hours), refs: [], extra: [], files: [] });
+const task = (subject, status = "doing", hours = 1) => ({ subject, title: subject, status, statusSince: hoursAgo(hours), attached: [], extra: [], files: [] });
+// What a row carries, as the server writes it (`shown` in `foundation/server/tasks.rs`): a view
+// the task made, with its shot when it has one, or a picture one of its lines carried.
+const made = (viewRef, label, preview) => ({ ref: `view:${viewRef}`, kind: "view", label, ...(preview ? { preview } : {}) });
+const pictured = (id, at = hoursAgo(1)) => ({ ref: `att:${id}`, kind: "picture",
+  preview: `/api/attachments/${id}/preview.v1`, url: `/api/attachments/${id}`, at, line: "update" });
 const tagged = (subject, names, status = "doing") => ({ ...task(subject, status), extra: [{ key: "systems", value: names }] });
 const worker = (id, role = "worker", extra = {}) => ({ run: "0123456789ab", id, role, state: "running", title: `Work ${id}`, started: hoursAgo(2), state_since: hoursAgo(1), ...extra });
 const project = (input) => buildHome(input, NOW);
@@ -120,11 +125,10 @@ test("a cancellation is on Home for an hour, and then not on Home at all", () =>
   // says the work is not happening. Ranked as history, two of these three days closed were
   // drawn in a group of five duties because the window had room, and read as pure interference.
   const cancelled = (subject, minutesAgo, extra = {}) => ({ ...task(subject, "cancelled", 0),
-    cancelledAt: new Date(NOW - minutesAgo * 60000).toISOString(), refs: [`shot-${subject}`], ...extra });
+    cancelledAt: new Date(NOW - minutesAgo * 60000).toISOString(), attached: [made(`shot-${subject}`, subject, `/${subject}.png`)], ...extra });
   const groups = [{ label: "duties", members: ["on-duty", "just-dropped", "dropped"] },
     { label: "gone", members: ["dropped-too"] }];
   const model = project({ groups,
-    views: ["just-dropped", "dropped"].map((s) => ({ view_ref: `shot-${s}`, label: s, shot_url: `/${s}.png` })),
     workers: [worker("still-on-it", "worker", { subject: "dropped" })],
     tasks: [task("on-duty", "serving", 1), cancelled("just-dropped", 50), cancelled("dropped", 70),
       cancelled("dropped-too", 3 * 24 * 60), { ...task("no-stamp", "cancelled", 0), statusSince: null }] });
@@ -134,7 +138,7 @@ test("a cancellation is on Home for an hour, and then not on Home at all", () =>
   assert.ok(model.nodes.some((n) => n.id === "overview:task:task:just-dropped"));
   // Past it, gone — not history. A live sibling, nobody being back yet and a picture of its own
   // keep nothing; a group holding nothing else is not added; a missing time reads as past it.
-  assert.deepEqual(ids(model, "result"), ["result:shot-just-dropped"]);
+  assert.deepEqual(ids(model, "result"), ["result:view:shot-just-dropped"]);
   assert.ok(!model.nodes.some((n) => n.id === "group:gone"));
   // A live session on it is still live work: it stands on the core under its own title.
   const hand = ofKind(model, "activity")[0];
@@ -505,11 +509,10 @@ test("every group up to eight has a hue of its own, and a group appended later m
 });
 
 test("a wire is its branch's one colour at every depth, a card in no group included, and never the status", () => {
-  const views = [{ view_ref: "views/one", label: "One", shot_url: "/one.png" }];
   const input = {
-    tasks: [task("rollup", "serving"), task("horse", "todo"), { ...task("court", "doing"), refs: ["views/one"] },
+    tasks: [task("rollup", "serving"), task("horse", "todo"), { ...task("court", "doing"), attached: [made("views/one", "One", "/one.png")] },
       task("vocab"), task("loose")],
-    views, workers: [worker("w1", "worker", { subject: "court" }), worker("w2", "worker", { subject: "court" })],
+    workers: [worker("w1", "worker", { subject: "court" }), worker("w2", "worker", { subject: "court" })],
     groups: [{ label: "KNQ", members: ["rollup"], groups: [
       { label: "赛马专家", members: ["horse"] }, { label: "视觉·场地", members: ["court"] }] },
     { label: "学习类", members: ["vocab"] }] };
@@ -541,10 +544,8 @@ test("a wire is its branch's one colour at every depth, a card in no group inclu
   assert.match(branchPaint(knq, "label"), /^oklch\(var\(--work-label-l\) var\(--work-branch-c\) [0-9]+\)$/);
 });
 
-test("a result with no picture is not on Home at all", () => {
-  const model = project({
-    tasks: [{ ...task("a"), refs: ["views/deck"], files: [{ path: "notes.md" }] }],
-    views: [{ view_ref: "views/deck", label: "Deck" }, { view_ref: "views/other" }] });
+test("a file the record names is not on Home at all, and neither is anything the row does not carry", () => {
+  const model = project({ tasks: [{ ...task("a"), files: [{ path: "notes.md" }] }] });
   assert.equal(model.nodes.length, 2, "core and the task, and nothing else");
   assert.equal(ofKind(model, "task")[0].data.results.length, 0, "and nothing on the task counts it");
   assert.equal(arrange(model).placed.length, 2);
@@ -552,31 +553,29 @@ test("a result with no picture is not on Home at all", () => {
 
 test("every picture is an image node below its task, and no card wears one", () => {
   const shots = project({
-    tasks: [{ ...task("deck"), refs: ["views/notes", "views/slide", "views/other-slide"] }],
-    views: [{ view_ref: "views/notes", label: "Notes" },
-      { view_ref: "views/slide", label: "Slide", shot_url: "/a.png" },
-      { view_ref: "views/other-slide", label: "Other", shot_url: "/b.png" }] });
+    tasks: [{ ...task("deck"), attached: [made("views/notes", "Notes"),
+      made("views/slide", "Slide", "/a.png"), made("views/other-slide", "Other", "/b.png")] }] });
   // One appearance per kind: a card is a card whether or not the task made a picture, and
   // every picture is a tile. Which one a result got used to depend on its place in `refs`.
   const drawn = arrange(shots).placed.find((p) => p.node.id === "task:deck");
   assert.deepEqual([drawn.w, drawn.h], [240, 135], "a picture never widens or heightens the card");
-  // Both shot-bearing refs are nodes, in the task's own order; the picture-less one is not.
-  assert.deepEqual(list(ofKind(shots, "result").map((n) => n.title)), ["Slide", "Other"]);
+  // Every view the row carries is a node, in the row's own order — the one with no shot yet
+  // too, drawn as its name while the server takes one. It used to be dropped, and a view a
+  // builder only ever reviewed has none, which hid the task's result.
+  assert.deepEqual(list(ofKind(shots, "result").map((n) => n.title)), ["Notes", "Slide", "Other"]);
   assert.deepEqual(list(childIndex(shots).get("task:deck").map((n) => n.id)),
-    ["result:views/slide", "result:views/other-slide"]);
-  for (const id of ["result:views/slide", "result:views/other-slide"]) {
+    ["result:view:views/notes", "result:view:views/slide", "result:view:views/other-slide"]);
+  assert.equal(ofKind(shots, "result")[0].data.preview, null, "the name is its picture until one lands");
+  for (const id of ["result:view:views/slide", "result:view:views/other-slide"]) {
     const tile = arrange(shots).placed.find((p) => p.node.id === id);
     // A shot is stored 960x540, so a tile has device pixels to spare at full zoom, and a
     // card is that box too.
     assert.deepEqual([tile.w, tile.h], [240, 135], "and every tile is the size of a card");
   }
 
-  // Tiles follow the task's `refs` — newest made first — not the order the view list
-  // happens to come back in.
+  // Tiles follow the row's order — newest placed first — which the server has already set.
   const reversed = project({
-    tasks: [{ ...task("deck"), refs: ["views/other-slide", "views/slide"] }],
-    views: [{ view_ref: "views/slide", label: "Slide", shot_url: "/a.png" },
-      { view_ref: "views/other-slide", label: "Other", shot_url: "/b.png" }] });
+    tasks: [{ ...task("deck"), attached: [made("views/other-slide", "Other", "/b.png"), made("views/slide", "Slide", "/a.png")] }] });
   assert.deepEqual(list(ofKind(reversed, "result").map((n) => n.title)), ["Other", "Slide"]);
 
   // A picture-less result is never a node, however many there are.
@@ -584,27 +583,43 @@ test("every picture is an image node below its task, and no card wears one", () 
   assert.equal(ofKind(duty, "result").length, 0);
   // And a task that really does make forty pictures hangs six of them, not forty.
   const many = project({
-    tasks: [{ ...task("shoot"), refs: Array.from({ length: 40 }, (_, i) => `views/p${i}`) }],
-    views: Array.from({ length: 40 }, (_, i) => ({ view_ref: `views/p${i}`, label: `P${i}`, shot_url: `/p${i}.png` })) });
+    tasks: [{ ...task("shoot"), attached: Array.from({ length: 40 }, (_, i) => made(`views/p${i}`, `P${i}`, `/p${i}.png`)) }] });
   assert.equal(ofKind(many, "result").length, 6, "capped below the task");
 
   const drawnDuty = arrange(duty).placed.find((p) => p.node.id === "task:logs");
   assert.deepEqual([drawnDuty.w, drawnDuty.h], [240, 135], "no picture, same card");
 });
 
+test("a picture a line carried hangs under its task, and opens that task at that line", () => {
+  // The court-calibration row: the figure attached to the 13:28 line and the page made later.
+  const model = project({ tasks: [{ ...task("court"), attached: [
+    made("court/lines", "Court lines", "/views/_shots/ref/court/lines.png?v=1"),
+    pictured("3f9a0c11d2e4b5a6", hoursAgo(2))] }] });
+  const [page, figure] = ofKind(model, "result");
+  assert.equal(page.id, "result:view:court/lines");
+  assert.equal(page.data.viewRef, "court/lines", "a page's tile goes to the page");
+  assert.equal(figure.id, "result:att:3f9a0c11d2e4b5a6");
+  assert.equal(figure.data.viewRef, null, "a picture's tile is not a page to go to");
+  assert.equal(figure.data.subject, "court", "it opens its own task's panel");
+  assert.equal(figure.data.at, hoursAgo(2), "at the line that carried it");
+  assert.equal(figure.data.preview, "/api/attachments/3f9a0c11d2e4b5a6/preview.v1");
+  assert.equal(figure.title, "Picture", "and until its preview loads it says what it is");
+  assert.equal(model.edges.find((e) => e.to === figure.id).relation, "produces");
+});
+
 test("the air between two nodes is set by where their branches part, not by how deep they sit", () => {
   // The failure this fixes: one gap for every pair meant a task's own results sat exactly as
   // far from it as the next task's results did, so the second rank read as one flat column
   // and only the wires said which branch anything belonged to.
-  const views = Array.from({ length: 8 }, (_, i) => ({ view_ref: `views/v${i}`, label: `V${i}`, shot_url: `/v${i}.png` }));
-  const tasks = ["a", "b", "c", "d"].map((s, i) => ({ ...task(s), refs: [`views/v${i * 2}`, `views/v${i * 2 + 1}`] }));
-  const placed = arrange(project({ tasks, views })).placed;
+  const shot = (i) => made(`views/v${i}`, `V${i}`, `/v${i}.png`);
+  const tasks = ["a", "b", "c", "d"].map((s, i) => ({ ...task(s), attached: [shot(i * 2), shot(i * 2 + 1)] }));
+  const placed = arrange(project({ tasks })).placed;
   const at = (id) => placed.find((p) => p.node.id === id);
   // Two tasks share a side, so their tile columns are adjacent and directly comparable.
   const column = placed.filter((p) => p.node.kind === "result" && p.dir === at("task:a").dir)
     .sort((x, y) => x.y - y.y);
   assert.equal(column.length, 4, "two tasks' pictures stack in one rank on this side");
-  const parent = (p) => p.node.id.startsWith("result:views/v0") || p.node.id.startsWith("result:views/v1") ? "first" : "second";
+  const parent = (p) => p.node.id.startsWith("result:view:views/v0") || p.node.id.startsWith("result:view:views/v1") ? "first" : "second";
   const gaps = column.slice(1).map((p, i) => ({ gap: p.y - (column[i].y + column[i].h), same: parent(p) === parent(column[i]) }));
   const within = list(gaps.filter((g) => g.same).map((g) => g.gap));
   const across = list(gaps.filter((g) => !g.same).map((g) => g.gap));
@@ -815,16 +830,15 @@ test("pictures take only the width the cards left, so one cannot keep a card out
   // side needed to reach its inner group, and the branch drew an older card instead. `Study`'s
   // task is the hottest and has a picture; `Life` holds a warm card inside `Shoes` and a cold one
   // on its own. In a window whose room fits an inner group and a picture, but not both at once:
-  const views = [{ view_ref: "views/p", label: "P", shot_url: "/p.png" }];
-  const model = project({ views, tasks: [
-    { ...task("t0", "doing", 1), refs: ["views/p"] }, task("s0", "doing", 3), task("l0", "doing", 9)],
+  const model = project({ tasks: [
+    { ...task("t0", "doing", 1), attached: [made("views/p", "P", "/p.png")] }, task("s0", "doing", 3), task("l0", "doing", 9)],
     groups: [{ label: "Life", members: ["l0"], groups: [{ label: "Shoes", members: ["s0"] }] }, { label: "Study", members: ["t0"] }] });
   const both = arrange(model), narrow = { w: (both.width - 40) * 0.8, h: LAPTOP.h };
   const cut = budgeted(model, narrow);
   assert.ok(ids(cut.model, "task").includes("task:s0"), "the warm card reaches its inner group");
   assert.deepEqual(ids(cut.model, "result"), [], "and the picture is what gives way");
   // With room for both, both are drawn.
-  assert.deepEqual(ids(budgeted(model, { w: (both.width + 40) * 0.8, h: LAPTOP.h }).model, "result"), ["result:views/p"]);
+  assert.deepEqual(ids(budgeted(model, { w: (both.width + 40) * 0.8, h: LAPTOP.h }).model, "result"), ["result:view:views/p"]);
 });
 
 test("what is drawn keeps the record's order: heat decides whether a card is on the chart, never where", () => {

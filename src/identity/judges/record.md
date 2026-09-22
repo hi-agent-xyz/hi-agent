@@ -18,8 +18,10 @@ fine but could be put another way passes. Short is never a reason.
 **The reader is the person whose task this is**, and nobody else reads it as closely. So
 what reads to them as someone else's vocabulary — the names the assistant's own parts have
 for each other, its files, its internal steps, a timestamp inside a sentence the record
-already dates — fails `machinery` or `hard` however accurate it is. A line that speaks of
-them in the third person was written for somebody else. A title is a name, the way they
+already dates — fails `machinery` or `hard` however accurate it is. A path to a picture or
+a clip is one of those files, and the rewrite is not to drop it but to carry it: the writer
+can attach the file to the line, where the person sees it under the words — so say that in
+the note. A line that speaks of them in the third person was written for somebody else. A title is a name, the way they
 would refer to the thing out loud, in their language; one that is a report or a filing is
 not a name.
 

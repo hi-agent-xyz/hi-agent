@@ -27,7 +27,8 @@ const COPY = {
       needsYou: "Needs you", running: "Working", waiting: "Work queued", idle: "Idle",
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
     roles: { reaction: "Conversation", cognition: "Coordination", reflection: "Review" },
-    source: { tasks: "tasks", workers: "live sessions", views: "results", groups: "grouping" },
+    source: { tasks: "tasks", workers: "live sessions", groups: "grouping" },
+    shown: { picture: "Picture", clip: "Clip", view: "Page" },
     trail: "Where this branch sits", back: "Step back out", unopened: "Made while you were on another page, not opened yet",
     ago: (n, unit) => `${n}${unit} ago`,
     more: (n) => `${n} more`,
@@ -42,7 +43,8 @@ const COPY = {
       needsYou: "等你处理", running: "正在处理", waiting: "有工作待处理", idle: "空闲",
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
     roles: { reaction: "交流", cognition: "协调", reflection: "回顾" },
-    source: { tasks: "任务", workers: "在线会话", views: "成果", groups: "分组" },
+    source: { tasks: "任务", workers: "在线会话", groups: "分组" },
+    shown: { picture: "图片", clip: "视频", view: "页面" },
     trail: "这一支所在的位置", back: "退回上一层", unopened: "做好时你在看别的页，还没打开",
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
     more: (n) => `还有 ${n} 项`,
@@ -327,23 +329,30 @@ function normalizeSession(raw) {
   };
 }
 
-function taskResults(task, views) {
-  // `refs` is what this task MADE, newest first: the store's `made` lines, which it writes
-  // when a session serving the task renders a view (`view_refs` in
-  // `foundation/server/tasks.rs`). The server has already dropped views no longer on disk,
-  // the app's own surfaces and builders' `_` probes, so this only looks each one up.
+function taskResults(task) {
+  // `attached` is what this task's lines PLACED, newest first by the line that placed each
+  // (`shown` in `foundation/server/tasks.rs`): the views it made — the store's `made` lines,
+  // written when a session serving the task renders one — and the pictures and clips its lines
+  // carried, handed over through `hi_task_note` (`docs/arch/showing.md`). The server has
+  // already dropped views no longer on disk, the app's own surfaces, builders' `_` probes and
+  // any attachment id nothing placed, so this only reshapes them.
   //
   // It used to be every known view the task's prose MENTIONED, and a mention has no verb:
-  // "the screen is showing `research-two-pairs`" hung a shoe report under a KTV task. The
-  // system-view filter that lived here was the first patch on that, for the one class a flag
-  // could catch; the fix is at the source, and the patch went with the cause.
+  // "the screen is showing `research-two-pairs`" hung a shoe report under a KTV task. A path a
+  // line spells is the same mention and is not read either.
   //
-  // **Only a picture is kept.** A result without one — a view never shot, a file the task
-  // wrote — used to feed a count printed on the card, and the count is gone: a number with
-  // nothing to open behind it is a claim the card cannot back, and `factory/tasks` lists them.
-  const byRef = new Map(views.filter((v) => v.view_ref && v.shot_url).map((v) => [v.view_ref, v]));
-  return (task.refs || []).filter((r) => byRef.has(r)).map((r) => byRef.get(r))
-    .map((v) => ({ id: v.view_ref, title: v.label || v.view_ref, shot: v.shot_url }));
+  // **A view with no picture yet is kept**, drawn as its name until the server's warm-up
+  // lands one. It used to be dropped, and a view a builder had only reviewed — never shown —
+  // has none, so a task's result was hidden until somebody happened to open it.
+  return (task.attached || []).map((item) => ({
+    id: item.ref,
+    kind: item.kind,
+    title: item.label || L.shown[item.kind] || item.kind,
+    preview: item.preview || null,
+    viewRef: item.kind === "view" ? item.ref.slice("view:".length) : null,
+    at: item.at || null,
+    durationMs: item.durationMs ?? null,
+  }));
 }
 
 /**
@@ -356,13 +365,13 @@ function taskResults(task, views) {
  * read as clutter rather than as rank. One appearance for pictures, one for cards.
  *
  * A result with no picture is never a node: twenty-one liveness JSONs are a log, and
- * twenty-one cards for them were 45% of the old canvas. The pictures below say what the work
- * actually made; what it wrote besides is `factory/tasks`' to list.
+ * twenty-one cards for them were 45% of the old canvas. What hangs below is a view the work
+ * made or a picture or clip one of its lines carried; what it wrote besides is
+ * `factory/tasks`' to list.
  *
- * **Order decides which six: the newest this task made.** That is the time on the task's own
- * `made` line. View records still have no timestamp, and the `?v=` cache-buster on the shot URL
- * is not declared to mean recency, so the tiles are the first shot-bearing views in `refs`
- * order and claim nothing about when a view last changed.
+ * **Order decides which six: the newest this task placed.** That is the time on the line that
+ * placed each — its `made` line, or the line that carried it. The server has already cut the
+ * row to six in that order, and a view record still has no clock of its own.
  */
 
 /**
@@ -409,7 +418,7 @@ function groupIndex(groups) {
   return { byTask, upkeep };
 }
 
-function buildHome({ tasks = [], workers = [], views = [], messages = [], groups = [] }, now = Date.now()) {
+function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now = Date.now()) {
   const nodes = [];
   const edges = [];
   const edgeIds = new Set();
@@ -476,7 +485,7 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
       || keepsClosed(task, taskEnd(task), { threadLive, inbound }, now);
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status, inHand,
-        endedAt: taskEnd(task), results: taskResults(task, views), sessions: [] } });
+        endedAt: taskEnd(task), results: taskResults(task), sessions: [] } });
     // A task hangs off its group when the arrangement puts it in one, and off the core when
     // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
     // here invents a group for a task the person has not placed.
@@ -487,8 +496,9 @@ function buildHome({ tasks = [], workers = [], views = [], messages = [], groups
     for (const result of node.data.results.slice(0, RESULT_TILES)) {
       const id = `result:${result.id}`;
       const exists = byId.has(id);
-      add({ id, kind: "result", title: result.title, sourceRefs: [ref("view", result.id)],
-        data: { viewRef: result.id, shot: result.shot } });
+      add({ id, kind: "result", title: result.title,
+        sourceRefs: [ref(result.viewRef ? "view" : "attachment", result.id)],
+        data: { ...result, subject: task.subject } });
       link(node.id, id, "produces", !exists);
     }
   }
@@ -1197,7 +1207,7 @@ export default function Home() {
     () => new Set((trail || []).filter((entry) => entry.unopened && entry.view_ref).map((entry) => entry.view_ref)),
     [trail],
   );
-  const [source, setSource] = useState({ tasks: [], workers: [], views: [], groups: [] });
+  const [source, setSource] = useState({ tasks: [], workers: [], groups: [] });
   const [loaded, setLoaded] = useState(false);
   const [ledgerSettled, setLedgerSettled] = useState(false);
   const [sourcesSettled, setSourcesSettled] = useState(false);
@@ -1214,7 +1224,9 @@ export default function Home() {
       // `factory/workers` is the surface that owns session history.
       const requests = [
         ["workers", "/api/workers", (v) => v.workers],
-        ["views", "/api/views", (v) => v],
+        // No `/api/views`: it was read every tick only to find each `made` ref's shot, and the
+        // ledger's rows carry what they placed now, pictures and all (`attached`).
+        //
         // How the person has arranged the work, which is this surface's own record and
         // nobody else's. It changes when somebody says so, not on a clock, but it is small
         // and it rides the poll the ledger's neighbours are on anyway.
@@ -1270,14 +1282,17 @@ export default function Home() {
   // render, so a status moved in the panel reaches the card and the panel by the one read. A row
   // that leaves the ledger closes it.
   const [openSubject, setOpenSubject] = useState(null);
+  // Which line the panel opens at, and which of the things it carries is opened whole — set by
+  // an attachment's tile, absent for a card.
+  const [openFocus, setOpenFocus] = useState(null);
   const [TaskPanel, setTaskPanel] = useState(null);
   // Fetched before anybody presses, so a press does not wait on a compile and a module.
   useEffect(() => { loadTaskPanel().then((panel) => setTaskPanel(() => panel), () => {}); }, []);
-  const openTask = useCallback((subject) => {
-    loadTaskPanel().then((panel) => { setTaskPanel(() => panel); setOpenSubject(subject); },
+  const openTask = useCallback((subject, focus = null) => {
+    loadTaskPanel().then((panel) => { setTaskPanel(() => panel); setOpenFocus(focus); setOpenSubject(subject); },
       (error) => console.warn("the task panel did not load", error));
   }, []);
-  const closeTask = useCallback(() => setOpenSubject(null), []);
+  const closeTask = useCallback(() => { setOpenSubject(null); setOpenFocus(null); }, []);
   const openRow = openSubject ? source.tasks.find((task) => task.subject === openSubject) : null;
   const model = useMemo(() => buildHome({ ...source, messages }, now), [source, messages, now]);
   const children = useMemo(() => childIndex(model), [model]);
@@ -1493,7 +1508,7 @@ export default function Home() {
       </div>
       {/* Over the frame, not in it: the chart's pan and pinch are the viewport's, and a press in
           the panel is not one of them. A roster that has not landed is not an empty one. */}
-      {openRow && TaskPanel && <TaskPanel task={openRow} onClose={closeTask}
+      {openRow && TaskPanel && <TaskPanel task={openRow} onClose={closeTask} focus={openFocus}
         workers={sourcesSettled && !errors.includes("workers") ? source.workers : undefined} />}
     </div>
   );
@@ -1722,19 +1737,50 @@ function Core({ node, model, now, more = 0, openRef }) {
  * the same move the task made — `factory/workers` exporting its detail for this surface to
  * draw; see `docs/arch/home.md` § Open.
  */
+/**
+ * What a result tile draws: its preview, or — while there is none, or it will not load — what it
+ * is in words, and a clip's length either way. The words are the floor a view's tile drew
+ * before pictures existed, and they are what a view that has not been pictured yet still draws
+ * until the server's warm-up lands one.
+ */
+function TilePicture({ data, title }) {
+  const [failed, setFailed] = useState(false);
+  const length = data.kind === "clip" && data.durationMs != null ? clock(data.durationMs) : null;
+  if (!data.preview || failed) {
+    return <span className="hi-work__tile-word">{length ? `${title} · ${length}` : title}</span>;
+  }
+  return <>
+    <img src={data.preview} alt={title} loading="lazy" onError={() => setFailed(true)} />
+    {length && <span className="hi-work__tile-length">{length}</span>}
+  </>;
+}
+
+/** `0:30`, `12:04`, `1:02:09`. */
+function clock(ms) {
+  const s = Math.round(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, r = String(s % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${r}` : `${m}:${r}`;
+}
+
 function Node({ node, now, children, openRef, openTask, tones, centreOn, unopened = new Set(), root = false, up = null, more = 0 }) {
   const state = stateOf(node), time = nodeTime(node);
   // A dot for something this task made that was put up while they were on another page and
   // is still waiting unopened in their list. Opening it — here, from the tile — clears it.
   const fresh = node.kind === "result" ? unopened.has(node.data.viewRef)
-    : node.kind === "task" && (node.data.task.refs || []).some((ref) => unopened.has(ref));
+    : node.kind === "task" && (node.data.results || []).some((result) => result.viewRef && unopened.has(result.viewRef));
   const open = node.kind === "task" ? () => openTask(node.data.task.subject)
     : node.kind === "activity" ? () => openRef(SESSION_BOARD) : null;
   // A tile lands exactly where it points: `openRef` takes a view ref natively, so it needs none
   // of the targeting the session handoff is waiting on.
-  if (node.kind === "result") return <article className="hi-work__tile" data-node-id={node.id} data-kind="result">
-    <button onClick={() => openRef(node.data.viewRef)} title={node.title}>
-      <img src={node.data.shot} alt={node.title} loading="lazy" />
+  // **A tile opens what it is a picture of.** A view is gone to, as it always was. A picture or
+  // a clip opens its task's panel at the line that carried it, and the panel's viewer draws it
+  // whole with that line as its caption — the words and the evidence arrive together, which is
+  // the point of a line carrying one (`docs/arch/home.md` § Handing off).
+  if (node.kind === "result") return <article className="hi-work__tile" data-node-id={node.id}
+    data-kind="result" data-shows={node.data.kind}>
+    <button onClick={() => (node.data.viewRef ? openRef(node.data.viewRef)
+      : openTask(node.data.subject, { at: node.data.at, ref: node.data.id }))} title={node.title}>
+      <TilePicture data={node.data} title={node.title} />
     </button>
     {fresh && <i className="hi-work__unopened" role="img" aria-label={L.unopened} />}
   </article>;
@@ -1923,6 +1969,12 @@ const CSS = `
    the one red dot on the chart, and it goes the moment the screen is on that page. */
 .hi-work__node, .hi-work__tile { position:relative; }
 .hi-work__unopened { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:var(--danger); box-shadow:0 0 0 2px var(--work-pane); pointer-events:none; }
+/* A view's shot is taken at the tile's own 16:9 and fills it; a picture or a clip is whatever
+   shape the work made it, so it is fitted whole rather than cropped to the box. */
+.hi-work__tile[data-shows="picture"] img, .hi-work__tile[data-shows="clip"] img { object-fit:contain; object-position:center; background:color-mix(in srgb, var(--fg) 6%, transparent); }
+.hi-work__tile button { position:relative; }
+.hi-work__tile-word { display:grid; place-items:center; height:100%; padding:10px; color:var(--fg-dim); font-size:13px; font-weight:620; text-align:center; }
+.hi-work__tile-length { position:absolute; right:7px; bottom:6px; padding:1px 6px; border-radius:5px; background:rgb(0 0 0 / .58); color:#fff; font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
 .hi-work__node-title { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.4; overflow-wrap:anywhere; font-weight:500; }
 .hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:12px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }

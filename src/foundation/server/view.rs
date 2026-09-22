@@ -215,6 +215,44 @@ async fn warm_shots(state: Arc<AppState>, refs: Vec<String>) {
     }
 }
 
+/// Take a first picture of each view a task's row carries that has none — the same warm-up,
+/// asked for by the ledger rather than by the band.
+///
+/// **Home's tiles come from the rows now, not from this inventory.** It used to poll
+/// `GET /api/views` every eight seconds only to look up each `made` ref's shot, and dropped a
+/// ref that had none — and a view a builder only ever *reviewed* has none, because a review's
+/// renders are handed back to the builder and never filed. So a task's result was hidden
+/// until somebody happened to open it. The row now carries the view without a picture, and
+/// this takes one, a few per read, deduplicated against the band's warm-up by the same set.
+///
+/// The ledger is bumped when one lands, since a picture arriving on a row is a change to what
+/// the row draws and Home is waiting on the ledger's version, not the appearance's.
+pub(super) fn warm_for_rows(state: &Arc<AppState>, refs: Vec<String>) {
+    let cold: Vec<String> = {
+        let mut warming = WARMING.lock().unwrap_or_else(|held| held.into_inner());
+        refs.into_iter()
+            .filter(|view_ref| super::view_shots::wants_shot(&state.data_dir, view_ref))
+            .filter(|view_ref| warming.insert(view_ref.clone()))
+            .take(WARM_PER_READ)
+            .collect()
+    };
+    if cold.is_empty() {
+        return;
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        let mut landed = false;
+        for view_ref in cold {
+            landed |= warm_one(&state, &view_ref).await;
+            WARMING.lock().unwrap_or_else(|held| held.into_inner()).remove(&view_ref);
+        }
+        if landed {
+            state.views.note_shot().await;
+            state.stores.bump(crate::mind::memory::tasks::DIMENSION).await;
+        }
+    });
+}
+
 /// One warm-up: resolve, compile, render. `true` if a picture landed.
 async fn warm_one(state: &Arc<AppState>, view_ref: &str) -> bool {
     let Some(render) = crate::mind::views::render_context() else {

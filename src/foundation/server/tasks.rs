@@ -33,6 +33,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::foundation::attachments::{self, Probe};
 use crate::foundation::server::{AppState, stores};
 use crate::mind::memory::facets;
 use crate::mind::memory::media::{content_type, ext_of, resolve_in_root, safe_rel_path};
@@ -114,9 +115,10 @@ struct RowDto {
     /// The newest line anybody *said* on the row — see [`latest_moment`]. This is the one line
     /// a card prints and the only thing that answers whether a person is being waited on.
     latest: Option<MomentDto>,
-    /// The views this task made, newest first — its `made` lines, never names its prose
-    /// spells. See [`view_refs`].
-    refs: Vec<String>,
+    /// What the row's lines placed, newest first and at most [`ROW_SHOWN`]: the views it made
+    /// and the attachments its lines carried — see [`shown`]. Home draws its tiles from this
+    /// and reads nothing else for them.
+    attached: Vec<ShownDto>,
     malformed: bool,
     extra: Vec<FieldDto>,
     extra_dropped: usize,
@@ -139,14 +141,133 @@ struct MomentDto {
     /// shows the line without a time rather than guessing one.
     at: Option<String>,
     kind: &'static str,
+    /// What the line says — without the store's `⟨attached …⟩` marker, which is drawn as
+    /// what it names rather than read as words.
     text: String,
+    /// What the line carries: the attachments it was written with, or the view a `made`
+    /// line names. The panel draws them under the sentence they are evidence for.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    attached: Vec<ShownDto>,
 }
 
-fn moment(entry: &TimelineEntry) -> MomentDto {
+/// One thing a line carries, as a surface draws it (`docs/arch/showing.md`).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShownDto {
+    /// `att:<id>` or `view:<ref>` — the one way either is named everywhere.
+    #[serde(rename = "ref")]
+    reff: String,
+    /// `picture`, `clip` or `view`.
+    kind: &'static str,
+    /// The tile's picture. Absent for a view nobody has taken a picture of yet, which a tile
+    /// draws as its name until one lands ([`super::view::warm_for_rows`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
+    /// An attachment's own bytes, for the viewer. A view has none: it is opened by its ref.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    /// A view's name as the band labels it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
+    /// On a row: when the line that placed it was written, and what kind of line it was —
+    /// which line a tile opens the panel at, and whether the picture was a delivery, the work
+    /// going on, or something the person is asked to judge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<&'static str>,
+}
+
+/// Most things a row carries: what Home hangs under a card. A task that attaches forty
+/// figures hangs its newest six; the panel has the rest, under the lines that carried them.
+const ROW_SHOWN: usize = 6;
+
+/// What drawing a row or a record needs besides the record: which views are on disk to be
+/// opened, and what each attachment its lines carry is. Loaded once per task, so building a
+/// row reads each attachment's probe at most once — and the store keeps them in memory, so
+/// a ledger polled every few seconds reads each off disk once for the life of the process.
+struct Showing<'a> {
+    data_dir: &'a FsPath,
+    views: &'a std::collections::HashSet<String>,
+    probes: std::collections::HashMap<String, Probe>,
+}
+
+impl<'a> Showing<'a> {
+    async fn load(
+        data_dir: &'a FsPath,
+        views: &'a std::collections::HashSet<String>,
+        task: &Task,
+    ) -> Showing<'a> {
+        let mut probes = std::collections::HashMap::new();
+        for entry in &task.timeline {
+            for id in entry.attached() {
+                if probes.contains_key(id) {
+                    continue;
+                }
+                if let Some(probe) = attachments::probe(data_dir, id).await {
+                    probes.insert(id.to_owned(), probe);
+                }
+            }
+        }
+        Showing { data_dir, views, probes }
+    }
+}
+
+/// What `entry` carries. A `made` line carries the view it names while that view is still on
+/// disk and is something a task can make; any other line carries the attachments the store
+/// wrote on it that this store holds — an id typed by hand, or one whose object is gone, is
+/// ignored the way a `made` ref to a deleted view is.
+fn carried(entry: &TimelineEntry, showing: &Showing<'_>) -> Vec<ShownDto> {
+    if let Some(view) = entry.made_ref() {
+        if !crate::mind::views::can_be_a_result(view) || !showing.views.contains(view) {
+            return Vec::new();
+        }
+        return vec![ShownDto {
+            reff: format!("view:{view}"),
+            kind: "view",
+            preview: super::view_shots::url_for_ref(showing.data_dir, view),
+            url: None,
+            label: Some(super::view_bus::humanize_ref(view)),
+            width: None,
+            height: None,
+            duration_ms: None,
+            at: None,
+            line: None,
+        }];
+    }
+    entry
+        .attached()
+        .into_iter()
+        .filter_map(|id| {
+            let probe = showing.probes.get(id)?;
+            Some(ShownDto {
+                reff: format!("{}{id}", attachments::PREFIX),
+                kind: probe.kind.as_str(),
+                preview: Some(attachments::preview_url(id)),
+                url: Some(attachments::url(id)),
+                label: None,
+                width: Some(probe.width),
+                height: Some(probe.height),
+                duration_ms: probe.duration_ms,
+                at: None,
+                line: None,
+            })
+        })
+        .collect()
+}
+
+fn moment(entry: &TimelineEntry, showing: &Showing<'_>) -> MomentDto {
     MomentDto {
         at: entry.at.map(rfc3339),
         kind: entry.kind.as_str(),
-        text: entry.text.clone(),
+        text: entry.said().to_owned(),
+        attached: carried(entry, showing),
     }
 }
 
@@ -161,36 +282,38 @@ fn moment(entry: &TimelineEntry) -> MomentDto {
 /// **`replied` is the store's too and is not excluded**, because what it witnessed is somebody
 /// speaking: the words are the person's, typed into this row. It is what answers a wait —
 /// after it the next step is ours, and a row that still needs them says so again under it.
-fn latest_moment(task: &Task) -> Option<MomentDto> {
+fn latest_moment(task: &Task, showing: &Showing<'_>) -> Option<MomentDto> {
     task.timeline
         .iter()
         .rev()
         .find(|entry| !matches!(entry.kind, TimelineKind::Moved | TimelineKind::Made))
-        .map(moment)
+        .map(|entry| moment(entry, showing))
 }
 
-/// The views this task made: its `made` lines, newest first, that still name a view on disk.
+/// What this task's lines placed, newest first, once each, at most [`ROW_SHOWN`]: the views
+/// it made and the attachments its lines carried (`docs/arch/home.md` § *Internal mapping*).
 ///
-/// **Not the names its prose spells, which is what this used to be.** Four spellings were
-/// matched anywhere in the record and filtered against the views tree, and the filter was
-/// the only check — so a note that another task's page was on screen made that page this
-/// task's result, and a shoe report hung under a KTV task. A mention has no verb, and no
-/// grammar gives it one. A `made` line is written by the store at the moment it saw a session
-/// serving this task render the view ([`tasks::record_made`]), so it is a fact, not a reading.
+/// **Only what a line placed, never the names its prose spells**, which is what this used to
+/// read. Four spellings were matched anywhere in the record, so a note that another task's
+/// page was on screen made that page this task's result and a shoe report hung under a KTV
+/// task. A mention has no verb. A `made` line is the store's witness of a session serving the
+/// task rendering the view ([`tasks::record_made`]); an attachment is on the line whose
+/// writer handed it over through `hi_task_note`. Both are facts, not readings.
 ///
-/// `known` still filters, because a view can be deleted after it was made, and a ref the
-/// person cannot open is not a result they can be shown. And [`can_be_a_result`] is applied
-/// again on read, so a `made` line typed by hand cannot put a system view or a probe back.
-///
-/// [`can_be_a_result`]: crate::mind::views::can_be_a_result
-fn view_refs(task: &Task, known: &std::collections::HashSet<String>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for view in task.timeline.iter().rev().filter_map(|entry| entry.made_ref()) {
-        if crate::mind::views::can_be_a_result(view)
-            && known.contains(view)
-            && !out.iter().any(|seen| seen == view)
-        {
-            out.push(view.to_owned());
+/// Ordered by the line that placed each, which is the one clock a view has.
+fn shown(task: &Task, showing: &Showing<'_>) -> Vec<ShownDto> {
+    let mut out: Vec<ShownDto> = Vec::new();
+    for entry in task.timeline.iter().rev() {
+        for mut item in carried(entry, showing) {
+            if out.iter().any(|seen| seen.reff == item.reff) {
+                continue;
+            }
+            item.at = entry.at.map(rfc3339);
+            item.line = Some(entry.kind.as_str());
+            out.push(item);
+            if out.len() == ROW_SHOWN {
+                return out;
+            }
         }
     }
     out
@@ -312,7 +435,7 @@ fn liveness_dto(task: &Task) -> Option<LivenessDto> {
     })
 }
 
-fn dto(task: &Task, malformed: bool, files: Vec<FileDto>) -> TaskDto {
+fn dto(task: &Task, malformed: bool, files: Vec<FileDto>, showing: &Showing<'_>) -> TaskDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     TaskDto {
         subject: task.subject.clone(),
@@ -325,8 +448,8 @@ fn dto(task: &Task, malformed: bool, files: Vec<FileDto>) -> TaskDto {
         completed_at: task.completed_at.map(rfc3339),
         cancelled_at: task.cancelled_at.map(rfc3339),
         liveness: liveness_dto(task),
-        timeline: task.timeline.iter().map(moment).collect(),
-        latest: latest_moment(task),
+        timeline: task.timeline.iter().map(|entry| moment(entry, showing)).collect(),
+        latest: latest_moment(task, showing),
         files,
         malformed,
         extra,
@@ -343,7 +466,7 @@ fn dto(task: &Task, malformed: bool, files: Vec<FileDto>) -> TaskDto {
 /// **No files.** They came back onto the row once so Home could count them under each task,
 /// at a `stat` per named file per task per ledger read; Home no longer counts anything it does
 /// not draw, and the one other reader, the board's file links, reads them off the record.
-fn row(task: &Task, malformed: bool, views: &std::collections::HashSet<String>) -> RowDto {
+fn row(task: &Task, malformed: bool, showing: &Showing<'_>) -> RowDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     RowDto {
         subject: task.subject.clone(),
@@ -356,8 +479,8 @@ fn row(task: &Task, malformed: bool, views: &std::collections::HashSet<String>) 
         completed_at: task.completed_at.map(rfc3339),
         cancelled_at: task.cancelled_at.map(rfc3339),
         liveness: liveness_dto(task),
-        latest: latest_moment(task),
-        refs: view_refs(task, views),
+        latest: latest_moment(task, showing),
+        attached: shown(task, showing),
         malformed,
         extra,
         extra_dropped,
@@ -611,11 +734,25 @@ pub async fn get_tasks(
     let views = super::view::existing_refs(dir).await;
 
     let mut rows: Vec<(SortKey, RowDto)> = Vec::new();
+    // Views a row carries that nobody has taken a picture of — one that was only ever
+    // reviewed, never shown. Home used to drop those, hiding the task's result until someone
+    // opened it; now it asks for the picture, a few per read.
+    let mut unshot: Vec<String> = Vec::new();
     for subject in &index {
         let (task, malformed) = read_row(dir, subject).await;
-        rows.push((sort_key(&task), row(&task, malformed, &views)));
+        let showing = Showing::load(dir, &views, &task).await;
+        let drawn = row(&task, malformed, &showing);
+        for item in &drawn.attached {
+            if item.preview.is_none()
+                && let Some(view) = item.reff.strip_prefix("view:")
+            {
+                unshot.push(view.to_owned());
+            }
+        }
+        rows.push((sort_key(&task), drawn));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
+    super::view::warm_for_rows(&state, unshot);
 
     let tasks: Vec<RowDto> = rows.into_iter().map(|(_, task)| task).collect();
     Json(serde_json::json!({ "version": version, "tasks": tasks })).into_response()
@@ -643,7 +780,9 @@ pub async fn get_task(State(state): State<Arc<AppState>>, Path(subject): Path<St
     }
     let (task, malformed) = read_row(dir, &subject).await;
     let files = referenced_files(dir, &task).await;
-    Json(serde_json::json!({ "task": dto(&task, malformed, files) })).into_response()
+    let views = super::view::existing_refs(dir).await;
+    let showing = Showing::load(dir, &views, &task).await;
+    Json(serde_json::json!({ "task": dto(&task, malformed, files, &showing) })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -708,7 +847,9 @@ pub async fn patch_task(
     // agent keeps these records with a shell.
     state.stores.bump(tasks::DIMENSION).await;
     let files = referenced_files(&state.data_dir, &task).await;
-    Json(serde_json::json!({ "ok": true, "task": dto(&task, false, files) })).into_response()
+    let views = super::view::existing_refs(&state.data_dir).await;
+    let showing = Showing::load(&state.data_dir, &views, &task).await;
+    Json(serde_json::json!({ "ok": true, "task": dto(&task, false, files, &showing) })).into_response()
 }
 
 /// One file out of a task's own folder, by the path the record spells.
@@ -841,7 +982,7 @@ mod tests {
             })
             .collect();
 
-        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert!(value.get("body").is_none(), "a row carries no prose: {value}");
         assert!(value.get("timeline").is_none(), "a row carries no timeline: {value}");
         assert!(value.get("files").is_none(), "files are the record's, not the row's: {value}");
@@ -866,20 +1007,20 @@ mod tests {
             entry(TimelineKind::Waiting, "which quarter?"),
             entry(TimelineKind::Moved, "todo \u{2192} doing"),
         ];
-        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert_eq!(value["latest"]["kind"], "waiting");
         assert_eq!(value["latest"]["text"], "which quarter?");
 
         // And the record says the same thing under the same name, so a panel and a card are
         // never reading two answers to one question.
-        let full = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let full = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(full["latest"], value["latest"]);
 
         task.timeline = vec![
             entry(TimelineKind::Moved, "todo \u{2192} doing"),
             entry(TimelineKind::Made, "`deck/leader`"),
         ];
-        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert!(value["latest"].is_null(), "a row with only the store's lines has said nothing: {value}");
     }
 
@@ -895,17 +1036,27 @@ mod tests {
             entry(TimelineKind::Replied, "ACCEPT"),
             entry(TimelineKind::Moved, "doing \u{2192} done"),
         ];
-        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert_eq!(value["latest"]["kind"], "replied");
         assert_eq!(value["latest"]["text"], "ACCEPT");
 
         task.timeline.push(entry(TimelineKind::Waiting, "which of the two takes?"));
-        let value = serde_json::to_value(row(&task, false, &views(&[]))).unwrap();
+        let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert_eq!(value["latest"]["kind"], "waiting");
     }
 
     fn views(refs: &[&str]) -> std::collections::HashSet<String> {
         refs.iter().map(|r| (*r).to_owned()).collect()
+    }
+
+    /// A row drawn against `views` and no attachments — the store holds none in these tests
+    /// unless one places them.
+    fn showing(views: &std::collections::HashSet<String>) -> Showing<'_> {
+        Showing {
+            data_dir: FsPath::new("/nonexistent-hi-agent-data"),
+            views,
+            probes: std::collections::HashMap::new(),
+        }
     }
 
     /// **A mention is not a result, in any spelling.** These are the four the old matcher read
@@ -941,14 +1092,14 @@ mod tests {
             "xiaoyuanzhu/vocab",
             "research-two-pairs",
         ]);
-        assert!(view_refs(&task, &known).is_empty());
+        assert!(shown(&task, &showing(&known)).is_empty());
     }
 
     /// What a row carries is its `made` lines: newest first, once each, and only while the
     /// view is still on disk to open. A hand-typed `made` line cannot bring back the two
     /// classes that are never a task's product.
     #[test]
-    fn refs_are_what_the_task_made_newest_first() {
+    fn a_row_carries_what_the_task_made_newest_first() {
         let mut task = Task::new("Research two pairs", TaskStatus::Doing);
         let made = |day, text: &str| TimelineEntry::new(TimelineKind::Made, at(day, 9), text);
         task.timeline = vec![
@@ -967,7 +1118,43 @@ mod tests {
             "factory/home",
             "_qa-shoes-wide",
         ]);
-        assert_eq!(view_refs(&task, &known), vec!["shoes/log", "shoes/report"]);
+        let carried: Vec<String> = shown(&task, &showing(&known)).into_iter().map(|s| s.reff).collect();
+        assert_eq!(carried, vec!["view:shoes/log", "view:shoes/report"]);
+    }
+
+    /// **An attachment is on the row by the line that carried it, beside the views the task
+    /// made, in the order the lines were written** — and an id nothing placed is nothing,
+    /// however it got into the file. The panel's line reads as its sentence alone.
+    #[tokio::test]
+    async fn a_row_carries_the_attachments_its_lines_carried_beside_its_views() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let figure = work.path().join("pose_899.png");
+        image::RgbImage::from_pixel(64, 36, image::Rgb([20, 120, 40])).save(&figure).unwrap();
+        let placed = attachments::place(data.path(), &figure).await.unwrap();
+
+        let mut task = Task::new("Calibrate the court", TaskStatus::Doing);
+        task.timeline = vec![
+            TimelineEntry::new(TimelineKind::Made, at(1, 9), "`court/lines`"),
+            TimelineEntry::new(
+                TimelineKind::Update,
+                at(2, 9),
+                format!("场地线压在线上 ⟨attached att:{} att:0123456789abcdef⟩", placed.id),
+            ),
+        ];
+        let known = views(&["court/lines"]);
+        let showing = Showing::load(data.path(), &known, &task).await;
+        let value = serde_json::to_value(row(&task, false, &showing)).unwrap();
+        let attached = value["attached"].as_array().unwrap();
+        assert_eq!(attached.len(), 2, "the typed id is not an attachment: {value}");
+        assert_eq!(attached[0]["ref"], format!("att:{}", placed.id));
+        assert_eq!(attached[0]["kind"], "picture");
+        assert_eq!(attached[0]["line"], "update");
+        assert_eq!(attached[0]["preview"], format!("/api/attachments/{}/preview.v1", placed.id));
+        assert_eq!(attached[0]["url"], format!("/api/attachments/{}", placed.id));
+        assert_eq!(attached[1]["ref"], "view:court/lines");
+        assert_eq!(value["latest"]["text"], "场地线压在线上", "the marker is drawn, never read");
+        assert_eq!(value["latest"]["attached"][0]["ref"], format!("att:{}", placed.id));
     }
 
     #[tokio::test]
@@ -986,7 +1173,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let value = serde_json::to_value(dto(&got, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&got, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(value["status"], "serving");
         assert_eq!(value["createdAt"], "2026-08-01T09:00:00Z");
         assert_eq!(value["statusSince"], "2026-08-02T09:00:00Z");
@@ -1018,7 +1205,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let value = serde_json::to_value(dto(&got, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&got, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert!(value.get("body").is_none(), "no prose beside the record: {value}");
         assert_eq!(value["timeline"][0]["kind"], "created");
         assert_eq!(value["timeline"][0]["at"], "2026-08-01T09:00:00Z");
@@ -1034,14 +1221,14 @@ mod tests {
     #[test]
     fn a_task_with_no_running_record_serves_an_empty_list() {
         let task = Task::new("Ship the deck", TaskStatus::Todo);
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(value["timeline"], serde_json::json!([]));
     }
 
     #[test]
     fn bare_task_has_no_due_or_liveness_metadata() {
         let task = Task::new("Ship the deck", TaskStatus::Todo);
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert!(value["dueAt"].is_null());
         assert!(value["checkedAt"].is_null());
         assert!(value["liveness"].is_null());
@@ -1057,7 +1244,7 @@ mod tests {
             "systems: KUT, gz, hi-agent".into(),
             "report_to: prdo8qht".into(),
         ];
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(value["extra"][0]["key"], "systems");
         assert_eq!(value["extra"][0]["value"], "KUT, gz, hi-agent");
         assert_eq!(value["extra"][0]["clipped"], false);
@@ -1071,7 +1258,7 @@ mod tests {
     fn a_quoted_value_is_shown_unquoted() {
         let mut task = Task::new("Deploy KUT", TaskStatus::Doing);
         task.extra = vec![r#"note: "16:20 — the callback is still not registered""#.into()];
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(
             value["extra"][0]["value"],
             "16:20 — the callback is still not registered"
@@ -1089,7 +1276,7 @@ mod tests {
             "  third".into(),
             "   ".into(),
         ];
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(value["extra"][0]["value"], "first second third");
         assert_eq!(value["extra"].as_array().unwrap().len(), 1);
     }
@@ -1104,13 +1291,13 @@ mod tests {
             .map(|i| format!("CHECK_{i}: still up"))
             .chain(std::iter::once(format!("long: {}", "x".repeat(400))))
             .collect();
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(value["extra"].as_array().unwrap().len(), EXTRA_FIELDS);
         assert_eq!(value["extraDropped"], 7);
 
         let mut one = Task::new("Watch the group", TaskStatus::Serving);
         one.extra = vec![format!("long: {}", "x".repeat(400))];
-        let value = serde_json::to_value(dto(&one, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&one, false, Vec::new(), &showing(&views(&[])))).unwrap();
         assert_eq!(
             value["extra"][0]["value"].as_str().unwrap().chars().count(),
             EXTRA_VALUE_CHARS
@@ -1128,7 +1315,7 @@ mod tests {
         .await
         .unwrap();
         let task = tasks::read_task(dir.path(), "kut").await.unwrap().unwrap();
-        let value = serde_json::to_value(dto(&task, false, Vec::new())).unwrap();
+        let value = serde_json::to_value(dto(&task, false, Vec::new(), &showing(&views(&[])))).unwrap();
         let keys: Vec<&str> = value["extra"]
             .as_array()
             .unwrap()

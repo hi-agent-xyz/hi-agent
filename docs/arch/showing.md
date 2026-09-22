@@ -195,15 +195,22 @@ On the tool call, before it returns:
 
 1. Resolve the path — absolute as given, or relative to the task's folder, then the data dir
    ([invariant 11](arch.md#invariants)). Refuse anything under `drive/accounts/secrets/`.
-2. Stream it once: hash while copying (or cloning) into `objects/`.
+2. Copy it in (a clone, where the filesystem has them), then hash and probe the copy — so what
+   is hashed, probed and kept is one set of bytes, even if the worker rewrites its file meanwhile.
 3. Probe it — an image header decode, `ffprobe` for time-based media. **What the bytes are is
    decided by decoding them, not by the extension.** A file that does not decode as a picture, clip,
    recording or document is refused with the reason, and nothing is written.
-4. Write the placement into the record, and answer with the id and the probe in one line
-   (`att:3f9a… · video 1920×1080 · 0:30 · 30 fps`), which is what the mind needs to refer to it
+4. Draw the preview from the frame the probe already decoded.
+5. Write the placement into the record, and answer with the id and the probe in one line
+   (`att:3f9a… · clip 1920×1080 · 0:30 · 30 fps`), which is what the mind needs to refer to it
    later and nothing more.
 
-Then, off the call: enqueue the preview, the proxy if one is needed, and the mirror upload.
+Then, off the call: the proxy if one is needed, and the mirror upload.
+
+**The preview is made on the call, not queued**, because it is the tile — the one thing the line
+is for — and it costs almost nothing once the probe has decoded a frame: measured on the
+court-calibration figures, a 2.4 MB picture attached in 39 ms and a 9.4 MB clip with a picture
+beside it in 210 ms, previews included.
 
 **Budget:** under 300 ms for a 5 MB image, under a second for a 200 MB clip — the hash and the
 probe, not the copy, dominate once the copy is a clone. Refused above **2 GiB**, with the
@@ -399,7 +406,7 @@ it. What reaches the person is what a mind handed over.
 |---|---|---|
 | placing a picture | ≤ 300 ms | a clone, a streamed hash, a header decode |
 | placing a clip ≤ 200 MB | ≤ 1 s | the same, and one `ffprobe` |
-| preview ready after placing | ≤ 0.5 s picture · ≤ 2 s clip | its own pool, never behind a transcode |
+| preview ready | with the call | the frame the probe already decoded |
 | a Home poll | no read per picture | previews computed from the timeline the row is already built from |
 | a tile, second time | 0 bytes | `immutable` |
 | a clip opened on the phone | the edge's bandwidth | mirrored at placement |
@@ -456,10 +463,14 @@ Each phase compiles, ships, and is worth having without the next.
    streaming; `hi_task_note(attach)`; the row's `attached` and the panel drawing them; Home's tiles
    from the row, the `/api/views` poll deleted, a shot enqueued for a `made` view without one;
    the projection carrying ids; `general.md`, `cognition.md` and `judges/record.md` re-aimed;
-   the legibility table's row; the counters. *This is the phase that would have drawn
-   `pose_899` at 13:28.*
+   the legibility table's rows. *This is the phase that would have drawn `pose_899` at 13:28.*
+   A clip in a codec no browser plays is refused with the command that makes one it can, until
+   `proxy.v1` makes that copy itself.
 2. **The stage and the conversation.** `hi_show(att:)` and the bundled viewer; the agent's
-   `Content::File` minted by `hi_say(attach)` and drawn by the chat; `proxy.v1`; `reaction.md`.
+   `Content::File` minted by `hi_say(attach)` and drawn by the chat; `proxy.v1`; `reaction.md`;
+   the preview and viewer moved from the board's view into `@hi/core`, which is the loan phase 1
+   takes and names; the measurements, with show-me messages counted by the reception read and
+   the rest computed from the records.
 3. **Pages embed, and shares carry.** `<Attachment>` in `@hi/core`; `view-builder.md` told a view
    is for composition; `hi_share` for attachments, with the scope and an absolute `og:image`.
 4. **One of everything.** One browser behind one queue; shots into `derived/` under SHA-256;

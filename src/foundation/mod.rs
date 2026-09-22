@@ -21,6 +21,7 @@
 //!   data crossing every boundary, not engine machinery.
 
 pub mod acoustics;
+pub mod attachments;
 pub mod codex;
 pub mod agent;
 pub mod auth;

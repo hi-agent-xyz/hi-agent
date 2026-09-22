@@ -28,7 +28,7 @@
 // cannot be driven from a keyboard, so the primary verb stays on the card and every
 // remaining transition is in the panel, which opens by click, tap and Enter alike.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { useLive, useWatched, TEMPO, useSendText, inputMethodHasKey } from "@hi/core";
+import { useLive, useWatched, useViews, TEMPO, useSendText, inputMethodHasKey } from "@hi/core";
 
 const J = { "Content-Type": "application/json" };
 const api = {
@@ -145,6 +145,9 @@ const T = {
       cancelled: "cancelled",
     },
     byHand: "by you",
+    // What a line carries, in words, for a tile whose picture is not there yet.
+    carried: { picture: "Picture", clip: "Clip", view: "Page" },
+    closeViewer: "Close",
     reply: "Reply on this task",
     send: "Send",
     monitoring: "Liveness",
@@ -226,6 +229,8 @@ const T = {
       cancelled: "取消",
     },
     byHand: "你改的",
+    carried: { picture: "图片", clip: "视频", view: "页面" },
+    closeViewer: "关闭",
     reply: "回复这个任务",
     send: "发送",
     monitoring: "运行检查",
@@ -525,7 +530,7 @@ function withRecord(row, record) {
  * The caller draws it inside a positioned box and it covers that box: the scrim is absolute
  * for the reason it is on the board.
  */
-export function TaskPanel({ task, workers, onClose }) {
+export function TaskPanel({ task, workers, onClose, focus = null }) {
   const [record, loadRecord] = useRecord(task.subject);
   const [busy, setBusy] = useState(false);
   const row = workers ? { ...task, onIt: bySubject(workers).get(task.subject) || null } : task;
@@ -545,6 +550,7 @@ export function TaskPanel({ task, workers, onClose }) {
         onStatus={setTaskStatus}
         onClose={onClose}
         onReplied={loadRecord}
+        focus={focus}
       />
     </div>
   );
@@ -798,8 +804,15 @@ function Card({ task, busy, dragging, onStatus, onOpen, onDragStart, onDragEnd }
 // a row nobody has touched in a week read as one that just moved. It sits above the list as the
 // paragraph it is, clamped to a screenful, with no label — with the ask gone from over it there
 // is nothing left for it to be confused with.
-function Detail({ task, busy, onStatus, onClose, onReplied }) {
+function Detail({ task, busy, onStatus, onClose, onReplied, focus = null }) {
   const panel = useRef(null);
+  const { openRef } = useViews();
+  // The one thing opened whole, with the sentence that carried it: `{ item, caption }`.
+  const [viewing, setViewing] = useState(null);
+  const openCarried = useCallback((item, caption) => {
+    if (item.kind === "view") openRef(item.ref.slice("view:".length));
+    else setViewing({ item, caption });
+  }, [openRef]);
   // Read through a ref: every caller passes a fresh arrow, and an effect keyed on it re-ran on
   // each re-render of the surface underneath — which on the board is every roster read — and
   // took the focus back to the panel out of the reply line somebody was typing in.
@@ -852,6 +865,22 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
   // panel must not print the second while the first is true: "Nothing recorded yet." under a
   // duty with forty entries is the stale reading that still reads as authoritative.
   const reading = !task.timeline;
+  // **Opened from a picture's tile, the panel opens at the line that carried it, with the
+  // picture up.** Once per focus, and only once the record is here: the row alone has no lines
+  // to find it on.
+  const focused = useRef(null);
+  useEffect(() => {
+    if (!focus || reading || focused.current === focus) return;
+    focused.current = focus;
+    const line = moments.find((moment) => moment.at === focus.at
+      && (moment.attached || []).some((item) => item.ref === focus.ref));
+    if (!line) return;
+    // An RFC 3339 instant has nothing a quoted attribute selector needs escaped. (Not
+    // `CSS.escape`: this module's own stylesheet is `CSS`, and it is not that object.)
+    panel.current?.querySelector(`[data-at="${line.at}"]`)?.scrollIntoView({ block: "center" });
+    const item = line.attached.find((carried) => carried.ref === focus.ref);
+    if (item) setViewing({ item, caption: line.text });
+  }, [focus, reading, moments]);
   // Frontmatter this schema does not know. The store keeps it because a writer that does not
   // understand a line is not entitled to drop it; the panel keeps it for the same reason — but
   // folded, with the rest of the machinery, because most of it is read once a month by somebody
@@ -930,6 +959,7 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
                   <li
                     key={`${moment.at || ""}-${index}`}
                     className="hi-tasks__moment"
+                    data-at={moment.at || undefined}
                     style={{ "--moment": momentTone(moment, index === spoken) }}
                   >
                     <span className="hi-tasks__moment-head">
@@ -946,6 +976,7 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
                         {inline(moment.text, `m${index}`, linkFile)}
                       </span>
                     )}
+                    <Carried items={moment.attached} onOpen={(item) => openCarried(item, moment.text)} />
                   </li>
                 );
               })}
@@ -1006,8 +1037,108 @@ function Detail({ task, busy, onStatus, onClose, onReplied }) {
         <Reply task={task} onSent={onReplied} />
         <Actions task={task} busy={busy} onStatus={onStatus} />
       </div>
+      {viewing && (
+        <Viewer item={viewing.item} caption={viewing.caption} onClose={() => setViewing(null)} />
+      )}
     </div>
   );
+}
+
+/**
+ * What a line carries, drawn under the sentence it is evidence for (`docs/arch/showing.md`):
+ * the pictures and clips a worker attached, or the page a `made` line names. A press opens a
+ * picture or a clip whole in [`Viewer`] with that sentence as its caption, and goes to a page.
+ *
+ * **Named loan.** This and `Viewer` live in the board's view because the board's panel is the
+ * one place attachments are drawn so far, and Home borrows the panel whole. They are the
+ * design's *Preview* and *Viewer*, which belong to the face and to `@hi/core`: the moment the
+ * stage or the conversation draws an attachment (showing.md, phase 2), they move there and
+ * this view imports them like any other.
+ */
+function Carried({ items, onOpen }) {
+  if (!items?.length) return null;
+  return (
+    <span className="hi-tasks__carried">
+      {items.map((item) => (
+        <CarriedItem key={item.ref} item={item} onOpen={onOpen} />
+      ))}
+    </span>
+  );
+}
+
+function CarriedItem({ item, onOpen }) {
+  const [failed, setFailed] = useState(false);
+  const word = item.label || L.carried[item.kind] || item.kind;
+  const length = item.kind === "clip" && item.durationMs != null ? clock(item.durationMs) : null;
+  return (
+    <button
+      type="button"
+      className="hi-tasks__carried-item"
+      data-kind={item.kind}
+      title={word}
+      onClick={() => onOpen(item)}
+    >
+      {item.preview && !failed ? (
+        <img src={item.preview} alt={word} loading="lazy" onError={() => setFailed(true)} />
+      ) : (
+        <span className="hi-tasks__carried-word">{word}</span>
+      )}
+      {length && <span className="hi-tasks__carried-length">{length}</span>}
+    </button>
+  );
+}
+
+/**
+ * One attachment, whole, over the panel — a picture fitted to the window, or a clip that plays
+ * and seeks — with the line that carried it underneath. Escape and a press outside close it and
+ * leave the panel where it was; its Escape is taken before the panel's own, so one key does not
+ * close both.
+ */
+function Viewer({ item, caption, onClose }) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close.current();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, []);
+  return (
+    <div
+      className="hi-tasks__viewer"
+      role="dialog"
+      aria-modal="true"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <figure onClick={(event) => event.stopPropagation()}>
+        {item.kind === "clip" ? (
+          <video src={item.url} poster={item.preview} controls autoPlay playsInline preload="metadata" />
+        ) : (
+          <img src={item.url} alt={caption || ""} />
+        )}
+        {caption && <figcaption>{caption}</figcaption>}
+      </figure>
+      <button type="button" className="hi-tasks__viewer-close" aria-label={L.closeViewer} onClick={onClose}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+/** `0:30`, `12:04`, `1:02:09`. */
+function clock(ms) {
+  const s = Math.round(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor(s / 60) % 60;
+  const r = String(s % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${r}` : `${m}:${r}`;
 }
 
 // **A reply typed here is something they said, so it goes where everything they say goes**:
@@ -2560,6 +2691,130 @@ const CSS = `
 
   .hi-tasks__file:hover code {
     color: var(--accent-2);
+  }
+
+  /* What a line carries, under its sentence: the tile shape Home draws, smaller, and fitted
+     whole — a figure is whatever shape the work made it. */
+  .hi-tasks__carried {
+    /* The whole width of the line, under both the head and the sentence: a third item in the
+       line's two-column grid would otherwise take the head's column and widen it by a row of
+       pictures, pushing the sentence off to the right. */
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .hi-tasks__carried-item {
+    position: relative;
+    width: 176px;
+    aspect-ratio: 16 / 9;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--fg-mute) 30%, var(--bg));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--fg-mute) 10%, var(--bg));
+    cursor: zoom-in;
+  }
+
+  .hi-tasks__carried-item[data-kind="view"] {
+    cursor: pointer;
+  }
+
+  .hi-tasks__carried-item:hover,
+  .hi-tasks__carried-item:focus-visible {
+    border-color: var(--accent);
+  }
+
+  .hi-tasks__carried-item img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .hi-tasks__carried-item[data-kind="view"] img {
+    object-fit: cover;
+    object-position: top center;
+  }
+
+  .hi-tasks__carried-word {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    padding: 8px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    font-weight: 620;
+  }
+
+  .hi-tasks__carried-length {
+    position: absolute;
+    right: 6px;
+    bottom: 5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgb(0 0 0 / 0.58);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One attachment whole, over the panel and the surface under it. */
+  .hi-tasks__viewer {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    padding: 28px 24px;
+    background: rgb(0 0 0 / 0.8);
+    cursor: zoom-out;
+  }
+
+  .hi-tasks__viewer figure {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 100%;
+    margin: 0;
+    cursor: default;
+  }
+
+  .hi-tasks__viewer img,
+  .hi-tasks__viewer video {
+    display: block;
+    max-width: 100%;
+    max-height: 78vh;
+    border-radius: 6px;
+    background: #000;
+    object-fit: contain;
+  }
+
+  .hi-tasks__viewer figcaption {
+    max-width: 72ch;
+    color: rgb(255 255 255 / 0.88);
+    font-size: 13px;
+    line-height: 1.55;
+    text-align: center;
+  }
+
+  .hi-tasks__viewer-close {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 0.14);
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
   }
 
   .hi-tasks__prose,

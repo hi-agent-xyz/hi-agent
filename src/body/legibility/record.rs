@@ -83,7 +83,9 @@ fn case(task: Option<&Task>, writing: &Writing) -> String {
         let skip = task.timeline.len().saturating_sub(RECENT_LINES);
         let lines = task.timeline[skip..]
             .iter()
-            .map(|e| format!("- {} — {}", e.kind.as_str(), e.text))
+            // The sentence, not the store's `⟨attached …⟩` marker after it: the person reads
+            // the words with the picture drawn under them, and so should the judge.
+            .map(|e| format!("- {} — {}", e.kind.as_str(), e.said()))
             .collect::<Vec<_>>()
             .join("\n");
         section(&mut s, "Its newest lines, oldest first", &lines);

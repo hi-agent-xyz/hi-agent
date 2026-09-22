@@ -22,6 +22,7 @@ use crate::types::{Channel, ViewEnvelope};
 
 pub mod account;
 pub mod activity;
+pub mod attachments;
 pub mod audio;
 pub mod binder;
 pub mod channels;
@@ -653,6 +654,9 @@ pub fn build(
         .route("/api/listening", get(listening::get_listening))
         .route("/api/messages", get(text::get_messages))
         .route("/api/media/{*ref}", get(files::get_media))
+        // What was put in front of the person, by content — see `docs/arch/showing.md`.
+        .route("/api/attachments/{id}", get(attachments::get_attachment))
+        .route("/api/attachments/{id}/{spec}", get(attachments::get_derived))
         .route("/api/in/audio", post(audio::post_audio).get(audio::get_in_audio))
         .route("/api/in/audio/stream", get(audio::get_audio_stream))
         .route("/api/out/audio", get(audio::get_out_audio))

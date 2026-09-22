@@ -523,12 +523,22 @@ fn task_note_tool() -> Value {
          language. The store writes the time and the kind, so put neither in the text. **A \
          line is one line, one thing that happened** — the record is the whole of what this \
          row says, so write the next thing as the next line rather than restating where it \
-         all stands. `subject` defaults to the task you serve.",
+         all stands. **When the line is about something they could look at** — a picture or \
+         a clip that shows the result, the direction, or what they are asked to judge — pass \
+         it as `attach` rather than naming its path: it is copied as it is now and drawn under \
+         the line, on their board and on Home, which is not their screen. `subject` defaults \
+         to the task you serve.",
         json!({
             "type": "object",
             "properties": {
                 "kind": { "type": "string", "enum": ["update", "delivered", "waiting", "title"] },
                 "text": { "type": "string" },
+                "attach": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 4,
+                    "description": "Pictures (PNG, JPEG, WebP, GIF) or clips (MP4, MOV, WebM) this line is about: paths — relative to your task's folder, or absolute — or att: ids from an earlier line. Say in `text` what they show."
+                },
                 "subject": { "type": "string", "description": "The row. Omit for the task you serve." },
             },
             "required": ["kind", "text"],
@@ -2817,6 +2827,14 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
         Ok(None) => return no_such_row(data_dir, &subject).await,
         Err(error) => return tool_error(&format!("could not read the row: {error}")),
     };
+    // What the line carries is copied in before anything else: a path that is not there is
+    // answered in a second, not after the gate's read, and a line whose evidence could not be
+    // attached is not written without it — the sentence and the picture go together or not
+    // at all.
+    let attached = match attach_all(data_dir, &subject, args).await {
+        Ok(attached) => attached,
+        Err(refused) => return tool_error(&format!("not recorded — {refused}")),
+    };
     let writing = crate::body::legibility::record::Writing::Note { note, text: text.trim() };
     if !text.trim().is_empty()
         && let crate::body::legibility::Review::SendBack(verdict) =
@@ -2824,7 +2842,22 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
     {
         return tool_error(&format!("not recorded — {verdict}"));
     }
-    match tasks::note(data_dir, &subject, note, text, Utc::now()).await {
+    let ids: Vec<String> = attached.iter().map(|placed| placed.id.clone()).collect();
+    match tasks::note(data_dir, &subject, note, text, &ids, Utc::now()).await {
+        Ok(Some(Ok(()))) if !attached.is_empty() => {
+            let carried: Vec<String> = attached
+                .iter()
+                .map(|placed| {
+                    format!(
+                        "{}{} ({})",
+                        crate::foundation::attachments::PREFIX,
+                        placed.id,
+                        placed.probe.describe()
+                    )
+                })
+                .collect();
+            tool_ok(&format!("recorded, carrying {}", carried.join(", ")))
+        }
         Ok(Some(Ok(()))) => tool_ok(match note {
             Note::Title => "renamed",
             _ => "recorded",
@@ -2833,6 +2866,80 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
         Ok(None) => no_such_row(data_dir, &subject).await,
         Err(error) => tool_error(&format!("could not write the row: {error}")),
     }
+}
+
+/// The files a `hi_task_note` call carries, copied in (`docs/arch/showing.md` § *On a task's
+/// record*). The answer is the sentence the caller reads when one cannot be attached.
+///
+/// A path is read the way a stored path is (invariant 11, `docs/arch/arch.md`): absolute as
+/// given, `~/` against the home directory, and otherwise against the task's own folder —
+/// where `general.md` tells a worker its work lives — and then the data dir. An `att:` id is
+/// an attachment an earlier line already carries, put on this one as well.
+async fn attach_all(
+    data_dir: &Path,
+    subject: &str,
+    args: &Value,
+) -> Result<Vec<crate::foundation::attachments::Placed>, String> {
+    use crate::foundation::attachments::{self, Placed, Refusal};
+
+    const MOST: usize = 4;
+    let Some(list) = args.get("attach").filter(|v| !v.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = list.as_array() else {
+        return Err("`attach` is a list of paths or att: ids".to_owned());
+    };
+    if items.len() > MOST {
+        return Err(format!(
+            "a line carries at most {MOST} attachments — put the rest on lines of their own, each saying what it shows"
+        ));
+    }
+    let folder = crate::mind::memory::facets::subject_dir(
+        data_dir,
+        crate::mind::memory::tasks::DIMENSION,
+        subject,
+    );
+    let mut out: Vec<Placed> = Vec::new();
+    for item in items {
+        let Some(raw) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+            return Err("each item in `attach` is a path or an att: id".to_owned());
+        };
+        let placed = if raw.starts_with(attachments::PREFIX) {
+            let Some(id) = attachments::parse_id(raw) else {
+                return Err(format!("`{raw}` is not an attachment id"));
+            };
+            match attachments::probe(data_dir, id).await {
+                Some(probe) => Placed { id: id.to_owned(), probe },
+                None => return Err(Refusal::UnknownId(id.to_owned()).to_string()),
+            }
+        } else {
+            let named = std::path::Path::new(raw);
+            let candidates: Vec<std::path::PathBuf> = if let Some(rest) = raw.strip_prefix("~/") {
+                std::env::var_os("HOME")
+                    .map(|home| vec![std::path::PathBuf::from(home).join(rest)])
+                    .unwrap_or_default()
+            } else if named.is_absolute() {
+                vec![named.to_owned()]
+            } else {
+                vec![folder.join(named), data_dir.join(named)]
+            };
+            let mut found = None;
+            for candidate in &candidates {
+                if tokio::fs::metadata(candidate).await.is_ok() {
+                    found = Some(candidate.clone());
+                    break;
+                }
+            }
+            let Some(path) = found else {
+                return Err(Refusal::Missing(raw.to_owned()).to_string());
+            };
+            attachments::place(data_dir, &path).await.map_err(|refused| refused.to_string())?
+        };
+        if !out.iter().any(|seen| seen.id == placed.id) {
+            out.push(placed);
+        }
+    }
+    Ok(out)
 }
 
 /// `hi_task_set` — a row's machinery, validated rather than judged.
@@ -4266,6 +4373,58 @@ mod surface_tests {
         let records = quality::read_since(dir.path(), Utc::now() - chrono::Duration::hours(1)).await;
         let [quality::Record::Check(c)] = records.as_slice() else { panic!("{records:?}") };
         assert_eq!((c.surface, c.outcome, c.axis.as_deref()), (quality::Surface::View, quality::Outcome::Revise, Some("machinery")));
+    }
+
+    /// **A line carries what it shows, copied from the task's own folder** — named the way a
+    /// worker names it, relative to where its work lives — and a line whose evidence cannot be
+    /// attached is not written without it (`docs/arch/showing.md` § *On a task's record*).
+    #[tokio::test]
+    async fn a_note_carries_a_picture_from_the_task_folder_or_is_not_written() {
+        use crate::mind::memory::{facets, tasks};
+        let dir = tempfile::tempdir().unwrap();
+        let opening = tasks::Opening {
+            subject: "court-calibration".into(),
+            title: "场地标定".into(),
+            status: tasks::TaskStatus::Doing,
+            wanted: "把场地线画回样片".into(),
+            due_at: None,
+            liveness: tasks::Liveness::default(),
+            systems: Vec::new(),
+        };
+        tasks::open(dir.path(), opening).await.unwrap().unwrap();
+        let folder = facets::subject_dir(dir.path(), tasks::DIMENSION, "court-calibration").join("work/figures");
+        std::fs::create_dir_all(&folder).unwrap();
+        image::RgbImage::from_pixel(192, 108, image::Rgb([30, 140, 60])).save(folder.join("pose_899.png")).unwrap();
+
+        let said = do_task_note(
+            dir.path(),
+            "general-court",
+            Some("court-calibration"),
+            &json!({ "kind": "update", "text": "场地线已按模型画回画面，线压在线上", "attach": ["work/figures/pose_899.png"] }),
+        )
+        .await;
+        assert_eq!(said["isError"], false, "{said}");
+        let answer = said["content"][0]["text"].as_str().unwrap();
+        assert!(answer.starts_with("recorded, carrying att:") && answer.contains("picture 192×108"), "{answer}");
+
+        let task = tasks::read_task(dir.path(), "court-calibration").await.unwrap().unwrap();
+        let line = task.timeline.last().unwrap();
+        assert_eq!(line.said(), "场地线已按模型画回画面，线压在线上");
+        let [id] = line.attached()[..] else { panic!("{line:?}") };
+        assert!(crate::foundation::attachments::object(dir.path(), id).await.is_some(), "the copy is filed");
+
+        let before = task.timeline.len();
+        let refused = do_task_note(
+            dir.path(),
+            "general-court",
+            Some("court-calibration"),
+            &json!({ "kind": "update", "text": "又画了一版", "attach": ["work/figures/gone.png"] }),
+        )
+        .await;
+        assert_eq!(refused["isError"], true);
+        assert!(refused.to_string().contains("gone.png"), "{refused}");
+        let task = tasks::read_task(dir.path(), "court-calibration").await.unwrap().unwrap();
+        assert_eq!(task.timeline.len(), before, "the sentence does not go on without its picture");
     }
 
     /// **Invariant 13: everything a person reads leaves through a seam** (`docs/arch/arch.md`).

@@ -315,6 +315,51 @@ impl TimelineEntry {
     pub fn made_ref(&self) -> Option<&str> {
         (self.kind == TimelineKind::Made).then(|| self.text.trim().trim_matches('`').trim())
     }
+
+    /// The attachments this line carries, as bare ids in the order they were attached —
+    /// what the store wrote after the text when a mind passed files to `hi_task_note`
+    /// (`docs/arch/showing.md` § *On a task's record*).
+    ///
+    /// Read off the store's own marker and nothing else: a path or an id spelled in the
+    /// sentence is a mention, not a hand-over. A person's `replied` line is their words
+    /// verbatim and carries none, whatever it happens to contain.
+    pub fn attached(&self) -> Vec<&str> {
+        if self.kind == TimelineKind::Replied {
+            return Vec::new();
+        }
+        split_attached(&self.text)
+            .1
+            .map(|ids| {
+                ids.split_whitespace()
+                    .filter_map(crate::foundation::attachments::parse_id)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// What the line says, without the store's marker — the sentence a person reads.
+    pub fn said(&self) -> &str {
+        if self.kind == TimelineKind::Replied {
+            return &self.text;
+        }
+        split_attached(&self.text).0
+    }
+}
+
+/// The marker the store writes after a line's text for what the line carries:
+/// ` ⟨attached att:… att:…⟩`. The same `⟨…⟩` family the conversation's carriers use for
+/// facts written for a reader to strip rather than for anyone to say.
+const ATTACHED_MARK: &str = "\u{27e8}attached ";
+
+/// A line's text split into what it says and, when it carries any, the ids after the marker.
+fn split_attached(text: &str) -> (&str, Option<&str>) {
+    let trimmed = text.trim_end();
+    if let Some(body) = trimmed.strip_suffix('\u{27e9}')
+        && let Some(at) = body.rfind(ATTACHED_MARK)
+    {
+        return (body[..at].trim_end(), Some(&body[at + ATTACHED_MARK.len()..]));
+    }
+    (text, None)
 }
 
 #[derive(Debug, Clone)]
@@ -965,6 +1010,11 @@ pub enum Refused {
     Closed,
     NoSubject,
     FoldIntoItself,
+    /// The `⟨attached …⟩` marker typed into the text. It is the store's to write, from the
+    /// files the caller passes — a typed one would be a claim nothing witnessed.
+    Marker,
+    /// A title carrying files. A name is a name; what the work made rides a line.
+    TitleCarries,
 }
 
 impl std::fmt::Display for Refused {
@@ -984,6 +1034,13 @@ impl std::fmt::Display for Refused {
             ),
             Self::NoSubject => f.write_str("the subject must contain a usable character"),
             Self::FoldIntoItself => f.write_str("a row cannot be folded into itself"),
+            Self::Marker => f.write_str(
+                "the ⟨attached …⟩ marker is written by the store — pass the files as `attach` \
+                 and say in the text what they show",
+            ),
+            Self::TitleCarries => f.write_str(
+                "a title is the row's name and carries no files — attach them to the line that says what they show",
+            ),
         }
     }
 }
@@ -993,23 +1050,34 @@ impl std::fmt::Display for Refused {
 /// **The instant and the kind are the store's, and the caller hands over prose and nothing
 /// else.** A line used to be typed whole — stamp, word, dash, text — and that is how 2,959
 /// machine timestamps came to sit inside the sentences of 144 records.
+///
+/// `attached` is the attachments the line carries, as ids the caller already placed
+/// ([`crate::foundation::attachments::place`]); the store writes them after the text in its
+/// own marker, so the sentence and its evidence are one line.
 pub async fn note(
     data_dir: &Path,
     subject: &str,
     note: Note,
     text: &str,
+    attached: &[String],
     at: DateTime<Utc>,
 ) -> anyhow::Result<Option<Result<(), Refused>>> {
     let text = text.trim();
     if text.is_empty() {
         return Ok(Some(Err(Refused::Empty)));
     }
-    edit(data_dir, subject, |task| task.note(note, text, at)).await
+    edit(data_dir, subject, |task| task.note(note, text, attached, at)).await
 }
 
 impl Task {
     /// [`note`] on a record in hand.
-    pub fn note(&mut self, note: Note, text: &str, at: DateTime<Utc>) -> Result<(), Refused> {
+    pub fn note(
+        &mut self,
+        note: Note,
+        text: &str,
+        attached: &[String],
+        at: DateTime<Utc>,
+    ) -> Result<(), Refused> {
         let text = text.trim();
         if text.is_empty() {
             return Err(Refused::Empty);
@@ -1020,8 +1088,23 @@ impl Task {
         if text.contains('\n') {
             return Err(Refused::Paragraph);
         }
+        if text.contains(ATTACHED_MARK.trim_end()) {
+            return Err(Refused::Marker);
+        }
         match note.kind() {
-            Some(kind) => self.timeline.push(TimelineEntry::new(kind, at, text)),
+            Some(kind) => {
+                let text = if attached.is_empty() {
+                    text.to_owned()
+                } else {
+                    let ids: Vec<String> = attached
+                        .iter()
+                        .map(|id| format!("{}{id}", crate::foundation::attachments::PREFIX))
+                        .collect();
+                    format!("{text} {ATTACHED_MARK}{}\u{27e9}", ids.join(" "))
+                };
+                self.timeline.push(TimelineEntry::new(kind, at, text));
+            }
+            None if !attached.is_empty() => return Err(Refused::TitleCarries),
             None => self.title = text.to_owned(),
         }
         Ok(())
@@ -1684,6 +1767,9 @@ fn render_projection(
         if let Some(note) = worker_note(task, working.get(&task.subject), now) {
             let _ = write!(out, " · {note}");
         }
+        if let Some(note) = attached_note(task) {
+            let _ = write!(out, " · {note}");
+        }
         out.push('\n');
     }
 
@@ -1809,6 +1895,21 @@ fn trailing_note(task: &Task, now: DateTime<Utc>) -> Option<String> {
     let created = task.created_at?;
     let days = (now - created).num_days();
     (days >= 1).then(|| format!("open {days}d"))
+}
+
+/// The attachments on the newest line that carries any — what the rung holding the
+/// conversation can put in front of the person when they ask to see where this stands,
+/// without dispatching anyone to go and find it (`docs/arch/showing.md`).
+///
+/// Ids only: what they show is the line's to say, and the record is one read away. Stable
+/// between writes, so the ledger's on-change comparison sees it move only when a line does.
+fn attached_note(task: &Task) -> Option<String> {
+    let ids = task.timeline.iter().rev().map(TimelineEntry::attached).find(|ids| !ids.is_empty())?;
+    let ids: Vec<String> = ids
+        .into_iter()
+        .map(|id| format!("{}{id}", crate::foundation::attachments::PREFIX))
+        .collect();
+    Some(format!("attached {}", ids.join(" ")))
 }
 
 /// Who is on this task, or — where that is the alarming answer — that nobody is.
@@ -3711,19 +3812,19 @@ mod verb_tests {
         open(dir.path(), opening("resume")).await.unwrap().unwrap();
         let at = Utc.with_ymd_and_hms(2026, 9, 18, 9, 0, 0).unwrap();
 
-        assert_eq!(note(dir.path(), "resume", Note::Delivered, "简历在你盘上了", at).await.unwrap(), Some(Ok(())));
+        assert_eq!(note(dir.path(), "resume", Note::Delivered, "简历在你盘上了", &[], at).await.unwrap(), Some(Ok(())));
         let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
         let last = task.timeline.last().unwrap();
         assert_eq!((last.kind, last.at, last.text.as_str()), (TimelineKind::Delivered, Some(at), "简历在你盘上了"));
 
         assert_eq!(
-            note(dir.path(), "resume", Note::Update, "one\ntwo", at).await.unwrap(),
+            note(dir.path(), "resume", Note::Update, "one\ntwo", &[], at).await.unwrap(),
             Some(Err(Refused::Paragraph))
         );
-        assert_eq!(note(dir.path(), "resume", Note::Update, "  ", at).await.unwrap(), Some(Err(Refused::Empty)));
-        assert_eq!(note(dir.path(), "missing", Note::Update, "x", at).await.unwrap(), None);
+        assert_eq!(note(dir.path(), "resume", Note::Update, "  ", &[], at).await.unwrap(), Some(Err(Refused::Empty)));
+        assert_eq!(note(dir.path(), "missing", Note::Update, "x", &[], at).await.unwrap(), None);
 
-        note(dir.path(), "resume", Note::Title, "简历", at).await.unwrap().unwrap().unwrap();
+        note(dir.path(), "resume", Note::Title, "简历", &[], at).await.unwrap().unwrap().unwrap();
         let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
         assert_eq!(task.title, "简历");
         assert_eq!(task.timeline.len(), 2, "a rename is not a line");
@@ -3739,14 +3840,66 @@ mod verb_tests {
         let at = Utc::now();
         assert!(Note::parse("stands").is_none(), "the kind is gone, not hidden");
         assert!(matches!(
-            note(dir.path(), "resume", Note::Update, "交付了，等你看。\n第二段。", at).await.unwrap(),
+            note(dir.path(), "resume", Note::Update, "交付了，等你看。\n第二段。", &[], at).await.unwrap(),
             Some(Err(Refused::Paragraph))
         ));
-        note(dir.path(), "resume", Note::Update, "交付了，等你看。", at).await.unwrap();
+        note(dir.path(), "resume", Note::Update, "交付了，等你看。", &[], at).await.unwrap();
 
         let task = read_task(dir.path(), "resume").await.unwrap().unwrap();
         assert!(task.retired_account.is_empty(), "nothing writes an account any more");
         assert_eq!(task.timeline.len(), 2, "the created line, and the one that landed");
+    }
+
+    /// **A line carries its attachments in the store's marker, and every reader gets the
+    /// sentence and the ids apart.** The marker is in the text on disk, so the record still
+    /// round-trips byte for byte; a mind cannot type one, and a title cannot carry one.
+    #[tokio::test]
+    async fn a_line_carries_what_it_shows_and_reads_back_as_sentence_and_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        open(dir.path(), opening("court")).await.unwrap().unwrap();
+        let at = Utc.with_ymd_and_hms(2026, 9, 22, 5, 28, 47).unwrap();
+        let ids = vec!["3f9a0c11d2e4b5a6".to_owned(), "0123456789abcdef".to_owned()];
+        note(dir.path(), "court", Note::Update, "场地线已按模型画回画面，线压在线上", &ids, at)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let raw = read_record(dir.path(), "court").await.unwrap().unwrap();
+        assert!(
+            raw.contains("update — 场地线已按模型画回画面，线压在线上 ⟨attached att:3f9a0c11d2e4b5a6 att:0123456789abcdef⟩"),
+            "{raw}"
+        );
+        let task = read_task(dir.path(), "court").await.unwrap().unwrap();
+        let line = task.timeline.last().unwrap();
+        assert_eq!(line.said(), "场地线已按模型画回画面，线压在线上");
+        assert_eq!(line.attached(), vec!["3f9a0c11d2e4b5a6", "0123456789abcdef"]);
+        assert_eq!(render(&task), raw, "the marker survives a rewrite unchanged");
+
+        let plain = &task.timeline[0];
+        assert!(plain.attached().is_empty());
+        assert_eq!(plain.said(), plain.text);
+
+        assert_eq!(
+            note(dir.path(), "court", Note::Update, "见图 ⟨attached att:3f9a0c11d2e4b5a6⟩", &[], at).await.unwrap(),
+            Some(Err(Refused::Marker))
+        );
+        assert_eq!(
+            note(dir.path(), "court", Note::Title, "场地标定", &ids, at).await.unwrap(),
+            Some(Err(Refused::TitleCarries))
+        );
+    }
+
+    /// **The person's own words are never read as carrying anything.**
+    #[test]
+    fn a_reply_is_its_words_whatever_it_contains() {
+        let reply = TimelineEntry::new(
+            TimelineKind::Replied,
+            Utc::now(),
+            "你看 ⟨attached att:3f9a0c11d2e4b5a6⟩",
+        );
+        assert!(reply.attached().is_empty());
+        assert_eq!(reply.said(), reply.text);
     }
 
     /// **Machinery is validated, not judged, and a status set through the verb is marked as a
@@ -3787,9 +3940,9 @@ mod verb_tests {
         let t = |h| base + chrono::Duration::hours(h);
         open(dir.path(), opening("shoes")).await.unwrap().unwrap();
         open(dir.path(), opening("shoes-again")).await.unwrap().unwrap();
-        note(dir.path(), "shoes", Note::Update, "survivor at 10", t(1)).await.unwrap();
-        note(dir.path(), "shoes-again", Note::Update, "folded at 11", t(2)).await.unwrap();
-        note(dir.path(), "shoes", Note::Update, "survivor at 12", t(3)).await.unwrap();
+        note(dir.path(), "shoes", Note::Update, "survivor at 10", &[], t(1)).await.unwrap();
+        note(dir.path(), "shoes-again", Note::Update, "folded at 11", &[], t(2)).await.unwrap();
+        note(dir.path(), "shoes", Note::Update, "survivor at 12", &[], t(3)).await.unwrap();
 
         fold(dir.path(), "shoes-again", "shoes", t(4)).await.unwrap().unwrap().unwrap();
 
@@ -3841,7 +3994,7 @@ mod verb_tests {
     async fn a_record_edited_by_hand_is_counted_as_a_bypass() {
         let dir = tempfile::tempdir().unwrap();
         open(dir.path(), opening("hand-edited")).await.unwrap().unwrap();
-        note(dir.path(), "hand-edited", Note::Update, "through the verb", Utc::now()).await.unwrap();
+        note(dir.path(), "hand-edited", Note::Update, "through the verb", &[], Utc::now()).await.unwrap();
         reconcile(dir.path()).await.unwrap();
 
         let path = record_path(dir.path(), "hand-edited");
@@ -3922,7 +4075,7 @@ mod verb_tests {
         let at = Utc::now();
         let (path_a, path_b) = (dir.path().to_path_buf(), dir.path().to_path_buf());
         let reply = tokio::spawn(async move { record_reply(&path_a, "answered", at, "ACCEPT").await });
-        let noted = tokio::spawn(async move { note(&path_b, "answered", Note::Update, "listening again", at).await });
+        let noted = tokio::spawn(async move { note(&path_b, "answered", Note::Update, "listening again", &[], at).await });
         assert!(reply.await.unwrap().unwrap());
         noted.await.unwrap().unwrap().unwrap().unwrap();
         reconcile(dir.path()).await.unwrap();
@@ -3946,7 +4099,7 @@ mod verb_tests {
         let at = Utc::now();
         let notes = (0..8).map(|n| {
             let path = dir.path().to_path_buf();
-            tokio::spawn(async move { note(&path, "resume", Note::Update, &format!("第 {n} 件"), at).await })
+            tokio::spawn(async move { note(&path, "resume", Note::Update, &format!("第 {n} 件"), &[], at).await })
         });
         for handle in notes.collect::<Vec<_>>() {
             handle.await.unwrap().unwrap();

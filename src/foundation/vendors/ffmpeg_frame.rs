@@ -34,7 +34,11 @@ const ENV_FFMPEG_BIN: &str = "FFMPEG_BIN";
 /// ffmpeg bundled in a packaged `.app` ([`super::ffmpeg::bundled_bin`]) → plain
 /// `ffmpeg` on `PATH`. The bundle tier is what makes a shipped app work without
 /// the user installing ffmpeg; dev/Docker have no bundle and fall through to PATH.
-fn ffmpeg_bin() -> String {
+///
+/// Shared with [`crate::foundation::attachments`], which decodes a clip once when it is
+/// attached — one resolution rule, so a packaged app never finds ffmpeg for one and not
+/// the other.
+pub(crate) fn ffmpeg_bin() -> String {
     if let Ok(s) = std::env::var(ENV_FFMPEG_BIN) {
         let s = s.trim();
         if !s.is_empty() {
