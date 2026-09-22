@@ -74,3 +74,32 @@ BYOK 不给 key，所以没有一轮能跑起来——这一趟看的是动词�
 - **macOS 应用的 WKWebView、手机宽度、电视**里的图块和查看器；远程手机经隧道打开视频（镜像还没做）。
 - **手机竖拍的 HEVC、带旋转矩阵的片子**只在解析单测里过过；HDR（HLG）的预览没做色调映射，没看过
   实际颜色。
+
+## 复测 2026-09-22 · 第 2 期（本机，scratch data dir，release 构建，**没有模型**）
+
+素材同上（`pose_899.png`、39 MB 的 `marked_silent.mp4`），都走 `/mcp` 直打。
+
+- **放不了的视频不再被拒**：`marked_silent.mp4`（`mpeg4 (Simple Profile)`）带上用了 **0.30 s**，回
+  `clip 1920×1080 · 0:30 · 30 fps · a copy browsers can play is being made`。后台 **1.08 s** 转出
+  H.264 1080p 30 s 的拷贝（9.4 MB）；`/playable` 从 `503` 变成 `302 → proxy.v1`，拷贝 `206`、
+  `immutable`。图片的 `/playable` 直接 `302` 到原件。
+- **放上屏**：`POST /api/views/open {"ref":"att:1b34d1fc630fb3d8"}` 回 `module_url =
+  /api/attachments/1b34d1fc630fb3d8/stage.v1.mjs`（三行、`text/javascript`、`immutable`）；列表里
+  那张卡 label 是 `Clip`、图是预览。headless Chrome 里舞台上的 `<video>` readyState 4、30 s、
+  1920×1080、无错误——那段 mpeg4 原片在浏览器里是放不了的，放的是拷贝。
+- **首页和面板换成 `@hi/core` 的组件后照旧**：两张图块预览加载、视频块 `0:30`；点图 → 面板 +
+  查看器（这次是 portal 到 body 的那个），原话在下面；Esc 只收查看器；面板里的视频从 `/playable`
+  播，readyState 4。
+- **`/api/legibility?days=1` 的 `showing`**：`evidence` 读出 2 行、2 行带附件（`update` 1、`delivered` 1）、
+  0 行在句子里写路径、到第一份证据 0 h；`show_me` 0——这台实例没有模型，reception 一次都没跑。
+- **`hi_say(attach)`**：不存在的 id、传路径而不是 id，都拒并说明；合法的 id 回 `sent`，但对话里什么都
+  没有——这台实例没有模型，没有一轮开起来，sequencer 丢掉了轮外的 beat（`unanswered.rs` 已写明的那
+  个口子），所以对话里递东西这一半**在这里看不到**。
+- **`hi_show(att:)`**：同一个原因，回 `shown`，屏幕没动；上面那次上屏走的是人的"去那里"。
+
+### 仍没看过的（第 2 期）
+
+- **Reaction 在真的一轮里** `hi_show(att:)` 和 `hi_say(attach)`：舞台上它自己放的那次、对话里 agent 递
+  的图（气泡里点开查看器、视频就地播）、三条上限按"字 + 每个附件"算。要有模型的实例。
+- **reception 真的答 `asks_to_see`**：rubric 改了、字段接上了，没有一次真判过。
+- 拷贝在 **HDR（HLG）** 片子上的颜色、长片（十几分钟）的转码时长、两路并发的实际占用。
