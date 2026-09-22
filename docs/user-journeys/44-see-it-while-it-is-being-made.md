@@ -143,3 +143,32 @@ BYOK 不给 key，所以没有一轮能跑起来——这一趟看的是动词�
 - 第 1、2 期那几条仍然没看过的（Reaction 真的一轮里 `hi_show(att:)` / `hi_say(attach)`、
   reception 真判 `asks_to_see`、HDR、长片转码、WKWebView 和手机宽度）。
 
+## 复测 2026-09-23 · 第 4 期(本机,scratch data dir,release 构建,**没有模型**)
+
+这一期是"每样只留一个":一个浏览器、一张类型表、一个内容键,以及把该删的删掉。
+
+- **一个浏览器**:三次 review 各 **0.25 s**,全程只有一个进程、一个 profile(以前每次渲染都要
+  起一个 Chrome 再杀掉)。`kill -9` 掉那个浏览器,下一次渲染 **0.61 s** 自己重起。分享一个视图
+  (check 渲染 + 补一张截图)之后仍然只有一个浏览器。
+- **但它带出一个新漏**:进程被 `kill -9`(或测试二进制跑完就退)时,那个留着的浏览器活了下来。
+  这台机器上十来次 `make test` + 几次 `pkill` 攒了 **27 个孤儿 Chrome**,一个几十到两百多兆。
+  现在每个 profile 里写着浏览器自己的 pid,启动时把"生它的那个 hi-agent 已经不在了"的 profile
+  连进程一起收掉(只收 `ps` 还认它是浏览器的 pid)。实测:故意留一个孤儿,下一次渲染之后就剩
+  一个浏览器、一个 profile。
+- **一张类型表**:`/views/probe/clip.mp4` 现在是 `video/mp4`(以前是 `text/plain`——这正是那些
+  视图要用 `fetch → blob` 自己搭播放器的原因),`.jsx` 还是 `text/plain`,附件路由不变。
+- **一个内容键**:`views/_compiled/` 下是 16 位十六进制的 SHA-256 前缀(`DefaultHasher` 的值,
+  编译器升级就可能变,而这个名字是浏览器要缓存一年、分享作用域要点名、外观记录要存的)。
+- **删掉的**:`GET /api/tasks/{subject}/files/*` → 404;记录 DTO 里不再有 `files`;面板不再把
+  行里的 `` `文件名` `` 变成链接(一行能打开的东西,是它自己带上的附件);`/api/media/drive/…` → 404
+  (drive 只由 `/api/drive/file` 服务);`drive/generated/` 和 `store_artifact` 一起删了。
+- **生成的东西现在直接是附件**:工具描述、四个提示词、Home 的组图标都改成收 `att:` id。
+  **这一条没在有模型的实例上跑过**——这台没有 key,`hi_text_to_image` 一次也没真调起来。
+
+### 仍没看过的(第 4 期)
+
+- **真的画一张**:`hi_text_to_image` → `att:` id → `hi_show`,整条链没跑过(要有 key 的实例)。
+- **task-manager 用 `att:` id 当组图标**重画一套。
+- 前三期仍没看过的那些(Reaction 真的一轮里 show/递、reception 真判 `asks_to_see`、
+  真的把链接发出去、HDR、长片转码、WKWebView 与手机宽度)。
+
