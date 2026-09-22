@@ -103,3 +103,43 @@ BYOK 不给 key，所以没有一轮能跑起来——这一趟看的是动词�
   的图（气泡里点开查看器、视频就地播）、三条上限按"字 + 每个附件"算。要有模型的实例。
 - **reception 真的答 `asks_to_see`**：rubric 改了、字段接上了，没有一次真判过。
 - 拷贝在 **HDR（HLG）** 片子上的颜色、长片（十几分钟）的转码时长、两路并发的实际占用。
+
+## 复测 2026-09-23 · 第 3 期（本机，scratch data dir，release 构建，**没有模型**）
+
+这一趟第一次有"外人"：实例同时开了 loopback（12368）和 off-box 监听（12369，绑在 127.0.0.1，
+不对外开口），凡是走 12369 的请求都按没有凭据的访客过闸。素材还是那条真任务里的
+`pose_899.png`、`court-lines-381…mp4`（H.264）和 `marked_silent.mp4`（mpeg4）。
+
+- **`hi_add_attachment`**：三个文件 **1.13 s** 一起放进去，回三行 `att:… · 文件名 · picture/clip …`；
+  id 和前两期一样——内容寻址应该如此。
+- **视图里嵌**：手写一个 `court-review/overlay.jsx`，三处 `<Attachment id="att:…" />`，
+  `hi_review_view` 渲染出来就是要的样子：图按自己的形状占一栏，两段片子各自带着封面，mpeg4 那段
+  放的是拷贝。图在 890 css px 的框里读的是预览，整页宽时读原件（`naturalWidth` 1920）。
+- **两个真的坑，都是这一趟才看见的**：
+  - `<video controls>` 自己会去要播放器图标（六个 `data:` SVG），还会在拿到头之后取消自己的预加载
+    请求（`net::ERR_ABORTED`、`canceled: true`）。原来 review 把它们当错误报，share check 把它们当
+    "伸到自己文件外面"——**只要视图里有片子就分享不出去**，review 也会说"没渲染好"。
+  - 请求原来只按 path 读，`https://elsewhere.example/views/mine/x.jpg` 会被当成"这个视图自己的文件"
+    放行。现在按页面加载的那个 origin 读，别人的机器整条 URL 报出来。
+- **分享一个视图**：scope 正好长出它画的那三个 id（`connect_src` 里连 `/playable`、`proxy.v1` 都在），
+  别的对象一个都不在。访客用 12369 打开：静态 HTML 里就有内容（`curl` 读得到标题、正文、三个
+  `figure`），脚本跑完 React 挂在上面，图升到原件、两段片子 `readyState` 4 / 30 s / 1920，
+  **控制台、CSP、加载全干净**。
+- **分享一个附件**：`/att/1b34d1fc630fb3d8`，页面就是宿主自己的查看器（黑底、片子就地放拷贝），
+  HTML 里是 `<video src=…/playable poster=…preview.v1>`，`og:image` 是预览的绝对地址。
+- **闸**：没被任何 share 提到的附件 401；`/api/tasks` 401；未列出的分享没 key 是 401，带 key 200，
+  之后子资源走 cookie；撤回之后页面和它带的附件都回到 401。
+- **又三个只有跑起来才会看见的**：分享页原来脚本一跑就白——渲染页从 `?module=` 读模块，而分享页
+  在自己的地址上，模块现在写在 `<meta>` 里；`connect-src` 原来写的是纯路径，浏览器整条忽略，等于
+  `'none'`；没有名字的核上，未列出分享的 key **一次都不打印**，等于发布了一个谁也打不开的东西。
+- **视图没有截图就没有 `og:image`**（只 review 过的视图本来就没有截图），发布时补一张。
+
+### 仍没看过的（第 3 期）
+
+- **真 worker 会不会这么用**：`hi_add_attachment` + `<Attachment>` 只有我手写的视图跑过，没有一个
+  有模型的 view-builder 按新的 `view-builder.md` 做过一版。
+- **真的发给人**：这台核没有名字，链接只在本机；隧道上的分享页、微信/飞书里的链接预览
+  （`og:image` 实际被抓）都没看过。
+- 第 1、2 期那几条仍然没看过的（Reaction 真的一轮里 `hi_show(att:)` / `hi_say(attach)`、
+  reception 真判 `asks_to_see`、HDR、长片转码、WKWebView 和手机宽度）。
+
