@@ -506,7 +506,12 @@ So the two wires split again, by what they carry rather than by who is talking:
 | | What | Size | Path |
 |---|---|---|---|
 | **control** | the conversation, SSE, view JSON, every API call | KB | the tunnel |
-| **content** | photos, video, audio, compiled views, the SPA bundle | MB to hundreds of MB | the community's cache, fetched directly |
+| **content** | photos, video, audio, attachments | MB to hundreds of MB | the community's cache, fetched directly |
+
+Compiled views, their pictures and the SPA bundle are content by size and still ride the
+tunnel — the pictures because they change in place today, the rest because a signed redirect
+cannot carry script — see [*What may be mirrored*](#what-may-be-mirrored-the-response-already-says)
+and Open 5.
 
 At 11 Mbps the control plane is free; it was never the problem. All of the problem is that
 content shares the pipe with it.
@@ -523,6 +528,13 @@ The bucket may be emptied at any moment with nothing lost. It is not storage and
 ever only there. Eviction is not a failure mode — it returns an object to the state every
 object starts in, and the next request puts it back.
 
+**Its lifecycle rule empties it continually, and that is the eviction a core can see**: the
+rule's length comes with the core's credentials and the core stops vouching for an object
+before the rule reaches it. **Emptying it by hand means replacing it.** A new bucket is a new
+target, and a core stops redirecting into the old one the first time it is asked for anything
+after its hour-long write key runs out — it re-asks for its keys then, on a read as much as on
+a write. Emptied in place, the edge would answer for objects the core still believes are there.
+
 ### What may be mirrored: the response already says
 
 Not a list of directories. A directory list is a thing to maintain, it goes stale as the
@@ -536,22 +548,35 @@ never change**, and every route that serves such bytes already declares it:
 
 | Route | Declares | Mirrored |
 |---|---|---|
-| `/api/media/{ref}` | `private, max-age=31536000, immutable` | yes — for signal refs. It also answers `drive/…` refs with the same header, and a drive file is edited in place, so that half of the claim is false; [showing.md](showing.md#what-this-deletes) takes those refs off this route |
-| `/api/attachments/*` | same | yes — content-addressed by construction, and uploaded at placement ([showing.md](showing.md#serving)) |
-| `/views/_compiled/*`, `/views/_shots/*` | same | yes |
-| `/assets/*` | same | yes |
+| `/api/media/{ref}`, a signal's own blob | `private, max-age=31536000, immutable` | yes |
+| `/api/media/{ref}`, the keepsake a faded day left | `private, max-age=31536000` | no — the ref named the original first |
+| `/api/attachments/*` | `private, max-age=31536000, immutable` | yes — content-addressed by construction, and uploaded at placement ([showing.md](showing.md#serving)) |
+| `/views/_shots/*` | `private, max-age=31536000` | no — a picture is healed in place when an older renderer left the wrong shape, re-rendered after pruning, and `ref/` is re-taken on a clock and told apart only by `?v=`. [showing.md](showing.md) makes a view's picture a derivation keyed by what it pictures |
+| `/views/_compiled/*` | `private, max-age=31536000, immutable` | no — script |
+| `/assets/*` | `private, max-age=31536000, immutable` | pictures and fonts only |
 | `/views/*` (source) | `no-store` | no |
 | `/api/drive/file/*` | `no-cache` | no — revalidated, never assumed |
-| `/api/people/faces/*` | `private, max-age=86400` | no — a TTL, not immutability |
+| `/api/people/{subject}/{modality}/{stem}` | `private, max-age=86400` | no — a TTL, not immutability |
+
+`/api/media` does not answer `drive/…` refs: a drive file is edited in place, so no header it
+could carry there would be both useful and true, and [showing.md](showing.md#what-this-deletes)
+takes those refs off the route.
 
 **So the rule is: a response marked `immutable` may be mirrored, and nothing else may.**
+
+**`immutable` vouches for the path, not the URL**, because the path is what the cache is
+keyed on. A route that is re-taken in place and told apart by a query string is immutable
+as a URL — a browser can keep each stamped version forever — and must still not say it.
+The same goes for a route that answers one path with two sets of bytes over its life, which
+is what a faded day does to its refs.
 
 **This is a correctness rule, not a privacy one, and it must not be read as a security
 measure** — the drive holds plaintext secrets and is excluded, but that is a consequence, not
 the reason. Someone who reads this as a defence will eventually notice that a core already
 trusts the community with everything it relays, conclude the rule is redundant, and delete it.
 What breaks then is cache coherence: an object wrongly marked immutable goes **permanently
-stale with no revalidation path**, because there is no ETag anywhere in this server to fall
+stale**. The only check left behind it is the length the core uploaded (below), which catches
+a change of size and nothing else, because there is no ETag anywhere in this server to fall
 back on.
 
 The asymmetry is what makes it opt-in. Forgetting to mark a new route `immutable` costs
@@ -561,7 +586,27 @@ already asks for.
 
 **Consequently `immutable` is now load-bearing in a way it was not.** It used to govern a
 browser cache; it now decides what leaves the machine. A test belongs on it: every path
-declaring `immutable` must be content-addressed or timestamp-addressed.
+declaring `immutable` must be content-addressed or timestamp-addressed, and every case on
+those same routes that is neither must be shown not to declare it.
+
+**A backstop, not a second rule: the core checks the length it uploaded against the length
+it would serve, at every redirect.** The route runs before the redirect is decided (see
+below), so the whole object's length is in hand for free — the body's for a `200`,
+`Content-Range`'s for a `206`. A mismatch is the one failure this design can have, caught:
+the path is logged and never mirrored again, because the edge may still hold the old bytes
+under that key and a re-upload would not reach them. The cure is still at the route.
+
+**Two narrower conditions ride on top, and both are about being served from another origin,
+not about the bytes.**
+
+- **The content type cannot resolve anything against its own URL** — pictures, sound, video,
+  fonts, PDF. The redirect changes the URL a response is read from and the signature lives in
+  its query, so a module's `import "./chunk.js"` or a stylesheet's `url(./font.woff2)` would
+  resolve beside it at the edge *without* a signature and be refused. Script, style and markup
+  stay on the tunnel however immutable they are. The list is an allow-list, so a type nobody
+  thought about fails towards "served from here".
+- **The path is plain ASCII** (`[A-Za-z0-9._~/-]`), so the path the edge hashes is, byte for
+  byte, the path the core signed. Anything else is served from here.
 
 ### The key is the request path
 
@@ -581,10 +626,38 @@ Nothing in a view changes. The URL a view emits is the core's own path, as it is
 there is nothing to rebase and no repeat of the prefix class of bug — `<img src>`, CSS
 `url()`, `<a href>` and `new Audio()` all keep working because none of them were ever touched.
 
-    GET /api/media/{ref}          ← unchanged, off-box, carries the cookie
+    GET /api/media/{ref}          ← unchanged, relayed, carries the cookie
       → cookie invalid            → 401, as today
-      → object is in the cache    → 302 to the signed URL, Cache-Control: private, max-age=TTL
-      → object is not             → serve the bytes, as today, and enqueue the upload
+      → the route answers         → as today; then, if it is immutable and mirrorable:
+          → object is in the cache    → drop the body, 302 to the signed URL,
+                                        Cache-Control: private, max-age=TTL
+          → object is not             → send the bytes, and enqueue the upload
+
+**Only a relayed request is redirected.** The cache exists to take content off the tunnel;
+a request that arrived on a public bind or over the home network has no tunnel to relieve,
+and a phone on the same Wi-Fi would be sent from a local link to a remote edge. The tunnel
+marks what it routes in, and nothing else is ever redirected.
+
+**The route runs first, and that is what makes the redirect safe.** It costs a `stat` and an
+open, and it means the core has checked, at the moment of redirecting, that the object still
+exists, still calls itself immutable, and is still the length it uploaded. A file deleted here
+stops being redirected to at once; one that faded to a keepsake stops claiming immutability
+and is forgotten on its next request.
+
+**The core knows what is in the cache from its own record, not by asking the bucket.** One row
+per request path — the bucket and prefix it went under, its length, when — in a file of its
+own beside `config.db`, as disposable as the bucket it describes: deleting it loses nothing,
+and every object goes back to the second branch. A row stops vouching one signature validity
+and a day before the bucket's lifecycle rule would expire the object — a redirect issued at the
+last moment can still be followed for one validity, and the day covers however the bucket
+rounds its expiry — so a redirect never names one that is gone. The lifecycle's length arrives
+with the credentials, so the two cannot disagree. A new bucket
+or a renamed handle reads as "not mirrored" without anything being cleared.
+
+**The edge answers every object with `Access-Control-Allow-Origin: *`.** A font, and a picture
+a view reads back through a canvas, are fetched in CORS mode, and after a cross-origin redirect
+their `Origin` is `null`. Nothing is exposed by it: the signature is the access, and the header
+only lets a page that already holds one read what it fetched.
 
 **The second branch is a degradation, not an error.** An object that has not been mirrored is
 exactly as slow as it is today and no slower, so there is no flag day, no migration script and
@@ -593,7 +666,11 @@ bucket configured simply takes that branch forever — the same code, correct in
 deployments.
 
 The redirect is browser-cacheable, so its round trip is paid once per object per device rather
-than once per render.
+than once per render. **One path signs to one URL for hours at a time** — the signing time is
+rounded down to a quarter of the signature's validity — because the browser keys the object
+itself under the whole signed URL, and a fresh signature per redirect would be a fresh
+download of something it already has. The redirect lives half the validity, so one replayed
+from the browser cache at the end of its life still names a URL with a quarter left to run.
 
 ### Uploading: a queue, with that second branch as its backstop
 
@@ -601,6 +678,17 @@ than once per render.
 background worker uploads at low priority, when the uplink is otherwise idle. Those bytes have
 to cross the uplink either way, and the only question is whether someone is watching a screen
 while they do.
+
+**What is written because someone will look at it is enqueued as it is written** — a file a
+person handed over, and an attachment at placement ([showing.md](showing.md#serving)). **What is written because the core perceived it waits
+for its first look** — a camera still, a mic clip. Mirroring ahead is a bet that someone will
+look, paid in uplink; a thing handed over is looked at, usually from the device that handed it
+over, and a perception frame mostly never is.
+
+The uploader fetches each object through the core's own router, as a loopback request, and
+puts exactly that response in the bucket — `Content-Type` and `Cache-Control` included. There
+is no second way of finding a file on disk to keep in agreement with the first, which is the
+key-is-the-request-path decision paying out again.
 
 The lazy branch is the safety net, not the mechanism: it catches an object that predates the
 feature, or whose upload failed, or that was asked for while the queue was still behind. It
@@ -621,6 +709,15 @@ neither is whatever periodically cuts that connection.
 |---|---|---|---|---|
 | **write** | upload to the bucket | the core | `<handle>/*` | ~1 hour, refreshed |
 | **read** | sign the URL the redirect points at | the core | the whole domain | long-lived |
+
+Both arrive in one answer to `POST <community>/api/cache/credential {handle}`, presented with
+the account's token for a handle the account owns — the same check the tunnel makes, because
+the prefix a core may write is the name it answers to. With them come the bucket, the edge's
+address and signature validity, and the bucket's lifecycle. A core asks only when it has
+something to upload, or once its write key has run out and something is asked for — never on
+a clock — and keeps nothing of it on disk. **A refusal
+withdraws both halves**: the core stops redirecting, not only uploading, so declining to mint
+is a revocation in fact and not just in name.
 
 The write credential is minted by the broker against the core's existing account token, scoped
 by policy to that handle's prefix. No long-lived storage key is ever on a person's machine, a
@@ -645,6 +742,10 @@ latency. The loan expires on the second user, not on a date.
 | **The key is the request path, not the disk path** | What is cached is a response. Deriving the key from the URL means no translation table, and a core may write wherever it likes |
 | **The view's URL does not change** | The redirect keeps authorization at the core and the signature invisible to everything above it. A view that had to know about a second origin is the prefix bug rebuilt |
 | **The unmirrored branch is today's behaviour** | Migration with no flag day, and a failure shape of "this one is as slow as last week" rather than a broken image |
+| **Only a relayed request is redirected** | The tunnel is the bottleneck this exists for. A LAN or public-bind client has none, and would be sent from a local link to a remote edge |
+| **The route runs before the redirect is decided** | A `stat` buys a redirect that is never to a deleted, faded or changed object — and the length check that backs up `immutable` |
+| **Script and style are never redirected** | The signature is in the query and relative references do not carry it. An allow-list of types that resolve nothing, so a new type fails towards the tunnel |
+| **Enqueue at write what will be looked at; wait for the first look for what was perceived** | Uploading ahead is a bet paid in uplink. A handed-over file is looked at; a camera frame mostly is not |
 
 ### Open
 
@@ -653,18 +754,29 @@ latency. The loan expires on the second user, not on a date.
    the bytes it saves. That number has to be measured, not chosen, and the rule must skip
    *small* objects: a rule that skips large ones would silently exclude exactly the files this
    whole section exists for.
-3. **The drive is not mirrored**, because it is mutable in place. It now *revalidates* rather
+3. **The drive is not mirrored**, because it is mutable in place — and generated images and
+   video land there (`drive/generated/<day>/`), so they are the largest objects this excludes. It now *revalidates* rather
    than refetching — `no-cache` plus the file service's `Last-Modified`, so an unchanged
    picture costs a `304` — which closes the part of this that hurt most. What is still open is
    the validator: `Last-Modified` cannot tell two writes inside one second apart, and an
    `ETag` exists nowhere in this server to fall back on.
 4. **Deleting must reach the cache.** A core that forgets something has not forgotten it while
-   a mirrored copy answers. Either deletion propagates to the bucket and purges the edge, or
-   the bucket's lifetime bounds how long it can lag. Immutability makes a stale copy *correct*,
-   which is precisely why this one needs saying: nothing else in the design will notice.
+   a mirrored copy answers. Half of this is closed by running the route before redirecting: a
+   deleted or faded object is never redirected to again, so a copy answers only to a signature
+   already issued — at most one validity period — and is stored until the lifecycle expires it.
+   What is open is the storage half: whether forgetting should also delete the object and purge
+   the edge, or whether the lifecycle bounding it is enough. Immutability makes a stale copy
+   *correct*, which is precisely why this one needs saying: nothing else in the design will
+   notice.
 5. **Whether `/assets/*` needs a signature at all.** It is byte-identical for every core and
    is not anyone's personal data, so it could be one shared public copy — a different question
-   from the rest of this section, and the one with the largest effect on the cold path.
+   from the rest of this section, and the one with the largest effect on the cold path. **The
+   signed path cannot carry it at all**, which narrows the question: the bundle is script and
+   style whose chunks import one another by relative path, and a relative import from a URL
+   signed in its query arrives at the edge unsigned. So it is a public, path-addressed copy
+   uploaded once per release, or it stays on the tunnel. The same constraint holds compiled
+   views off the cache today, though each is a single module whose imports resolve through the
+   page's import map — whether that survives being loaded from another origin is unverified.
 
 **One decision elsewhere inverts because of this.** `VIEW_PRELOAD_SPECIFIERS` excludes
 `motion/react` deliberately, reasoning that preloading 183 kB would "trade a round trip for

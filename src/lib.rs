@@ -515,6 +515,11 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         tokio::spawn(async move { foundation::tunnel::start(&data_dir, router).await });
     }
 
+    // Mirror immutable bytes into the community's cache, so a relayed request for
+    // one can be sent there instead of down the tunnel. Idle — nothing is asked of
+    // the community — until a write or a relayed request gives it something to do.
+    foundation::mirror::start(&config.data_dir, router.clone());
+
     // Record the bound port so the native Settings "Sign in" button and the
     // account-link handlers can build the loopback callback URL (not a secret).
     let _ = foundation::credentials::set_setting(

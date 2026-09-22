@@ -205,6 +205,9 @@ async fn ingest_field(
     drop(blob);
 
     let reff = media::signal_ref(Channel::File, ts, &rel);
+    // Something handed over is something that gets looked at, usually from the
+    // device that handed it over: have it in the community's cache before then.
+    crate::foundation::mirror::enqueue(&format!("/api/media/{reff}"));
 
     crate::foundation::channel_log::inbound(Channel::File, name);
 
@@ -405,6 +408,7 @@ pub(crate) async fn receive_screenshot(
         .await
         .map_err(|e| format!("store file: {e}"))?;
     let reff = media::signal_ref(Channel::File, ts, &rel);
+    crate::foundation::mirror::enqueue(&format!("/api/media/{reff}"));
 
     crate::foundation::channel_log::inbound(Channel::File, &name);
 

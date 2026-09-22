@@ -851,6 +851,12 @@ pub fn build(
         None => router,
     };
 
+    // The mirror, just inside the gate: a request reaches it only once it is
+    // authorized, and it decides after the route has answered — a relayed request
+    // for an immutable picture that is already in the community's cache gets a
+    // redirect there instead of the bytes. See [`crate::foundation::mirror`].
+    let router = router.layer(axum::middleware::from_fn(crate::foundation::mirror::layer));
+
     // The gate, outside every route including the appearance router and the
     // owner sign-in mount: an off-box request is answered only with a credential.
     // Loopback passes untouched, which is why `make dev`, the curl journeys, the

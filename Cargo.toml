@@ -126,6 +126,11 @@ sha2 = "0.10"
 # distribution goal. Only app-managed config lives here; the agent's own data
 # (memory journal, `.env`, claude-config) stays on the filesystem.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# The mirror signs its own requests to the bucket (HMAC-SHA1, COS's scheme) and
+# its own edge URLs (MD5, EdgeOne's token auth type A). See foundation/mirror.
+hmac = "0.12"
+sha1 = "0.10"
+md-5 = "0.10"
 
 # macOS effector capabilities (input actuation + window capture). `core-graphics`
 # gives CGEvent (synthesize mouse/keyboard input) and CGWindowList (enumerate

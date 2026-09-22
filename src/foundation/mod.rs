@@ -33,6 +33,7 @@ pub mod energy_history;
 pub mod energy_state;
 pub mod machine_id;
 pub mod mcp;
+pub mod mirror;
 pub mod models;
 pub mod observatory;
 pub mod pcm;

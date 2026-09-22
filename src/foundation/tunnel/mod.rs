@@ -50,6 +50,13 @@ use crate::foundation::surfaces::{Acceptor, accepted_on};
 const REDIAL_MIN: Duration = Duration::from_secs(2);
 const REDIAL_MAX: Duration = Duration::from_secs(60);
 
+/// Marks a request as routed in over the tunnel — the one fact the mirror needs
+/// that [`Acceptor`] does not carry. Both a public bind and the tunnel are off-box;
+/// only the tunnel runs through an 11 Mbps relay, so only a request that took it
+/// is worth sending to the cache instead. See [`crate::foundation::mirror`].
+#[derive(Debug, Clone, Copy)]
+pub struct Relayed;
+
 /// Hold a tunnel open for `handle`, redialing forever.
 ///
 /// Returns immediately, handing back the [`tokio::task::AbortHandle`] for the
@@ -61,7 +68,7 @@ pub fn spawn(
     handle: String,
 ) -> tokio::task::AbortHandle {
     let task = tokio::spawn(async move {
-        let router = accepted_on(router, Acceptor::OffBox);
+        let router = accepted_on(router, Acceptor::OffBox).layer(axum::Extension(Relayed));
         let mut backoff = REDIAL_MIN;
         loop {
             match hold(&data_dir, &router, &handle).await {
