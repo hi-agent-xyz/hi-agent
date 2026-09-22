@@ -55,8 +55,7 @@ const api = {
     return response.json();
   },
   // The account behind one row, read when somebody opens it. The list carries a row's
-  // identity, its clocks and one line; the prose, the whole timeline and the resolved files
-  // are here, and they are the bulk — on one live store the ledger's rows are ~150 KB and the
+  // identity, its clocks and one line; the whole timeline is here, and it is the bulk — on one live store the ledger's rows are ~150 KB and the
   // records behind them 2.1 MB. A board polls the first every few seconds and asks for the
   // second when a person actually wants to read one.
   record: (subject) =>
@@ -841,20 +840,6 @@ function Detail({ task, busy, onStatus, onClose, onReplied, focus = null }) {
   const live = liveMoment(task);
   // One worry, not five — see `concernMeta`.
   const concern = concernMeta(task);
-  // A record spells its artifacts in inline code — *"the completed report is
-  // `inspection-report.md` in this task directory"* — and that was a pointer the one
-  // person reading it could not follow. The server says which of those names are really
-  // on disk; this turns each one into the file itself, wherever the record says it.
-  const linkFile = useCallback(
-    (token) =>
-      (task.files || []).some((file) => file.path === token)
-        ? `/api/tasks/${encodeURIComponent(task.subject)}/files/${token
-            .split("/")
-            .map(encodeURIComponent)
-            .join("/")}`
-        : null,
-    [task.subject, task.files],
-  );
   // Newest first. The file appends, because that is what a writer with a shell can do
   // safely; a reader catching up wants the opposite order.
   const moments = [...(task.timeline || [])].reverse();
@@ -980,7 +965,7 @@ function Detail({ task, busy, onStatus, onClose, onReplied, focus = null }) {
                     </span>
                     {!life && (
                       <span className="hi-tasks__moment-text">
-                        {inline(moment.text, `m${index}`, linkFile)}
+                        {inline(moment.text, `m${index}`)}
                       </span>
                     )}
                     <Carried items={moment.attached} onOpen={(item) => openCarried(item, moment.text)} />
@@ -1745,7 +1730,7 @@ function linked(text, keyBase) {
 // actually has, so a name the record wrote becomes the file it names. It is given the token
 // verbatim and answers `null` for everything else, which is nearly everything — these bodies
 // spell `hi_say`, `status_since` and a SHA-256 the same way they spell a filename.
-function inline(text, keyBase, link) {
+function inline(text, keyBase) {
   const out = [];
   let i = 0;
   for (const part of String(text).split(INLINE)) {
@@ -1754,17 +1739,12 @@ function inline(text, keyBase, link) {
     if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
       out.push(<strong key={key}>{linked(part.slice(2, -2), key)}</strong>);
     } else if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
-      const token = part.slice(1, -1);
-      const href = link ? link(token) : null;
-      out.push(
-        href ? (
-          <a key={key} className="hi-tasks__file" href={href} target="_blank" rel="noreferrer">
-            <code>{token}</code>
-          </a>
-        ) : (
-          <code key={key}>{token}</code>
-        ),
-      );
+      // A file name in a line is a *name*, not a link. The panel used to resolve each one
+      // against a listing the server derived from this same prose and link the ones that
+      // happened to be on disk — a second index of the folder, drawn from what somebody
+      // wrote about it. What a reader can open is what the line carried
+      // (`docs/arch/showing.md`): the attachments under it.
+      out.push(<code key={key}>{part.slice(1, -1)}</code>);
     } else if (part.length > 2 && part.startsWith("*") && part.endsWith("*")) {
       out.push(<em key={key}>{linked(part.slice(1, -1), key)}</em>);
     } else {
@@ -2617,20 +2597,6 @@ const CSS = `
     line-height: 1.6;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-
-  /* A name the record wrote that turned out to be a file it has. It stays typographically
-     the code span it was — the sentence is unchanged — and only gains the underline that
-     says it opens. */
-  .hi-tasks__file {
-    color: inherit;
-    text-decoration: underline;
-    text-decoration-color: var(--accent-2);
-    text-underline-offset: 2px;
-  }
-
-  .hi-tasks__file:hover code {
-    color: var(--accent-2);
   }
 
   /* What a line carries, under its sentence: the tile shape Home draws, smaller, and fitted

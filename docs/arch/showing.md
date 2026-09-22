@@ -122,7 +122,7 @@ picture put on three lines is one attachment and three claims about it, which is
 
 **There is no catalogue of attachments.** Each surface's own record is the index of what is on it
 — the rule [`views/`](data.md#views) already keeps (*nothing indexes it*) and the one
-`referenced_files` states (*not a listing of the folder*). An attachment no record places is
+`referenced_files` stated while it existed (*not a listing of the folder*). An attachment no record places is
 drawn nowhere, which is correct: nobody decided it was worth looking at.
 
 **Presentation is one set of components** — a preview and a viewer — that every place draws

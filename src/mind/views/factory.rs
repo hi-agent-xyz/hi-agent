@@ -517,21 +517,23 @@ mod tests {
             tasks.contains("{inline(moment.text,"),
             "the timeline must render through the inline vocabulary, or its URLs stay text"
         );
-        // **Two link sites, and each one's anchor text *is* its destination.** That is the
-        // property, and the count is only how it is held: a third site cannot appear without
-        // failing here and having to say why it is self-naming too. The autolinker's anchor
-        // is `{url}` going to `{url}`. The file link's is the code span the record wrote
-        // going to that same token under the task's own folder — `linkFile` builds the path
-        // out of the token and the server only answers for a regular file that resolves
-        // inside the folder, so the worst it can do is open the file it plainly names.
+        // **One link site, and its anchor text *is* its destination.** That is the property,
+        // and the count is only how it is held: a second site cannot appear without failing
+        // here and having to say why it is self-naming too. The autolinker's anchor is
+        // `{url}` going to `{url}`.
         //
-        // What neither can be is a *label*: text a session wrote naming one destination and
+        // What it cannot be is a *label*: text a session wrote naming one destination and
         // going to another. That is the reach being refused, and it needs a link site whose
         // text and href are separate bindings — which is what this count notices.
+        //
+        // There were two, until the second went with `referenced_files`: a file name in a
+        // line was resolved against a listing the server derived from that same prose and
+        // linked if it happened to be on disk. What a reader can open now is what the line
+        // itself carried (`docs/arch/showing.md`).
         assert_eq!(
             tasks.matches("href={").count(),
-            2,
-            "a link in this panel is the autolinker's or the record's own filename, and nothing else"
+            1,
+            "a link in this panel is the autolinker's, and nothing else"
         );
         // Compared with the whitespace removed, because the property is the *binding* and
         // not the layout. This previously pinned `{url}\n      </a>` — six spaces of JSX
@@ -544,12 +546,8 @@ mod tests {
             "the autolinker's anchor text is the same binding as its destination"
         );
         assert!(
-            tasks.contains("href={href}") && tasks.contains("<code>{token}</code>"),
-            "the file link's anchor text is the token it opens"
-        );
-        assert!(
-            tasks.contains("/files/${token"),
-            "and its destination is built from that token, never from a separate binding"
+            !tasks.contains("/api/tasks/${encodeURIComponent(task.subject)}/files/"),
+            "the panel builds no link into a task's folder: that route is gone"
         );
     }
 

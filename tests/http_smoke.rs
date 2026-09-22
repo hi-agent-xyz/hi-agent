@@ -523,13 +523,13 @@ async fn a_posted_window_frame_becomes_the_review_viewport() {
     assert_eq!(view_render::stage_frame().width, 1728, "the last good frame survives");
 }
 
-/// The file a task's own record names is reachable from the panel that renders it.
-///
-/// The gap this closes was on screen: a `done` row whose account read *"the completed
-/// report is `inspection-report.md` in this task directory"*, with no way to open it from
-/// the panel — the reader was told where the answer lived and handed nothing.
+/// A row is the list's shape and a record is the record's, and **neither offers a file the
+/// record merely spells**. The panel used to link every inline-code token that turned out to
+/// be a real file in the task's folder, which is a listing derived from prose; what carries
+/// something a person can open is the line that hands it over
+/// (`hi_task_note(attach)`, `docs/arch/showing.md`).
 #[tokio::test]
-async fn a_task_serves_the_files_its_own_record_names() {
+async fn a_row_carries_no_record_and_a_record_names_no_files() {
     let (base, dir, _seams) = spawn_server().await;
     let client = reqwest::Client::new();
 
@@ -595,9 +595,7 @@ async fn a_task_serves_the_files_its_own_record_names() {
             .expect("the line that names it")
             .contains("inspection-report.md")
     );
-    assert_eq!(record["files"][0]["path"], "inspection-report.md");
-    assert_eq!(record["files"][0]["bytes"], 15);
-    assert_eq!(record["files"].as_array().expect("files").len(), 1, "only what it names");
+    assert!(record.get("files").is_none(), "a record lists no files either: {record}");
 
     // A subject with no record behind it is a 404 and not an invented task: the list may
     // stand a malformed row up so somebody can go and fix it, a direct read may not.
@@ -608,6 +606,8 @@ async fn a_task_serves_the_files_its_own_record_names() {
         .expect("send");
     assert_eq!(resp.status(), 404);
 
+    // The route that served them is gone with the list: a task's folder is the work's, and
+    // what reaches a reader is what a line handed over.
     let resp = client
         .get(format!(
             "{base}/api/tasks/{}/files/inspection-report.md",
@@ -616,27 +616,7 @@ async fn a_task_serves_the_files_its_own_record_names() {
         .send()
         .await
         .expect("send");
-    assert_eq!(resp.status(), 200);
-    assert_eq!(
-        resp.headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok()),
-        Some("text/plain; charset=utf-8"),
-        "a report opens in the browser rather than downloading",
-    );
-    assert_eq!(resp.text().await.expect("body"), "# /data at 90%\n");
-
-    // Every segment of that path came from an agent, so the route refuses to leave the
-    // folder however the request is spelled.
-    let resp = client
-        .get(format!(
-            "{base}/api/tasks/{}/files/..%2F..%2F..%2Fconfig.db",
-            task.subject
-        ))
-        .send()
-        .await
-        .expect("send");
-    assert_eq!(resp.status(), 404, "no climbing out of the task's folder");
+    assert_eq!(resp.status(), 404, "no route serves a task's folder any more");
 }
 
 /// **The ledger answers when it moves, not when asked again.**

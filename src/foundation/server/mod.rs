@@ -747,7 +747,6 @@ pub fn build(
         // read plus exactly the writes it can honestly honour — no stop verb for workers,
         // no edits at all for tools or drive, because neither is accumulated state a
         // person can fix from a screen.
-        .route("/api/tasks/{subject}/files/{*path}", get(tasks::get_task_file))
         .route("/api/activity", get(activity::get_activity))
         .route("/api/drive/file/{*path}", get(drive::get_drive_file))
         // The review *reads*, on their own `Router` so the compressor below can be scoped to
