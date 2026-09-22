@@ -26,7 +26,11 @@ axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower = "0.5"
 # `compression-*` is scoped to the static surfaces (the embedded SPA and the view
 # workshop) — never `/api/*`, whose long-poll and SSE bodies must not be buffered.
-tower-http = { version = "0.6", features = ["trace", "compression-gzip", "compression-br"] }
+# `fs` is the file service behind `server::disk_file`: byte ranges, conditional
+# requests and a streaming body, on the media and drive routes only. The two
+# features never meet — a compressed `206` would carry a `Content-Range`
+# describing bytes that are not the ones in the body.
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "compression-br", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }

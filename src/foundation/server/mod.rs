@@ -26,6 +26,7 @@ pub mod audio;
 pub mod binder;
 pub mod channels;
 pub mod deliveries;
+pub mod disk_file;
 pub mod drive;
 pub mod duty;
 pub mod external_sessions;

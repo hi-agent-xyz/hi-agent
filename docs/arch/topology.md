@@ -652,9 +652,11 @@ latency. The loan expires on the second user, not on a date.
    the bytes it saves. That number has to be measured, not chosen, and the rule must skip
    *small* objects: a rule that skips large ones would silently exclude exactly the files this
    whole section exists for.
-3. **The drive is not mirrored** and stays slow. It is mutable in place, so it needs
-   revalidation — an ETag and a `304` — which is a different mechanism this server has nowhere
-   at all today.
+3. **The drive is not mirrored**, because it is mutable in place. It now *revalidates* rather
+   than refetching — `no-cache` plus the file service's `Last-Modified`, so an unchanged
+   picture costs a `304` — which closes the part of this that hurt most. What is still open is
+   the validator: `Last-Modified` cannot tell two writes inside one second apart, and an
+   `ETag` exists nowhere in this server to fall back on.
 4. **Deleting must reach the cache.** A core that forgets something has not forgotten it while
    a mirrored copy answers. Either deletion propagates to the bucket and purges the edge, or
    the bucket's lifetime bounds how long it can lag. Immutability makes a stale copy *correct*,

@@ -39,10 +39,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use axum::Json;
-use axum::body::Body;
-use axum::extract::{Path, Query, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
@@ -197,20 +195,34 @@ pub async fn get_drive(
 pub async fn get_drive_file(
     State(state): State<Arc<AppState>>,
     Path(path): Path<String>,
+    req: Request,
 ) -> Response {
     let Some(full) = resolve_in_drive(&state.data_dir, &path).await else {
         return (StatusCode::NOT_FOUND, "not found\n").into_response();
     };
-    let Ok(bytes) = tokio::fs::read(&full).await else {
-        return (StatusCode::NOT_FOUND, "not found\n").into_response();
-    };
-    let mut resp = Response::new(Body::from(bytes));
-    resp.headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type(&path)));
-    // Drive files are edited in place under a stable path, so a cached copy would go
-    // stale silently.
-    resp.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    resp
+    super::disk_file::serve(
+        req,
+        &full,
+        content_type(&path),
+        // **`no-cache`, not `no-store` — and the difference is the whole point.**
+        // A drive file is edited in place under a stable path, so a copy kept
+        // without asking would go stale silently; that is a real hazard and it is
+        // why this said `no-store`. But `no-store` forbids *keeping* the bytes,
+        // which made a drive view re-download every picture on every render, over
+        // the relay, forever. `no-cache` keeps them and revalidates every time:
+        // the file service answers `If-Modified-Since` against the file's mtime,
+        // so an unchanged picture costs a `304` and no bytes at all, and an edited
+        // one is refetched on the next look. The staleness the old header was
+        // protecting against cannot happen either way.
+        //
+        // A `Last-Modified` validator is second-best to an `ETag` — a file written
+        // twice inside one second is indistinguishable — but this server has no
+        // ETag anywhere to build on, and second-best revalidation beats none.
+        // `docs/arch/topology.md` § *Content* Open 3 carries the rest.
+        "no-cache",
+        "not found\n",
+    )
+    .await
 }
 
 /// A uniform JSON error body with a 400.

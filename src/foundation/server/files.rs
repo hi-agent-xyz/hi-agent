@@ -42,7 +42,7 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use axum::body::Bytes;
 use axum::extract::multipart::Field;
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{Multipart, Path, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Json;
@@ -320,33 +320,36 @@ pub(crate) async fn deliver_artifact(
 /// Read-only, and confined to what the ref grammar can express: `parse_ref` accepts
 /// `<channel>/<date>/<HH>/<MM>-<SS>.<ext>` and nothing else, so no path this route
 /// resolves can escape the media tree.
+/// **Served through [`disk_file`](super::disk_file), so this is the route that can
+/// carry a video.** A `<video>` opens by asking for `bytes=0-1` and will not start
+/// on a server that answers the whole file instead; that is what this used to do,
+/// having read every byte into memory first. Ranges, seeking, and a body that
+/// streams all arrive with the file service.
 pub async fn get_media(
     State(state): State<Arc<AppState>>,
     Path(reff): Path<String>,
+    req: Request,
 ) -> Response {
     let Some(path) = media::resolve_ref(&state.data_dir, &reff).await else {
         return (StatusCode::NOT_FOUND, "no such media").into_response();
-    };
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            tracing::warn!(reff = %reff, error = %err, "media read failed");
-            return (StatusCode::NOT_FOUND, "no such media").into_response();
-        }
     };
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    (
-        [
-            (header::CONTENT_TYPE, mime_for_ext(&ext)),
-            (header::CACHE_CONTROL, "private, max-age=31536000, immutable"),
-        ],
-        bytes,
+    super::disk_file::serve(
+        req,
+        &path,
+        mime_for_ext(&ext),
+        // Content-addressed by `<channel>/<date>/<HH>/<MM>-<SS>.<ext>`, so these
+        // bytes never change at this path — which is what lets a browser keep them
+        // forever, and what marks the response mirrorable at all. See
+        // `docs/arch/topology.md` § *Content*.
+        "private, max-age=31536000, immutable",
+        "no such media",
     )
-        .into_response()
+    .await
 }
 
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap
