@@ -223,6 +223,31 @@ pub fn stage_module_url(id: &str) -> String {
     format!("/api/attachments/{id}/{STAGE_SPEC}")
 }
 
+/// What a view is told about an attachment it embeds by id. Versioned and `immutable` for the
+/// reason the preview is: the id fixes the probe, and the spec fixes what is said about it.
+pub const ABOUT_SPEC: &str = "about.v1";
+
+/// Where [`about`] is served for `id`.
+pub fn about_url(id: &str) -> String {
+    format!("/api/attachments/{id}/{ABOUT_SPEC}")
+}
+
+/// The face's own description of one attachment — the `AttachmentItem` every surface draws it
+/// from (`appearance/web/src/core/attachments.tsx`), so the stage module that is handed it and
+/// the `<Attachment>` a view embeds that fetches it cannot describe the same object two ways.
+/// A clip's bytes are named by the route that says where its playable bytes are.
+pub fn about(id: &str, probe: &Probe) -> serde_json::Value {
+    serde_json::json!({
+        "ref": format!("{PREFIX}{id}"),
+        "kind": probe.kind.as_str(),
+        "url": if probe.kind == Kind::Clip { playable_url(id) } else { url(id) },
+        "preview": preview_url(id),
+        "width": probe.width,
+        "height": probe.height,
+        "durationMs": probe.duration_ms,
+    })
+}
+
 /// The bare id an `att:` ref names, or `None` for a view's ref. The stage and the trail carry an
 /// attachment under the ref it is named by everywhere, so the one thing that tells the two
 /// apart is the prefix.
@@ -240,15 +265,7 @@ pub fn ref_id(reference: &str) -> Option<&str> {
 /// § 1). The component is the host's; this only names which attachment it draws, and its bare
 /// imports resolve through the page's import map to the one shared instance, like every view's.
 pub fn stage_module(id: &str, probe: &Probe) -> String {
-    let item = serde_json::json!({
-        "ref": format!("{PREFIX}{id}"),
-        "kind": probe.kind.as_str(),
-        "url": if probe.kind == Kind::Clip { playable_url(id) } else { url(id) },
-        "preview": preview_url(id),
-        "width": probe.width,
-        "height": probe.height,
-        "durationMs": probe.duration_ms,
-    });
+    let item = about(id, probe);
     format!(
         "// One attachment on the stage (docs/arch/showing.md). Served by the host, never compiled.\n\
          import {{ jsx }} from \"react/jsx-runtime\";\n\
@@ -1118,6 +1135,12 @@ Input #0, mp3, from 'memo.mp3':
         assert!(module.contains("from \"@hi/core\"") && module.contains("AttachmentStage"), "{module}");
         assert!(module.contains(&format!("\"url\":\"/api/attachments/{}\"", placed.id)), "{module}");
         assert_eq!(stage_module_url(&placed.id), format!("/api/attachments/{}/stage.v1.mjs", placed.id));
+        // What a view that embeds it by id is told is the item the stage module was written from.
+        let about = about(&placed.id, &placed.probe);
+        assert!(module.contains(&about.to_string()), "{module}\n{about}");
+        assert_eq!(about["kind"], "picture");
+        assert_eq!((about["width"].as_u64(), about["height"].as_u64()), (Some(320), Some(180)));
+        assert_eq!(about_url(&placed.id), format!("/api/attachments/{}/about.v1", placed.id));
 
         assert_eq!(ref_id(&format!("att:{}", placed.id)), Some(placed.id.as_str()));
         assert_eq!(ref_id(&placed.id), None, "a bare id is not a ref: a view's ref could look like one");

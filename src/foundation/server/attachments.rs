@@ -45,6 +45,9 @@ pub async fn get_derived(
     if spec == attachments::STAGE_SPEC {
         return stage_module(&state, &id).await;
     }
+    if spec == attachments::ABOUT_SPEC {
+        return about(&state, &id).await;
+    }
     if spec == "playable" {
         return playable(&state, &id).await;
     }
@@ -93,6 +96,18 @@ async fn playable(state: &AppState, id: &str) -> Response {
     }
     headers.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     resp
+}
+
+/// `GET /api/attachments/{id}/about.v1` — what an attachment is, for a view that embeds it by
+/// id alone (`<Attachment id="att:…" />`). As immutable as the object: the id fixes the probe.
+async fn about(state: &AppState, id: &str) -> Response {
+    let (Some(id), Some(probe)) = (attachments::parse_id(id), attachments::probe(&state.data_dir, id).await)
+    else {
+        return (StatusCode::NOT_FOUND, "no such attachment").into_response();
+    };
+    let mut resp = axum::Json(attachments::about(id, &probe)).into_response();
+    resp.headers_mut().insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static(IMMUTABLE));
+    nosniff(resp)
 }
 
 /// The module the stage mounts for an attachment ([`attachments::stage_module`]). Generated,

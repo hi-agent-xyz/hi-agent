@@ -554,6 +554,33 @@ fn task_note_tool() -> Value {
     )
 }
 
+/// `hi_add_attachment` — put a picture or a clip in the attachment store and learn its id,
+/// without saying anything about it anywhere.
+///
+/// **For a view, which is the one placement that is not a line** (`docs/arch/showing.md` §
+/// *Inside a view*): the view's own source is the record of what it shows, so a builder embeds
+/// `<Attachment id="att:…" />` instead of copying the file into its folder or writing a player
+/// around it. Nothing is drawn by this call — an attachment no record places is drawn nowhere.
+fn add_attachment_tool() -> Value {
+    tool(
+        "hi_add_attachment",
+        "Put pictures or clips you have into the attachment store and get back each one's          `att:` id, to embed in a view as `<Attachment id=\"att:…\" />` (imported from          `@hi/core`) or to carry on a line later. The file is copied as it is now, so the id          keeps showing exactly this even after you overwrite your file. Nothing is shown to          anyone by this call: the view or the line that carries the id is what puts it in          front of them. To show a result on your task's record, `hi_task_note` with `attach`          does both at once.",
+        json!({
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "description": "Pictures (PNG, JPEG, WebP, GIF) or clips (MP4, MOV, WebM, MKV — one in a codec no browser plays gets a copy that does): absolute, or relative to your task's folder, the views folder or the data dir, in that order."
+                },
+            },
+            "required": ["paths"],
+        }),
+    )
+}
+
 fn task_set_tool() -> Value {
     tool(
         "hi_task_set",
@@ -705,6 +732,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             send_message_tool(),
             task_note_tool(),
             task_set_tool(),
+            add_attachment_tool(),
             view_verdict_tool(),
             review_view_tool(),
             share_view_tool(),
@@ -1715,6 +1743,13 @@ async fn dispatch_tool(
             return do_review_view(data_dir, subject.as_deref(), args).await;
         }
         "hi_share_view" => return do_share_view(data_dir, args).await,
+        "hi_add_attachment" => {
+            let served = slug
+                .as_ref()
+                .and_then(|id| registry::global().status(id))
+                .and_then(|status| status.subject);
+            return do_add_attachment(data_dir, served.as_deref(), args).await;
+        }
         "hi_view_verdict" => {
             let reviewer = slug.as_ref().map_or_else(|| "view-reviewer".to_owned(), |s| s.to_string());
             return do_view_verdict(data_dir, &reviewer, args).await;
@@ -2895,17 +2930,13 @@ async fn do_task_note(data_dir: &Path, writer: &str, served: Option<&str>, args:
 /// The files a `hi_task_note` call carries, copied in (`docs/arch/showing.md` § *On a task's
 /// record*). The answer is the sentence the caller reads when one cannot be attached.
 ///
-/// A path is read the way a stored path is (invariant 11, `docs/arch/arch.md`): absolute as
-/// given, `~/` against the home directory, and otherwise against the task's own folder —
-/// where `general.md` tells a worker its work lives — and then the data dir. An `att:` id is
-/// an attachment an earlier line already carries, put on this one as well.
+/// A relative path is read against the task's own folder first — where `general.md` tells a
+/// worker its work lives — and then the data dir.
 async fn attach_all(
     data_dir: &Path,
     subject: &str,
     args: &Value,
 ) -> Result<Vec<crate::foundation::attachments::Placed>, String> {
-    use crate::foundation::attachments::{self, Placed, Refusal};
-
     const MOST: usize = 4;
     let Some(list) = args.get("attach").filter(|v| !v.is_null()) else {
         return Ok(Vec::new());
@@ -2923,10 +2954,76 @@ async fn attach_all(
         crate::mind::memory::tasks::DIMENSION,
         subject,
     );
+    place_all(data_dir, &[folder, data_dir.to_path_buf()], items, "attach").await
+}
+
+/// `hi_add_attachment`: place each path and answer with the ids, one line each, in the shape
+/// `hi_task_note` answers with — `att:3f9a… · pose_899.png · picture 1920×1080`.
+async fn do_add_attachment(data_dir: &Path, served: Option<&str>, args: &Value) -> Value {
+    const MOST: usize = 20;
+    let Some(items) = args.get("paths").and_then(Value::as_array).filter(|a| !a.is_empty()) else {
+        return tool_error("hi_add_attachment takes `paths`, a list of the files to place");
+    };
+    if items.len() > MOST {
+        return tool_error(&format!("at most {MOST} at a time"));
+    }
+    let mut bases = Vec::new();
+    if let Some(subject) = served {
+        bases.push(crate::mind::memory::facets::subject_dir(
+            data_dir,
+            crate::mind::memory::tasks::DIMENSION,
+            subject,
+        ));
+    }
+    bases.push(data_dir.join("views"));
+    bases.push(data_dir.to_path_buf());
+    // One at a time, so a refusal part-way still answers with the ids already placed: they are
+    // in the store either way, and a caller told only "refused" would place them again.
+    let mut lines = Vec::new();
+    for item in items {
+        let raw = item.as_str().map(str::trim).unwrap_or_default();
+        match place_all(data_dir, &bases, std::slice::from_ref(item), "paths").await {
+            Ok(placed) => {
+                for p in placed {
+                    let name = std::path::Path::new(raw)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| raw.to_owned());
+                    lines.push(format!(
+                        "{}{} · {name} · {}",
+                        crate::foundation::attachments::PREFIX,
+                        p.id,
+                        p.probe.describe()
+                    ));
+                }
+            }
+            Err(why) if lines.is_empty() => return tool_error(&why),
+            Err(why) => {
+                return tool_error(&format!("{}\n\n`{raw}` was not placed: {why}", lines.join("\n")));
+            }
+        }
+    }
+    tool_ok(&lines.join("\n"))
+}
+
+/// Put each of `items` — a path, or the `att:` id of something already placed — in the store,
+/// once each, in order. Stops at the first that cannot be, with the sentence saying why, so
+/// nothing a caller was told was placed is missing.
+///
+/// A path is read the way a stored path is (invariant 11, `docs/arch/arch.md`): absolute as
+/// given, `~/` against the home directory, and otherwise against each of `bases` in turn.
+async fn place_all(
+    data_dir: &Path,
+    bases: &[std::path::PathBuf],
+    items: &[Value],
+    field: &str,
+) -> Result<Vec<crate::foundation::attachments::Placed>, String> {
+    use crate::foundation::attachments::{self, Placed, Refusal};
+
     let mut out: Vec<Placed> = Vec::new();
     for item in items {
         let Some(raw) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
-            return Err("each item in `attach` is a path or an att: id".to_owned());
+            return Err(format!("each item in `{field}` is a path or an att: id"));
         };
         let placed = if raw.starts_with(attachments::PREFIX) {
             let Some(id) = attachments::parse_id(raw) else {
@@ -2945,7 +3042,7 @@ async fn attach_all(
             } else if named.is_absolute() {
                 vec![named.to_owned()]
             } else {
-                vec![folder.join(named), data_dir.join(named)]
+                bases.iter().map(|base| base.join(named)).collect()
             };
             let mut found = None;
             for candidate in &candidates {
@@ -4489,6 +4586,33 @@ mod surface_tests {
         assert!(refused.to_string().contains("gone.png"), "{refused}");
         let task = tasks::read_task(dir.path(), "court-calibration").await.unwrap().unwrap();
         assert_eq!(task.timeline.len(), before, "the sentence does not go on without its picture");
+    }
+
+    /// `hi_add_attachment` answers with an id a view can embed, from the views folder as readily
+    /// as from a task's, and says which were placed when one of them cannot be.
+    #[tokio::test]
+    async fn attaching_for_a_view_answers_with_ids_and_writes_no_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("views/court-review");
+        std::fs::create_dir_all(&project).unwrap();
+        image::RgbImage::from_pixel(160, 90, image::Rgb([200, 60, 40])).save(project.join("overlay.png")).unwrap();
+
+        let said = do_add_attachment(dir.path(), None, &json!({ "paths": ["court-review/overlay.png"] })).await;
+        assert_eq!(said["isError"], false, "{said}");
+        let answer = said["content"][0]["text"].as_str().unwrap();
+        assert!(answer.starts_with("att:") && answer.contains("overlay.png · picture 160×90"), "{answer}");
+        let id = &answer[4..20];
+        assert!(crate::foundation::attachments::object(dir.path(), id).await.is_some(), "the copy is filed");
+
+        let partly = do_add_attachment(
+            dir.path(),
+            None,
+            &json!({ "paths": ["court-review/overlay.png", "court-review/gone.png"] }),
+        )
+        .await;
+        assert_eq!(partly["isError"], true);
+        let text = partly["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(id) && text.contains("gone.png"), "the one placed is still named: {text}");
     }
 
     /// **Invariant 13: everything a person reads leaves through a seam** (`docs/arch/arch.md`).

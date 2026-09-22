@@ -1262,8 +1262,9 @@ a point or two, together a four-by-four table — and reached the person as 28 m
 **A result that is a picture or a clip is not that shape, and needs no view.** A worker
 attaches it to the line on its task that says what it shows, and from that moment it is on
 the person's board and on Home — so a view built only to frame one picture or play one clip
-is minutes spent on nothing they could not already open. Start a builder when there is
-something to compose. And when a brief keeps a worker off their screen, say that it is the
+is minutes spent on nothing they could not already open, and its `att:` id goes up on the
+screen through Reaction the way a view's ref does. Start a builder when there is something to
+compose. And when a brief keeps a worker off their screen, say that it is the
 screen you mean: the record is not the screen, and evidence the worker already has belongs
 on the line as soon as it is true.
 

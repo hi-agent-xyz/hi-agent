@@ -52,8 +52,12 @@ It is not two tasks. Measured on the live store (2026-09-22, read-only):
   by the agent. Evidence that exists only where it is pushed misses where they actually look.
 - Eight views are nothing but a frame around one medium, three of them for tasks and all three
   since 09-20, written by general workers as `fetch → blob → <video>` because `/views/*` serves
-  mp4 as `text/plain`. Beside the views sit **3,136 images and 12 videos, 1.3 GB, copied in**
-  so that views could reference them.
+  mp4 as `text/plain`. Beside the views sit **4,672 pictures and clips, 1.37 GB** (measured
+  2026-09-23). Only 1,543 of them (170 MB) are byte-identical to a file elsewhere in the data
+  dir, and 1,448 of *those* are browser-profile caches workers created inside the views tree;
+  the other 3,129 were made or downloaded there, so the cost is not duplicate bytes but
+  results with no address of their own, each reachable only through the one page built
+  around it.
 
 **The cause is structural, not a lapse.** From a file to anything the person can see there is
 exactly one road — build a view, render it with `hi_review_view`, which writes `made` on the
@@ -110,7 +114,7 @@ by the place it was put, in the record that place already keeps:
 | handed over in the conversation | a message | the journal | `hi_say(…, attach)` | Reaction | push |
 | on a share | a page somebody else opens | `views/_shares` | `hi_share` | worker | outward |
 | sent through an app | Feishu, WeChat, mail | the task's `delivered` line | the app's own tool, then `hi_task_note(delivered, attach)` | worker | outward |
-| inside a view | wherever the view is drawn | the view's source | `<Attachment>` | view builder | — |
+| inside a view | wherever the view is drawn | the view's source | `hi_add_attachment`, then `<Attachment>` | view builder | — |
 
 **Context lives on the placement, content lives on the attachment.** The caption is the line or
 the message that carries it; the time, the task and the session are the placement's. One
@@ -245,7 +249,7 @@ mark before pictures existed; the preview replaces it when it lands.
 ### Serving
 
     GET /api/attachments/{id}                 the bytes
-    GET /api/attachments/{id}/{spec}          a derivation (preview, proxy)
+    GET /api/attachments/{id}/{spec}          a derivation (preview, proxy), or what it is (about)
 
 - `Cache-Control: private, max-age=31536000, immutable`, `ETag` the digest — both true forever,
   and the second is what makes a revalidation cost nothing.
@@ -363,11 +367,26 @@ a sentence about one.
     import { Attachment } from "@hi/core";   <Attachment id="att:3f9a…" />
 
 A view embeds an attachment through the same component the host draws it with, instead of
-downloading an image into its folder or writing a `fetch → blob → <video>` player. The ball
+keeping the file in its folder or writing a `fetch → blob → <video>` player. The ball
 tracker's player view is what that looked like; it is the part of the view builder's job that
-stops existing. 44 of the 125 composed views embed a picture or a clip, and the 1.3 GB copied
-beside views is what embedding costs when each view keeps its own copy; an attachment is one copy
-however many views show it, and a shared view's scope names exactly the ones it uses.
+stops existing. 44 of the 125 composed views embed a picture or a clip; an attachment is one
+copy however many views show it, has an address a line, a message and a share can carry as
+well, and a shared view's scope names exactly the ones it uses.
+
+**The view names the id and nothing else.** `<Attachment>` asks
+`/api/attachments/<id>/about.v1` what the thing is — the same description the stage module is
+written from, so the two cannot disagree — and draws a picture at its own shape from its
+preview until its box is wider than the preview is sharp, then from the original; a clip
+through the playable route, so a clip no browser decodes plays from its copy here too. An id
+the core does not hold is said on the page and reported as an error, which a review reads.
+
+**An id without a line is `hi_add_attachment`**, a worker's verb that copies files into the
+store and answers with their ids, writing nothing anywhere: the placement is the `<Attachment>`
+in the view's source, which is its record. It is the builder's only way to an id for a file no
+line carries, and it is not a way to show anything — an id nobody embeds or carries is drawn
+nowhere. **A view's own material stays its own**: a photograph found
+for a poster is part of the composition, not a result, and lives in the view's folder as it
+always has. What moves is the work's evidence, the thing the view is *about*.
 
 ## Presentation
 

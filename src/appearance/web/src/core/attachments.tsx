@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -103,7 +103,17 @@ const GIVE_UP_MS = 20 * 60_000;
  * shows the frame it has and asks again — so the stage, the panel and the conversation need no
  * notion of *ready*: the one URL answers, eventually, with bytes a browser plays.
  */
-export function AttachmentClip({ item, autoPlay }: { item: AttachmentItem; autoPlay: boolean }) {
+export function AttachmentClip({
+  item,
+  autoPlay,
+  fill = false,
+}: {
+  item: AttachmentItem;
+  autoPlay: boolean;
+  /** Take the width it is given, as a clip laid out inside a view does, rather than fitting
+   * whole inside a box that is already sized. */
+  fill?: boolean;
+}) {
   const [attempt, setAttempt] = useState(0);
   const [waiting, setWaiting] = useState(false);
   const since = useRef(Date.now());
@@ -117,7 +127,7 @@ export function AttachmentClip({ item, autoPlay }: { item: AttachmentItem; autoP
     return () => clearTimeout(timer);
   }, [waiting]);
   return (
-    <span className="relative inline-flex max-h-full max-w-full">
+    <span className={fill ? "relative flex w-full" : "relative inline-flex max-h-full max-w-full"}>
       {/* `playsInline` for the reason the conversation's own videos carry it: without it an
           iPhone takes a playing video to its own fullscreen player. */}
       <video
@@ -129,7 +139,13 @@ export function AttachmentClip({ item, autoPlay }: { item: AttachmentItem; autoP
         playsInline
         preload="metadata"
         onError={() => setWaiting(true)}
-        className="block max-h-full max-w-full rounded-md bg-black object-contain"
+        width={fill ? (item.width ?? undefined) : undefined}
+        height={fill ? (item.height ?? undefined) : undefined}
+        className={
+          fill
+            ? "block h-auto w-full rounded-md bg-black object-contain"
+            : "block max-h-full max-w-full rounded-md bg-black object-contain"
+        }
       />
       {waiting && (
         <span className="pointer-events-none absolute inset-x-0 bottom-12 text-center text-xs font-semibold text-white/85">
@@ -229,5 +245,137 @@ export function AttachmentStage({ item }: { item: AttachmentItem }) {
     <div className="flex size-full items-center justify-center bg-black p-[max(16px,2vw)]">
       <Whole item={item} autoPlay={false} />
     </div>
+  );
+}
+
+/** What each attachment a page embeds is, asked once per id however many times it is drawn. The
+ * answer is `immutable` at the route, so the browser keeps it too. */
+const described = new Map<string, Promise<AttachmentItem | null>>();
+
+function describe(id: string): Promise<AttachmentItem | null> {
+  let known = described.get(id);
+  if (!known) {
+    known = fetch(`/api/attachments/${id}/about.v1`)
+      .then((r) => (r.ok ? (r.json() as Promise<AttachmentItem>) : null))
+      .catch(() => null);
+    described.set(id, known);
+  }
+  return known;
+}
+
+/** The long side a `preview.v1` is fitted to — `docs/arch/showing.md` § *Derivations*. */
+const PREVIEW_BOX = { width: 960, height: 540 };
+
+/**
+ * Which bytes a picture drawn `cssWidth` wide should load: the preview while it is sharp enough
+ * at this screen's density, the original once the box is wider than the preview is. A page
+ * that embeds twenty figures loads twenty tiles, not twenty originals; a picture laid across a
+ * whole frame loads the whole picture.
+ */
+export function pictureSource(item: AttachmentItem, cssWidth: number, density: number): string {
+  const original = item.url ?? item.preview ?? "";
+  if (!item.preview || !item.width || !item.height) return original;
+  const scale = Math.min(1, PREVIEW_BOX.width / item.width, PREVIEW_BOX.height / item.height);
+  return cssWidth * density <= item.width * scale ? item.preview : original;
+}
+
+/**
+ * An attachment inside a view: `<Attachment id="att:3f9a…" />`, drawn by the same components the
+ * host draws it with everywhere else (`docs/arch/showing.md` § *Inside a view*). The view names
+ * the id and nothing else — what the thing is, where its bytes are and whether a clip needs its
+ * playable copy are the host's to say.
+ *
+ * A picture takes the width its box gives it at its own shape, and opens whole in the viewer
+ * when pressed; a clip plays in place. The preview is drawn from the first frame, before the
+ * host has said which it is, so a page is never laid out around an empty box. An id this core
+ * does not hold is said in the page and reported as an error, so a review catches it before the
+ * person does.
+ */
+export function Attachment({
+  id,
+  caption,
+  className,
+  style,
+}: {
+  /** `att:<id>`, as the host answered when it was placed. */
+  id: string;
+  /** What it shows, for the viewer and for anyone who cannot see it. */
+  caption?: string;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const hex = id.trim().replace(/^att:/, "");
+  const valid = /^[0-9a-f]{16}$/.test(hex);
+  const [item, setItem] = useState<AttachmentItem | null | undefined>(undefined);
+  const [open, setOpen] = useState(false);
+  const [width, setWidth] = useState(0);
+  const box = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!valid) {
+      console.error(`<Attachment id="${id}"> — that is not an attachment id; use the att: id the host answered with`);
+      setItem(null);
+      return;
+    }
+    let alive = true;
+    describe(hex).then((found) => {
+      if (!alive) return;
+      if (!found) console.error(`<Attachment id="${id}"> — no such attachment on this agent`);
+      setItem(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [hex, valid, id]);
+
+  // Only ever grows: a picture that has loaded its original never goes back to the tile.
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const seen = new ResizeObserver(([entry]) => {
+      const w = entry?.contentRect.width ?? 0;
+      setWidth((was) => (w > was ? w : was));
+    });
+    seen.observe(el);
+    return () => seen.disconnect();
+  }, []);
+
+  const shape = item?.width && item?.height ? `${item.width} / ${item.height}` : undefined;
+  const density = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+
+  let body: ReactNode;
+  if (item === null) {
+    body = (
+      <span className="flex aspect-video w-full items-center justify-center rounded-md bg-muted p-3 text-center text-xs text-muted-foreground">
+        {valid ? `${id} is not on this agent` : `${id} is not an attachment id`}
+      </span>
+    );
+  } else if (item?.kind === "clip") {
+    body = <AttachmentClip item={item} autoPlay={false} fill />;
+  } else {
+    const src = item ? pictureSource(item, width, density) : `/api/attachments/${hex}/preview.v1`;
+    body = (
+      <img
+        src={src}
+        alt={caption ?? ""}
+        width={item?.width ?? undefined}
+        height={item?.height ?? undefined}
+        onClick={item ? () => setOpen(true) : undefined}
+        style={shape ? { aspectRatio: shape } : undefined}
+        className="block h-auto w-full cursor-zoom-in rounded-md object-contain"
+      />
+    );
+  }
+
+  return (
+    <figure
+      ref={box}
+      className={["m-0", className].filter(Boolean).join(" ")}
+      style={style}
+      data-attachment={valid ? `att:${hex}` : undefined}
+    >
+      {body}
+      {open && item && <AttachmentViewer item={item} caption={caption} onClose={() => setOpen(false)} />}
+    </figure>
   );
 }

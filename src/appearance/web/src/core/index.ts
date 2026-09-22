@@ -17,7 +17,9 @@ export {
   AttachmentViewer,
   AttachmentStage,
   AttachmentClip,
+  Attachment,
   attachmentOf,
+  pictureSource,
   clock,
   type AttachmentItem,
 } from "./attachments";
