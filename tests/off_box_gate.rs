@@ -299,14 +299,23 @@ async fn a_cookie_alone_cannot_drive_a_state_change_from_another_site() {
 /// them *shared*.
 #[tokio::test]
 async fn nothing_behind_the_gate_is_cacheable_by_a_shared_cache() {
-    let (_loopback, off_box, _dir, seams) = spawn().await;
+    let (_loopback, off_box, dir, seams) = spawn().await;
     let client = reqwest::Client::new();
     let (_id, token) = seams.state.surfaces.mint("the test").expect("mint");
 
+    // A compiled view has to exist to be answered with its header at all. This
+    // asked for `/generated/_compiled/…` until 2026-09-22 — a route that does not
+    // exist, so the shared-view fallback answered and the views route was never on
+    // trial.
+    let compiled = dir.path().join("views/_compiled/anything.mjs");
+    std::fs::create_dir_all(compiled.parent().unwrap()).unwrap();
+    std::fs::write(&compiled, "export default 1").unwrap();
+
     // Everything static enough to carry a long TTL, which is the whole risk set:
     // the host bundle, a non-hashed embedded file, and the agent's own compiled
-    // views. A 404 is fine — the header is what is on trial, not the body.
-    for path in ["/assets/index.js", "/vite.svg", "/generated/_compiled/anything.mjs", "/api/tools"] {
+    // views. A 404 is fine for the embedded two — the header is what is on trial,
+    // not the body.
+    for path in ["/assets/index.js", "/vite.svg", "/views/_compiled/anything.mjs", "/api/tools"] {
         let res = client
             .get(format!("{off_box}{path}"))
             .bearer_auth(&token)

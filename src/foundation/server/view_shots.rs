@@ -167,8 +167,8 @@ pub fn url_for(data_dir: &Path, module_url: &str) -> Option<String> {
 
 /// The URL of a named surface's current picture, or `None` while none has been taken.
 ///
-/// **Carries the file's mtime.** The `_shots/` route serves a year-long immutable
-/// `Cache-Control`, which is right for a content-addressed artifact and wrong for a
+/// **Carries the file's mtime.** The `_shots/` route serves a year-long
+/// `Cache-Control`, which is right for a picture that is never re-taken and wrong for a
 /// path that is re-taken in place: without the stamp the browser would go on showing
 /// this morning's board out of its own cache no matter how often the server re-renders
 /// it. The stamp changes on every re-take, so each picture is still cached forever —

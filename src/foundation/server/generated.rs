@@ -57,9 +57,8 @@ pub async fn views_file(
     let mut resp = Response::new(Body::from(bytes));
     resp.headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static(views_content_type(&path)));
-    // Compiled modules under _compiled/ and their thumbnails under _shots/ are
-    // content-addressed → immutable; source files change in place, so they must not be
-    // cached.
+    // Compiled modules under _compiled/ are content-addressed → immutable; source files
+    // change in place, so they must not be cached.
     //
     // **`private`, because this is the agent's own code, written for one person.**
     // Content-addressing makes a module safe to cache *forever*; it does not make
@@ -67,8 +66,18 @@ pub async fn views_file(
     // store a view it only received because a credential checked out, and then
     // serve it to a request carrying none. Same reasoning, and the same fix, as
     // the embedded assets in `appearance::serve_embedded`.
-    let cache = if path.starts_with("_compiled/") || path.starts_with("_shots/") {
+    //
+    // **Their pictures under `_shots/` are kept a year but not called immutable**, because
+    // the bytes at a picture's path do change: a record shot an older renderer left in
+    // the wrong shape is healed in place, one pruned past the keep limit is rendered
+    // again with live data, and `_shots/ref/` is re-taken on a clock and told apart only
+    // by the `?v=<mtime>` its URL carries. `immutable` vouches for the *path* now,
+    // because the path is what a mirror of this response is keyed on
+    // (`docs/arch/topology.md` § *Content*).
+    let cache = if path.starts_with("_compiled/") {
         "private, max-age=31536000, immutable"
+    } else if path.starts_with("_shots/") {
+        "private, max-age=31536000"
     } else {
         "no-store"
     };

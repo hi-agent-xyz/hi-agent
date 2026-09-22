@@ -394,6 +394,13 @@ async fn nearest_keepsake(keep_dir: &Path, ts: DateTime<Utc>) -> Option<PathBuf>
     best.map(|(_, p)| p)
 }
 
+/// Is `path` — as [`resolve`] returned it — a keepsake rather than the original?
+/// A keepsake is what a faded day left under the original's ref, so the same ref
+/// has served two sets of bytes; nothing may call the second immutable.
+pub fn is_keepsake(path: &Path) -> bool {
+    path.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "keep")
+}
+
 /// Parse a keepsake filename into its `[start, end]` seconds-of-day span. An
 /// instant (`091623.jpg`) is a zero-width span; a clip (`091610-091618.wav`) the
 /// two endpoints. `None` if the stem isn't `HHMMSS[-HHMMSS]`.

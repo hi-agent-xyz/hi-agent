@@ -338,18 +338,25 @@ pub async fn get_media(
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    super::disk_file::serve(
-        req,
-        &path,
-        mime_for_ext(&ext),
-        // Content-addressed by `<channel>/<date>/<HH>/<MM>-<SS>.<ext>`, so these
-        // bytes never change at this path — which is what lets a browser keep them
-        // forever, and what marks the response mirrorable at all. See
-        // `docs/arch/topology.md` § *Content*.
-        "private, max-age=31536000, immutable",
-        "no such media",
-    )
-    .await
+    // **Only one of the three things a ref can name is immutable at its path**, and
+    // `immutable` is now what decides whether bytes leave this machine at all, so it
+    // is said of that one alone (`docs/arch/topology.md` § *Content*):
+    //
+    // - a signal's own blob, addressed `<channel>/<date>/<HH>/<MM>-<SS>.<ext>` and
+    //   written once — immutable, kept forever by a browser, mirrorable;
+    // - the keepsake a faded day left in its place — the same ref named the
+    //   original first, so these are the *second* bytes at this path. Kept a year
+    //   (the URL will not name anything else again), never called immutable;
+    // - a drive file, which is edited in place — revalidated every time, exactly as
+    //   `/api/drive/file` serves the same bytes.
+    let cache = if reff.trim().starts_with(media::DRIVE_PREFIX) {
+        "private, no-cache"
+    } else if media::is_keepsake(&path) {
+        "private, max-age=31536000"
+    } else {
+        "private, max-age=31536000, immutable"
+    };
+    super::disk_file::serve(req, &path, mime_for_ext(&ext), cache, "no such media").await
 }
 
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap
@@ -397,6 +404,7 @@ pub(crate) async fn receive_screenshot(
     let rel = media::store_blob(&state.data_dir, Channel::File, ts, MediaSlot::InputOneOff, "png", bytes)
         .await
         .map_err(|e| format!("store file: {e}"))?;
+    let reff = media::signal_ref(Channel::File, ts, &rel);
 
     crate::foundation::channel_log::inbound(Channel::File, &name);
 
@@ -404,7 +412,7 @@ pub(crate) async fn receive_screenshot(
         state,
         ts,
         FileRef {
-            reff: media::signal_ref(Channel::File, ts, &rel),
+            reff,
             mime: "image/png".to_string(),
             name,
             bytes: Some(bytes.len() as u64),
