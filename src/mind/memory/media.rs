@@ -273,16 +273,20 @@ pub fn ext_of(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Best-effort `Content-Type` by extension, for the trees whose bytes a surface serves
-/// verbatim — `drive/` and a task's own folder. Unknown types download rather than render.
+/// **The one table**: `Content-Type` by extension, for every route in this server that
+/// serves bytes — the drive, a task's folder, an attachment, the views tree, the build's
+/// own assets, a person's clip. Unknown types download rather than render.
 ///
-/// It lives beside the path guards for the same reason they do: both trees are served by
-/// more than one route now, and a table that gets a new extension in one copy and not the
-/// other is a file that renders in one place and downloads in another.
+/// There were five of these, and each divergence was a file that rendered in one place
+/// and downloaded in another: `/api/media` served a `.mov` or an `.m4a` as
+/// `application/octet-stream`, and `/views/*` served an `.mp4` as `text/plain`, which is
+/// why the views built to play a clip fetched it as a blob instead of naming it in a
+/// `<video src>`. A table that gains an extension in one copy and not the others is that
+/// failure waiting to happen again, so there is one copy.
 pub fn content_type(path: &str) -> &'static str {
     match ext_of(path).as_str() {
         "pdf" => "application/pdf",
-        "md" | "markdown" | "txt" | "log" | "csv" | "jsonl" => "text/plain; charset=utf-8",
+        "md" | "markdown" | "txt" | "log" | "csv" | "jsonl" | "jsx" | "tsx" => "text/plain; charset=utf-8",
         "json" => "application/json; charset=utf-8",
         "html" | "htm" => "text/html; charset=utf-8",
         "css" => "text/css; charset=utf-8",
@@ -301,6 +305,16 @@ pub fn content_type(path: &str) -> &'static str {
         "m4a" => "audio/mp4",
         "ogg" | "opus" => "audio/ogg",
         "zip" => "application/zip",
+        // What the build ships: the SPA's own assets go out by this table too.
+        "webmanifest" => "application/manifest+json",
+        "map" => "application/json; charset=utf-8",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "wasm" => "application/wasm",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",

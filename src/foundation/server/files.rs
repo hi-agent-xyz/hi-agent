@@ -96,27 +96,6 @@ impl UploadResult {
 
 /// A filesystem-safe lowercase extension for the stored blob, from the original
 /// filename when it has one, else mapped from the mime, else `bin`.
-/// The inverse of [`ext_for`], for serving bytes back. Deliberately a short list
-/// rather than a mime database: the only extensions this route can ever see are the
-/// ones `ext_for` wrote, and anything it doesn't recognize is safest served as
-/// opaque bytes the browser will not try to execute.
-fn mime_for_ext(ext: &str) -> &'static str {
-    match ext {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "heic" => "image/heic",
-        "pdf" => "application/pdf",
-        "txt" | "md" => "text/plain; charset=utf-8",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        _ => "application/octet-stream",
-    }
-}
-
 fn ext_for(name: &str, mime: &str) -> String {
     if let Some(dot) = name.rfind('.') {
         let raw = &name[dot + 1..];
@@ -336,11 +315,6 @@ pub async fn get_media(
     let Some(path) = media::resolve_ref(&state.data_dir, &reff).await else {
         return (StatusCode::NOT_FOUND, "no such media").into_response();
     };
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
     // **Only one of the three things a ref can name is immutable at its path**, and
     // `immutable` is now what decides whether bytes leave this machine at all, so it
     // is said of that one alone (`docs/arch/topology.md` § *Content*):
@@ -359,7 +333,7 @@ pub async fn get_media(
     } else {
         "private, max-age=31536000, immutable"
     };
-    super::disk_file::serve(req, &path, mime_for_ext(&ext), cache, "no such media").await
+    super::disk_file::serve(req, &path, media::content_type(&path.to_string_lossy()), cache, "no such media").await
 }
 
 /// Receive a screenshot pushed with the "come and see this" gesture (double-tap

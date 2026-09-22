@@ -470,7 +470,14 @@ In the phase that replaces each, never after it:
   that hands something over carries it. **What it costs:** inline-code file names on records
   written before this stop being links; the text stays, as retired mechanisms' text always
   does.
-- Three of the four type tables; the whole-file reads in every byte route.
+- Four of the five type tables — a `.mov` and an `.m4a` went out of `/api/media` as
+  `application/octet-stream`, and `/views/*` served an `.mp4` as `text/plain`, which is why
+  the views built to play a clip fetched it as a blob instead of naming it in a `<video src>`.
+- The whole-file reads in every byte route but one. **`/views/*` keeps its**, deliberately:
+  it is the one route inside a compression layer, and a compressed `206` would carry a
+  `Content-Range` describing bytes that are not the bytes in the body. What it serves is
+  compiled modules — tens of kilobytes of text where compression is the win and a range is
+  never asked for.
 - A fresh Chromium per render, and the four paths that launch one.
 - `DefaultHasher` as a content key, in `_compiled/` and `_shots/` both: a compiled module
   is named by the first 16 hex digits of its source's SHA-256, and a view's picture takes its

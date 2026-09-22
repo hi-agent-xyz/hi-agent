@@ -21,21 +21,6 @@ fn safe_views_path(path: &str) -> bool {
     !path.is_empty() && path.split('/').all(|seg| !seg.is_empty() && seg != "..")
 }
 
-/// Best-effort `Content-Type` by extension for files in the views folder.
-fn views_content_type(path: &str) -> &'static str {
-    match path.rsplit('.').next().unwrap_or("") {
-        "mjs" | "js" => "application/javascript; charset=utf-8",
-        "json" => "application/json; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        _ => "text/plain; charset=utf-8",
-    }
-}
-
 /// `GET /views/<path>` — serve a file from the agent's views folder: a compiled view
 /// module from `_compiled/`, an image, or any artifact a build sub-agent wrote.
 /// The views tree is single-user and trusted, so it's served whole; the only guard is
@@ -56,7 +41,7 @@ pub async fn views_file(
 
     let mut resp = Response::new(Body::from(bytes));
     resp.headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(views_content_type(&path)));
+        .insert(CONTENT_TYPE, HeaderValue::from_static(crate::mind::memory::media::content_type(&path)));
     // Compiled modules under _compiled/ are content-addressed → immutable; source files
     // change in place, so they must not be cached.
     //
@@ -99,10 +84,16 @@ mod tests {
         assert!(!safe_views_path(""), "empty");
     }
 
+    /// The views tree reads the one table, which is how a clip in a view's folder stopped
+    /// being `text/plain` — the reason eight views fetched their own video as a blob
+    /// instead of naming it in a `<video src>`.
     #[test]
-    fn views_content_types() {
-        assert_eq!(views_content_type("x.mjs"), "application/javascript; charset=utf-8");
-        assert_eq!(views_content_type("a/b/photo.png"), "image/png");
-        assert_eq!(views_content_type("v.jsx"), "text/plain; charset=utf-8");
+    fn a_views_file_is_typed_by_the_one_table() {
+        use crate::mind::memory::media::content_type;
+        assert_eq!(content_type("x.mjs"), "application/javascript; charset=utf-8");
+        assert_eq!(content_type("a/b/photo.png"), "image/png");
+        assert_eq!(content_type("v.jsx"), "text/plain; charset=utf-8");
+        assert_eq!(content_type("court/out/marked.mp4"), "video/mp4");
+        assert_eq!(content_type("notes.bin"), "application/octet-stream");
     }
 }

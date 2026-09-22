@@ -26,11 +26,9 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
-use axum::body::Body;
+use axum::extract::{Path, Request, State};
 use axum::{Extension, Json};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
@@ -143,9 +141,22 @@ pub async fn get_people(
 
 /// `GET /api/people/{subject}/{modality}/{stem}` — serve one face crop or voice clip.
 /// `subject` is slugged (it may be an arbitrary name); `modality`/`stem` are checked.
+/// A person's clip by the one table, with one rule over it: **a voice turn is audio**,
+/// whatever container it is in. `people_vectors` writes voice as `.mp4`/`.m4a`, and the
+/// table names an `.mp4` `video/mp4` — right for a clip on a task's line, wrong for
+/// something a `<audio>` element is handed.
+fn clip_type(path: &std::path::Path) -> &'static str {
+    let named = crate::mind::memory::media::content_type(&path.to_string_lossy());
+    match named {
+        "video/mp4" => "audio/mp4",
+        other => other,
+    }
+}
+
 pub async fn get_clip(
     State(state): State<Arc<AppState>>,
     Path((subject, modality, stem)): Path<(String, String, String)>,
+    req: Request,
 ) -> Response {
     let Some(modality) = parse_modality(&modality) else {
         return (StatusCode::NOT_FOUND, "no such modality\n").into_response();
@@ -158,18 +169,13 @@ pub async fn get_clip(
         return (StatusCode::NOT_FOUND, "bad subject\n").into_response();
     }
     match people_vectors::clip_media_path(&state.data_dir, &subj, modality, &stem).await {
-        Ok(Some(path)) => match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let ct = media_content_type(&path);
-                let mut resp = Response::new(Body::from(bytes));
-                resp.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(ct));
-                // Content-addressed by uuid stem → immutable.
-                resp.headers_mut()
-                    .insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=86400"));
-                resp
-            }
-            Err(_) => (StatusCode::NOT_FOUND, "not found\n").into_response(),
-        },
+        // Streamed and seekable like every other route that serves a file: a voice turn is
+        // played, and a player asks for the bytes it is about to need.
+        // Content-addressed by uuid stem → a long cache.
+        Ok(Some(path)) => {
+            super::disk_file::serve(req, &path, clip_type(&path), "private, max-age=86400", "not found\n")
+                .await
+        }
         Ok(None) => (StatusCode::NOT_FOUND, "not found\n").into_response(),
         Err(e) => err(&e.to_string()),
     }
@@ -185,44 +191,25 @@ pub async fn get_clip(
 pub async fn get_avatar(
     State(state): State<Arc<AppState>>,
     Path(subject): Path<String>,
+    req: Request,
 ) -> Response {
     let subj = facets::slug(&subject);
     if subj.is_empty() {
         return (StatusCode::NOT_FOUND, "bad subject\n").into_response();
     }
     match people_vectors::avatar_media(&state.data_dir, &subj).await {
-        Ok(Some(path)) => match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let ct = media_content_type(&path);
-                let mut resp = Response::new(Body::from(bytes));
-                resp.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(ct));
-                // Which crop stands for a person changes only when the store does —
-                // a rename, a merge, an eject — so a short cache spares one request
-                // per message group without pinning a stale face for long.
-                resp.headers_mut()
-                    .insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=300"));
-                resp
-            }
-            Err(_) => (StatusCode::NOT_FOUND, "not found\n").into_response(),
-        },
+        // Which crop stands for a person changes only when the store does — a rename, a
+        // merge, an eject — so a short cache spares one request per message group without
+        // pinning a stale face for long.
+        Ok(Some(path)) => {
+            super::disk_file::serve(req, &path, clip_type(&path), "private, max-age=300", "not found\n")
+                .await
+        }
         Ok(None) => (StatusCode::NOT_FOUND, "no face for this person\n").into_response(),
         Err(e) => err(&e.to_string()),
     }
 }
 
-/// Content-type for a clip by extension (face crops, voice turns).
-fn media_content_type(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "webp" => "image/webp",
-        "wav" => "audio/wav",
-        "mp3" => "audio/mpeg",
-        "m4a" | "mp4" => "audio/mp4",
-        "ogg" | "opus" => "audio/ogg",
-        _ => "application/octet-stream",
-    }
-}
 
 // ── name / rename (+ merge) ─────────────────────────────────────────────────────
 
