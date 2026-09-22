@@ -353,33 +353,19 @@ fn detail(problems: &[String]) -> String {
 /// [`crate::runtime::browser`]), loads the standalone host page, waits for it to
 /// settle, and captures.
 pub async fn render(req: &RenderRequest) -> anyhow::Result<RenderedView> {
-    let browser = crate::runtime::browser::ensure()
-        .await
-        .context("resolving a headless browser for the view renderer")?;
-    tracing::debug!(
-        browser = %browser.bin.display(),
-        origin = browser.origin,
-        url = %req.page_url(),
-        "rendering a view",
-    );
-
-    let capture = chrome_headless::capture(
-        &browser,
-        &chrome_headless::PageRequest {
-            url: req.page_url(),
-            width: req.viewport.width,
-            height: req.viewport.height,
-            scale: req.viewport.scale,
-            settle_timeout: DEFAULT_SETTLE,
-            // A review is the owner looking at their own view, so it renders with
-            // everything this core would give it and needs no page back.
-            blocked: req.blocked.clone(),
-            allowed: req.allowed.clone(),
-            want_html: req.want_html,
-        },
-    )
-    .await
-    .context("rendering the view in the headless browser")?;
+    let page = chrome_headless::PageRequest {
+        url: req.page_url(),
+        width: req.viewport.width,
+        height: req.viewport.height,
+        scale: req.viewport.scale,
+        settle_timeout: DEFAULT_SETTLE,
+        // A review is the owner looking at their own view, so it renders with
+        // everything this core would give it and needs no page back.
+        blocked: req.blocked.clone(),
+        allowed: req.allowed.clone(),
+        want_html: req.want_html,
+    };
+    let capture = in_the_one_browser(&page).await.context("rendering the view in the headless browser")?;
 
     let blank = is_blank_png(&capture.png);
     Ok(RenderedView {
@@ -391,6 +377,93 @@ pub async fn render(req: &RenderRequest) -> anyhow::Result<RenderedView> {
         html: capture.html,
         requested: capture.requested,
     })
+}
+
+/// The browser this process holds open, and the queue in front of it.
+///
+/// **One at a time, in one process** (`docs/arch/showing.md` § *Derivations*). The lock is
+/// the queue: a render waits for the one before it rather than starting a second Chrome. What
+/// it saves is a process launch — a view builder's run renders eight times at the median, and
+/// every one of them used to pay for one.
+static BROWSER: std::sync::OnceLock<tokio::sync::Mutex<Option<chrome_headless::Running>>> =
+    std::sync::OnceLock::new();
+
+/// How long the browser is kept after the last render before it is closed. Held open, a
+/// headless Chrome is tens of megabytes of a desktop machine's memory for something nobody
+/// may ask for again today; relaunched, it costs one process start. Neither is a wake: this
+/// sleeps a task, and the only thing it can do is close a child.
+const IDLE_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// When the last render finished, as a unix timestamp in milliseconds.
+static LAST_RENDER: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn held() -> &'static tokio::sync::Mutex<Option<chrome_headless::Running>> {
+    BROWSER.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+/// Render `page` in the one browser, starting it if it is not there and replacing it if it
+/// will not answer.
+///
+/// **A browser that fails a render is replaced, once.** A long-lived process can be wedged by
+/// the render before this one — a page that never settled, a socket that went away — and a
+/// second failure in a fresh process is a real failure, not a stale one.
+async fn in_the_one_browser(
+    page: &chrome_headless::PageRequest,
+) -> anyhow::Result<chrome_headless::PageCapture> {
+    let resolved = crate::runtime::browser::ensure()
+        .await
+        .context("resolving a headless browser for the view renderer")?;
+    let mut holding = held().lock().await;
+
+    for attempt in 0..2 {
+        if holding.as_mut().is_none_or(|running| !running.alive()) {
+            if let Some(dead) = holding.take() {
+                dead.close().await;
+            }
+            tracing::debug!(
+                browser = %resolved.bin.display(),
+                origin = resolved.origin,
+                "starting the headless browser",
+            );
+            *holding = Some(chrome_headless::launch(&resolved).await?);
+        }
+        let running = holding.as_ref().expect("just started");
+        tracing::debug!(url = %page.url, attempt, "rendering a view");
+        match chrome_headless::capture_in(running, page).await {
+            Ok(capture) => {
+                LAST_RENDER.store(chrono::Utc::now().timestamp_millis(), std::sync::atomic::Ordering::Relaxed);
+                drop(holding);
+                close_when_idle();
+                return Ok(capture);
+            }
+            Err(error) if attempt == 0 => {
+                tracing::warn!(%error, "the held browser did not render; replacing it");
+                if let Some(wedged) = holding.take() {
+                    wedged.close().await;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the loop returns on the second attempt")
+}
+
+/// Close the browser once nothing has rendered for [`IDLE_AFTER`]. One task per render, and
+/// every one of them but the last finds a newer render and leaves it alone.
+fn close_when_idle() {
+    tokio::spawn(async move {
+        tokio::time::sleep(IDLE_AFTER).await;
+        let since = chrono::Utc::now().timestamp_millis()
+            - LAST_RENDER.load(std::sync::atomic::Ordering::Relaxed);
+        if since < IDLE_AFTER.as_millis() as i64 {
+            return;
+        }
+        let mut holding = held().lock().await;
+        if let Some(idle) = holding.take() {
+            tracing::debug!("closing the headless browser after {}s idle", IDLE_AFTER.as_secs());
+            idle.close().await;
+        }
+    });
 }
 
 /// True when every pixel of `png` is (near enough) the same colour — a screenshot

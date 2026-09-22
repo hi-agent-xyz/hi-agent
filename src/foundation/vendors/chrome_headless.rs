@@ -33,8 +33,10 @@
 //! guessing with a sleep, so a slow view is not captured half-painted and a
 //! fast one is not waited on for nothing.
 //!
-//! Stateless free functions taking their config explicitly, per the vendor-layer
-//! contract in [`super`].
+//! Free functions taking their config explicitly, per the vendor-layer contract in
+//! [`super`] — with one thing held: the browser process itself ([`Running`]), which the
+//! capability above keeps and hands back in. One process, one render at a time, a fresh tab
+//! each time.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -105,13 +107,46 @@ pub struct PageCapture {
     pub requested: Vec<String>,
 }
 
-/// Launch `browser`, load `req.url`, wait for the page to settle, and return the
-/// screenshot together with everything that went wrong while doing it.
+/// A browser process this core is holding open, and the one thing every render goes
+/// through.
 ///
-/// The browser is a fresh process with a throwaway profile per render: no shared
-/// cache, no leftover state, nothing to reset between reviews. It is always
-/// killed and its profile removed, including on the error paths.
-pub async fn capture(browser: &ResolvedBrowser, req: &PageRequest) -> anyhow::Result<PageCapture> {
+/// **One process, not one per render.** Four paths render views — a review in two skins, a
+/// show's picture, a ref's picture, a share's check — and each used to launch Chrome, wait
+/// for it to publish a port, drive it once and kill it. That is the cost that grows with use:
+/// a view builder's run renders eight times at the median. What a render needs to be free of
+/// the last one is a fresh *tab*, which is what [`capture_in`] opens and closes; the profile
+/// they share is a cache, and everything in it that a render reads twice is either immutable
+/// or served `no-store`.
+pub struct Running {
+    child: Child,
+    profile: std::path::PathBuf,
+    port: u16,
+    /// The browser's own stderr, as far as it fits — the only diagnostic there is when it
+    /// will not start, and still the one worth quoting when a render fails.
+    log: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+impl Running {
+    /// Whether the process is still there. Asked before a render, because a browser that
+    /// died between two of them must be replaced rather than dialled.
+    pub fn alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// What the browser said on its way to wherever it is now.
+    pub fn stderr_tail(&self) -> String {
+        self.log.lock().ok().map(|b| b.trim().to_string()).unwrap_or_default()
+    }
+
+    /// Kill it and take its profile with it.
+    pub async fn close(mut self) {
+        let _ = self.child.kill().await;
+        let _ = tokio::fs::remove_dir_all(&self.profile).await;
+    }
+}
+
+/// Start a browser and wait until it will answer.
+pub async fn launch(browser: &ResolvedBrowser) -> anyhow::Result<Running> {
     let profile = std::env::temp_dir().join(format!(
         "hi-render-{}-{}",
         std::process::id(),
@@ -144,15 +179,69 @@ pub async fn capture(browser: &ResolvedBrowser, req: &PageRequest) -> anyhow::Re
         });
     }
 
-    let result = drive(&profile, req).await;
+    let port = match wait_for_devtools_port(&profile).await {
+        Ok(port) => port,
+        Err(e) => {
+            let tail = log.lock().ok().map(|b| b.trim().to_string()).unwrap_or_default();
+            let _ = child.kill().await;
+            let _ = tokio::fs::remove_dir_all(&profile).await;
+            return Err(if tail.is_empty() { e } else { e.context(format!("browser stderr:\n{tail}")) });
+        }
+    };
+    Ok(Running { child, profile, port, log })
+}
 
-    let _ = child.kill().await;
-    let _ = tokio::fs::remove_dir_all(&profile).await;
-
+/// Load `req.url` in a **fresh tab** of `running`, wait for the page to settle, and return
+/// the screenshot together with everything that went wrong while doing it.
+///
+/// The tab is always closed, including on the error paths, so a wedged page cannot outlive
+/// the render that opened it.
+pub async fn capture_in(running: &Running, req: &PageRequest) -> anyhow::Result<PageCapture> {
+    let tab = open_tab(running.port).await?;
+    let result = drive(&tab.socket, req).await;
+    close_tab(running.port, &tab.id).await;
     result.map_err(|e| {
-        let tail = log.lock().ok().map(|b| b.trim().to_string()).unwrap_or_default();
+        let tail = running.stderr_tail();
         if tail.is_empty() { e } else { e.context(format!("browser stderr:\n{tail}")) }
     })
+}
+
+/// One tab, by the ids the DevTools HTTP endpoint answers with.
+struct Tab {
+    id: String,
+    socket: String,
+}
+
+/// Open a blank tab to render in. **Blank, and attached before navigating**, so nothing the
+/// view does on load happens off-camera.
+async fn open_tab(port: u16) -> anyhow::Result<Tab> {
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/json/new?about:blank");
+    let deadline = tokio::time::Instant::now() + LAUNCH_TIMEOUT;
+    loop {
+        // `PUT`: the endpoint refuses `GET` in every Chrome this ships against.
+        if let Ok(resp) = client.put(&url).send().await {
+            if let Ok(target) = resp.json::<Value>().await {
+                let id = target.get("id").and_then(Value::as_str);
+                let socket = target.get("webSocketDebuggerUrl").and_then(Value::as_str);
+                if let (Some(id), Some(socket)) = (id, socket) {
+                    return Ok(Tab { id: id.to_string(), socket: socket.to_string() });
+                }
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("the headless browser opened no tab at {url}");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Close it, best effort: a tab left open holds a page that may still be running timers.
+async fn close_tab(port: u16, id: &str) {
+    let _ = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{port}/json/close/{id}"))
+        .send()
+        .await;
 }
 
 /// Spawn the browser with a throwaway profile and an ephemeral DevTools port.
@@ -197,12 +286,9 @@ fn spawn(browser: &ResolvedBrowser, profile: &Path) -> anyhow::Result<Child> {
         .with_context(|| format!("spawning the headless browser at {}", browser.bin.display()))
 }
 
-/// Attach to the launched browser and perform one render.
-async fn drive(profile: &Path, req: &PageRequest) -> anyhow::Result<PageCapture> {
-    let port = wait_for_devtools_port(profile).await?;
-    let ws_url = page_socket_url(port).await?;
-
-    let (mut socket, _) = tokio_tungstenite::connect_async(ws_url.as_str())
+/// Attach to one tab and perform one render.
+async fn drive(ws_url: &str, req: &PageRequest) -> anyhow::Result<PageCapture> {
+    let (mut socket, _) = tokio_tungstenite::connect_async(ws_url)
         .await
         .with_context(|| format!("connecting to the DevTools socket at {ws_url}"))?;
 
@@ -381,34 +467,6 @@ async fn wait_for_devtools_port(profile: &Path) -> anyhow::Result<u16> {
                  (it may have failed to start)",
                 marker.display()
             );
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-/// Ask the browser's HTTP endpoint for the blank starting tab's page socket. We
-/// talk to the *page* target directly rather than plumbing flat-protocol session
-/// ids through every message.
-async fn page_socket_url(port: u16) -> anyhow::Result<String> {
-    let url = format!("http://127.0.0.1:{port}/json/list");
-    let deadline = tokio::time::Instant::now() + LAUNCH_TIMEOUT;
-    let client = reqwest::Client::new();
-    loop {
-        if let Ok(resp) = client.get(&url).send().await {
-            if let Ok(targets) = resp.json::<Vec<Value>>().await {
-                let found = targets
-                    .iter()
-                    .find(|t| t.get("type").and_then(Value::as_str) == Some("page"))
-                    .and_then(|t| t.get("webSocketDebuggerUrl"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                if let Some(ws) = found {
-                    return Ok(ws);
-                }
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            bail!("the headless browser exposed no page target at {url}");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

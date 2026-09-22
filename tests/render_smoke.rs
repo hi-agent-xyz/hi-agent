@@ -51,8 +51,9 @@ async fn a_real_browser_launches_attaches_and_screenshots() {
     let browser = resolve().await;
     eprintln!("browser: {} ({})", browser.bin.display(), browser.origin);
 
-    let cap = chrome_headless::capture(
-        &browser,
+    let running = chrome_headless::launch(&browser).await.expect("the browser starts");
+    let cap = chrome_headless::capture_in(
+        &running,
         &PageRequest {
             url: READY_PAGE.to_string(),
             width: 800,
@@ -66,6 +67,7 @@ async fn a_real_browser_launches_attaches_and_screenshots() {
     )
     .await
     .expect("the browser half of the render path");
+    running.close().await;
 
     assert!(!cap.timed_out, "the page declared itself ready; the driver missed it");
     assert!(!cap.page_failed, "clean page reported failed: {:?}", cap.problems);
@@ -94,8 +96,9 @@ async fn a_real_browser_launches_attaches_and_screenshots() {
 async fn a_page_that_never_reports_times_out_and_reads_blank() {
     let browser = resolve().await;
 
-    let cap = chrome_headless::capture(
-        &browser,
+    let running = chrome_headless::launch(&browser).await.expect("the browser starts");
+    let cap = chrome_headless::capture_in(
+        &running,
         &PageRequest {
             url: SILENT_PAGE.to_string(),
             width: 400,
@@ -109,6 +112,7 @@ async fn a_page_that_never_reports_times_out_and_reads_blank() {
     )
     .await
     .expect("a silent page still captures");
+    running.close().await;
 
     assert!(cap.timed_out, "a page that never reports must time out");
     assert!(cap.page_failed, "a timeout is a failure, not a pass");
