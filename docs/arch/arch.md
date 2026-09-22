@@ -65,7 +65,7 @@ rung is partitioned — see [One conversation](host.md#one-conversation).
 | | Time | Job |
 |---|---|---|
 | **Reflex** | sub-second | barge-in and the attention gesture — **no model in the loop** |
-| **Reaction** | one generation | speaks, holds the floor, manages the interaction |
+| **Reaction** | one generation — or, for a branch it prepared, one decision call | speaks, holds the floor, manages the interaction |
 | **Cognition** | seconds to minutes+ | the outward brain: reads what arrived and works out what was actually asked, owns Tasks, dispatches everything heavy, stays idle and responsive |
 | **Reflection** | background | the inward brain: same capability, pointed at `data/` — the work nobody asked for |
 
@@ -121,6 +121,9 @@ Each is a statement we can test, and each has a real failure behind it.
    the [projection test](data.md#what-earns-a-place).
 5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
    through Reaction, which decides whether it is worth saying and says it as a message.
+   The one thing that can happen ahead of the turn is a branch Reaction prepared for
+   exactly this message ([Prepared branches](agents.md#prepared-branches)): Reaction
+   decided it, and the message only chose it. The turn still runs, and is told what ran.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Two loops pace
    glancing up — Cognition's glance-up and the reflection backoff. Reaction has no
    cadence of its own: it wakes on input, on mail, and on its own check-in. Scheduling

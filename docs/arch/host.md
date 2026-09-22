@@ -140,6 +140,13 @@ is what makes the draft stale. The payoff case needs them to stop without having
 the draft was written — the rare one. So holding buys latency in the case that barely happens
 and costs a supersede rule, an expiry rule and a release timer in every case that does.
 
+**The one thing that waits for them is not a draft waiting for silence** — it is a
+[prepared branch](agents.md#prepared-branches), and it waits on *what* they say. The argument
+above is why that is the only kind. A branch prepared for the message that selects it is not
+made stale by that message; the message chooses it. And it needs none of the three: the
+message resolves the set either way, the next turn to start voids it, and nothing runs a
+branch but the message.
+
 **One bound, because a refusal has no ceiling of its own.** Someone who speaks during every
 generation refuses every reply, and total silence is a worse failure than a slightly late
 line — so after a few refusals in a row, one goes through. That is the mechanical form of

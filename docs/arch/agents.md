@@ -13,6 +13,8 @@ prompt, not new machinery.
 | Decision | Reasoning |
 |---|---|
 | Fast means *no fetch*, not *no knowledge* | Reaction runs a capable model; it is fast because it cannot wait on anything |
+| **Below one generation, nothing is decided — a decision already made is chosen** | A generation has a floor no prompt moves (13.8 s to a first line). What can be faster is a branch Reaction prepared before the message came, chosen when a calibrated decision call says the message went where that branch expected — see [Prepared branches](#prepared-branches) |
+| **`hi_say` is this moment; `hi_prepare` is where it may go next** | The reply and the preparation are different things — one takes effect now, the other at the next message or never — so they are different verbs, and `hi_say` is untouched. One `hi_prepare` call is one choice: the directions, each a condition and a list of Reaction's own actions, mutually exclusive, so a message runs at most one. Calling again replaces it whole. What ran goes back to Reaction as an ordinary turn, because a branch is where the reply starts, not where it ends |
 | The reading is separate from Reaction | Reaction can speak and show but not read, so *someone* must open the file and look at the photo — and Reaction may not go deaf while that happens. That someone is Cognition |
 | Cognition never grinds | It is on the conversation's path, so a turn it spends *doing* is a turn the person waits through. It reads and answers; anything with an artifact, a side effect or a long tail is a worker's |
 | Cognition stays idle | Someone has to be awake when nobody is talking, and it must be free when they are |
@@ -88,8 +90,9 @@ The mouth. One Reaction, one mouth, one turn at a time —
 [invariant 1](arch.md#invariants). It speaks, holds the floor, manages the interaction, and
 decides whether to answer from what it holds or hand the question onward.
 
-**Tools: `hi_say`, `hi_show`, and `SendMessage`.** Its two expression channels are calls — speech
-included — plus the one verb that reaches another agent. **No reads, no fetches, no
+**Tools: `hi_say`, `hi_show`, `hi_prepare`, and `SendMessage`.** Its two expression channels
+are calls — speech included — plus branches prepared for where the conversation may go next
+([below](#prepared-branches)) and the one verb that reaches another agent. **No reads, no fetches, no
 working directory, and no built-ins at all**: it is fast because it *cannot* wait on
 anything, not because it is small. Judging the edge of your own knowledge is a hard problem
 and needs a capable model.
@@ -152,6 +155,231 @@ It does not write that memory; it has no file access to write anything with. Cog
 writes it. And because this is the one rung that cannot go and look, it is also
 the measure for everything else: **projected = what Reaction must know without reading** —
 [the test](data.md#what-earns-a-place).
+
+#### Prepared branches
+
+**`hi_say` is the reply to this moment. Beside it, Reaction can prepare for where the
+conversation is likely to go next: a few mutually exclusive branches, each a condition and
+the actions it would take if the conversation went there. When the person's next message
+meets one, that branch's actions run at once — and then the message, with what ran, goes to
+Reaction as an ordinary turn, which carries on from there.**
+
+Someone who has just proposed something usually knows what they will do next if the answer
+is the likely one — "OK, A then; first thing is…", or putting the numbers up because they
+knew that question was coming — and does it at once. Only a turn they did not see coming
+sends them back to think. This rung has no *at once*: everything it does in answer to a
+message starts with a generation, and a generation has a floor — **13.8 s to the first
+`hi_say`**, one upstream request over ~100K tokens of context, nearly all of it fixed cost;
+the median from the person's last word to the first line is 29.1 s
+([measuring.md](../user-journeys/measuring.md)). No prompt shortens that. The only way under
+it is to have decided before the message came, and to spend the moment it comes only on
+recognizing which decision it was.
+
+##### The shape
+
+`hi_prepare(branches)` — **one call is the whole set**: the directions Reaction thinks the
+conversation may take next, as one choice. Each branch is two fields:
+
+- **`condition`** — where the conversation goes, in plain words: "agrees to A and attaches
+  nothing", "asks to see the numbers behind the second row", "says to drop it".
+- **`actions`** — an ordered list of Reaction's own tool calls, with their arguments, exactly
+  as it would make them: `hi_say`, `hi_show`, `hi_send_message` — any tool Reaction holds
+  except `hi_prepare` itself. Putting the board up *and* saying 好，我把数据摆上来 is two
+  actions in one branch. **An empty list is allowed**: a branch that recognizes a direction
+  with nothing ready ("picks B") is what stops a B from being read as a weak A, and meeting it
+  means think.
+
+The branches in one call are **mutually exclusive**: the person's next message meets at most
+one, and only that one runs. Everything no branch describes is the implicit rest, and the
+rest always means think. **Calling again replaces the set** — changing its mind is preparing
+again, not editing a branch — and an empty list clears it. So the question the next message
+is read against is always one call, whole, exactly as Reaction wrote it; nothing is assembled
+from pieces written at different moments.
+
+| | `hi_say` | `hi_prepare` |
+|---|---|---|
+| Answers | this moment | a moment that may come next |
+| Takes effect | now | at their next message, if its condition is met — otherwise never |
+| Carries | words | one choice: each direction, and the actions — words among them — it would take there |
+| Lives in | the conversation, append-only | a pending set held beside the floor, in memory, mostly discarded |
+| Judged against | the room at the instant the words are ready | the message that arrives |
+
+**Validated when prepared, run when met.** The call checks each action the way its own tool
+would — a line within `SAY_MAX_CHARS`, a `ref` that resolves, a `to` that is reachable — and
+if any fails, **refuses the whole call**, naming the branch and the reason; nothing from it is
+set, and the set before it stands. A choice with one option missing is a different choice —
+a message headed that way would be read against the others — so it is fixed and sent again
+whole, in the turn that can still fix it, not discovered at the reply. It answers "prepared —
+3 directions, 2 with actions", or "not prepared: they have already replied" when a message
+from them landed after the turn began, read off the counter that refuses a stale `hi_say` as
+unheard.
+
+**Its lines are a seam of the speech surface.** The pre-send check
+([`legibility.md`](legibility.md) § E) reads every `hi_say` action when the branch is
+prepared, **off the mouth's serial lock** — nobody is waiting on these, and they must not put
+seconds in front of a line somebody is. A branch whose line the check sends back
+**loses all of its actions and keeps its condition**, and that is recorded. All of them,
+because a branch's actions are one decision and half of it is not what was decided — the view
+without the sentence that introduces it. The condition stays, because it is still a direction
+the set is choosing between; taking it out would let a message headed there be read as one of
+the others. Meeting it then means think. With the check in shadow, branches are ready at
+once. `legibility.md`'s table of surfaces gains `hi_prepare` beside
+`hi_say` in the change that adds the verb: that table is held by a test against the tools the
+rungs actually hold, so it cannot name the verb first.
+
+**Prepared after the reply, never before it.** The `hi_say` that answers this moment goes out
+first, and the branches are prepared while the person reads or hears it. The order is
+load-bearing for the reason it is in [Working ahead](#working-ahead): prepared first, the
+guesses would sit in front of the thing the person is waiting for, in every turn, including
+the ones where they are wrong.
+
+##### The next message picks at most one
+
+When a message from the person lands and branches are set, the host asks the
+[decision capability](../../src/body/capabilities/decision.rs) two questions about a
+deliberately small state — the messages since the person's previous one, and this one, with
+who said it:
+
+- **`which`** (`choice`) — one option per branch, whose criterion is its condition, plus
+  `rest`;
+- **`qualified`** (`noul`) — does the message attach a condition, a reservation or a
+  correction to where it goes — anything that would change what the chosen branch should do?
+
+A branch is **met** when its option carries at least **τ** of the mass and `qualified` is at
+most 1 − τ. Both numbers are calibrated, and that is why this is a decision call and not a
+generation: 0.9 means the same thing on every call, so τ is a policy about how often a met
+branch may be the wrong one, and the count of those that were is a check on the policy. A
+generation's self-reported confidence compares to nothing, and it would cost the turn this is
+meant to skip.
+
+**Qualifying is not continuing.** 对，不过预算砍一半 *qualifies* agreement: the branch prepared
+for plain agreement would now do the wrong thing, so it does not run. 对，然后下面是分版块的
+agrees and *continues*: the branch runs, and the turn after it takes up the rest, because that
+turn reads the whole message. On this install, the agreeing replies that came within 30 s of
+an agent line were mostly the second shape — which is why the turn after a branch exists, and
+why `qualified` asks only about the first.
+
+##### Running it
+
+A met branch waits for the batch to close — the next section — and then for the floor,
+**checked once, for the branch as a whole, before any of it runs**: a voice still going or a
+line still being typed means they are not done, and the branch is dropped rather than held a
+second time ([a refusal is not a hold](host.md#the-floor)). Then its actions run in order,
+through the seams they would have gone through if called at that moment — `hi_say` to the
+mouth, `hi_show` to the sequencer, `hi_send_message` to the registry — each with its ordinary
+result. **The first action that does not happen stops the rest**, because a later action may
+lean on it: 好，我把数据摆上来 after a show that failed is a false line.
+
+**A line may claim only what is true when it goes out** — what was already true, and what the
+branch's own earlier actions have just made true, nothing more. After a `hi_show`, "it's up"
+is true. After a `hi_send_message` to Cognition, 我去弄 is true and 弄好了 is not. A prepared
+thing reported as more than it is, is the failure [Working ahead](#working-ahead) forbids.
+
+**No new safety concept.** Every action is one of Reaction's own verbs, and none of them
+reaches outside: words to the person, a view on their screen, a message to Cognition.
+Anything outward — a message to a colleague, a file sent — is a worker's, behind Cognition's
+judgment and [invariant 9](arch.md#invariants), exactly as when Reaction hands the same
+message down in a turn. A wrong branch costs what a wrong hand-down costs: something to take
+back in the next turn, which is told what ran.
+
+**It pairs with [Working ahead](#working-ahead).** Cognition prepares the reversible half of
+the likely next step and says it is ready; a branch is how Reaction uses it the moment it is
+asked for — "wants it sent to Feishu" → hand it down, and say 好，这就发. Working ahead removes
+the wait for the work; a branch removes the wait for the turn.
+
+##### Then it goes to Reaction
+
+The message drives an ordinary turn, as every message does — Reaction has to hear everything.
+That turn starts after the branch has run, never beside it, and carries both: the message, and
+what ran — which condition, each action, each result. From there it is Reaction's turn like
+any other: say more, stay silent, or prepare the next set of branches.
+
+##### It rides the batch, not the turn
+
+The reading starts when the message is delivered
+([`Reaction::deliver`](../../src/body/reaction/mod.rs)), outside the serial loop — it has to,
+because in 53% of replies the loop is still running a turn when the reply lands, and in 151 of
+the 171 such cases measured it was the turn answering their previous message, which is exactly
+the turn that prepares branches (a turn runs a median 10.7 s past its last `hi_say`). A branch
+waits for the batch closure a turn would ([surfaces.md § Batching](surfaces.md#batching)): the
+settle, held open while they are still talking or typing, because a second message is exactly
+what turns 同意。 into 同意。不过…. A message that joins the batch asks again over the whole of
+it. The branch does not queue behind the running turn's serial lock: whatever waits there was
+written before the reply, and the floor refuses it as unheard — and that turn's later
+`hi_prepare` calls are refused the same way.
+
+##### What it buys, and what it costs
+
+From the person's last word to the branch's first action: typed, the 0.7 s settle plus
+whatever of the decision call (70–500 ms, asked during the settle) is left — about a second;
+spoken, the recognizer's 0.8 s endpoint on top — about two. A hard budget of one second on
+the call; past it, or with no key, or on any error, no branch runs and the message takes
+today's path, so **the worst case is today's speed**. A miss adds no latency — the call runs
+inside a window the turn waits out anyway. The cost is the tail: branches are output
+generated after the last `hi_say`, which delays the next turn in the case where the person
+replies while this one is still running and nothing was met.
+
+##### How long a set lives
+
+A set of branches is a bet that the next thing to happen is the person's next message after
+the one it follows. That message resolves it — one branch runs or none does, and the set is
+gone either way. Anything that happens first voids it, recorded with the reason:
+
+- **another Reaction turn starts** — a report or mail landing first means the moment moved;
+  if the branches still hold, that turn can prepare them again (a `hi_prepare` in the same
+  turn simply replaces the set, and is not a void);
+- **a message is sent after the one the set follows** — that is no longer the last thing said;
+- **a barge-in on the message the set follows** — the branches assumed it was heard;
+- **a restart** — the set lives in memory, and is written to the log when prepared and when
+  resolved.
+
+None of these is a timer. [Nothing in this host fires at a named time](host.md#there-is-no-timer-and-the-last-one-to-go-was-the-agents-own),
+and this adds nothing that does.
+
+##### When to prepare
+
+**Reaction's call, and usually the answer is not to.** It pays where the next move is
+narrow: after a proposal or a question with a small answer space, after a handover whose
+follow-up is obvious, in a discussion that is going somewhere. The one or two likely
+directions, never a fan; and actions only where they are what would have been done next
+anyway, not an acknowledgment. How often that is, nobody knows yet. The one thing measured
+is the narrowest case: of 548 first replies from the person to an agent line on this install
+(06-14 → 09-21), 36 followed a line ending in a question or proposal, the median reply was 32
+characters, and 3 were a bare confirmation — most were a new instruction, a correction, or a
+turn elsewhere. Whether those were *predictable* directions no count over text can say; the
+shadow below is what measures it. The case must be free where it misses, and it is — a turn
+that prepares nothing costs nothing.
+
+##### Where it lives
+
+The set is Reaction's, and the host keeps it beside the floor, the way it keeps the counters
+`hi_say` is judged by. The reading is a model call, so it is not the host's —
+[the host consults no model](host.md#goal). It is Reaction's recognition carried out by a
+faculty fast enough to be on time for it: where the conversation might go, what to do there,
+and whether to prepare at all are Reaction's; the decision call says only which branch the
+message met.
+
+##### Shadow first, the way the pre-send check went
+
+`prepared_branches` is `shadow` unless set to `on` or `off`. In shadow everything runs except
+the actions: every message that meets a branch records the verdict, its numbers, and what
+would have run, and the turn runs as it does today. **What Reaction then does, having read the
+message, is the ground truth** — a would-be branch was right when Reaction, with the message
+in hand, took those actions or their substance. That agreement, per τ, is the number that
+turns it on. It is inflated by one thing, stated here so nobody reads it at face value: in
+shadow the turn can see the branches it prepared, so it can anchor on its own guess; a sample
+is read by a person before the number is trusted. Once on, two readers, as in
+[Working ahead](#working-ahead): the count — prepared, met, voided by reason, each with its
+numbers — for the person tuning it; and the conversation for
+[Reflection](#reflection--background), where a branch the next turn had to take back is an
+exchange it can read.
+
+##### Blind spots, named
+
+The decision call reads literally, so 行吧，你说了算 can land as agreement. It is not a safety
+check: in a room somebody else can answer a question meant for the owner, and who spoke is
+evidence in the state, not a rule. And it cannot know a branch was the wrong one the way the
+person does; only the turn after can, which is why that turn is told what ran.
 
 #### Deliberation was retired into Cognition
 
