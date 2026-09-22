@@ -15,7 +15,6 @@
 //! `src/runtime`). We exec that binary directly — there is no Node anywhere in this,
 //! neither as a wrapper nor as the thing that installed it.
 
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -219,16 +218,22 @@ impl ViewCompiler {
     }
 }
 
-/// Deterministic content hash + served URL for `source`. A cache key, not a
-/// security boundary: a 64-bit hash is ample for de-duping a few authored views.
+/// Deterministic content key + served URL for `source`: the first 16 hex digits of its
+/// SHA-256, the same key [`crate::foundation::attachments`] gives bytes.
+///
+/// **An address a compiler upgrade may change is not an address.** This was
+/// `DefaultHasher`, whose value Rust is explicitly free to change between releases —
+/// and the key is a served URL, kept `immutable` for a year by browsers, named by a
+/// share's scope, written into the appearance record and re-derived as the name of the
+/// view's own picture. One toolchain bump would have renamed all of it at once.
 ///
 /// `pub(crate)` so a test can seed the compiled cache for a known source and
 /// exercise a caller of [`ViewCompiler::compile`] on the cache-hit path, which is
 /// the one path through the compiler that never spawns esbuild.
 pub(crate) fn module_ref(source: &str) -> (String, String) {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    source.hash(&mut h);
-    let hash = format!("{:016x}", h.finish());
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(source.as_bytes());
+    let hash: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
     let url = format!("/views/_compiled/{hash}.mjs");
     (hash, url)
 }
@@ -236,6 +241,18 @@ pub(crate) fn module_ref(source: &str) -> (String, String) {
 #[cfg(test)]
 mod view_ref_tests {
     use super::*;
+
+    /// The key is the bytes' own SHA-256, not a hash a toolchain may redefine — and it
+    /// is the name of a URL browsers keep for a year, of the view's picture, and of what
+    /// a share's scope names.
+    #[test]
+    fn a_compiled_module_is_named_by_its_content() {
+        let (hash, url) = module_ref("export default () => 1");
+        assert_eq!(hash, "63c9217a8223e2b3", "the first 8 bytes of the source's SHA-256");
+        assert_eq!(url, "/views/_compiled/63c9217a8223e2b3.mjs");
+        assert_eq!(module_ref("export default () => 1").0, hash, "the same source, the same name");
+        assert_ne!(module_ref("export default () => 2").0, hash);
+    }
 
     #[test]
     fn ref_validation_allows_nested_slugs_blocks_traversal() {

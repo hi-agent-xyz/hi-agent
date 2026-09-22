@@ -65,7 +65,6 @@
 //! has a second later, not a frozen copy. At 118×76 that is a distinction without a
 //! difference, and it is the same distinction a browser's tab switcher makes.
 
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::body::capabilities::view_render;
@@ -130,10 +129,11 @@ fn shots_dir(data_dir: &Path) -> PathBuf {
 
 /// The file name a module's shot is stored under.
 ///
-/// A compiled module URL is already `/views/_compiled/<hash>.mjs`, and that hash is
-/// over the source — exactly the identity a picture of it should have. Anything else
-/// (a module served from somewhere this doesn't recognise) is hashed by URL so the
-/// function is still total.
+/// A compiled module URL is already `/views/_compiled/<hash>.mjs`, and that hash is the
+/// SHA-256 of the source — exactly the identity a picture of it should have. Anything
+/// else (a module served from somewhere this doesn't recognise) is keyed by the SHA-256
+/// of its URL, so the function is still total and no name here comes from a hash a
+/// toolchain may redefine.
 fn shot_name(module_url: &str) -> String {
     let stem = module_url
         .rsplit('/')
@@ -143,9 +143,10 @@ fn shot_name(module_url: &str) -> String {
     if !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric()) {
         return format!("{stem}.png");
     }
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    module_url.hash(&mut hasher);
-    format!("u{:016x}.png", hasher.finish())
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(module_url.as_bytes());
+    let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    format!("u{hex}.png")
 }
 
 /// Where a named surface's picture lives — `_shots/ref/<ref>.png`, mirroring the ref's

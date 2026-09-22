@@ -228,7 +228,7 @@ Each is a named, versioned spec, and its key is `(spec, id)`:
 |---|---|---|
 | `preview.v1` | a still fitted whole inside 960×540, JPEG — PNG where the picture has transparency — the tile rule of [stage.md](stage.md#the-frame-is-a-surface-and-a-view-goes-up-before-it-is-finished) | on placement; for video, a frame from the first tenth that is not black; for a document, its first page |
 | `proxy.v1` | H.264 High, SDR BT.709, ≤1080p, `faststart`, AAC | on placement, only when the probe says a browser this product ships in cannot play the original (HEVC outside WebKit, HDR transfer curves, exotic containers) |
-| `shot.v1` | a view's picture — today's `_shots/` | as today: on a show, on an open, and for a `made` view that has none |
+| `shot.v1` | a view's picture, in the views tree's own `_shots/` | as today: on a show, on an open, for a `made` view that has none, and when one is published |
 
 **A preview is the tile's size, not the file's.** Workers write figures at full resolution —
 `pose_899.png` is 2.4 MB — and a Home drawing twenty of them would fetch tens of megabytes to
@@ -472,7 +472,9 @@ In the phase that replaces each, never after it:
   does.
 - Three of the four type tables; the whole-file reads in every byte route.
 - A fresh Chromium per render, and the four paths that launch one.
-- `DefaultHasher` as a content key, in `_compiled/` and `_shots/` both.
+- `DefaultHasher` as a content key, in `_compiled/` and `_shots/` both: a compiled module
+  is named by the first 16 hex digits of its source's SHA-256, and a view's picture takes its
+  name from that.
 - Agents writing into `views/_shots/`, a host directory: 530 of its 624 files (102 MB) are
   review screenshots workers saved there themselves. A review's pictures come back in the
   call; a worker that wants to keep one places it.
@@ -499,7 +501,7 @@ Each phase compiles, ships, and is worth having without the next.
    the rest computed from the records.
 3. **Pages embed, and shares carry.** `<Attachment>` in `@hi/core`; `view-builder.md` told a view
    is for composition; `hi_share` for attachments, with the scope and an absolute `og:image`.
-4. **One of everything.** One browser behind one queue; shots into `derived/` under SHA-256;
+4. **One of everything.** One browser behind one queue; content keys under SHA-256;
    generated media as attachments; `referenced_files` and the task-files route deleted; one type
    table and streaming across every byte route, `/api/media` and `/api/drive/file` included.
 
@@ -530,6 +532,7 @@ Each phase compiles, ships, and is worth having without the next.
 | **Placing on the record is the worker's, pushing is Reaction's** | Pull surfaces are visited; push surfaces interrupt. The one mouth stays one, and a worker needs nobody's leave to show its own evidence where its record is read |
 | **No inference from folders or prose** | 2,101 pictures in one task's folder are its working files, not its results; a path in a line is a mention without a verb |
 | **One route, streamed, ranged, immutable** | Five byte routes and four type tables, of which two stream and answer ranges; `immutable` is now what decides what leaves the machine, so it has to be true by construction rather than by care. The route rides `server::disk_file`, which already carries ranges and streaming for the other two |
+| **A view's picture stays in the views tree** | It is not a derivation *of an attachment*. Its key is either a compiled module's content, which lives in `views/_compiled/`, or a named surface's ref — which is not content at all and is rewritten in place, which is what its `?v=` is for. Putting it under the attachment store's pen would file a non-attachment there and rename what the face, Home, a share's scope and three journeys already speak. What phase 4 wanted from it — no content key a toolchain may redefine — is the SHA-256 above |
 | **Derivations are named specs in one disposable cache** | Thumbnail quality and codec choices change for years; a spec bump re-derives lazily and needs no migration |
 | **Previews at the tile's size, in JPEG** | A tile is looked at, not edited; fitting it is an order of magnitude off every Home, and lossy WebP's further quarter costs a native library on every platform |
 | **One browser, one queue** | Four render paths each launching Chromium, one of them locked, is the cost that grows with use |
