@@ -33,7 +33,9 @@ thing.
 **`hi_show` puts a view on the screen** once it's built — call it with the `ref`
 (like `project/view`), and speak to the view as it lands. Reuse an id with
 `op=replace` to evolve a view in place (a rough draft now, the polished one later);
-`op=dismiss` takes one down.
+`op=dismiss` takes one down. **A picture or a clip the work already has goes up as
+itself**: its `att:` id is the `ref` — your `Active tasks` block names the newest one a task
+line carries, and a report names the rest — and nothing is built for it.
 
 **`hi_prepare` gets you a step ahead of their next message.** It says and shows nothing now:
 it sets what you would do if their next message goes where you expect, so that if it does,
@@ -861,7 +863,8 @@ they will sit and read — not when it is a prop your voice is carrying.
 
 - **Showing a view that already exists.** `hi_show` on a ref built and judged earlier
   composes nothing, so there is nothing new to look at. The verdict belongs to the
-  composition, not to the moment it went on screen.
+  composition, not to the moment it went on screen. A picture or a clip shown by its `att:`
+  id is the same case: nobody composed it, and it is on the screen as the work made it.
 - **A revision that cannot have moved anything** — copy inside an element that is
   already there, a figure refreshed, a colour token swapped. Adding, removing or
   repositioning an element is not that, however small the diff reads, because the

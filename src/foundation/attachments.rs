@@ -197,6 +197,73 @@ pub fn preview_url(id: &str) -> String {
     format!("/api/attachments/{id}/{PREVIEW_SPEC}")
 }
 
+/// The module that puts an attachment on the stage. Versioned for the reason the preview is:
+/// it is served `immutable`, so a change to what it says is a new name.
+pub const STAGE_SPEC: &str = "stage.v1.mjs";
+
+/// Where the stage module for `id` is served — what the stage mounts in place of a compiled
+/// view (`docs/arch/showing.md` § *On the stage*).
+pub fn stage_module_url(id: &str) -> String {
+    format!("/api/attachments/{id}/{STAGE_SPEC}")
+}
+
+/// The bare id an `att:` ref names, or `None` for a view's ref. The stage and the trail carry an
+/// attachment under the ref it is named by everywhere, so the one thing that tells the two
+/// apart is the prefix.
+pub fn ref_id(reference: &str) -> Option<&str> {
+    let reference = reference.trim();
+    reference.starts_with(PREFIX).then(|| parse_id(reference)).flatten()
+}
+
+/// The stage module for one attachment: three lines that draw the face's own `AttachmentStage`
+/// (`appearance/web/src/core/attachments.tsx`) with what the probe knows.
+///
+/// **Not a view, and not compiled.** A view is built and can be wrong; showing a picture must
+/// not depend on a builder having been right, nor on the view compiler or its cache, which is
+/// why the conversation's own surface is bundled rather than compiled (`docs/arch/stage.md`
+/// § 1). The component is the host's; this only names which attachment it draws, and its bare
+/// imports resolve through the page's import map to the one shared instance, like every view's.
+pub fn stage_module(id: &str, probe: &Probe) -> String {
+    let item = serde_json::json!({
+        "ref": format!("{PREFIX}{id}"),
+        "kind": probe.kind.as_str(),
+        "url": url(id),
+        "preview": preview_url(id),
+        "width": probe.width,
+        "height": probe.height,
+        "durationMs": probe.duration_ms,
+    });
+    format!(
+        "// One attachment on the stage (docs/arch/showing.md). Served by the host, never compiled.\n\
+         import {{ jsx }} from \"react/jsx-runtime\";\n\
+         import {{ AttachmentStage }} from \"@hi/core\";\n\
+         const item = {item};\n\
+         export default function Attachment() {{ return jsx(AttachmentStage, {{ item }}); }}\n"
+    )
+}
+
+/// What `id` is, read without awaiting — for a caller building a label under a lock. The same
+/// cache [`probe`] fills; a miss reads the probe's few hundred bytes off disk once.
+pub fn probe_now(data_dir: &Path, id: &str) -> Option<Probe> {
+    let id = parse_id(id)?;
+    let path = probe_path(data_dir, id);
+    if let Some(hit) = PROBES.lock().unwrap_or_else(|p| p.into_inner()).get(&path) {
+        return Some(hit.clone());
+    }
+    let probe: Probe = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    PROBES.lock().unwrap_or_else(|p| p.into_inner()).insert(path, probe.clone());
+    Some(probe)
+}
+
+/// The name an attachment's card goes by where a view's would carry its own: what it is.
+pub fn label(data_dir: &Path, id: &str) -> String {
+    match probe_now(data_dir, id).map(|p| p.kind) {
+        Some(Kind::Picture) => "Picture".to_owned(),
+        Some(Kind::Clip) => "Clip".to_owned(),
+        None => "Attachment".to_owned(),
+    }
+}
+
 fn root(data_dir: &Path) -> PathBuf {
     data_dir.join("attachments")
 }
@@ -293,6 +360,13 @@ pub async fn place(data_dir: &Path, path: &Path) -> Result<Placed, Refusal> {
         elapsed_ms = started.elapsed().as_millis() as u64,
         "attached"
     );
+    // **Placing is the write that mirrors it** (`docs/arch/topology.md` § *Content*): the
+    // bytes cross the uplink while nobody is looking, so by the time the person opens Home on
+    // their phone the picture is at the edge. Free when mirroring is off.
+    crate::foundation::mirror::enqueue(&url(&placed.id));
+    if preview {
+        crate::foundation::mirror::enqueue(&preview_url(&placed.id));
+    }
     Ok(placed)
 }
 
@@ -901,6 +975,26 @@ Input #0, mp3, from 'memo.mp3':
         assert!(looks_like_a_clip(&webm).await);
         assert!(!looks_like_a_clip(&notes).await);
         assert!(!looks_like_a_clip(&pdf).await);
+    }
+
+    /// **An attachment goes on the stage through a module the host writes, not one a builder
+    /// made** — three lines naming the object, importing the face's own viewer by the bare
+    /// specifiers the import map resolves.
+    #[tokio::test]
+    async fn an_attachment_goes_on_the_stage_as_itself() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let placed = place(data.path(), &picture(work.path(), "pose_899.png", 320, 180, 5)).await.unwrap();
+        let module = stage_module(&placed.id, &placed.probe);
+        assert!(module.contains("from \"@hi/core\"") && module.contains("AttachmentStage"), "{module}");
+        assert!(module.contains(&format!("\"url\":\"/api/attachments/{}\"", placed.id)), "{module}");
+        assert_eq!(stage_module_url(&placed.id), format!("/api/attachments/{}/stage.v1.mjs", placed.id));
+
+        assert_eq!(ref_id(&format!("att:{}", placed.id)), Some(placed.id.as_str()));
+        assert_eq!(ref_id(&placed.id), None, "a bare id is not a ref: a view's ref could look like one");
+        assert_eq!(ref_id("factory/tasks"), None);
+        assert_eq!(label(data.path(), &placed.id), "Picture");
+        assert_eq!(label(data.path(), "0123456789abcdef"), "Attachment");
     }
 
     #[test]

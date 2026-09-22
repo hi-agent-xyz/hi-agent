@@ -3919,8 +3919,13 @@ async fn emit_view(
     view_ref: Option<String>,
     keep: bool,
 ) {
+    let attachment = view_ref.as_deref().and_then(crate::foundation::attachments::ref_id);
     let module_url = if op == ViewOp::Dismiss {
         None
+    } else if let Some(id) = attachment {
+        // An attachment is mounted by the host's own stage module — nothing to compile, so a
+        // picture goes up whether or not any builder ever touched it.
+        Some(crate::foundation::attachments::stage_module_url(id))
     } else {
         match reaction.inner.view_compiler.compile(&source).await {
             Ok(url) => Some(url),

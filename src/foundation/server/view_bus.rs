@@ -593,6 +593,9 @@ impl ViewBus {
             // it compiled to, and its picture is written once. Same split the whole
             // history turns on. See [`super::view_shots`].
             match shown.view_ref.clone() {
+                // An attachment's picture is its preview, already made; there is no page to
+                // render a picture of.
+                Some(view_ref) if crate::foundation::attachments::ref_id(&view_ref).is_some() => {}
                 Some(view_ref) => super::view_shots::capture_ref(
                     self.data_dir.clone(),
                     view_ref,
@@ -654,6 +657,11 @@ impl ViewBus {
         let Some(view_ref) = restored_ref(&view, &self.data_dir).await else {
             return;
         };
+        // An attachment's module names its object and nothing else, so there is nothing that
+        // could have moved on while the process was down.
+        if crate::foundation::attachments::ref_id(&view_ref).is_some() {
+            return;
+        }
 
         let source = match crate::mind::views::resolve_ref(&self.data_dir, &view_ref).await {
             Ok(source) => source,
@@ -897,7 +905,7 @@ impl ViewBus {
             .filter_map(|h| {
                 h.view.view_ref.as_ref().map(|view_ref| Shown {
                     view_ref: view_ref.clone(),
-                    label: label_for(&h.view),
+                    label: label_for(&self.data_dir, &h.view),
                     at: h.at,
                     live: live.as_deref() == Some(destination_of(&h.view).as_str()),
                     by: h.by,
@@ -938,7 +946,7 @@ impl ViewBus {
                             id: h.view.id.clone(),
                             module_url: h.view.module_url.clone(),
                             view_ref: h.view.view_ref.clone(),
-                            label: label_for(&h.view),
+                            label: label_for(&self.data_dir, &h.view),
                             at: h.at,
                             shot_url: shot_for(&self.data_dir, &h.view),
                             unopened: h.unopened,
@@ -1022,6 +1030,10 @@ fn resolve_slot(
 /// and so does a named entry whose surface picture has not been taken yet, which is
 /// how every show recorded before this split keeps the picture it already had.
 fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
+    // An attachment's picture is its preview, made when it was attached: nothing to render.
+    if let Some(id) = view.view_ref.as_deref().and_then(crate::foundation::attachments::ref_id) {
+        return Some(crate::foundation::attachments::preview_url(id));
+    }
     view.view_ref
         .as_deref()
         .and_then(|r| super::view_shots::url_for_ref(data_dir, r))
@@ -1143,7 +1155,13 @@ fn destination_of(view: &RetainedView) -> String {
 /// entry in the state on every version bump, and a dozen file reads per long-poll
 /// response to recover a nicer string is the wrong trade. (The `// purpose:` line the
 /// factory views open with is the nicer string, if this ever proves too thin.)
-fn label_for(view: &RetainedView) -> String {
+///
+/// An attachment's card says what it is — *Picture*, *Clip* — since its ref is a content hash
+/// that says nothing to anyone (`docs/arch/showing.md` § *On the stage*).
+fn label_for(data_dir: &Path, view: &RetainedView) -> String {
+    if let Some(id) = view.view_ref.as_deref().and_then(crate::foundation::attachments::ref_id) {
+        return crate::foundation::attachments::label(data_dir, id);
+    }
     humanize_ref(view.view_ref.as_deref().unwrap_or(&view.id))
 }
 

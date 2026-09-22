@@ -1437,13 +1437,16 @@ fn show_tool() -> Value {
          What is up right now is listed under `## On screen now` in your \
          context — trust that list, don't guess. If it says the room is clear, there is \
          nothing to dismiss; don't fire dismisses at remembered ids. \
+         **A picture or a clip needs no view:** pass its `att:` id as the `ref` — from the \
+         task line that carries it (your `Active tasks` block lists the newest ones) or from a \
+         report — and it goes up as itself, whole, playable, with nothing built. \
          For a trivial one-off you may pass raw `source` JSX instead of a ref.",
         json!({
             "type": "object",
             "properties": {
                 "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show puts this view up, replacing whatever was on screen; replace swaps the same id in place, keeping the slot so motion animates; dismiss clears the screen." },
                 "id": { "type": "string", "description": "A stable name for this on-screen slot, so replace/dismiss can target it. Omit to auto-generate." },
-                "ref": { "type": "string", "description": "A view ref a builder reported (e.g. `project/view`) — the usual way to show a built view. Omit for dismiss." },
+                "ref": { "type": "string", "description": "A view ref a builder reported (e.g. `project/view`) — the usual way to show a built view — or an attachment's `att:` id, to put a picture or a clip up as itself. Omit for dismiss." },
                 "source": { "type": "string", "description": "Raw JSX (default-exported component) for a trivial inline view, when not using a ref. Omit for dismiss." },
             },
             "required": ["op"],
@@ -2283,6 +2286,15 @@ async fn dispatch_tool(
             // that goes stale the moment the source is edited or the binary reseeds
             // `factory/`. Restoring the screen after a restart needs the name.
             let (view_ref, source) = match arg_opt("ref") {
+                // An attachment goes up as itself: no source, no compile — the stage mounts
+                // the host's own viewer for it (`docs/arch/showing.md` § *On the stage*).
+                Some(r) if crate::foundation::attachments::ref_id(&r).is_some() => {
+                    let id = crate::foundation::attachments::ref_id(&r).unwrap_or_default();
+                    if crate::foundation::attachments::probe(data_dir, id).await.is_none() {
+                        return tool_error(&crate::foundation::attachments::Refusal::UnknownId(id.to_owned()).to_string());
+                    }
+                    (Some(format!("{}{id}", crate::foundation::attachments::PREFIX)), String::new())
+                }
                 Some(r) if !r.trim().is_empty() => {
                     match crate::mind::views::resolve_ref(data_dir, &r).await {
                         Ok(source) => (Some(r.trim().to_string()), source),

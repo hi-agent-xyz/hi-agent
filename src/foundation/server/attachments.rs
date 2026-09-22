@@ -42,6 +42,9 @@ pub async fn get_derived(
     Path((id, spec)): Path<(String, String)>,
     req: Request,
 ) -> Response {
+    if spec == attachments::STAGE_SPEC {
+        return stage_module(&state, &id).await;
+    }
     if spec != PREVIEW_SPEC {
         return (StatusCode::NOT_FOUND, "no such derivation").into_response();
     }
@@ -49,6 +52,24 @@ pub async fn get_derived(
         return (StatusCode::NOT_FOUND, "no preview").into_response();
     };
     nosniff(super::disk_file::serve(req, &path, mime, IMMUTABLE, "no preview").await)
+}
+
+/// The module the stage mounts for an attachment ([`attachments::stage_module`]). Generated,
+/// not read off disk, and as immutable as the object it names: the id fixes the probe, and the
+/// spec in the path fixes what the module says.
+async fn stage_module(state: &AppState, id: &str) -> Response {
+    let (Some(id), Some(probe)) = (attachments::parse_id(id), attachments::probe(&state.data_dir, id).await)
+    else {
+        return (StatusCode::NOT_FOUND, "no such attachment").into_response();
+    };
+    let mut resp = attachments::stage_module(id, &probe).into_response();
+    let headers = resp.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/javascript; charset=utf-8"),
+    );
+    headers.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static(IMMUTABLE));
+    nosniff(resp)
 }
 
 fn nosniff(mut resp: Response) -> Response {

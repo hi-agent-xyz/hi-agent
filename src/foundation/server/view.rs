@@ -646,6 +646,14 @@ async fn compile_ref(
     state: &Arc<AppState>,
     view_ref: &str,
 ) -> Result<String, axum::response::Response> {
+    // An attachment on the trail goes back up the way it went up the first time: the host's
+    // own stage module, which compiles nothing (`docs/arch/showing.md` § *On the stage*).
+    if let Some(id) = crate::foundation::attachments::ref_id(view_ref) {
+        return match crate::foundation::attachments::probe(&state.data_dir, id).await {
+            Some(_) => Ok(crate::foundation::attachments::stage_module_url(id)),
+            None => Err((axum::http::StatusCode::NOT_FOUND, "no such attachment".to_string()).into_response()),
+        };
+    }
     let Some(render) = crate::mind::views::render_context() else {
         return Err((
             axum::http::StatusCode::SERVICE_UNAVAILABLE,

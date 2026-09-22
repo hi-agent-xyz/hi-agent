@@ -305,12 +305,16 @@ the line that placed each, still six at most on Home.
 
     hi_show(op, id, ref: view:<ref> | att:<id>)                  Reaction
 
-An attachment on the stage is drawn by the **bundled viewer** in the content slot — bundled, not
-compiled, for the reason the conversation is ([stage.md § 1](stage.md#1-a-views-source-is-bundled-or-compiled)):
-showing a picture must not depend on the view compiler, the module cache, or a builder having
-been right. Its trail entry's picture is the preview. Everything else about the stage — one
-screen, one cursor, *a show takes the window with it* and the one case it does not — is
-unchanged.
+An attachment on the stage is drawn by the face's **own viewer** — the component in `@hi/core`
+that the panel and the conversation draw it with — for the reason the conversation is bundled
+([stage.md § 1](stage.md#1-a-views-source-is-bundled-or-compiled)): showing a picture must not
+depend on the view compiler, the module cache, or a builder having been right. The stage mounts
+it through a module the host writes rather than compiles, `/api/attachments/<id>/stage.v1.mjs`
+— three lines naming the object and importing that component by the bare specifiers the import
+map resolves — so an attachment is a destination like any view's: in the trail, under the
+cursor, restored after a restart, its card's picture its preview and its label what it is.
+Everything else about the stage — one screen, one cursor, *a show takes the window with it* and
+the one case it does not — is unchanged.
 
 This is what turns *拿出来我看看* into seconds. Reaction already holds the id from the
 projection; putting it up needs no worker, no view and no review.
