@@ -38,7 +38,10 @@ export function attachmentOf(ref: string, mime: string): AttachmentItem {
   const kind = mime.startsWith("image/") ? "picture" : mime.startsWith("video/") ? "clip" : "file";
   if (ref.startsWith(PREFIX)) {
     const id = ref.slice(PREFIX.length);
-    return { ref, kind, url: `/api/attachments/${id}`, preview: `/api/attachments/${id}/preview.v1` };
+    // A clip is played from the route that says where its playable bytes are — the original,
+    // or the copy the host makes of one no browser decodes.
+    const url = kind === "clip" ? `/api/attachments/${id}/playable` : `/api/attachments/${id}`;
+    return { ref, kind, url, preview: `/api/attachments/${id}/preview.v1` };
   }
   return { ref, kind, url: `/api/media/${ref}`, preview: kind === "picture" ? `/api/media/${ref}` : null };
 }
@@ -89,22 +92,58 @@ export function AttachmentPreview({ item, title }: { item: AttachmentItem; title
   );
 }
 
-/** The thing itself: a picture fitted whole, or a clip that plays and seeks. */
-function Whole({ item, caption, autoPlay }: { item: AttachmentItem; caption?: string | null; autoPlay: boolean }) {
-  if (item.kind === "clip" && item.url) {
-    // `playsInline` for the reason the conversation's own videos carry it: without it an iPhone
-    // takes a playing video to its own fullscreen player.
-    return (
+/** How long a clip whose playable copy is still being made waits before asking again, and for
+ * how long it keeps asking. The route answers `503` until the copy lands; a transcode of a long
+ * clip can take minutes. */
+const RETRY_MS = 3000;
+const GIVE_UP_MS = 20 * 60_000;
+
+/**
+ * A clip that plays and seeks. When the route says its copy is still being made, the player
+ * shows the frame it has and asks again — so the stage, the panel and the conversation need no
+ * notion of *ready*: the one URL answers, eventually, with bytes a browser plays.
+ */
+export function AttachmentClip({ item, autoPlay }: { item: AttachmentItem; autoPlay: boolean }) {
+  const [attempt, setAttempt] = useState(0);
+  const [waiting, setWaiting] = useState(false);
+  const since = useRef(Date.now());
+  useEffect(() => {
+    if (!waiting) return;
+    if (Date.now() - since.current > GIVE_UP_MS) return;
+    const timer = setTimeout(() => {
+      setWaiting(false);
+      setAttempt((n) => n + 1);
+    }, RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [waiting]);
+  return (
+    <span className="relative inline-flex max-h-full max-w-full">
+      {/* `playsInline` for the reason the conversation's own videos carry it: without it an
+          iPhone takes a playing video to its own fullscreen player. */}
       <video
-        src={item.url}
+        key={attempt}
+        src={item.url ?? undefined}
         poster={item.preview ?? undefined}
         controls
         autoPlay={autoPlay}
         playsInline
         preload="metadata"
+        onError={() => setWaiting(true)}
         className="block max-h-full max-w-full rounded-md bg-black object-contain"
       />
-    );
+      {waiting && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-12 text-center text-xs font-semibold text-white/85">
+          Making a copy that plays here…
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** The thing itself: a picture fitted whole, or a clip that plays and seeks. */
+function Whole({ item, caption, autoPlay }: { item: AttachmentItem; caption?: string | null; autoPlay: boolean }) {
+  if (item.kind === "clip" && item.url) {
+    return <AttachmentClip item={item} autoPlay={autoPlay} />;
   }
   return (
     <img

@@ -250,7 +250,12 @@ fn carried(entry: &TimelineEntry, showing: &Showing<'_>) -> Vec<ShownDto> {
                 reff: format!("{}{id}", attachments::PREFIX),
                 kind: probe.kind.as_str(),
                 preview: Some(attachments::preview_url(id)),
-                url: Some(attachments::url(id)),
+                // A clip is played from the URL that says where its playable bytes are — the
+                // original, or the copy made for a codec no browser decodes.
+                url: Some(match probe.kind {
+                    attachments::Kind::Clip => attachments::playable_url(id),
+                    attachments::Kind::Picture => attachments::url(id),
+                }),
                 label: None,
                 width: Some(probe.width),
                 height: Some(probe.height),

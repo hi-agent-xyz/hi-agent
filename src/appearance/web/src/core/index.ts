@@ -16,6 +16,7 @@ export {
   AttachmentPreview,
   AttachmentViewer,
   AttachmentStage,
+  AttachmentClip,
   attachmentOf,
   clock,
   type AttachmentItem,

@@ -45,6 +45,16 @@ pub async fn get_derived(
     if spec == attachments::STAGE_SPEC {
         return stage_module(&state, &id).await;
     }
+    if spec == "playable" {
+        return playable(&state, &id).await;
+    }
+    if spec == attachments::PROXY_SPEC {
+        let Some(attachments::Playable::Copy(path)) = attachments::playable(&state.data_dir, &id).await
+        else {
+            return (StatusCode::NOT_FOUND, "no playable copy").into_response();
+        };
+        return nosniff(super::disk_file::serve(req, &path, "video/mp4", IMMUTABLE, "no playable copy").await);
+    }
     if spec != PREVIEW_SPEC {
         return (StatusCode::NOT_FOUND, "no such derivation").into_response();
     }
@@ -52,6 +62,37 @@ pub async fn get_derived(
         return (StatusCode::NOT_FOUND, "no preview").into_response();
     };
     nosniff(super::disk_file::serve(req, &path, mime, IMMUTABLE, "no preview").await)
+}
+
+/// `GET /api/attachments/{id}/playable` — the one URL a `<video>` is handed for a clip, and it
+/// says where the bytes to play are: the original when a browser plays it, the `proxy.v1` copy
+/// once it exists, and `503` with a `Retry-After` while it is being made, which the face's
+/// player answers by trying again. **Never cached**: what it answers changes the moment the copy
+/// lands, where the two places it points at never change at all.
+async fn playable(state: &AppState, id: &str) -> Response {
+    let Some(now) = attachments::playable(&state.data_dir, id).await else {
+        return (StatusCode::NOT_FOUND, "no such attachment").into_response();
+    };
+    let Some(id) = attachments::parse_id(id) else {
+        return (StatusCode::NOT_FOUND, "no such attachment").into_response();
+    };
+    let (status, location) = match now {
+        attachments::Playable::Original => (StatusCode::FOUND, Some(attachments::url(id))),
+        attachments::Playable::Copy(_) => (StatusCode::FOUND, Some(attachments::proxy_url(id))),
+        attachments::Playable::Preparing => (StatusCode::SERVICE_UNAVAILABLE, None),
+    };
+    let mut resp = match &location {
+        Some(_) => status.into_response(),
+        None => (status, "a copy browsers can play is being made").into_response(),
+    };
+    let headers = resp.headers_mut();
+    if let Some(location) = location.and_then(|l| HeaderValue::from_str(&l).ok()) {
+        headers.insert(axum::http::header::LOCATION, location);
+    } else {
+        headers.insert(axum::http::header::RETRY_AFTER, HeaderValue::from_static("3"));
+    }
+    headers.insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
 }
 
 /// The module the stage mounts for an attachment ([`attachments::stage_module`]). Generated,

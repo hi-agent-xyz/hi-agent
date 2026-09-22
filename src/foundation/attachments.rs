@@ -120,7 +120,23 @@ impl Probe {
         if let Some(fps) = self.fps {
             out.push_str(&format!(" · {} fps", trim_float(fps)));
         }
+        if !self.playable() {
+            out.push_str(" · a copy browsers can play is being made");
+        }
         out
+    }
+
+    /// Whether a browser this product ships in can play the bytes as they are. A picture is
+    /// only ever kept in a format one can show; a clip is playable when both its container and
+    /// its video codec are. One that is not is played from its `proxy.v1` copy.
+    pub fn playable(&self) -> bool {
+        match self.kind {
+            Kind::Picture => true,
+            Kind::Clip => {
+                matches!(self.ext.as_str(), "mp4" | "mov" | "webm")
+                    && self.codec.as_deref().is_some_and(|c| BROWSER_CODECS.contains(&c))
+            }
+        }
     }
 }
 
@@ -227,7 +243,7 @@ pub fn stage_module(id: &str, probe: &Probe) -> String {
     let item = serde_json::json!({
         "ref": format!("{PREFIX}{id}"),
         "kind": probe.kind.as_str(),
-        "url": url(id),
+        "url": if probe.kind == Kind::Clip { playable_url(id) } else { url(id) },
         "preview": preview_url(id),
         "width": probe.width,
         "height": probe.height,
@@ -367,6 +383,11 @@ pub async fn place(data_dir: &Path, path: &Path) -> Result<Placed, Refusal> {
     if preview {
         crate::foundation::mirror::enqueue(&preview_url(&placed.id));
     }
+    // A clip no browser can play is kept as it is and a copy is made beside it, off the call:
+    // a transcode takes seconds to minutes, and the worker's line is not held for it.
+    if !placed.probe.playable() {
+        ensure_proxy(data_dir.to_owned(), placed.id.clone());
+    }
     Ok(placed)
 }
 
@@ -450,9 +471,9 @@ async fn settle(
 const NOT_A_BROWSER_PICTURE: &str =
     "is a picture in a format a browser cannot show — attach a PNG, JPEG, WebP or GIF";
 const NOT_A_BROWSER_CLIP: &str =
-    "is a clip in a container a browser cannot play — attach an MP4, MOV or WebM";
+    "is a clip in a container this cannot keep — attach an MP4, MOV, WebM or MKV";
 const NOT_SHOWABLE: &str = "is not a picture or a clip — only pictures (PNG, JPEG, WebP, GIF) \
-     and clips (MP4, MOV, WebM) can be attached for now; a recording or a document cannot yet";
+     and clips (MP4, MOV, WebM, MKV) can be attached for now; a recording or a document cannot yet";
 
 async fn sha256_file(path: &Path) -> anyhow::Result<String> {
     let path = path.to_owned();
@@ -599,9 +620,6 @@ async fn read_clip(path: &Path) -> Result<(ClipInfo, Option<DynamicImage>), Stri
         // A single still ffmpeg can read and the image decoder could not — HEIC, TIFF.
         return Err(NOT_A_BROWSER_PICTURE.to_owned());
     }
-    if let Some(why) = unplayable(&info) {
-        return Err(why);
-    }
     let frame = if out.status.success() && !out.stdout.is_empty() {
         image::load_from_memory(&out.stdout).ok()
     } else {
@@ -678,23 +696,12 @@ fn parse_clip_info(stderr: &str) -> Option<ClipInfo> {
     })
 }
 
-/// The video codecs a browser this product ships in can play. What is not on the list is
-/// refused rather than attached as a tile whose clip never starts: the court-calibration
-/// overlay was MPEG-4 Part 2 (`mp4v`), which neither Chrome nor WebKit decodes, and its worker
-/// had to re-encode it to H.264 before the page it built could play it. A playable copy made
-/// by the host (`proxy.v1`, `docs/arch/showing.md` § *Derivations*) is what lifts this, and until
-/// it exists the refusal says how to make one.
+/// The video codecs a browser this product ships in can play. A clip in anything else is kept
+/// as it is and played from a copy the host makes (`proxy.v1`, `docs/arch/showing.md`
+/// § *Derivations*): the court-calibration overlay was MPEG-4 Part 2 (`mp4v`), which neither
+/// Chrome nor WebKit decodes, and its worker had to re-encode it to H.264 before the page it
+/// built could play it.
 const BROWSER_CODECS: &[&str] = &["h264", "hevc", "vp8", "vp9", "av1"];
-
-fn unplayable(info: &ClipInfo) -> Option<String> {
-    let codec = info.codec.as_deref()?;
-    (!BROWSER_CODECS.contains(&codec)).then(|| {
-        format!(
-            "is a clip in `{codec}`, which a browser cannot play — re-encode it to H.264 \
-             (`ffmpeg -i <in> -c:v libx264 -pix_fmt yuv420p -movflags +faststart <out>.mp4`) and attach that"
-        )
-    })
-}
 
 /// `00:00:30.00` → 30000.
 fn parse_duration(s: &str) -> Option<u64> {
@@ -714,10 +721,120 @@ fn clip_ext(container: &str, named: &str) -> Option<&'static str> {
     if family.contains(&"mov") || family.contains(&"mp4") {
         return Some(if named == "mov" { "mov" } else { "mp4" });
     }
-    if family.contains(&"webm") {
-        return Some("webm");
+    if family.contains(&"webm") || family.contains(&"matroska") {
+        return Some(if named == "mkv" { "mkv" } else { "webm" });
     }
     None
+}
+
+/// The playable copy of a clip no browser can play as it is: H.264 in MP4, SDR, at most
+/// 1080p, `faststart` so it begins before it has all arrived. Versioned like every derivation.
+pub const PROXY_SPEC: &str = "proxy.v1";
+
+/// Where a clip is played from, whatever it is kept as — the one URL every surface hands a
+/// `<video>`. The route answers with the original when a browser can play it, with the copy once
+/// it exists, and with *try again shortly* while it is being made.
+pub fn playable_url(id: &str) -> String {
+    format!("/api/attachments/{id}/playable")
+}
+
+/// Where the copy is served. Immutable, like the object: its bytes are fixed by the id and
+/// the spec.
+pub fn proxy_url(id: &str) -> String {
+    format!("/api/attachments/{id}/{PROXY_SPEC}")
+}
+
+fn proxy_path(data_dir: &Path, id: &str) -> PathBuf {
+    root(data_dir).join("derived").join(PROXY_SPEC).join(shard(id)).join(format!("{id}.mp4"))
+}
+
+/// What playing `id` means right now.
+pub enum Playable {
+    /// A browser plays it as it is.
+    Original,
+    /// It is played from its copy, which is on disk.
+    Copy(PathBuf),
+    /// The copy is being made.
+    Preparing,
+}
+
+/// Where `id` plays from, asking for its copy if it has none and none is being made — which is
+/// how a copy lost to a restart mid-transcode is made again: on the first attempt to play it.
+pub async fn playable(data_dir: &Path, id: &str) -> Option<Playable> {
+    let id = parse_id(id)?;
+    let probe = probe(data_dir, id).await?;
+    if probe.playable() {
+        return Some(Playable::Original);
+    }
+    let copy = proxy_path(data_dir, id);
+    if tokio::fs::metadata(&copy).await.is_ok() {
+        return Some(Playable::Copy(copy));
+    }
+    ensure_proxy(data_dir.to_owned(), id.to_owned());
+    Some(Playable::Preparing)
+}
+
+/// Copies being made, by where they will land — so a clip asked for twice is transcoded once.
+static MAKING: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = LazyLock::new(Default::default);
+
+/// At most two transcodes at once, so a long one never starves the machine running the agent,
+/// and never holds up a preview, which is made on the call and never queued behind this.
+static TRANSCODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// Make `id`'s copy in the background unless it exists or is already being made.
+pub fn ensure_proxy(data_dir: PathBuf, id: String) {
+    let copy = proxy_path(&data_dir, &id);
+    if copy.exists() || !MAKING.lock().unwrap_or_else(|p| p.into_inner()).insert(copy.clone()) {
+        return;
+    }
+    tokio::spawn(async move {
+        let started = Instant::now();
+        let made = match TRANSCODES.acquire().await {
+            Ok(_slot) => make_proxy(&data_dir, &id, &copy).await,
+            Err(_) => Err(anyhow::anyhow!("the transcode queue is closed")),
+        };
+        MAKING.lock().unwrap_or_else(|p| p.into_inner()).remove(&copy);
+        match made {
+            Ok(()) => {
+                tracing::info!(
+                    target: "attachments", %id, elapsed_ms = started.elapsed().as_millis() as u64,
+                    "made a copy browsers can play"
+                );
+                crate::foundation::mirror::enqueue(&proxy_url(&id));
+            }
+            Err(error) => tracing::warn!(target: "attachments", %id, %error, "could not make a playable copy"),
+        }
+    });
+}
+
+async fn make_proxy(data_dir: &Path, id: &str, copy: &Path) -> anyhow::Result<()> {
+    let (object, _) = object(data_dir, id).await.context("no such attachment")?;
+    let dir = copy.parent().context("copy has a parent")?;
+    tokio::fs::create_dir_all(dir).await?;
+    let tmp = dir.join(format!(".making-{}.mp4", uuid::Uuid::now_v7()));
+    let out = Command::new(crate::foundation::vendors::ffmpeg_frame::ffmpeg_bin())
+        .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i"])
+        .arg(&object)
+        .args([
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale='min(1920,iw)':-2",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+        ])
+        .arg(&tmp)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("ffmpeg could not be run")?;
+    if !out.status.success() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        bail!("ffmpeg: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    tokio::fs::rename(&tmp, copy).await?;
+    Ok(())
 }
 
 /// The preview for `id` on disk and its type, making it from the object if it is missing.
@@ -920,7 +1037,7 @@ Output #0, image2pipe, to 'pipe:1':
     }
 
     #[test]
-    fn a_clip_a_browser_cannot_play_is_refused_by_its_codec() {
+    fn a_clip_a_browser_cannot_play_is_kept_and_played_from_a_copy() {
         // The court-calibration overlay, as ffmpeg describes it.
         let said = "\
 Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'marked_silent.mp4':
@@ -928,10 +1045,22 @@ Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'marked_silent.mp4':
   Stream #0:0[0x1](und): Video: mpeg4 (Simple Profile) (mp4v / 0x7634706D), yuv420p, 1920x1080 [SAR 1:1 DAR 16:9], 10461 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
 ";
         let info = parse_clip_info(said).unwrap();
-        let why = unplayable(&info).unwrap();
-        assert!(why.contains("`mpeg4`") && why.contains("libx264"), "{why}");
-        let h264 = ClipInfo { codec: Some("h264".into()), ..info };
-        assert_eq!(unplayable(&h264), None);
+        let probe = |codec: &str, ext: &str| Probe {
+            kind: Kind::Clip,
+            ext: ext.into(),
+            bytes: 1,
+            width: info.width,
+            height: info.height,
+            duration_ms: Some(info.duration_ms),
+            fps: info.fps,
+            codec: Some(codec.into()),
+            sha256: String::new(),
+        };
+        let overlay = probe(info.codec.as_deref().unwrap(), "mp4");
+        assert!(!overlay.playable(), "mpeg4 is kept, and played from a copy");
+        assert!(overlay.describe().ends_with("a copy browsers can play is being made"), "{}", overlay.describe());
+        assert!(probe("h264", "mp4").playable());
+        assert!(!probe("h264", "mkv").playable(), "the container matters too");
     }
 
     #[test]
@@ -1036,6 +1165,39 @@ Input #0, mp3, from 'memo.mp3':
         assert_eq!(placed.probe.mime(), "video/mp4");
         let (file, _) = preview(data.path(), &placed.id).await.unwrap();
         assert_eq!(image::image_dimensions(file).unwrap(), (960, 540));
+    }
+
+    /// A clip no browser decodes, through the real ffmpeg: kept as it is, and played from the
+    /// copy made beside it. Ignored in `make test` because it needs the binary and a transcode.
+    #[tokio::test]
+    #[ignore]
+    async fn an_unplayable_clip_is_played_from_the_copy_made_beside_it() {
+        let data = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let clip = work.path().join("marked_silent.mp4");
+        let made = std::process::Command::new(crate::foundation::vendors::ffmpeg_frame::ffmpeg_bin())
+            .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=640x360:rate=30", "-c:v", "mpeg4"])
+            .arg(&clip)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let placed = place(data.path(), &clip).await.unwrap();
+        assert_eq!(placed.probe.codec.as_deref(), Some("mpeg4"));
+        assert!(!placed.probe.playable());
+        let mut waited = 0;
+        loop {
+            match playable(data.path(), &placed.id).await.unwrap() {
+                Playable::Copy(path) => {
+                    assert!(std::fs::metadata(path).unwrap().len() > 0);
+                    break;
+                }
+                Playable::Preparing if waited < 120 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    waited += 1;
+                }
+                _ => panic!("no copy after 30 s"),
+            }
+        }
     }
 
     fn walk(dir: &Path) -> Vec<String> {

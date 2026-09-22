@@ -545,7 +545,7 @@ fn task_note_tool() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "maxItems": 4,
-                    "description": "Pictures (PNG, JPEG, WebP, GIF) or clips (MP4, MOV, WebM) this line is about: paths — relative to your task's folder, or absolute — or att: ids from an earlier line. Say in `text` what they show."
+                    "description": "Pictures (PNG, JPEG, WebP, GIF) or clips (MP4, MOV, WebM, MKV — one in a codec no browser plays gets a copy that does) this line is about: paths — relative to your task's folder, or absolute — or att: ids from an earlier line. Say in `text` what they show."
                 },
                 "subject": { "type": "string", "description": "The row. Omit for the task you serve." },
             },
