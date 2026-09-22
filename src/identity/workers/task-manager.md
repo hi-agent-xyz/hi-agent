@@ -300,6 +300,14 @@ then it **waits** — and waiting has a place in this schema. It is `doing` with
 line naming who must act, what they must do, and **where they do it**, exactly as
 `waiting` is defined above: a line about a task that is still `doing`.
 
+**Seeing it is never the person's step.** Putting the thing in front of them is the last
+step of *our* work, not theirs: a finished view goes up the moment it comes back — onto the
+screen, or into their list with a mark when they are on another page — and either one is it
+reaching them. So *"要不要看一眼，等你一句话"* is never a `waiting` line; it is our own last
+step written up as theirs, and it asks a person whether they want what they asked for. If the
+view has not gone up, the row is still ours, and what it needs — showing — is a sentence in
+your report.
+
 **Write the address, not the word for it.** *"the ordinary URL was handed to him"* is a
 description of a URL and not one, and it is what KT8-059 sat behind for three days — the
 person opened the row, read that he was the one holding it up, and had nothing to click.

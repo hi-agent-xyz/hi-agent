@@ -188,6 +188,11 @@ pub(super) struct Mouth {
     /// ([`super::prepared`]). On the mouth because both halves of it are here: `prepare`
     /// sets it, and a line `say` sends after it voids it.
     pub(super) prepared: Arc<super::prepared::Prepared>,
+    /// The screen, asked by `show` whether a view goes in front of them or into their list
+    /// ([`crate::foundation::server::ViewBus::claim`]).
+    pub(super) views: crate::foundation::server::ViewBus,
+    /// Whether they have been away since the page in front of them went up.
+    pub(super) attachments: crate::body::attachments::Attachments,
 }
 
 
@@ -457,26 +462,60 @@ impl ToolSink {
     /// Unlike speech this is never gated: a view is retained state, folded and
     /// replayed to whatever connects next (and restored across restarts), so showing
     /// into an empty room costs nothing and is waiting when they arrive.
+    ///
+    /// **Where it lands is decided here, and said back.** A show from a turn they did not
+    /// start can go into their list instead of in front of them, when they are still on a
+    /// page that just went up ([`crate::foundation::server::ViewBus::claim`]). The answer
+    /// says which, because the turn is still running and about to speak: "放上来了" beside
+    /// a view that went into the list is the one way this can mislead them.
     pub async fn show(
         &self,
         id: Option<String>,
         op: String,
         source: String,
         view_ref: Option<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<String> {
+        use crate::foundation::server::view_bus::{AWAY_FOR, Claim};
         let mouth = self
             .mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no screen; there is nowhere to show it"))?;
+        let claim = match (op.as_str(), mouth.floor.show_from()) {
+            ("dismiss", _) | (_, None) => Claim::Takes,
+            (_, Some(from)) => {
+                let back_at = mouth.attachments.back_from_away(AWAY_FOR);
+                mouth.views.claim(id.as_deref(), view_ref.as_deref(), from, back_at).await
+            }
+        };
         // Part of what the turn did, for whatever reads its words: "it's on screen" is true
-        // only beside a show.
-        let named = view_ref.as_deref().or(id.as_deref()).unwrap_or("an inline view");
-        mouth.speech.note_shown(&format!("{op} {named}"));
+        // only beside a show that took it.
+        let named = view_ref.as_deref().or(id.as_deref()).unwrap_or("an inline view").to_owned();
+        let (keep, ack) = match &claim {
+            Claim::Takes => {
+                mouth.speech.note_shown(&format!("{op} {named}"));
+                (false, "shown".to_string())
+            }
+            Claim::Keeps { reading } => {
+                mouth.speech.note_shown(&format!(
+                    "{op} {named} — into their list; the screen stayed on {reading}"
+                ));
+                (
+                    true,
+                    format!(
+                        "shown into their list, not in front of them: they are still on \
+                         \"{reading}\", which only just went up, so the screen stayed \
+                         there. It is first in their list with a mark on it, and on the task \
+                         that made it; one tap opens it. Do not say it is on the screen."
+                    ),
+                )
+            }
+        };
         mouth
             .beats
-            .send(Beat::Show { id, op, source, view_ref })
+            .send(Beat::Show { id, op, source, view_ref, keep })
             .await
-            .map_err(|_| anyhow::anyhow!("sequencer gone; show dropped"))
+            .map_err(|_| anyhow::anyhow!("sequencer gone; show dropped"))?;
+        Ok(ack)
     }
 }
 
@@ -544,6 +583,11 @@ mod tests {
                 prepared: Arc::new(super::super::prepared::Prepared::new(
                     crate::foundation::observatory::Observatory::new(None),
                 )),
+                // An empty screen: a claim reads it and nothing here ever writes one.
+                views: crate::foundation::server::ViewBus::load(std::path::Path::new(
+                    "/nonexistent/hi-agent-tools-test",
+                )),
+                attachments: crate::body::attachments::Attachments::new(),
             }),
         };
         (sink, rx)

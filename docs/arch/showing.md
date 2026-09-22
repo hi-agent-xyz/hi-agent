@@ -148,8 +148,11 @@ bubble and on a shared page, and improving the video player improves it everywhe
    without asking anyone — that surface is visited, not imposed, and visited more than the
    screen is pushed: 425 moves by the person in September against 73 shows. Taking the
    screen or a message is Reaction's, by [invariant 1](arch.md#invariants) and by
-   [*the screen answers to the conversation*](stage.md#the-screen-answers-to-the-conversation-in-both-directions).
-   No host gate, no queue, no importance field.
+   [*the screen answers to the conversation*](stage.md#the-screen-answers-to-the-conversation-in-both-directions),
+   and the one thing the host decides about a push is where it lands: a show onto a page
+   they only just got goes into their list with a dot instead
+   ([*a show leaves a page being read alone*](stage.md#a-show-leaves-a-page-being-read-alone)).
+   No queue, no importance field.
 7. **The read path does no work per picture.** A surface that polls reads records it already
    reads; a picture on it costs one immutable fetch the browser caches forever.
 
@@ -299,7 +302,8 @@ An attachment on the stage is drawn by the **bundled viewer** in the content slo
 compiled, for the reason the conversation is ([stage.md § 1](stage.md#1-a-views-source-is-bundled-or-compiled)):
 showing a picture must not depend on the view compiler, the module cache, or a builder having
 been right. Its trail entry's picture is the preview. Everything else about the stage — one
-screen, one cursor, *a show takes the window with it* — is unchanged.
+screen, one cursor, *a show takes the window with it* and the one case it does not — is
+unchanged.
 
 This is what turns *拿出来我看看* into seconds. Reaction already holds the id from the
 projection; putting it up needs no worker, no view and no review.

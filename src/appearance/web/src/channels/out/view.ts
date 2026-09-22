@@ -44,6 +44,10 @@ export interface WireHistoryEntry {
    * good on a view that did not render cleanly; the tile falls back to its mark either
    * way. */
   shot_url?: string;
+  /** Shown while they were reading something else, so the screen stayed where it was and
+   * this went into the list instead; not opened since. The card and the task on Home that
+   * made it wear a mark for it until the screen is on it. */
+  unopened?: boolean;
 }
 
 /** The conversation's full appearance state — one GET /api/out/view response. */

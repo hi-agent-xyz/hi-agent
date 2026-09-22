@@ -1747,6 +1747,8 @@ impl Reaction {
                         speech: self.inner.speech.clone(),
                         unanswered: self.inner.unanswered.clone(),
                         prepared: self.inner.prepared.clone(),
+                        views: self.inner.views.clone(),
+                        attachments: self.inner.attachments.clone(),
                     }),
                 },
             )
@@ -2377,7 +2379,10 @@ async fn run_reaction_turn(
     speaking: &Speaking,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
-    reaction.inner.floor.note_turn_started(turn_id);
+    // Whether they started this turn, which is whether what it shows is the answer to them —
+    // the one thing the screen needs to know about a turn (`ViewBus::claim`).
+    let answering = batch.iter().any(|input| matches!(input, LoopInput::Message(_)));
+    reaction.inner.floor.note_turn_started(turn_id, answering);
     // Branches still set now were prepared for a message that has not come, and something
     // else is driving this turn: the moment they were for has moved. The ones a message
     // resolved were taken by its reading, and what that ran is this turn's to be told.
@@ -2775,7 +2780,7 @@ mod turn_context_tests {
     #[test]
     fn the_screen_block_says_where_they_took_the_screen() {
         use crate::foundation::server::view_bus::{Cursor, Hand};
-        let cursor = Cursor { name: "factory/drive".into(), by: Hand::Move };
+        let cursor = Cursor { name: "factory/drive".into(), by: Hand::Move, kept: false };
 
         let parked = render_on_screen(&["tasks".to_string()], Some(&cursor), &[]);
         assert!(parked.contains("factory/drive"), "{parked}");
@@ -2799,6 +2804,27 @@ mod turn_context_tests {
         );
     }
 
+    /// A screen a show left alone is not a place they went: the turn must not read it as
+    /// their move, and must know what it put up is waiting unopened rather than in front of
+    /// them — the difference between "放上来了" being true and false.
+    #[test]
+    fn a_kept_screen_reads_as_still_on_their_page_with_yours_waiting() {
+        use crate::foundation::server::view_bus::{Cursor, Hand, Shown};
+        let cursor = Cursor { name: "reid/compare".into(), by: Hand::Show, kept: true };
+        let waiting = Shown {
+            view_ref: "fp/libs".into(),
+            label: "Libs".into(),
+            at: Utc::now(),
+            live: true,
+            by: Hand::Show,
+            unopened: true,
+        };
+        let block = render_on_screen(&["libs".to_string()], Some(&cursor), &[waiting]);
+        assert!(block.contains("still on \"reid/compare\""), "{block}");
+        assert!(!block.contains("took the screen"), "{block}");
+        assert!(block.contains("`fp/libs` — Libs — in their list, not opened yet"), "{block}");
+    }
+
     /// The half of the screen the agent could not see: what it has already put up and can
     /// put back. Carries refs, because going back is a `hi_show` by ref and the id the
     /// slot is wearing is no help.
@@ -2812,6 +2838,7 @@ mod turn_context_tests {
                 at: Utc::now(),
                 live: true,
                 by: Hand::Show,
+                unopened: false,
             },
             Shown {
                 view_ref: "spend/august".into(),
@@ -2819,6 +2846,7 @@ mod turn_context_tests {
                 at: Utc::now() - chrono::Duration::minutes(20),
                 live: false,
                 by: Hand::Show,
+                unopened: false,
             },
             // Equally reachable by ref, and not something the agent ever showed.
             Shown {
@@ -2827,6 +2855,7 @@ mod turn_context_tests {
                 at: Utc::now() - chrono::Duration::minutes(20),
                 live: false,
                 by: Hand::Move,
+                unopened: false,
             },
         ];
 
@@ -2857,6 +2886,7 @@ mod turn_context_tests {
                 at: Utc::now(),
                 live: false,
                 by: crate::foundation::server::view_bus::Hand::Show,
+                unopened: false,
             }],
         );
         for nudge in ["right move", "comes back round", "instant", "nothing is rebuilt"] {
@@ -3577,8 +3607,8 @@ async fn perform(
                 let _ = tx.send(sentence).await;
             }
         }
-        interleave::Emit::Show { id, op, source, view_ref } => {
-            emit_view(reaction, id, op, source, view_ref).await
+        interleave::Emit::Show { id, op, source, view_ref, keep } => {
+            emit_view(reaction, id, op, source, view_ref, keep).await
         }
     }
 }
@@ -3644,7 +3674,17 @@ fn render_on_screen(
     // that reloaded reads it like every other window. It used to arrive as a fact that
     // could outlive the looking — "they went to X a few minutes ago" — and had to be
     // hedged accordingly. Nothing here can go stale against itself.
-    if let Some(cursor) = cursor {
+    // A kept cursor is the other way a screen comes to be parked: not their move but a show
+    // of yours that came back while they were still reading, and went into their list.
+    if let Some(cursor) = cursor.filter(|c| c.kept) {
+        let _ = write!(
+            s,
+            "\nThe screen is still on \"{}\": they were reading it when your last view came \
+back, so that one went into their list, marked unopened, instead of in front of them. It is \
+not on the screen until they open it.",
+            cursor.name,
+        );
+    } else if let Some(cursor) = cursor {
         let instead = if ids.is_empty() { "" } else { ", not what you have up" };
         let _ = write!(
             s,
@@ -3660,6 +3700,7 @@ fn render_on_screen(
             // the person opens views too, and every one of them is equally reachable by
             // ref. Saying so keeps "already shown" from being a claim that isn't true.
             let when = match (view.live, view.by) {
+                _ if view.unopened => " — in their list, not opened yet".to_string(),
                 (true, _) => " — up now".to_string(),
                 (false, crate::foundation::server::view_bus::Hand::Show) => {
                     format!(" — last up {}", went_ago(Utc::now() - view.at))
@@ -3867,12 +3908,16 @@ async fn forward_frames(
 /// preceding sentence has flushed, so it stays paced to narration); a `dismiss`
 /// carries no module. A compile failure is logged and the view is dropped — the
 /// turn's speech already went out, so a broken view never breaks the reply.
+///
+/// `keep` is the show going into their list while the screen stays on the page they are
+/// reading, as `show` decided when it was asked for.
 async fn emit_view(
     reaction: &Reaction,
     id: String,
     op: ViewOp,
     source: String,
     view_ref: Option<String>,
+    keep: bool,
 ) {
     let module_url = if op == ViewOp::Dismiss {
         None
@@ -3897,13 +3942,17 @@ async fn emit_view(
     // Before it goes on the wire: showing something is as much an utterance as
     // saying it, and the screen persists across restarts, so a mind that can't read
     // back what it put up will put it up again.
-    let line = render_view_line(&id, op, module_url.as_deref(), view_ref.as_deref());
+    let mut line = render_view_line(&id, op, module_url.as_deref(), view_ref.as_deref());
+    if keep {
+        line.push_str(" into their list — the screen stayed on the page they were reading");
+    }
     record_out(reaction, Channel::View, line).await;
     let _ = reaction
         .inner
         .out
         .send(OutboundSignal::View {
             envelope: ViewEnvelope { id, op, module_url, view_ref },
+            keep,
         })
         .await;
 }

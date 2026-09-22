@@ -278,7 +278,7 @@ async fn a_reply_that_crossed_with_a_new_line_lands_after_it() {
     let mut feed = Feed::open(&base).await;
     assert!(feed.next().await.reset().is_empty());
 
-    seams.state.floor.note_turn_started(7);
+    seams.state.floor.note_turn_started(7, true);
     post_text(&base, "actually never mind").await;
     assert_eq!(feed.next().await.appended().text, "actually never mind");
 

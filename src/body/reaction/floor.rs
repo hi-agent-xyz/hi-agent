@@ -98,7 +98,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -249,6 +249,9 @@ pub struct Floor {
     /// async speech state so inbound HTTP handlers can order a settled human
     /// line against a turn without waiting on a lock.
     latest_turn: Arc<AtomicU64>,
+    /// Whether that turn was started by something they said. Read by `show`, because what
+    /// a turn they started puts up is the answer to them and always takes the screen.
+    answering: Arc<AtomicBool>,
     /// Human lines accepted into the conversation, ever. Bumped as each one is
     /// handed to Reaction's queue, **not** when the loop dequeues it — during a
     /// generation nothing dequeues, and "did they say something while I was
@@ -267,6 +270,7 @@ impl Default for Floor {
         Self {
             inner: Arc::new(Mutex::new(SpeechState::default())),
             latest_turn: Arc::new(AtomicU64::new(u64::MAX)),
+            answering: Arc::new(AtomicBool::new(false)),
             heard: Arc::new(AtomicU64::new(0)),
             seen: Arc::new(AtomicU64::new(0)),
             refused: Arc::new(AtomicU64::new(0)),
@@ -354,9 +358,21 @@ impl Floor {
     /// [`may_speak`](Self::may_speak) refuses on it. Called once the batch is
     /// assembled — after the settle has drained — so the count matches exactly
     /// what went into the prompt.
-    pub fn note_turn_started(&self, turn: u64) {
+    ///
+    /// `answering` is whether the batch carried something they said, as opposed to a
+    /// worker's report, mail or the boot wake — see [`show_from`](Self::show_from).
+    pub fn note_turn_started(&self, turn: u64, answering: bool) {
+        self.answering.store(answering, Ordering::Release);
         self.latest_turn.store(turn, Ordering::Release);
         self.seen.store(self.heard.load(Ordering::Acquire), Ordering::Release);
+    }
+
+    /// The running turn as the screen reads it, or `None` before any turn has started.
+    pub fn show_from(&self) -> Option<crate::foundation::server::view_bus::ShowFrom> {
+        self.latest_turn_started().map(|turn| crate::foundation::server::view_bus::ShowFrom {
+            turn,
+            answering: self.answering.load(Ordering::Acquire),
+        })
     }
 
     /// Latest started reaction turn, if any.
@@ -604,7 +620,7 @@ mod floor_tests {
         floor.note_typing(t0).await;
         floor.note_sent().await;
         floor.note_heard();
-        floor.note_turn_started(1);
+        floor.note_turn_started(1, true);
         assert_eq!(floor.may_speak(t0 + ms(50)).await, Ok(()));
     }
 
@@ -674,7 +690,7 @@ mod floor_tests {
     async fn a_line_the_turn_never_saw_refuses_even_in_a_quiet_room() {
         let floor = Floor::new();
         floor.note_heard(); // their first sentence
-        floor.note_turn_started(1); // ...which this turn was built from
+        floor.note_turn_started(1, true); // ...which this turn was built from
         floor.note_heard(); // and then they kept going, mid-generation
         assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
     }
@@ -686,10 +702,10 @@ mod floor_tests {
     async fn the_next_turn_is_built_from_what_it_refused_over() {
         let floor = Floor::new();
         floor.note_heard();
-        floor.note_turn_started(1);
+        floor.note_turn_started(1, true);
         floor.note_heard();
         assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
-        floor.note_turn_started(2); // the next turn's batch carries that line
+        floor.note_turn_started(2, true); // the next turn's batch carries that line
         assert_eq!(floor.may_speak(Instant::now()).await, Ok(()));
     }
 
@@ -699,7 +715,7 @@ mod floor_tests {
     #[tokio::test]
     async fn the_backstop_takes_a_small_opening() {
         let floor = Floor::new();
-        floor.note_turn_started(1);
+        floor.note_turn_started(1, true);
         floor.note_heard();
         for _ in 0..MAX_CONSECUTIVE_REFUSALS {
             assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
@@ -734,7 +750,7 @@ mod floor_tests {
     async fn a_live_voice_outranks_a_stale_reply() {
         let floor = Floor::new();
         let t0 = Instant::now();
-        floor.note_turn_started(1);
+        floor.note_turn_started(1, true);
         floor.note_heard();
         floor.note_speech(t0).await;
         assert_eq!(floor.may_speak(t0 + ms(100)).await, Err(Busy::Speaking));
@@ -856,7 +872,7 @@ mod tests {
         let reg = Floor::new();
         let clone = reg.clone();
         assert_eq!(clone.latest_turn_started(), None);
-        reg.note_turn_started(41);
+        reg.note_turn_started(41, true);
         assert_eq!(clone.latest_turn_started(), Some(41));
     }
 }

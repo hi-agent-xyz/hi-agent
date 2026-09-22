@@ -708,7 +708,15 @@ async fn run(reaction: &Reaction, runner: &Runner, branch: &Branch) -> Vec<(Stri
                 match source {
                     Err(why) => Err(why),
                     Ok(source) => {
-                        let beat = Beat::Show { id: id.clone(), op: op.clone(), source, view_ref: view_ref.clone() };
+                        // Never kept: a met branch runs on their message, so what it shows is
+                        // the answer to it.
+                        let beat = Beat::Show {
+                            id: id.clone(),
+                            op: op.clone(),
+                            source,
+                            view_ref: view_ref.clone(),
+                            keep: false,
+                        };
                         match runner.beats.send(beat).await {
                             Ok(()) => Ok("shown".to_string()),
                             Err(_) => Err("not shown — the sequencer is gone".to_string()),

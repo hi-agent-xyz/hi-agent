@@ -233,6 +233,12 @@ export function Views({ onChose }: { onChose: () => void }) {
                         {initial(entry.label)}
                       </span>
                     )}
+                    {/* Put up while they were reading something else, and not opened
+                        since: the one way something reaches this row without having been in
+                        front of them. */}
+                    {entry.unopened && (
+                      <span className="hi-views-unopened" role="img" aria-label="not opened yet" />
+                    )}
                     <span className="hi-views-title">
                       {isLive && <span className="hi-views-pip" aria-hidden="true" />}
                       <span className="hi-views-name">{entry.label}</span>

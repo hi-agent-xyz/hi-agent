@@ -680,8 +680,6 @@ pub fn build(
         // changes — real-time "who's here", no remote call. A no-op without the
         // face capability.
         .route("/api/in/vision/presence", post(vision::post_presence))
-        // The attention lane: the web face reports its own window coming forward
-        // (visibility/focus) — the "they're checking on you" signal for presence.
         // The stage lane: the desktop window reports the frame it is showing, so
         // `review_view` renders a view at the size the person actually has rather
         // than at a constant matching no window. Not `/api/in/*` — a frame size is

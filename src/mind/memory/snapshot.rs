@@ -339,7 +339,7 @@ _Nothing has been put on their screen in the last {SHOWN_WINDOW_MIN} minutes._
     let mut out = format!(
         "# On their screen
 
-_What they have actually been shown in the last {SHOWN_WINDOW_MIN} minutes, oldest first. Work they have not seen is work they are still waiting for, whatever its task says._
+_What has actually gone up for them in the last {SHOWN_WINDOW_MIN} minutes — in front of them, or into their list while they were on another page — oldest first. Work that has not gone up is work they are still waiting for, whatever its task says._
 
 "
     );

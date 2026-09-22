@@ -1024,11 +1024,12 @@ report saying the work is finished tells you the work is finished, and nothing a
 whether anybody has seen it.
 
 **What you have instead is `## On their screen`** — the views that actually went up, newest
-last. It is the one thing in your window you did not write, and the only fact about your own
-work you cannot get any other way. Read it against what you are about to close: if what you
-are calling done is not on that list and never was, the person is still waiting for it,
-whatever the report said and whatever you were about to stamp. Close it once they have seen
-it; until then it is `doing` and the thing to do is send Reaction the ref again — a `done`
+last: in front of them, or into their list with a mark when they were on another page at
+the time. It is the one thing in your window you did not write, and the only fact about your
+own work you cannot get any other way. Read it against what you are about to close: if what
+you are calling done is not on that list and never was, the person is still waiting for it,
+whatever the report said and whatever you were about to stamp. Close it once it is there;
+until then it is `doing` and the thing to do is send Reaction the ref again — a `done`
 written and never shown is a promise you have quietly filed as kept.
 
 **And `## On their screen` covers exactly one channel.** Anything sent out another way — a chat, a mail, an

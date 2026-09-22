@@ -1893,6 +1893,19 @@ button,
   background: var(--host-accent-2);
 }
 
+/* The one red thing in the row, and it means one thing: this was put up while they were on
+   another page, so it has never been in front of them. Gone the moment the screen is on it. */
+.hi-views-unopened {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--host-danger);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
 .hi-views-bookmarks {
   display: flex;
   flex-wrap: wrap;

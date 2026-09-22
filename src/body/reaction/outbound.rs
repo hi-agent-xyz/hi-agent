@@ -40,8 +40,9 @@ pub enum OutboundSignal {
     AudioEnd { turn: u64 },
     /// An agent-authored view module to mount on the /view channel. `envelope`
     /// carries the compiled module URL; the binder broadcasts it to GET
-    /// /api/out/view subscribers.
-    View { envelope: ViewEnvelope },
+    /// /api/out/view subscribers. `keep` is the show going into their list while the
+    /// screen stays on the page they are reading (`ViewBus::apply_kept`).
+    View { envelope: ViewEnvelope, keep: bool },
     /// What is wrong with the upstream right now, or `None` once it is usable again —
     /// the host's own state, not something the agent said.
     ///

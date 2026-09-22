@@ -24,6 +24,8 @@ pub(super) enum Emit {
         op: ViewOp,
         source: String,
         view_ref: Option<String>,
+        /// Leave the page in front of them where it is ([`crate::foundation::server::view_bus::Claim::Keeps`]).
+        keep: bool,
     },
 }
 
@@ -47,12 +49,13 @@ pub(super) fn view_emits(
     op: ViewOp,
     source: String,
     view_ref: Option<String>,
+    keep: bool,
 ) -> Vec<Emit> {
     let mut out = Vec::new();
     if let Some(tail) = splitter.flush() {
         out.push(Emit::Speak(tail));
     }
-    out.push(Emit::Show { id, op, source, view_ref });
+    out.push(Emit::Show { id, op, source, view_ref, keep });
     out
 }
 
@@ -79,9 +82,9 @@ mod release_tests {
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = Vec::new();
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None));
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None, false));
         emits.extend(speak_emits("Narrate one. ", &mut sp, now));
-        emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None));
+        emits.extend(view_emits(&mut sp, "b".into(), ViewOp::Show, "c2".into(), None, false));
         emits.extend(speak_emits("Narrate two. ", &mut sp, now));
         if let Some(tail) = sp.flush() {
             emits.push(Emit::Speak(tail));
@@ -99,7 +102,7 @@ mod release_tests {
         let now = Instant::now();
         let mut sp = Segmenter::new(Terminator, now);
         let mut emits = speak_emits("partial no period", &mut sp, now);
-        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None));
+        emits.extend(view_emits(&mut sp, "a".into(), ViewOp::Show, "c1".into(), None, false));
         assert_eq!(trace(&emits), vec!["speak:partial no period", "show:c1"]);
     }
 }

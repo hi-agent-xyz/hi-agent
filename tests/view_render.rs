@@ -486,6 +486,7 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
     h.seams
         .out_tx
         .send(hi_agent::body::reaction::OutboundSignal::View {
+            keep: false,
             envelope: hi_agent::types::ViewEnvelope {
                 id: "spending".to_string(),
                 op: hi_agent::types::ViewOp::Show,
@@ -560,6 +561,7 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
     h.seams
         .out_tx
         .send(hi_agent::body::reaction::OutboundSignal::View {
+            keep: false,
             envelope: hi_agent::types::ViewEnvelope {
                 id: "spending".to_string(),
                 op: hi_agent::types::ViewOp::Show,

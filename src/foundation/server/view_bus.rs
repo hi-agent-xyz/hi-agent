@@ -86,6 +86,9 @@ pub struct Shown {
     /// Whether the agent put the screen here or the person did. The agent can put any
     /// of these back up; only some of them are things it ever showed.
     pub by: Hand,
+    /// Shown while they were reading something else, so it went into their list rather
+    /// than in front of them, and they have not opened it since.
+    pub unopened: bool,
 }
 
 /// Where the screen is parked, for the turn to read.
@@ -94,10 +97,45 @@ pub struct Cursor {
     /// What to call the destination in a prompt — the ref when it has one, else the id
     /// the inline view was shown as. The module hash names nothing.
     pub name: String,
-    /// Which hand put the screen here. Only ever [`Hand::Move`] today, because a show
-    /// drops the cursor — but read from the entry rather than assumed, so the day a
-    /// third writer appears this reports it instead of lying.
+    /// Which hand put the screen here in the first place — read from the entry rather
+    /// than assumed, because since a show can leave the screen where it is, a parked
+    /// screen can be on something the agent put up.
     pub by: Hand,
+    /// The screen is parked here because a show left it alone — they were reading this
+    /// when the agent put something else up — rather than because they went here.
+    pub kept: bool,
+}
+
+/// How long a page counts as *just put in front of them*: a show from a turn they did
+/// not start leaves the screen alone for this long after the page they are on went up.
+/// A starting value, long enough to read one page and short enough that "just" is still
+/// true; nothing has measured it yet.
+pub const READING_FOR: Duration = Duration::minutes(5);
+
+/// How long every window has to have let the conversation go before they count as having
+/// left the page — see [`crate::body::attachments::Attachments::back_from_away`]. Long
+/// enough that a glance at another app or a reconnect is not leaving. Unmeasured.
+pub const AWAY_FOR: Duration = Duration::minutes(2);
+
+/// The turn a show comes from, as far as the screen is concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowFrom {
+    /// The sequencer's turn id.
+    pub turn: u64,
+    /// The turn was started by something they said. What it shows is the answer, and an
+    /// answer always takes the screen.
+    pub answering: bool,
+}
+
+/// What a show will do to the screen, decided when it is asked for so the answer can
+/// be told to the rung that asked. See [`ViewBus::claim`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Claim {
+    /// It goes in front of them.
+    Takes,
+    /// It goes live and into their list, marked unopened, and the screen stays on
+    /// `reading` — the name of the page they are on, for the answer.
+    Keeps { reading: String },
 }
 
 /// The screen: two fixed slots, not a stack.
@@ -136,6 +174,17 @@ struct Appearance {
     /// because it *is* the appearance — every window renders it — and it is the one
     /// field a person writes.
     cursor: Option<String>,
+    /// The cursor is set because a show left the screen where it was, not because the
+    /// person went there. Only the turn's reading of the screen differs by it.
+    kept: bool,
+    /// When the screen last changed what it has in front of them — the page they are on,
+    /// whichever hand put it there. `None` for an empty room, and after a restart, which
+    /// knows nothing about how long anyone has been reading.
+    front_since: Option<DateTime<Utc>>,
+    /// The turn whose show last took the screen, so the next show in the same turn is read
+    /// as the next beat of one walk-through rather than as something arriving over it.
+    /// Cleared by the person moving the screen.
+    took: Option<u64>,
     /// Bumped on every state change; the long-poll's `since` compares against it.
     version: u64,
     /// Pulsed whenever `version` bumps so parked readers re-check.
@@ -158,6 +207,10 @@ struct HistoryEntry {
     /// which is exactly what [`Hand::Show`] means — so the default is the migration.
     #[serde(default)]
     by: Hand,
+    /// Shown while they were reading something else and not opened since — the mark the
+    /// trail card and the task on Home wear. Cleared the moment the screen is on it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unopened: bool,
 }
 
 /// One view the screen has held. Public because [`ViewBus::go_to`] takes one: putting the
@@ -202,6 +255,9 @@ struct Snapshot {
     /// and approximate towards the agent's own last show, which is the safe end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cursor: Option<String>,
+    /// Whether that cursor is where a show left the screen. See [`Appearance::kept`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    kept: bool,
     #[serde(default, rename = "views", skip_serializing_if = "Vec::is_empty")]
     legacy_views: Vec<RetainedView>,
 }
@@ -254,6 +310,10 @@ pub struct WireHistoryEntry {
     /// a record that is complete without it. See [`super::view_shots`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shot_url: Option<String>,
+    /// Shown while they were reading something else, and not opened since. The card wears
+    /// a mark for it, and so does the task on Home that made it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unopened: bool,
 }
 
 /// The full appearance state — the body of one `GET /api/out/view`
@@ -303,6 +363,9 @@ impl ViewBus {
                     condition: snap.condition,
                     history: snap.history,
                     cursor: snap.cursor,
+                    kept: snap.kept,
+                    front_since: None,
+                    took: None,
                     version: snap.version,
                     notify: Arc::new(Notify::new()),
                 };
@@ -381,9 +444,17 @@ impl ViewBus {
             return false;
         }
         entry.cursor = next;
+        if moved {
+            entry.kept = false;
+            entry.took = None;
+            entry.front_since = in_front(entry).map(|_| Utc::now());
+        }
+        // Being on a card is having opened it, whichever way the screen got there — a tile
+        // on Home, the card in the band, or going live on what a show left waiting.
+        let opened = mark_opened(entry);
         entry.version += 1;
         entry.notify.notify_waiters();
-        if arrived {
+        if arrived || opened {
             persist(&self.data_dir, entry).await;
         }
         moved
@@ -401,7 +472,43 @@ impl ViewBus {
             .map(|h| Cursor {
                 name: h.view.view_ref.clone().unwrap_or_else(|| h.view.id.clone()),
                 by: h.by,
+                kept: map.kept,
             })
+    }
+
+    /// Decide what a show asked for now will do to the screen: take it, or leave the page
+    /// they are reading where it is and go into their list. See [`decide`] for the rule.
+    ///
+    /// **Decided when the show is asked for, not when it lands**, so the answer can go back
+    /// to the rung that asked it in the same turn. A show that goes into the list while the
+    /// agent says "放上来了" is the failure that reversed the old *a raise never yanks*
+    /// (`docs/arch/stage.md` § *A show takes the window with it*), and the difference now
+    /// is that the tool says which one happened. A take is recorded against the turn at
+    /// once, because the show that follows it in the same turn is asked for before this one
+    /// has landed.
+    ///
+    /// `back_at` is [`back_from_away`](crate::body::attachments::Attachments::back_from_away)
+    /// at [`AWAY_FOR`], read by the caller.
+    pub async fn claim(
+        &self,
+        id: Option<&str>,
+        view_ref: Option<&str>,
+        from: ShowFrom,
+        back_at: Option<DateTime<Utc>>,
+    ) -> Claim {
+        let mut map = self.inner.lock().await;
+        let entry = &mut *map;
+        let front = in_front(entry).zip(entry.front_since).map(|((dest, id, name), since)| Front {
+            dest,
+            id,
+            name,
+            since,
+        });
+        let claim = decide(front.as_ref(), id, view_ref, from, entry.took, back_at, Utc::now());
+        if claim == Claim::Takes {
+            entry.took = Some(from.turn);
+        }
+        claim
     }
 
     /// Fold one reaction-emitted envelope into the **content** slot.
@@ -422,6 +529,24 @@ impl ViewBus {
     /// the agent has moved on. A dismiss is not: the empty room is not somewhere to
     /// go back to, and the view it cleared is already in the list.
     pub async fn apply(&self, envelope: ViewEnvelope) {
+        self.fold(envelope, false).await
+    }
+
+    /// Fold a show that [`claim`](Self::claim) answered with [`Claim::Keeps`]: it becomes
+    /// what the agent has up and the newest card in their list, marked unopened, and the
+    /// screen stays parked on the page in front of them — the same cursor going back to a
+    /// card sets, set by the show instead of by the person. Going live is then one tap on
+    /// the card, and nothing is withheld: the view is in every window's list the moment it
+    /// lands.
+    ///
+    /// Re-checked here rather than trusted, because the screen may have moved between the
+    /// claim and the landing: with nothing in front of them, or with the same page, there
+    /// is nothing to leave alone and this is an ordinary show.
+    pub async fn apply_kept(&self, envelope: ViewEnvelope) {
+        self.fold(envelope, true).await
+    }
+
+    async fn fold(&self, envelope: ViewEnvelope, keep: bool) {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
         let Some(next) = resolve_slot(&entry.content, envelope) else {
@@ -430,13 +555,33 @@ impl ViewBus {
         if entry.content == next {
             return;
         }
+        let before = in_front(entry).map(|(dest, _, _)| dest);
         if let Some(shown) = &next {
-            record_entry(entry, shown.clone(), Utc::now(), Hand::Show);
-            // A show takes every window with it, whatever any of them had gone back to.
-            // One write, in the same call that records the show, so the rule and the
-            // record cannot drift.
-            entry.cursor = None;
-            // Take the picture now, while this *is* the screen. Off the write path
+            let reading = before.clone().filter(|dest| keep && *dest != destination_of(shown));
+            if let Some(reading) = reading {
+                // The page they are on has to be a card the cursor can point at. It is,
+                // unless the screen was restored from a snapshot older than the trail.
+                if !entry.history.iter().any(|h| destination_of(&h.view) == reading)
+                    && let Some(current) = entry.content.clone()
+                {
+                    record_entry(entry, current, Utc::now(), Hand::Show);
+                }
+                record_entry(entry, shown.clone(), Utc::now(), Hand::Show);
+                if let Some(card) = entry.history.last_mut() {
+                    card.unopened = true;
+                }
+                entry.cursor = Some(reading);
+                entry.kept = true;
+            } else {
+                record_entry(entry, shown.clone(), Utc::now(), Hand::Show);
+                // A show takes every window with it, whatever any of them had gone back
+                // to — unless it was kept, above. One write, in the same call that records
+                // the show, so the rule and the record cannot drift.
+                entry.cursor = None;
+                entry.kept = false;
+            }
+            // Take the picture now — the render is headless, so a kept show gets its tile
+            // too, and a card waiting in their list is not a bare mark. Off the write path
             // entirely: nothing here waits for a browser, and a shot that never
             // arrives leaves the tile on its mark.
             let bus = self.clone();
@@ -462,6 +607,17 @@ impl ViewBus {
             }
         }
         entry.content = next;
+        // A trimmed trail can have cut the card a kept show parked on; then the screen
+        // is live after all, which is an ordinary show.
+        drop_dangling_cursor(entry);
+        if entry.cursor.is_none() {
+            entry.kept = false;
+        }
+        // The same page refined in place is the page they have been reading all along.
+        let after = in_front(entry).map(|(dest, _, _)| dest);
+        if after != before {
+            entry.front_since = after.map(|_| Utc::now());
+        }
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, entry).await;
@@ -669,6 +825,9 @@ impl ViewBus {
         }
         entry.content = None;
         entry.cursor = None;
+        entry.kept = false;
+        entry.took = None;
+        entry.front_since = None;
         entry.version += 1;
         entry.notify.notify_waiters();
         persist(&self.data_dir, entry).await;
@@ -742,6 +901,7 @@ impl ViewBus {
                     at: h.at,
                     live: live.as_deref() == Some(destination_of(&h.view).as_str()),
                     by: h.by,
+                    unopened: h.unopened,
                 })
             })
             .collect()
@@ -781,6 +941,7 @@ impl ViewBus {
                             label: label_for(&h.view),
                             at: h.at,
                             shot_url: shot_for(&self.data_dir, &h.view),
+                            unopened: h.unopened,
                         })
                         .collect(),
                     cursor: entry.cursor.clone(),
@@ -870,10 +1031,86 @@ fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
 fn record_entry(entry: &mut Appearance, view: RetainedView, at: DateTime<Utc>, by: Hand) {
     let key = destination_of(&view);
     entry.history.retain(|h| destination_of(&h.view) != key);
-    entry.history.push(HistoryEntry { view, at, by });
+    entry.history.push(HistoryEntry { view, at, by, unopened: false });
     let overflow = entry.history.len().saturating_sub(HISTORY_MAX);
     entry.history.drain(..overflow);
     drop_dangling_cursor(entry);
+}
+
+/// The page in front of them — the card the cursor is on, or what the agent has up —
+/// as `(destination, id, name)`, where the name is what a prompt calls it.
+fn in_front(entry: &Appearance) -> Option<(String, String, String)> {
+    let view = match entry.cursor.as_deref() {
+        Some(key) => &entry.history.iter().find(|h| destination_of(&h.view) == key)?.view,
+        None => entry.content.as_ref()?,
+    };
+    let name = view.view_ref.clone().unwrap_or_else(|| view.id.clone());
+    Some((destination_of(view), view.id.clone(), name))
+}
+
+/// Clear the unopened mark on the card the screen is now on. Returns whether one was set.
+fn mark_opened(entry: &mut Appearance) -> bool {
+    let Some((dest, _, _)) = in_front(entry) else {
+        return false;
+    };
+    match entry.history.iter_mut().find(|h| destination_of(&h.view) == dest && h.unopened) {
+        Some(card) => {
+            card.unopened = false;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The page in front of them, as [`decide`] reads it.
+struct Front {
+    dest: String,
+    id: String,
+    name: String,
+    since: DateTime<Utc>,
+}
+
+/// Whether a show leaves the page in front of them alone.
+///
+/// **Showing is not a judgment any more; where it lands is this.** Reaction puts up every
+/// view that comes back finished, the moment it comes back — waiting for the talk to reach
+/// it was the rule that let a finished page sit unseen for four days while the agent asked
+/// whether to put it up (`docs/arch/stage.md` § *A show leaves a page being read alone*).
+/// What that costs is a finished view arriving over a page someone is halfway down, so the
+/// host leaves the screen alone when every one of these holds:
+///
+/// - **Something is in front of them**, and not the resting board (`factory/home`), which
+///   nobody is reading.
+/// - **The turn was not started by them.** What a turn they started shows is the answer, and
+///   an answer always takes the screen — "给我看看" must never go into a list.
+/// - **This turn has not already taken the screen.** A walk-through is a run of shows in one
+///   turn, each one after a page the same turn put up.
+/// - **It is a different page.** The same ref, or the same id refined in place, is the page
+///   they are already reading getting better.
+/// - **The page went up less than [`READING_FOR`] ago** and they have not been away since:
+///   not every window has let the conversation go for [`AWAY_FOR`] after it went up
+///   (`back_at`). Longer than that, or back from being away, and they are done with it.
+///
+/// Nothing is held back either way: a kept show is live and first in their list at once.
+fn decide(
+    front: Option<&Front>,
+    id: Option<&str>,
+    view_ref: Option<&str>,
+    from: ShowFrom,
+    took: Option<u64>,
+    back_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Claim {
+    let Some(front) = front else {
+        return Claim::Takes;
+    };
+    let resting = front.dest == crate::mind::views::factory::HOME_REF;
+    let same_page = view_ref == Some(front.dest.as_str()) || id == Some(front.id.as_str());
+    let reading = now - front.since < READING_FOR && back_at.is_none_or(|back| back <= front.since);
+    if resting || from.answering || took == Some(from.turn) || same_page || !reading {
+        return Claim::Takes;
+    }
+    Claim::Keeps { reading: front.name.clone() }
 }
 
 /// A cursor is a pointer into a bounded list, so trimming can cut the ground from under
@@ -996,6 +1233,7 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
         condition: entry.condition.clone(),
         history: entry.history.clone(),
         cursor: entry.cursor.clone(),
+        kept: entry.kept,
         legacy_views: Vec::new(),
     };
     let bytes = match serde_json::to_vec_pretty(&snap) {
@@ -1058,6 +1296,7 @@ mod tests {
                 label: "Something".into(),
                 at: Utc::now(),
                 shot_url: Some("/views/_shots/abc.png".into()),
+                unopened: false,
             }],
             cursor: None,
             live: Some("/views/_compiled/abc.mjs".into()),
@@ -2052,5 +2291,127 @@ mod tests {
         let state = bus.wait_state(None).await;
         assert_eq!(ids(&state), vec!["vendor-outage"]);
         assert_eq!(state.views[0].module_url, "/m/energy.mjs");
+    }
+
+    // ── A show leaves a page being read alone ───────────────────────────────────
+
+    const DELIVERY: ShowFrom = ShowFrom { turn: 7, answering: false };
+
+    fn front(dest: &str, minutes_ago: i64) -> Front {
+        Front {
+            dest: dest.into(),
+            id: dest.rsplit('/').next().unwrap().into(),
+            name: dest.into(),
+            since: Utc::now() - Duration::minutes(minutes_ago),
+        }
+    }
+
+    fn keeps(claim: &Claim) -> bool {
+        matches!(claim, Claim::Keeps { .. })
+    }
+
+    /// The case the rule exists for: a finished page arrives from a turn nobody asked for
+    /// while they are a minute into another one.
+    #[test]
+    fn a_finished_view_does_not_land_on_a_page_just_put_in_front_of_them() {
+        let now = Utc::now();
+        let claim = decide(Some(&front("reid/compare", 1)), None, Some("fp/libs"), DELIVERY, None, None, now);
+        assert_eq!(claim, Claim::Keeps { reading: "reid/compare".into() });
+    }
+
+    /// Each exemption is a flow that must keep working exactly as before.
+    #[test]
+    fn what_they_asked_for_a_walk_through_and_a_refinement_always_take_the_screen() {
+        let now = Utc::now();
+        let page = front("reid/compare", 1);
+        let asked = ShowFrom { answering: true, ..DELIVERY };
+        assert!(!keeps(&decide(Some(&page), None, Some("fp/libs"), asked, None, None, now)), "给我看看");
+        assert!(
+            !keeps(&decide(Some(&page), None, Some("fp/libs"), DELIVERY, Some(DELIVERY.turn), None, now)),
+            "the second beat of a walk-through this turn started"
+        );
+        assert!(!keeps(&decide(Some(&page), None, Some("reid/compare"), DELIVERY, None, None, now)), "same ref");
+        assert!(!keeps(&decide(Some(&page), Some("compare"), None, DELIVERY, None, None, now)), "same slot");
+    }
+
+    /// Nothing to interrupt: an empty room, the resting board, a page they have had for a
+    /// while, or one they walked away from.
+    #[test]
+    fn a_page_nobody_is_reading_is_taken_over() {
+        let now = Utc::now();
+        let fp = Some("fp/libs");
+        assert!(!keeps(&decide(None, None, fp, DELIVERY, None, None, now)));
+        assert!(!keeps(&decide(Some(&front("factory/home", 1)), None, fp, DELIVERY, None, None, now)));
+        assert!(!keeps(&decide(Some(&front("reid/compare", 6)), None, fp, DELIVERY, None, None, now)));
+        let page = front("reid/compare", 3);
+        let back = Some(now - Duration::minutes(1));
+        assert!(!keeps(&decide(Some(&page), None, fp, DELIVERY, None, back, now)), "away since it went up");
+        let before = Some(now - Duration::minutes(10));
+        assert!(keeps(&decide(Some(&page), None, fp, DELIVERY, None, before, now)), "away before it went up");
+    }
+
+    /// Kept: live and first in their list with a mark, and the screen still on the page they
+    /// were reading — for the agent's reading of it, as a kept cursor.
+    #[tokio::test]
+    async fn a_kept_show_goes_live_behind_the_page_they_are_reading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("compare", "/m/reid.mjs", "reid/compare")).await;
+        let claim = bus.claim(None, Some("fp/libs"), DELIVERY, None).await;
+        assert!(keeps(&claim));
+        bus.apply_kept(show_ref("libs", "/m/fp.mjs", "fp/libs")).await;
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.live.as_deref(), Some("fp/libs"));
+        assert_eq!(state.cursor.as_deref(), Some("reid/compare"), "the screen stayed");
+        let card = state.history.iter().find(|h| h.view_ref.as_deref() == Some("fp/libs")).unwrap();
+        assert!(card.unopened);
+        let cursor = bus.cursor().await.unwrap();
+        assert!(cursor.kept && cursor.name == "reid/compare");
+    }
+
+    /// Opening it is the one thing that clears the mark, however they get there — here by
+    /// going live on it from the card.
+    #[tokio::test]
+    async fn opening_a_kept_view_clears_its_mark_and_starts_its_own_reading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("compare", "/m/reid.mjs", "reid/compare")).await;
+        bus.apply_kept(show_ref("libs", "/m/fp.mjs", "fp/libs")).await;
+        assert!(bus.go_to(Some(dest("libs", "/m/fp.mjs", Some("fp/libs")))).await);
+
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.cursor, None, "going to what the agent has up is going live");
+        assert!(state.history.iter().all(|h| !h.unopened));
+        assert!(!bus.cursor().await.is_some_and(|c| c.kept));
+        // A third page arriving now lands on one they opened a moment ago.
+        assert!(keeps(&bus.claim(None, Some("shoes/pairs"), DELIVERY, None).await));
+    }
+
+    /// The mark is durable: a restart must not put a dot back on something they opened, nor
+    /// take one off something they have not.
+    #[tokio::test]
+    async fn the_unopened_mark_and_the_kept_cursor_survive_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("compare", "/m/reid.mjs", "reid/compare")).await;
+            bus.apply_kept(show_ref("libs", "/m/fp.mjs", "fp/libs")).await;
+        }
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(None).await;
+        assert!(state.history.iter().any(|h| h.unopened));
+        assert!(bus.cursor().await.is_some_and(|c| c.kept));
+    }
+
+    /// A kept show that lands after the screen emptied has nothing to stay behind.
+    #[tokio::test]
+    async fn a_kept_show_onto_an_empty_room_is_an_ordinary_show() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply_kept(show_ref("libs", "/m/fp.mjs", "fp/libs")).await;
+        let state = bus.wait_state(None).await;
+        assert_eq!(state.cursor, None);
+        assert!(state.history.iter().all(|h| !h.unopened));
     }
 }

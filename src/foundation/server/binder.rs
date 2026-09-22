@@ -72,12 +72,16 @@ pub(crate) async fn bind_outbound(
             // /view: fold the envelope into the retained appearance
             // state (what GET /out/view serves), and echo a non-draining copy
             // to the channel inspector's broadcast tap.
-            OutboundSignal::View { envelope } => {
+            OutboundSignal::View { envelope, keep } => {
                 let _ = view_out.send(ViewEvent {
                     envelope: envelope.clone(),
                     ts: Utc::now(),
                 });
-                views.apply(envelope).await;
+                if keep {
+                    views.apply_kept(envelope).await;
+                } else {
+                    views.apply(envelope).await;
+                }
             }
             // The host's own state about the upstream. It lands beside the recognition
             // interim rather than as a message, so an outage is visible to a window that

@@ -50,6 +50,7 @@ async fn emit_view(
     seams
         .out_tx
         .send(OutboundSignal::View {
+            keep: false,
             envelope: ViewEnvelope {
                 id: id.to_string(),
                 op,

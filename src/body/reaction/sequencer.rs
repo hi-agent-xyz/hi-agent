@@ -47,6 +47,9 @@ pub(super) enum Beat {
         op: String,
         source: String,
         view_ref: Option<String>,
+        /// Decided when the show was asked for ([`crate::foundation::server::ViewBus::claim`]):
+        /// it goes into their list and the screen stays on the page they are reading.
+        keep: bool,
     },
     TurnEnd {
         done: oneshot::Sender<String>,
@@ -137,6 +140,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 op,
                 source,
                 view_ref,
+                keep,
             } => {
                 let (id, op) = resolve_view(id, &op);
                 if !armed {
@@ -145,7 +149,7 @@ pub(super) async fn run_sequencer(reaction: Reaction, mut beats: mpsc::Receiver<
                 if reaction.inner.floor.should_skip(turn).await {
                     continue;
                 }
-                for emit in interleave::view_emits(&mut splitter, id, op, source, view_ref) {
+                for emit in interleave::view_emits(&mut splitter, id, op, source, view_ref, keep) {
                     super::perform(emit, &synth_tx, &reaction).await;
                 }
             }

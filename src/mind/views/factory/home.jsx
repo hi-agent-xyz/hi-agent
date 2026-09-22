@@ -28,7 +28,7 @@ const COPY = {
       failed: "Last turn failed", interrupted: "Last turn interrupted", missing: "Not connected" },
     roles: { reaction: "Conversation", cognition: "Coordination", reflection: "Review" },
     source: { tasks: "tasks", workers: "live sessions", views: "results", groups: "grouping" },
-    trail: "Where this branch sits", back: "Step back out",
+    trail: "Where this branch sits", back: "Step back out", unopened: "Made while you were on another page, not opened yet",
     ago: (n, unit) => `${n}${unit} ago`,
     more: (n) => `${n} more`,
     onBoard: (n) => `${n} more on the task board`,
@@ -43,7 +43,7 @@ const COPY = {
       failed: "上一轮失败", interrupted: "上一轮中断", missing: "未连接" },
     roles: { reaction: "交流", cognition: "协调", reflection: "回顾" },
     source: { tasks: "任务", workers: "在线会话", views: "成果", groups: "分组" },
-    trail: "这一支所在的位置", back: "退回上一层",
+    trail: "这一支所在的位置", back: "退回上一层", unopened: "做好时你在看别的页，还没打开",
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
     more: (n) => `还有 ${n} 项`,
     onBoard: (n) => `还有 ${n} 项，在任务板上`,
@@ -1189,8 +1189,14 @@ function writePlace(place) {
 }
 
 export default function Home() {
-  const { openRef } = useViews();
+  const { openRef, trail } = useViews();
   const { messages } = useMessages();
+  // What was put up while they were on another page and has not been opened since — the
+  // screen's list says so, and a task that made one wears a dot until it is opened.
+  const unopened = useMemo(
+    () => new Set((trail || []).filter((entry) => entry.unopened && entry.view_ref).map((entry) => entry.view_ref)),
+    [trail],
+  );
   const [source, setSource] = useState({ tasks: [], workers: [], views: [], groups: [] });
   const [loaded, setLoaded] = useState(false);
   const [ledgerSettled, setLedgerSettled] = useState(false);
@@ -1401,7 +1407,7 @@ export default function Home() {
     return { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, at: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top } };
   };
   const branches = children.get("core")?.filter((n) => n.kind !== "overview") || [];
-  const common = { now, children, openRef, openTask, tones, centreOn };
+  const common = { now, children, openRef, openTask, tones, centreOn, unopened };
   // One step out from a focused group: the group holding it, or the whole chart.
   const up = path.length > 1 ? path[path.length - 2].id : null;
   return (
@@ -1716,8 +1722,12 @@ function Core({ node, model, now, more = 0, openRef }) {
  * the same move the task made — `factory/workers` exporting its detail for this surface to
  * draw; see `docs/arch/home.md` § Open.
  */
-function Node({ node, now, children, openRef, openTask, tones, centreOn, root = false, up = null, more = 0 }) {
+function Node({ node, now, children, openRef, openTask, tones, centreOn, unopened = new Set(), root = false, up = null, more = 0 }) {
   const state = stateOf(node), time = nodeTime(node);
+  // A dot for something this task made that was put up while they were on another page and
+  // is still waiting unopened in their list. Opening it — here, from the tile — clears it.
+  const fresh = node.kind === "result" ? unopened.has(node.data.viewRef)
+    : node.kind === "task" && (node.data.task.refs || []).some((ref) => unopened.has(ref));
   const open = node.kind === "task" ? () => openTask(node.data.task.subject)
     : node.kind === "activity" ? () => openRef(SESSION_BOARD) : null;
   // A tile lands exactly where it points: `openRef` takes a view ref natively, so it needs none
@@ -1726,6 +1736,7 @@ function Node({ node, now, children, openRef, openTask, tones, centreOn, root = 
     <button onClick={() => openRef(node.data.viewRef)} title={node.title}>
       <img src={node.data.shot} alt={node.title} loading="lazy" />
     </button>
+    {fresh && <i className="hi-work__unopened" role="img" aria-label={L.unopened} />}
   </article>;
   // A group carries its own note as hover text — one line saying what the grouping was
   // based on, so the person reading the chart can see why these three are one thing.
@@ -1757,6 +1768,7 @@ function Node({ node, now, children, openRef, openTask, tones, centreOn, root = 
   return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}
     style={{ "--node-tone": TONE[state] || TONE.todo, opacity: emphasis(node, now) }}>
     {open ? <button className="hi-work__open" onClick={open}>{body}</button> : body}
+    {fresh && <i className="hi-work__unopened" role="img" aria-label={L.unopened} />}
   </article>;
 }
 
@@ -1907,6 +1919,10 @@ const CSS = `
 .hi-work__tile { height:100%; border:1px solid var(--work-line); border-radius:12px; overflow:hidden; background:color-mix(in srgb, var(--fg-mute) 10%, var(--work-pane)); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); }
 .hi-work__tile button { display:block; width:100%; height:100%; padding:0; }
 .hi-work__tile img { display:block; width:100%; height:100%; object-fit:cover; object-position:top center; }
+/* Something this task made went up while they were on another page and has not been opened:
+   the one red dot on the chart, and it goes the moment the screen is on that page. */
+.hi-work__node, .hi-work__tile { position:relative; }
+.hi-work__unopened { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:var(--danger); box-shadow:0 0 0 2px var(--work-pane); pointer-events:none; }
 .hi-work__open { display:flex; flex-direction:column; flex:1; min-width:0; height:100%; padding:0; }
 .hi-work__node-title { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:17px; line-height:1.4; overflow-wrap:anywhere; font-weight:500; }
 .hi-work__node-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; margin-top:auto; padding-top:8px; font-size:12px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }

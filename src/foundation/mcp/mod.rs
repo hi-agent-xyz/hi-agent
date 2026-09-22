@@ -1421,7 +1421,10 @@ fn show_tool() -> Value {
          is what you want when the topic is over and nothing replaces it. \
          The screen is persistent state: what you've shown stays up across page refreshes, \
          other devices in the conversation, even restarts, until something replaces it or you \
-         dismiss it. What is up right now is listed under `## On screen now` in your \
+         dismiss it. When a turn they did not start shows something while they are still \
+         on a page that only just went up, it goes into their list with a mark instead of \
+         over that page — the answer to the call says which happened. \
+         What is up right now is listed under `## On screen now` in your \
          context — trust that list, don't guess. If it says the room is clear, there is \
          nothing to dismiss; don't fire dismisses at remembered ids. \
          For a trivial one-off you may pass raw `source` JSX instead of a ref.",
@@ -2278,9 +2281,9 @@ async fn dispatch_tool(
                 }
                 _ => (None, arg_str("source")),
             };
-            sink.show(arg_opt("id"), op, source, view_ref)
-                .await
-                .map(|()| "shown".to_string())
+            // The answer says where it landed — in front of them, or into their list while
+            // they finish the page they are on — because the turn is about to speak.
+            sink.show(arg_opt("id"), op, source, view_ref).await
         }
         other => return tool_error(&format!("unknown tool: {other}")),
     };

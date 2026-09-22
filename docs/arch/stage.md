@@ -1220,6 +1220,11 @@ agent puts up is what is in front of them a moment later — on every window, pa
 The cursor survives everything except a show: they can read an old card for as long as the
 agent is quiet, and the moment it shows something, they are looking at that.
 
+*Amended September 22, 2026: except a show from a turn they did not start, arriving while the
+page in front of them only just went up. That one goes into their list and the cursor stays —
+see* [A show leaves a page being read alone](#a-show-leaves-a-page-being-read-alone)*, which
+also says why the failure that reversed "a raise never yanks" does not come back with it.*
+
 *Reversed August 21, 2026. It used to read "a raise signals; it never yanks" — see the
 vocabulary note below for why the word changed too.* The rule was
 argued from the conversation — landing a view on someone mid-read is auto-scrolling them to
@@ -1267,6 +1272,11 @@ talking, keep asking what would help them keep up with you* — the screen exist
 the gap between what the agent has in front of it and what the person can see, and a view
 finishing is not a reason to show it, only a reason to be able to.
 
+*Reversed for finished work, September 22, 2026.* A view that comes back finished is shown
+when it comes back, and whether it lands over the page they are on is the host's — see
+[A show leaves a page being read alone](#a-show-leaves-a-page-being-read-alone). The purpose
+below still settles everything the agent shows *while talking to them*.
+
 **That it is stated as a purpose and not as a cost is the design decision, not the
 wording.** Written the other way up — *a show lands in front of them and takes what was
 there off, so weigh it* — every sentence after it argues for showing less, and the failure
@@ -1280,7 +1290,9 @@ nothing else, and a rule written for particular screens is exactly what the reti
 sentence above was. The agent is mid-sentence with the person; it can read which case it is
 in far better than a paragraph written months earlier can enumerate.
 
-**No host gate, no queue, no importance field.** The only thing in this system that knows
+**No host gate, no queue, no importance field.** *Amended September 22, 2026: still no queue
+and no importance field. There is now a host rule about where a show lands, and it holds
+nothing back — [below](#a-show-leaves-a-page-being-read-alone).* The only thing in this system that knows
 whether a view is a fun aside or the thing they have been waiting on is the rung holding
 the conversation; a threshold in the bus would be a number standing in for a read of the
 room, and a hold-and-release queue would be machinery for a delay the agent can simply
@@ -1325,6 +1337,82 @@ deliberately is not:
 
 **Ages are coarse here:** the block is `Cadence::OnChange`, so a live figure would put the
 whole screen back in the prompt every turn.
+
+### A show leaves a page being read alone
+
+Added September 22, 2026. *The screen answers to the conversation* made **when** a judgment
+Reaction held — a view finishing was "only a reason to be able to" show it, and
+`reaction.md` told it that "something built for a thread you've both moved off can wait for
+the talk to reach it". The counterweight that section named, *the failure it must not
+produce is silence with a finished view behind it*, is the failure it produced.
+
+A video-fingerprint comparison page was built for a task on September 18 (its `made` line
+is 16:39) and never went up. The task's own record explains why in the agent's words:
+*未挂屏，在挂屏队列里（一次只挂一页，排在 …reid 后面、鞋那页前面）* — a queue no code holds,
+reasoned out of *one view at a time* plus *wait for the talk*. Four days later its `waiting`
+line asked the person whether they wanted to see it at all, and *"(it has never been on the
+screen, so you can't find it in views either)"*. The answer was *当然要看啊，有什么疑问？？*
+For work the person handed over and moved off, the talk does not come back. "Wait for it"
+therefore meant "never", and the agent built itself a queue so that "never" would read as
+"later".
+
+**So showing is not a judgment any more, and where a show lands is the host's.** Reaction
+puts up every view that comes back finished, the moment it comes back. What that costs is a
+finished view arriving over a page someone is halfway down. `ViewBus::claim` decides that when
+`hi_show` is *called*, not when the view lands, so the answer can go back to the turn. It reads
+facts, and none of them is about importance:
+
+| The show takes the screen when… | because |
+|---|---|
+| the turn was started by something they said | what it shows is the answer, and "给我看看" must never go into a list |
+| this turn has already taken the screen | a walk-through is a run of shows in one turn |
+| it is the same ref, or the same id refined in place | that is the page they are reading, getting better |
+| nothing is in front of them, or only the resting board (`factory/home`) | nobody is reading |
+| what is in front of them went up `READING_FOR` (5 min) ago or more | they are done with it |
+| no window has held the conversation for `AWAY_FOR` (2 min) since it went up | they left it |
+
+Otherwise the show is **kept**. It becomes what the agent has up (`live`) and the newest card
+in the trail, marked `unopened`, and the cursor is set to the page in front of them — the same
+cursor that going back to a card sets, set here by the show. So nothing is withheld and nothing
+is queued: the view is in every window's list the moment it lands, one tap from the screen,
+and the page someone is reading does not move under them.
+
+**The mark goes where they already look.** A kept card wears a red dot in the band, and so do
+the tile it hangs and the task card on Home whose `made` refs include it. The dot goes the
+moment the screen is on that card, whoever's hand put it there. It is durable (`unopened` on
+the history entry, carried in the snapshot), so a restart neither puts it back on something
+opened nor takes it off something that wasn't.
+
+**What reversed "a raise never yanks" does not come back.** That was reversed on August 21
+because the agent said *我现在放到屏幕上了* half a minute after the person had gone elsewhere,
+and the screen did not change. There are two differences now:
+
+- A turn they started always takes the screen, so the agent pointing at the screen while
+  talking to them always lands.
+- A kept show is told as kept. The call answers "shown into their list, not in front of them
+  … do not say it is on the screen". The next turn's `## On screen now` reads "the screen is
+  still on X … it is not on the screen until they open it".
+
+The dot deleted then signalled *something happened somewhere else* to someone who had just
+been told it happened here. This one marks a thing nobody said was here.
+
+**Absence is read off the wire, and errs one way.** `Attachments::back_from_away` is the last
+moment no window had held `/api/out/text` open for `AWAY_FOR`. The face holds that channel
+only while its window is attended: hidden, minimized and (on macOS) fully covered all drop it.
+A window left open on a desk nobody is at reads as someone still there, and what that costs
+is a view waiting in the list with a dot rather than taking the screen. This is the second
+consumer of `attachments`. Like the first, it is a fact about the wire read by the host at one
+instant, and no rung is told it.
+
+**Delivered follows.** `## On their screen` lists kept shows as well as taken ones — the
+journal line ends *into their list — the screen stayed on the page they were reading* — and
+`cognition.md` closes a task on either, because a view in their list with a dot on it has
+reached them. Seeing a thing is never the person's step to be asked about (`task-manager.md`).
+
+**Unwatched.** Both thresholds are starting values. None of this has been watched on a live
+instance: a kept show, the dot on Home, the dot clearing on open, and whether Reaction's next
+line after a kept show describes it truthfully. Journey
+[33](../user-journeys/33-work-finishes-while-you-are-busy.md) says what to watch.
 
 ### One screen, and the cursor is on it
 
