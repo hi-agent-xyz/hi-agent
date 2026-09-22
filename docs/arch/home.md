@@ -455,10 +455,18 @@ theirs.
     results", which was a number with nothing to open behind it and the only thing a
     picture-less result ever became here. `factory/tasks` lists them.
   - **The tiles are capped.** A task that makes forty screenshots hangs six.
-  - Which six is the task's `refs` order: newest first by when *this task* made each one, so
-    a row that has been through three deliverables is about the last one. That is the time on
-    the task's own `made` line, not a time on the view — a view record still has none.
-- **A result is what the task made, never what its record mentions.** `refs` used to be every
+  - **A tile is either of the two things a record can place** ([showing.md](showing.md)): a
+    view the task made, drawn by its shot, or an attachment one of its lines carried — a
+    picture, a clip, a document — drawn by its preview. The row carries both as `attached`,
+    so Home reads nothing but `GET /api/tasks` for them: it used to poll `/api/views` every
+    eight seconds to join each `made` ref to a shot, and dropped any view that had none — so a
+    view that was only ever reviewed, never shown, hid its task's result until somebody opened
+    it. A `made` view with no shot is now enqueued for one instead.
+  - Which six is the order of the lines that placed them: newest first by when *this task*
+    placed each one — its `made` line for a view, the line that carried it for an attachment —
+    so a row that has been through three deliverables is about the last one. A view record
+    still has no time of its own.
+- **A result is what the task made or handed over, never what its record mentions.** `refs` used to be every
   known view name spelled anywhere in a task's prose, and a mention has no verb: "the screen
   is currently showing `research-two-pairs`" put a shoe report under a KTV task, and the
   shoe report's own note that a polaroid grid had taken the screen hung that grid under the
@@ -481,6 +489,11 @@ theirs.
   - **What is not rendered for a task does not hang under it.** A task that only arranged for
     someone else's page to go up, or a record older than the stamp, shows no pictures. An
     absent tile is a gap; a tile under the wrong task is a confident wrong answer.
+  - **An attachment has the verb a mention lacks.** A line that carries a picture was written
+    through `hi_task_note(…, attach)`, and the host copied the file and wrote its id onto that
+    line — the same kind of witnessed fact as `made`, with the line's own words as its caption.
+    A path spelled in a line's prose is still not read: the 2,101 pictures in one task's
+    folder are its working files, and naming one is not handing it over.
 
 `running`, `waiting` and `idle` are registry states of a live session. In particular,
 `waiting` means queued work, not a request for the person to answer. Last-turn outcome
@@ -836,6 +849,12 @@ writes no journal line, because reading a module is not going somewhere. The pan
 Home's own ledger row, so a status moved in the panel reaches the card by the read that
 already keeps the chart current.
 
+**A tile opens what it is a picture of.** A view's tile goes to the view, as it always has. An
+attachment's tile opens its task's panel at the line that carried it, which draws the
+attachment under the sentence it is evidence for and opens it whole in the one viewer
+([showing.md](showing.md#presentation)) — the words and the picture arrive together, which is
+the point of carrying one on a line.
+
 **An activity opens `factory/workers`**, and the core's count opens `factory/tasks`: *N more*
 is the board's to show, because the board is where all of them are.
 
@@ -924,6 +943,10 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   view is what the task is for". So a research task in flight cannot show an empty report
   slot above a rank of process pictures. Naming the face is a judgment and belongs to
   whatever writes the task, not to a reader ranking what it made.
+  **Attachments answer half of it**: the kind of the line that carried one says what it was —
+  `delivered` is what they have now, `update` how the work is going, `waiting` what they are
+  asked to judge ([showing.md](showing.md#on-a-tasks-record)). The row records it and nothing
+  ranks by it yet; views made through `made` still carry no such word.
 - **A view record carries no time.** A task's `made` line says when *that task* first
   rendered a view, which orders its results, but nothing says when a view last changed, so
   no surface can show a view's newest state as newer than another's. `bookmarked` and

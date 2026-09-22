@@ -63,16 +63,22 @@ A new human-facing surface ships with its seam or it does not ship
 | A view on screen | a view builder | `hi_view_verdict` — the view reviewer's | by the view reviewer, its verdict kept — § *Views* |
 | Home's group labels and notes | a task manager | `hi_set_home_groups` | at the seam, gated — § *Home* |
 | A report's wording, where it reaches the person | Cognition, workers | `hi_say` — the speech it becomes | where it becomes speech — § B, § E, § G |
-| A file handed over (a report, a deck) | any worker | — | § Open |
+| A picture, a clip, a recording or a document on a task's line | any worker | `hi_task_note`, carrying it as an attachment ([showing.md](showing.md)) | the line it rides, at the seam — § L–M; the attachment itself is not read — § Open |
+| A file handed over in the conversation | Reaction | `hi_say`, carrying an attachment | the words it goes with, as speech — § A–K; the attachment itself is not read — § Open |
+| An attachment put on the screen | Reaction | `hi_show` | the spoken line that goes with it — § *Views* |
 
 **A report to Reaction is not a surface of its own.** A model reads it, so it may be complete
 (§ B); what the person reads is the speech made from it, and that passes through `hi_say` like
 any other. The row is here because a report's wording is the most common way machinery
 reaches a message, and it is held where it reaches them rather than where it was written.
 
-**A file handed to the person is the one row with no seam**, and it is why this is a table of
+**A file handed to the person was the one row with no seam**, and it is why this is a table of
 surfaces rather than a list of checks: the gap is found by enumerating what a person reads,
-never by enumerating what the host already intercepts.
+never by enumerating what the host already intercepts. It has one now, and it is not a verb of
+its own: a file reaches the person **carried by the sentence that says what it is** — a task's
+line, a message — so the seam that reads the sentence is already the one that sees the file go
+([showing.md](showing.md)). A path spelled in a line is not a hand-over; the gate reads it as
+machinery, and the rewrite is to carry it.
 
 ## The speech path
 
@@ -593,11 +599,10 @@ because an arrangement the person asked for is not held back over its wording.
   "wordy — the last sentences add nothing", which the table spreads over `hard`, `known` and
   `repeat` or does not name at all. Better questions over the same judge are the next work here,
   not a different judge.
-- **The surface with no verb: a file handed over.** A weekly report, a deck, a page written
-  into the drive for the person to open is read by them and passes through nothing. Whether
-  the seam is a verb that hands a file over, or the delivering `hi_say` carrying the ref, is
-  undecided — and until it is decided, this is the one row of the table that the invariant
-  cannot yet be tested against.
+- **Reading the attachment, not only its caption.** The seam reads the line or the message an
+  attachment rides; nothing reads whether the picture is legible or is the one the words
+  describe. A vision read at the seam is the obvious shape and its cost is unmeasured
+  ([showing.md § Open](showing.md#open)).
 - **Whether a record's judgment should reach the person at all.** § I counts it and Reflection
   learns from it. Nothing draws it on the board, and a row that showed its own writing quality
   would be the agent grading itself where the work should be.

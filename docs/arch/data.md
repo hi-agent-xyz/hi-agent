@@ -30,6 +30,7 @@ The question is not *where* something lives — it all lives here — but **who 
 | Written by **foundation** (mechanical, no judgment) | Written by **agents** (judgment) |
 |---|---|
 | `memory/raw/` — the log; `drive/accounts/secrets/` — managed credential files | `memory/` — episodes, facets, tasks; `prompts/seed/`; ordinary `drive/` content |
+| `attachments/` — what was put in front of the person, copied at the moment it was ([showing.md](showing.md)) | |
 | `prompts/` — the bundled system prompts, all of them | `drive/` — what was decided worth keeping |
 | `skills/`, `views/` — the `factory/` layer | `skills/`, `views/` — everything the agent built |
 
@@ -675,7 +676,10 @@ now, or it went out; **not a closing**, since a standing watch delivers its firs
 and keeps running. `waiting` — **a human must act before this row can move**. And three the
 store writes: `moved`, the status transition; `made`, a view a session serving the row
 rendered ([`home.md`](home.md)); and `replied`, what the person typed into the row's own
-reply box (below). Anything a mind wants to say that is
+reply box (below). **A mind's line can carry attachments** — the pictures, clips or documents
+it is about, passed as paths to `hi_task_note` — and the store copies each into `attachments/`
+and writes their ids after the text as `⟨attached att:… att:…⟩`, which no mind types and every
+reader strips ([showing.md](showing.md#on-a-tasks-record)). Anything a mind wants to say that is
 none of those goes in the prose above, which is not read line by line. A line this schema
 cannot classify is kept verbatim as a note; the frontmatter rule, one level down.
 
@@ -1014,7 +1018,7 @@ Distinct from the person's own archive.
 
 | | |
 |---|---|
-| Projects | artifacts and bytes it produced or was given |
+| Projects | artifacts and bytes it decided to keep, or was given — what it generates and what it shows land in [`attachments/`](showing.md) first, and come here when somebody decides they are worth keeping |
 | Notes | verbatim pages — endpoints, calling conventions, how a thing is driven |
 | Accounts | what it is logged into, the endpoint and calling convention, and an opaque `secret_ref` |
 | Ledgers | append-only, e.g. message-id → done, so a serving task never duplicates or misses |
@@ -1083,6 +1087,14 @@ said. The substitution is on the way into a session, not on the way into the log
 a session that opens the file — see `privacy.md` § *What this is not*. Retention decides whether
 the private broker may still resolve the value after this exchange, not whether the local
 record ever received it.
+
+## `attachments/`
+
+What was put in front of the person — a picture on a task's line, a file handed over in the
+conversation, something on the screen that was not a view — copied at the moment it was put
+there and addressed by its content, so a line's evidence cannot change after the line is
+written. Foundation's pen: written at a seam, the way the log is, and kept the way text is.
+`derived/` beside the objects is a disposable cache. See [`showing.md`](showing.md).
 
 ## `skills/`
 

@@ -91,7 +91,7 @@ Below the ladder sit **workers** — where the actual jobs get done.
   ─────────────────────────────────────────────────────────────────────────────
   data/        memory (raw = the log · episodes · facets · tasks ·
                        prompts = generated, one per agent that needs state) ·
-               prompts (bundled) · secret files · drive · skills · views
+               prompts (bundled) · secret files · drive · attachments · skills · views
   ─────────────────────────────────────────────────────────────────────────────
   FOUNDATION   engine   runtime · agent wire/MCP · gateway · config · store I/O · build ·
                         observatory · energy
@@ -186,6 +186,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | [`text-transcript.md`](text-transcript.md) | the append-only message list: what is a message, ownership, wire, durability |
 | [`legibility.md`](legibility.md) | what a person reads is the product — what is worth saying, how much, in what form, and how that is kept true |
 | [`stage.md`](stage.md) | what may be on screen at once — bundled vs compiled views, the four roles, the conversation's three presentations |
+| [`showing.md`](showing.md) | what the agent made to be looked at — attachments and views, where each is put, the one viewer, what it costs |
 | [`agents.md`](agents.md) | the tempo ladder in detail, workers, the decision maker |
 | [`privacy.md`](privacy.md) | keys a person typed: where they are filed, the one seam that substitutes their paths, and what is deliberately left alone |
 | [`data.md`](data.md) | the directory that *is* the agent — memory (the log and the generated system prompts included), the bundled prompts, drive, skills, views |

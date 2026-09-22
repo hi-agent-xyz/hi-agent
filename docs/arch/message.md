@@ -291,6 +291,12 @@ a document or a generated artifact into the conversation, rendered where the wor
 than in the view slot. A view is something the agent *shows* and takes back; a file is
 something it *hands over* and the person keeps. `Content` does not branch on who sent it.
 
+**It is minted by `hi_say` carrying an attachment** ([showing.md](showing.md#in-the-conversation)):
+the words are one message and each thing handed over is one more, enqueued together as one
+arrival, and each counts toward the three messages between one of the person's and the next.
+The ref is the attachment's `att:` id, never a path; the person's own files keep their signal
+refs, and one viewer draws both.
+
 ## Relevance has somewhere to attach
 
 Reaction receives a message with an id, so what it concludes can name what it concluded about.

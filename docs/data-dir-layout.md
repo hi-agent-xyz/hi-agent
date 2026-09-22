@@ -44,6 +44,7 @@ data/
       secrets/       #   one ordinary owner-only .txt file per retained credential
     …                #   the agent makes folders like a person organizes Documents
 
+  attachments/       # what was put in front of the person — content-addressed copies, host-written (arch/showing.md)
   views/             # where views are built — disposable, gitignored, regenerable   (replaced workspace/)
     <project>/       #   ad-hoc views: source + build, until the source graduates to drive/projects/
     <toolchain>      #   esbuild + the headless-preview harness + node_modules — once, shared (NOT per-project)

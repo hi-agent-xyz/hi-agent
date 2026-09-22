@@ -114,7 +114,7 @@ Three parts, in order of how much they change:
 | Source | What it is | Who has one |
 |---|---|---|
 | **compiled** | an esbuild artifact behind a content-addressed module URL, mounted by dynamic `import()` | the agent's content view, the condition notice |
-| **bundled** | a component inside the host bundle, always present, no compile step and no fetch | the conversation, the camera self-view |
+| **bundled** | a component inside the host bundle, always present, no compile step and no fetch | the conversation, the camera self-view, the viewer an attachment is drawn in ([showing.md](showing.md#on-the-stage)) |
 
 This is what makes it safe for the product's most important surface to be a view.
 **Being a view means having a role on the stage — not having gone through esbuild.** A

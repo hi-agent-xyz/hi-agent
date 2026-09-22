@@ -10,8 +10,8 @@ nothing about what is built.
 
 Let a person hand over one thing the agent made, without handing over the agent.
 
-Everything below follows from taking both halves literally. *One thing* — a share is a view,
-never an account, a conversation or a door into the core. *Hand over* — what the other person
+Everything below follows from taking both halves literally. *One thing* — a share is a view or
+an [attachment](showing.md), never an account, a conversation or a door into the core. *Hand over* — what the other person
 receives is a page, not a guest seat.
 
 ## Decisions
@@ -23,6 +23,7 @@ receives is a page, not a guest seat.
 | **A share grants reading one view, never the API** | The allow-list is computable from the ref without running anything, because the builder is already told to keep a view's files in its own folder. `/api/*` is the whole of the core; nothing about "look at this chart" needs it |
 | **A view is checked before it may be shared, with the API blocked** | A view that fetches its data renders half-empty under that scope, and the owner does not find out — the person they sent it to does. The check is the only thing standing between "share" and a silent bad impression |
 | **Only a named view may be shared** | The same rule bookmarks already keep. An inline view is the disposable artifact a turn compiled; it has no name to put in a URL and nothing to come back to |
+| **An attachment may be shared too, and needs no check** | A picture or a clip is its bytes and a page that is the host's own viewer, with its preview as `og:image`. It fetches nothing, so there is nothing to render half-empty; a view's scope grows by exactly the attachments its check saw it request ([showing.md](showing.md#on-a-share)) |
 | **Sharing is per-view and opt-in, and the default is unshared** | A share is a decision about one artifact, so it is stored beside the view and made once. Nothing becomes shareable by being shown |
 | **Revocation is not instant** | A shared page is served to callers with no credential, so it is cacheable, and an edge holds it. Short `max-age` and honesty in the UI beat a mechanism that pretends otherwise |
 | **No interaction, no live data, in the first shape** | Both are real wants and both cost the isolation this design does not currently need. A still, self-contained page is what the default view already is ([`overlay-presentation-model`](stage.md)) |

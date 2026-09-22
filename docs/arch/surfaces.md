@@ -53,7 +53,8 @@ zero knowledge of the wire.
 | audio | out | the same `hi_say` call, rendered by TTS host-side |
 | vision | in | a **ref**; the agent calls a tool to actually look |
 | file | in | a **ref** to a handed object |
-| surface (rich content) | out | the `hi_show` call, by **path ref** |
+| file | out | an **attachment**, carried by the `hi_say` that hands it over or the task line it is evidence for ([showing.md](showing.md)) |
+| surface (rich content) | out | the `hi_show` call, by **ref** — a view, or an attachment |
 | view | in | the person went to one of the agent's surfaces — a ref, never a window |
 | action | out | tool call — request/response |
 
@@ -171,7 +172,9 @@ and how the four roles are arranged, is [`stage.md`](stage.md).
 is an act, not a gesture: it can fail, it has an id, and it can be taken down again.
 
 **A worker hands a view over as a path ref.** The worker builds the view and passes its
-**ref**; Reaction calls `hi_show` with the ref, and the **host resolves it server-side**. So
+**ref**; Reaction calls `hi_show` with the ref, and the **host resolves it server-side**. A
+picture or a clip needs no view at all: it is an attachment, placed by path and shown by its
+`att:` id, drawn by a viewer the host bundles ([showing.md](showing.md)). So
 view source never enters a thinking layer's context — which is the point. A view is a build
 artifact, sometimes thousands of lines, and the window that has to answer fastest is the last
 place it should be paid for.

@@ -536,11 +536,12 @@ never change**, and every route that serves such bytes already declares it:
 
 | Route | Declares | Mirrored |
 |---|---|---|
-| `/api/media/{ref}` | `private, max-age=31536000, immutable` | yes |
+| `/api/media/{ref}` | `private, max-age=31536000, immutable` | yes — for signal refs. It also answers `drive/…` refs with the same header, and a drive file is edited in place, so that half of the claim is false; [showing.md](showing.md#what-this-deletes) takes those refs off this route |
+| `/api/attachments/*` | same | yes — content-addressed by construction, and uploaded at placement ([showing.md](showing.md#serving)) |
 | `/views/_compiled/*`, `/views/_shots/*` | same | yes |
 | `/assets/*` | same | yes |
 | `/views/*` (source) | `no-store` | no |
-| `/api/drive/file/*` | `no-store` | no |
+| `/api/drive/file/*` | `no-cache` | no — revalidated, never assumed |
 | `/api/people/faces/*` | `private, max-age=86400` | no — a TTL, not immutability |
 
 **So the rule is: a response marked `immutable` may be mirrored, and nothing else may.**
