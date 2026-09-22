@@ -30,6 +30,7 @@ person**, never many people behind one surface, and never one person split acros
 | The community is infrastructure, never a principal | It has no name, cannot be addressed, and signs nothing. The moment it needs a key to speak *as* someone, the model has broken |
 | **A handle is owned by an account, permanently** | An address is only worth handing out if it survives a new laptop and a quiet month. Permanence needs an owner that outlives any one machine, and the only such thing is an account. A lease would put the burden on the person to keep proving they still want their own name |
 | Claiming may require an account; it must never require a **paid** one | A BYOK install pays us nothing and must still get a name. "Free" is the load-bearing word — sign-up is a cost the person pays once, billing is a cost that would make the address a product |
+| **Content does not ride the tunnel** | The relay is an 11 Mbps box, measured. A small machine can carry anyone's conversation and nobody's photographs. Immutable bytes go to a cache the app fetches directly, ahead of being asked for |
 
 ## The three roles
 
@@ -151,7 +152,7 @@ anyway, by mirroring the phone onto it — untried, and needing no code either w
 
 ## Community
 
-Always-on shared infrastructure — the things a single core cannot provide for itself. Four
+Always-on shared infrastructure — the things a single core cannot provide for itself. Five
 services, independent, deliberately not sharing keys:
 
 | Service | Does | State |
@@ -160,6 +161,10 @@ services, independent, deliberately not sharing keys:
 | **relay** | routes an inbound request by the handle in its `Host` into that core's live connection | the routing table |
 | **broker** | provider role: LLM credentials and energy | accounts, billing |
 | **post** | push to a surface, on a core's instruction; later, mail for a sleeping core | push tokens |
+| **cache** | serves immutable bytes a core has mirrored, against a signature that core minted | mirrored objects only, all of them discardable |
+
+**The cache is the one service holding a person's own bytes**, and it holds only a copy: see
+[*Content*](#content) for what may be mirrored and why the core remains the truth.
 
 **The registry knows accounts and must never know billing.** A handle is owned by an account,
 so the two share an identity — but nothing on the claim path reads a tier, a balance or a
@@ -428,7 +433,13 @@ being acceptable, but nothing is designed around the possibility.
 ## The two wires
 
 Because an address is a base URL and the community never checks access, an app talks only to
-its cores. There is no app-to-community wire.
+its cores. **There is no app-to-community wire** — an app never registers, asks, or
+authenticates there.
+
+An app does fetch bytes from the community's [cache](#content), which is not a third wire and
+not an exception to that sentence: it carries no protocol, asks nothing, and returns only
+immutable bytes some core already decided to put there. The app arrives holding a redirect its
+own core issued.
 
 ### app ↔ core — the existing API
 
@@ -479,6 +490,185 @@ is asleep, not lost. There is no heartbeat and nothing to renew.
 
 Dialing out is what makes this work behind NAT with no configuration: anywhere the core can
 already reach the community, it can be reached back.
+
+---
+
+## Content
+
+**The tunnel carries everything today, and it cannot.** The community box is a 4 vCPU CVM
+whose public egress measures **1.4 MB/s** — about 11 Mbps, flat over 77 seconds, which is a
+shaper and not congestion. Every byte any app ever sees passes through it, so a 4 MB photo is
+2.9 seconds on its own and a view holding twelve of them is 34 seconds. Parallelism buys
+nothing against a bandwidth gate: twelve streams divide the same 48 MB.
+
+So the two wires split again, by what they carry rather than by who is talking:
+
+| | What | Size | Path |
+|---|---|---|---|
+| **control** | the conversation, SSE, view JSON, every API call | KB | the tunnel |
+| **content** | photos, video, audio, compiled views, the SPA bundle | MB to hundreds of MB | the community's cache, fetched directly |
+
+At 11 Mbps the control plane is free; it was never the problem. All of the problem is that
+content shares the pipe with it.
+
+**The property that makes this worth building is not the cache — it is that the transfer can
+happen before the demand.** A core mirrors a photo while nobody is looking, over an uplink
+that is otherwise idle. A cache in front of the tunnel cannot do this: it accelerates the
+*second* fetch of an object, and in a life record the first fetch is the common case, because
+what a person opens is what just happened.
+
+### The core is the truth; the cache holds a subset of it
+
+The bucket may be emptied at any moment with nothing lost. It is not storage and nothing is
+ever only there. Eviction is not a failure mode — it returns an object to the state every
+object starts in, and the next request puts it back.
+
+### What may be mirrored: the response already says
+
+Not a list of directories. A directory list is a thing to maintain, it goes stale as the
+agent grows new places to write, and the data dir is mostly files that no off-box client ever
+fetches — a live SQLite file, append-only frame logs, a drive edited in place. Mirroring those
+would upload gigabytes to accelerate nothing, and the mutable ones would be wrong the instant
+they were copied.
+
+The property that makes bytes both safe and worth mirroring is that **the bytes at this path
+never change**, and every route that serves such bytes already declares it:
+
+| Route | Declares | Mirrored |
+|---|---|---|
+| `/api/media/{ref}` | `private, max-age=31536000, immutable` | yes |
+| `/views/_compiled/*`, `/views/_shots/*` | same | yes |
+| `/assets/*` | same | yes |
+| `/views/*` (source) | `no-store` | no |
+| `/api/drive/file/*` | `no-store` | no |
+| `/api/people/faces/*` | `private, max-age=86400` | no — a TTL, not immutability |
+
+**So the rule is: a response marked `immutable` may be mirrored, and nothing else may.**
+
+**This is a correctness rule, not a privacy one, and it must not be read as a security
+measure** — the drive holds plaintext secrets and is excluded, but that is a consequence, not
+the reason. Someone who reads this as a defence will eventually notice that a core already
+trusts the community with everything it relays, conclude the rule is redundant, and delete it.
+What breaks then is cache coherence: an object wrongly marked immutable goes **permanently
+stale with no revalidation path**, because there is no ETag anywhere in this server to fall
+back on.
+
+The asymmetry is what makes it opt-in. Forgetting to mark a new route `immutable` costs
+acceleration and nothing else. Marking a mutable one costs correctness, forever. So the one
+judgment a person has to make — *do these bytes ever change?* — is the one the annotation
+already asks for.
+
+**Consequently `immutable` is now load-bearing in a way it was not.** It used to govern a
+browser cache; it now decides what leaves the machine. A test belongs on it: every path
+declaring `immutable` must be content-addressed or timestamp-addressed.
+
+### The key is the request path
+
+The thing cached is an HTTP response, not a file, so the object key is the URL:
+
+    GET  <core>/api/media/file/2026-09-22/14/03-22.jpg
+      →  <bucket>/<handle>/api/media/file/2026-09-22/14/03-22.jpg
+
+The redirect target is derived mechanically from the request; neither side holds a translation
+table. **The disk layout stops mattering**, which is the point — a core may write wherever it
+likes and no mapping has to be kept in agreement with it. Routes that compute a response from
+several files come along for free.
+
+### One endpoint, two branches
+
+Nothing in a view changes. The URL a view emits is the core's own path, as it is today, so
+there is nothing to rebase and no repeat of the prefix class of bug — `<img src>`, CSS
+`url()`, `<a href>` and `new Audio()` all keep working because none of them were ever touched.
+
+    GET /api/media/{ref}          ← unchanged, off-box, carries the cookie
+      → cookie invalid            → 401, as today
+      → object is in the cache    → 302 to the signed URL, Cache-Control: private, max-age=TTL
+      → object is not             → serve the bytes, as today, and enqueue the upload
+
+**The second branch is a degradation, not an error.** An object that has not been mirrored is
+exactly as slow as it is today and no slower, so there is no flag day, no migration script and
+no broken image. Every object crosses over independently, and a self-hosted core with no
+bucket configured simply takes that branch forever — the same code, correct in both
+deployments.
+
+The redirect is browser-cacheable, so its round trip is paid once per object per device rather
+than once per render.
+
+### Uploading: a queue, with that second branch as its backstop
+
+**The trigger is the core writing the file**, not a request for it. Writing enqueues; a
+background worker uploads at low priority, when the uplink is otherwise idle. Those bytes have
+to cross the uplink either way, and the only question is whether someone is watching a screen
+while they do.
+
+The lazy branch is the safety net, not the mechanism: it catches an object that predates the
+feature, or whose upload failed, or that was asked for while the queue was still behind. It
+also means **the backlog is never migrated** — only writes from here on are enqueued, and
+everything older crosses over the first time someone looks at it. A one-time upload of the
+whole history would be the worst possible first day.
+
+An upload that fails leaves the object unmirrored, which is the second branch, which is
+today's behaviour. Nothing needs to be rolled back.
+
+Upload is multipart, for resumability on a home connection. It goes directly from the core to
+the bucket and **not through the tunnel**, so the relay's egress is not on this path and
+neither is whatever periodically cuts that connection.
+
+### Two credentials, in opposite directions
+
+| | Purpose | Held by | Scope | Lifetime |
+|---|---|---|---|---|
+| **write** | upload to the bucket | the core | `<handle>/*` | ~1 hour, refreshed |
+| **read** | sign the URL the redirect points at | the core | the whole domain | long-lived |
+
+The write credential is minted by the broker against the core's existing account token, scoped
+by policy to that handle's prefix. No long-lived storage key is ever on a person's machine, a
+compromised core can write only its own prefix, and revocation is the broker declining to mint.
+**This does not weaken invariant 3** — that invariant governs who may reach a core, while this
+governs who may write to the community's own storage, and the broker already mints scoped
+credentials for a core in exactly this shape.
+
+**The read credential is a named loan.** One signing secret per domain means every core holds
+a key that can sign a URL for any path, and the key layout is public. That is acceptable while
+one person is the only person and unacceptable the moment a second one exists. **What takes it
+back: per-handle keys validated by an edge function**, which needs no callback and so costs no
+latency. The loan expires on the second user, not on a date.
+
+### Decisions
+
+| Decision | Reasoning |
+|---|---|
+| **Content leaves the tunnel; control stays in it** | The relay is an 11 Mbps box. A small machine can carry a conversation for anyone; it cannot carry everyone's photographs |
+| **Mirror ahead of demand, not on demand** | A cache in front of the tunnel only speeds up the second fetch, and the first fetch is the common case. The uplink cost is identical; only whether someone is waiting differs |
+| **`immutable` is the rule, not a directory list** | A list is maintained by hand, goes stale as the agent grows new places to write, and fails towards including something it should not. The annotation already asserts exactly the property a cache needs |
+| **The key is the request path, not the disk path** | What is cached is a response. Deriving the key from the URL means no translation table, and a core may write wherever it likes |
+| **The view's URL does not change** | The redirect keeps authorization at the core and the signature invisible to everything above it. A view that had to know about a second origin is the prefix bug rebuilt |
+| **The unmirrored branch is today's behaviour** | Migration with no flag day, and a failure shape of "this one is as slow as last week" rather than a broken image |
+
+### Open
+
+1. **Per-handle read keys via an edge function** — what repays the loan above.
+2. **A size floor for mirroring.** Below some size the redirect's round trip costs more than
+   the bytes it saves. That number has to be measured, not chosen, and the rule must skip
+   *small* objects: a rule that skips large ones would silently exclude exactly the files this
+   whole section exists for.
+3. **The drive is not mirrored** and stays slow. It is mutable in place, so it needs
+   revalidation — an ETag and a `304` — which is a different mechanism this server has nowhere
+   at all today.
+4. **Deleting must reach the cache.** A core that forgets something has not forgotten it while
+   a mirrored copy answers. Either deletion propagates to the bucket and purges the edge, or
+   the bucket's lifetime bounds how long it can lag. Immutability makes a stale copy *correct*,
+   which is precisely why this one needs saying: nothing else in the design will notice.
+5. **Whether `/assets/*` needs a signature at all.** It is byte-identical for every core and
+   is not anyone's personal data, so it could be one shared public copy — a different question
+   from the rest of this section, and the one with the largest effect on the cold path.
+
+**One decision elsewhere inverts because of this.** `VIEW_PRELOAD_SPECIFIERS` excludes
+`motion/react` deliberately, reasoning that preloading 183 kB would "trade a round trip for
+bytes on a connection where bytes are the scarcer thing". That is correct at 11 Mbps. Once
+`/assets/*` is served at the edge's bandwidth, round trips become the scarcer thing again and
+the exclusion should reverse. It is a sound decision whose premise this section removes — not
+an oversight, and not to be changed until the premise actually goes.
 
 ---
 
@@ -601,7 +791,9 @@ Each is testable, and each has a real failure behind it.
    needs an account, and no path from claiming reaches a tier, a balance or a payment.
 3. **The core is the sole authority on who may reach it.** The community never issues,
    checks or holds access. *Stated plainly: in the relayed shape it is trusted not to
-   replay what it forwards, because a bearer token is a bearer token.*
+   replay what it forwards, because a bearer token is a bearer token.* The cache validating
+   a signature a core minted is enforcement, not a decision — it holds no ACL and can grant
+   nothing a core did not sign.
 4. **The core never learns of other cores.** The roster is app state and stays there.
 5. **One body per person.** One handle, one live core.
 6. **Off-box trust is structural** — decided by which listener accepted the request, never
