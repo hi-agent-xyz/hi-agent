@@ -1,39 +1,39 @@
-# 画张图,再改一版(生成即产物,存进 drive 拿 ref)
+# 画张图,再改一版(画出来就是附件,拿 `att:` id)
 
 **Persona:** 老板随口要一张图 —— 海报、示意图、给孩子的卡片;不关心用哪个模型,只看结果。
-**Goal:** agent 真用图像模型画出来(不是用代码画的),存成**不会褪色**的产物,能拿去改、拿去看、拿去上屏。
+**Goal:** agent 真用图像模型画出来(不是用代码画的),**画出来就是一个附件**——不褪色、按内容寻址,能直接上屏、带在任务行上、递进对话、发出去分享,也能拿去改。
 **Preconditions:** 配了图像 provider(xiaoyuanzhu 模式开箱即有;BYOK 粘一把 key)。生成工具只发给 **worker** —— Reaction 只说话,产物是干活那一层的事。
 
 ## Steps & expected UX
 
-1. **"画只戴围巾的橘猫"** → Reaction 派个 worker;worker 调 `hi_text_to_image`,**自己挑模型**(工具描述里现列着这个账号当下能用的模型 + 哪个最好/最快/最便宜),回来的是 `⟨ref: drive/generated/<日期>/<时分秒>-戴围巾的橘猫.png⟩` 加绝对路径和 URL。
-2. **worker 把 ref 报给 Reaction** → Reaction 说一句 + `hi_show` 一个内嵌 `<img src="/api/drive/file/…">` 的 view,图**真出现在屏幕上**。
-3. **"围巾换成红的"** → 同一个 ref 交给 `hi_image_to_image`,原图不动,回来一个**新的 ref**;再 show 一次,原地替换。
+1. **"画只戴围巾的橘猫"** → Reaction 派个 worker;worker 调 `hi_text_to_image`,**自己挑模型**(工具描述里现列着这个账号当下能用的模型 + 哪个最好/最快/最便宜),回来的是一行 `att:<id> · picture 2048×2048`。
+2. **worker 把 id 报给 Reaction** → Reaction 说一句 + `hi_show` 那个 `att:` id,图**真出现在屏幕上**:不编译、不建视图、不走 builder。要递到对话里就是 `hi_say(attach)`。
+3. **"围巾换成红的"** → 同一个 id 交给 `hi_image_to_image`,原图不动,回来一个**新的 id**;再 show 一次,原地替换。
 4. **"手机壁纸尺寸"** → `size` 是可选旋钮之一,agent 自己填;填了模型咽不下的值(gpt-image 要求边长 16 的倍数)→ 当场报错**告诉它该怎么填**,不是甩一个 400。
-5. **"让它动起来"** → 那张图的 ref 交给 `hi_image_to_video`;工具**立刻返回**,不占线;几分钟后片子好了,以**一条消息**带着 `⟨ref: …⟩` 送回发起的 worker。
+5. **"让它动起来"** → 那张图的 id 交给 `hi_image_to_video`;工具**立刻返回**,不占线;几分钟后片子好了,以**一条消息**带着 `att:` id 送回发起的 worker;浏览器放不了的编码,宿主在旁边做一份能放的拷贝。
 
 ## Expected outcome
 
 - 图是**图像模型画的**,不是 PIL/SVG 糊出来的(这正是 [12](12-play-with-child.md) 实测记下的缺口)。
-- 产物落在 `drive/generated/`,**永久**;raw 里的相机帧会随天冷掉褪色,画出来的东西不会。
-- 一个 `ref` 语法通吃三种来源:相机拍的、别人递的、自己刚画的 —— `hi_image_to_image` / `hi_image_to_video` / `hi_image_text_to_text` / `hi_show` 都吃同一个参数。
-- 文件名带提示词,一年后翻 `drive/` 还认得出哪张是哪张(中文提示词给中文文件名)。
+- 产物落在附件库(`data/attachments/`),**永久**、按内容寻址;raw 里的相机帧会随天冷掉褪色,画出来的东西不会。同一张图画两次是一个对象。
+- 一个参数通吃三种来源:相机拍的、别人递的、自己刚画的 —— `hi_image_to_image` / `hi_image_to_video` / `hi_image_text_to_text` / `hi_show` 都吃 `att:` id 或 `⟨ref: …⟩`。
+- 认哪张是哪张靠的是**它被放在哪儿**:任务行上的那句话、对话里的那条消息、屏幕上的那次 show。附件库本身不编目录(`docs/arch/showing.md`:没有目录)。
 
 ## Edge cases & failure modes
 
 - **没配 provider** → 说"没配图像 key,去 Settings",不说别的;这和"这个模型不会改图"是两码事,后者要报**哪个模型会**。
 - **点名一个谁都不提供的模型** → 列出当下能用的,**绝不悄悄换一个**代生成 —— 换了会被记成"就是你要的那张"。
 - **旋钮这条线咽不下**(seedream 不吃 `quality`/透明底;gpt-image-2 不吃 `watermark`、也**没有**透明底)→ 报错时点名换哪个模型能办,不做静默丢弃。
-- **视频跑了一半 worker 结束了** → 片子照样存进 drive,日志记一笔;不假装没干过这活。
+- **视频跑了一半 worker 结束了** → 片子照样放进附件库,日志记一笔;不假装没干过这活。
 - **视频十五分钟没动静** → 送回一条"还没完成,可能稍后才上游落地",不无限等。
 
 ## Open questions
 
 - 生成这件事要不要进 journal?现在**不进** —— worker 把产物报给 owner,那条 report 本来就落在 `worker` 频道,事件已经在记忆里了。要是以后想按"我画过什么"检索,再单独说。
-- `drive/generated/` 长期只涨不减(遗忘是 keep 偏向的,drive 不褪色)。到多大才需要管,现在不知道。
+- 附件库长期只涨不减(遗忘是 keep 偏向的)。到多大才需要管,现在不知道 —— `docs/arch/showing.md` 的 § *Open* 里记着同一个问题。
 - 多图(`n>1`)现在只有 gpt-image 那条线支持;seedream 要多张得多调几次。
 
-_机制:`image_gen`/`video_gen` 两个能力 + `drive/` 产物家 + `drive/<path>` ref 语法;模型由 agent 选,wire 是内部管道、**没人在 Settings 里挑**。_
+_机制:`image_gen`/`video_gen` 两个能力 + 附件库(`docs/arch/showing.md`);模型由 agent 选,wire 是内部管道、**没人在 Settings 里挑**。_
 
 ## 实测 2026-08-12 · feat/image-generation(Mac mini,`--data-dir /tmp/j30`,xiaoyuanzhu 开箱账号)
 
@@ -64,3 +64,11 @@ _机制:`image_gen`/`video_gen` 两个能力 + `drive/` 产物家 + `drive/<path
 - **根因不在 image_gen,在提示词**:`hi_text_to_image` / `hi_image_to_image` / `hi_text_to_video` / `hi_image_to_video` / `hi_video_text_to_text` 五个工具,**任何一份 prompt 都没提过一个字** —— 只有 worker 的 `tools/list` 里有。会说话的那层不知道自己有手,就去找了别人的手。这也解释了 2026-08-12 待复测里那句"Reaction 没派 worker":不是不肯派,是不知道有什么可派。
 - ✅ 已改:`reaction.md` 加 "What the rest of you can make"(四件事 + 常见说法 + "不是菜单、也不是能力边界"),`cognition.md` 加"别去研究自己的身体 —— 谁拿着工具谁才看得见当下可达的模型",`workers/general.md` 补上四个生成工具与 drive/ref 那条链;顺带修掉一个早不存在的工具名(`watch` → `hi_video_text_to_text`),并加了个测试:prompt 里写的每个 `hi_` 名字都必须是真声明过的工具。
 - ⏳ **整条链路仍未实跑**:2026-08-12 的三条待复测(老板一句话 → 图上屏、gpt-image-2 真调用、两条视频)一条都没动;这次只是把"派不出去"的原因拆掉了。
+
+## 2026-09-23 改了落点(未复测)
+
+生成的东西不再落 `drive/generated/`,而是直接进附件库,工具回的是 `att:` id;`hi_image_to_image`、
+`hi_image_to_video`、`hi_image_text_to_text` 都收 id,Home 的组图标也收 id。上面 2026-08-12 那次实测
+里"落 `drive/generated/…`、`/api/drive/file/…` 200"这两条**已经不是现在的行为**,其余(模型菜单、
+该拒就拒、按字节定扩展名)没动。**新的落点还没有在有模型的实例上跑过一次。**
+

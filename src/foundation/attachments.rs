@@ -386,8 +386,43 @@ pub async fn place(data_dir: &Path, path: &Path) -> Result<Placed, Refusal> {
         return Err(Refusal::Missing(shown));
     }
 
-    let result = settle(data_dir, &staged, &source).await;
-    let _ = tokio::fs::remove_file(&staged).await;
+    finish(data_dir, &staged, &source, shown, started).await
+}
+
+/// Put bytes the agent just made into the store: a generated picture or a clip downloaded
+/// from the vendor that made it. There is no file to copy — the bytes *are* what was made —
+/// so `named` is only what a refusal calls it, and what its extension is guessed from before
+/// the probe decides.
+pub async fn place_bytes(data_dir: &Path, bytes: &[u8], named: &str) -> Result<Placed, Refusal> {
+    let started = Instant::now();
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Refusal::TooLarge(named.to_owned(), bytes.len() as u64));
+    }
+    let objects = root(data_dir).join("objects");
+    let staged = objects.join(format!(".placing-{}", uuid::Uuid::now_v7()));
+    let written = async {
+        tokio::fs::create_dir_all(&objects).await?;
+        tokio::fs::write(&staged, bytes).await
+    };
+    if let Err(error) = written.await {
+        let _ = tokio::fs::remove_file(&staged).await;
+        tracing::warn!(target: "attachments", %error, named, "could not write bytes in");
+        return Err(Refusal::Missing(named.to_owned()));
+    }
+    finish(data_dir, &staged, Path::new(named), named.to_owned(), started).await
+}
+
+/// Hash, probe, file and announce what is staged — the half [`place`] and [`place_bytes`]
+/// share, from the copy onwards.
+async fn finish(
+    data_dir: &Path,
+    staged: &Path,
+    source: &Path,
+    shown: String,
+    started: Instant,
+) -> Result<Placed, Refusal> {
+    let result = settle(data_dir, staged, source).await;
+    let _ = tokio::fs::remove_file(staged).await;
     let (placed, preview) = match result {
         Ok(done) => done,
         Err(why) => return Err(Refusal::NotShowable(shown, why)),

@@ -488,7 +488,10 @@ In the phase that replaces each, never after it:
 - `drive/generated/` as the landing place for `hi_text_to_image` and its siblings, which
   produce attachments at birth; the drive keeps what somebody decides to keep, which is what the
   drive is. With it goes `/api/media` answering `drive/…` refs at all: drive bytes are served by
-  `/api/drive/file`, revalidated, and only an attachment claims never to change.
+  `/api/drive/file`, revalidated, and only an attachment claims never to change. **A generated
+  picture answers with its `att:` id**, which is what `hi_image_to_image`, `hi_image_to_video`,
+  `hi_image_text_to_text` and a group's `icon` all take — and what puts it on the screen with
+  nothing built around it.
 
 ## Phases
 

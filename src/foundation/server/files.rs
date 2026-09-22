@@ -312,10 +312,18 @@ pub async fn get_media(
     Path(reff): Path<String>,
     req: Request,
 ) -> Response {
+    // **This route is the log's, and only the log's.** A drive file is served by
+    // `/api/drive/file`, which is the one route that route is for; serving the same bytes
+    // here too meant one tree with two addresses and two cache rules, and the second was
+    // `immutable` about a file agents edit in place until 2026-09-22. Nothing ever built a
+    // `/api/media/drive/…` URL.
+    if reff.trim().starts_with(media::DRIVE_PREFIX) {
+        return (StatusCode::NOT_FOUND, "a drive file is served by /api/drive/file").into_response();
+    }
     let Some(path) = media::resolve_ref(&state.data_dir, &reff).await else {
         return (StatusCode::NOT_FOUND, "no such media").into_response();
     };
-    // **Only one of the three things a ref can name is immutable at its path**, and
+    // **Only one of the two things a ref can name is immutable at its path**, and
     // `immutable` is now what decides whether bytes leave this machine at all, so it
     // is said of that one alone (`docs/arch/topology.md` § *Content*):
     //
@@ -323,12 +331,8 @@ pub async fn get_media(
     //   written once — immutable, kept forever by a browser, mirrorable;
     // - the keepsake a faded day left in its place — the same ref named the
     //   original first, so these are the *second* bytes at this path. Kept a year
-    //   (the URL will not name anything else again), never called immutable;
-    // - a drive file, which is edited in place — revalidated every time, exactly as
-    //   `/api/drive/file` serves the same bytes.
-    let cache = if reff.trim().starts_with(media::DRIVE_PREFIX) {
-        "private, no-cache"
-    } else if media::is_keepsake(&path) {
+    //   (the URL will not name anything else again), never called immutable.
+    let cache = if media::is_keepsake(&path) {
         "private, max-age=31536000"
     } else {
         "private, max-age=31536000, immutable"

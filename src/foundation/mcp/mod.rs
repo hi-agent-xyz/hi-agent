@@ -792,7 +792,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                                 "properties": {
                                     "label": { "type": "string", "description": "What this group is called, in the person's own vocabulary. Unique." },
                                     "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
-                                    "icon": { "type": "string", "description": "Optional: the ⟨ref: drive/…⟩ of an icon you drew for this group. Omit to keep the one the label already has." },
+                                    "icon": { "type": "string", "description": "Optional: the att: id of an icon you drew for this group. Omit to keep the one the label already has." },
                                     "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
                                     "groups": { "type": "array", "items": { "type": "object" }, "description": "Groups inside this one — each a group of this same shape (label, note, icon, members, groups, upkeep). Omit when there are none." },
                                     "upkeep": { "type": "boolean", "description": "True on the one group that holds the agent's own upkeep. Omit elsewhere." },
@@ -1057,12 +1057,12 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 //       bundle. No model reached through the agent wire emits pixels, so these are
 //       always a provider call.
 //
-// The four generation tools are wired. The decision they waited on — where a
-// generated artifact lands and what ref it gets — is settled: the bytes go to
-// [`drive/`](crate::mind::memory::media::store_artifact), the tree that does not
-// fade, and the ref is `drive/<path>`, a second arm on the one ref grammar rather
-// than a second grammar. So `hi_image_to_image` takes a camera still, a handed file and
-// its own last output through the same argument.
+// The four generation tools are wired, and what they make is an
+// [attachment](crate::foundation::attachments) from the moment it exists: kept, addressed
+// by its own bytes, and showable as it is. It used to land in `drive/generated/` — the
+// agents' own cabinet — which meant the only way to put a drawing in front of the person
+// was to build a view with an `<img>` in it. `hi_image_to_image` still takes a camera
+// still, a handed file and its own last output through the same argument.
 //
 // They also differ from every other tool here in being **built per call**: the
 // `model` argument is described from the live menu, because "the agent chooses the
@@ -1213,11 +1213,12 @@ fn text_to_image_tool() -> Value {
     tool(
         "hi_text_to_image",
         "Draw a new image from a description. Say what it should show; every other argument is \
-         a knob you may set or leave alone, and leaving one alone means the model decides. The \
-         picture is filed in the drive and you get back its `⟨ref: …⟩` — pass that to \
-         `hi_image_to_image` to change it, to `hi_image_text_to_text` to look at it, or report it to \
-         whoever asked so it can go on screen. A knob a model cannot honour comes back as an \
-         error naming one that can, so nothing is silently ignored.",
+         a knob you may set or leave alone, and leaving one alone means the model decides. You \
+         get back its `att:` id — pass that to `hi_image_to_image` to change it, to \
+         `hi_image_text_to_text` to look at it, carry it on a line with `hi_task_note`, or \
+         report the id to whoever asked: a picture goes on the screen as it is, with no view \
+         built around it. A knob a model cannot honour comes back as an error naming one that \
+         can, so nothing is silently ignored.",
         json!({
             "type": "object",
             "properties": {
@@ -1241,13 +1242,14 @@ fn image_to_image_tool() -> Value {
     tool(
         "hi_image_to_image",
         "Edit an existing image — say what to change and it returns a new image, leaving the \
-         original untouched. Pass the `⟨ref: …⟩` of the image to work from: a camera still, a \
-         file someone handed over, or one you drew a moment ago. The result is filed in the \
-         drive and comes back as its own ref, so you can edit that in turn.",
+         original untouched. Pass the `ref` of the image to work from: an `att:` id you were \
+         given, a camera still, or a file someone handed over. The result comes back as its \
+         own `att:` id, so you can edit that in turn, put it on a line, or hand the id to \
+         whoever asked — it goes on the screen as it is.",
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the image to edit, e.g. vision/2026-06-25/14/23-07.jpg or drive/generated/2026-06-25/142307-a-red-bicycle.png." },
+                "ref": { "type": "string", "description": "The image to edit: an att: id (att:3f9a0c11d2e4b5a6), or the ⟨ref: …⟩ of a still, e.g. vision/2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "What to change (e.g. \"make the sky overcast\", \"remove the car\")." },
                 "model": image_edit_model_property(),
                 "size": { "type": "string", "description": "Optional output size." },
@@ -1268,7 +1270,7 @@ fn text_to_video_tool() -> Value {
         "hi_text_to_video",
         "Generate a short video clip from a description. Generation runs for minutes, so this \
          returns straight away and the finished clip arrives as a message carrying its \
-         `⟨ref: …⟩`. There is nothing to poll: get on with something else and you will be told.",
+         `att:` id. There is nothing to poll: get on with something else and you will be told.",
         json!({
             "type": "object",
             "properties": {
@@ -1290,13 +1292,13 @@ fn image_to_video_tool() -> Value {
     tool(
         "hi_image_to_video",
         "Animate an existing still — it becomes the first frame of a short clip. Pass the \
-         `⟨ref: …⟩` of the image, and optionally say how it should move. Like any generation \
-         this runs for minutes: it returns straight away and the clip arrives as a message \
-         carrying its own ref.",
+         `ref` of the image, and optionally say how it should move. Like any generation this \
+         runs for minutes: it returns straight away and the clip arrives as a message \
+         carrying its own `att:` id.",
         json!({
             "type": "object",
             "properties": {
-                "ref": { "type": "string", "description": "The ⟨ref: …⟩ of the still to animate from, e.g. vision/2026-06-25/14/23-07.jpg or one you generated." },
+                "ref": { "type": "string", "description": "The still to animate from: an att: id you were given, or the ⟨ref: …⟩ of a camera still, e.g. vision/2026-06-25/14/23-07.jpg." },
                 "prompt": { "type": "string", "description": "Optional: how it should move or what should happen." },
                 "model": video_model_property(),
                 "duration": { "type": "integer", "description": "Optional: clip length in seconds." },
@@ -3499,10 +3501,17 @@ fn video_params(args: &Value) -> video_gen::VideoParams {
 
 /// Read a `⟨ref: …⟩` argument to bytes plus a content type, from either root.
 async fn read_ref(data_dir: &Path, task: &str, reff: &str) -> Result<(Bytes, String), Value> {
-    let Some(path) = crate::mind::memory::media::resolve_ref(data_dir, reff).await else {
+    // An `att:` id first: what this agent made is an attachment now, and what it hands back
+    // is the name it will be shown, sent and shared by.
+    let found = match crate::foundation::attachments::parse_id(reff) {
+        Some(id) => crate::foundation::attachments::object(data_dir, id).await.map(|(path, _)| path),
+        None => crate::mind::memory::media::resolve_ref(data_dir, reff).await,
+    };
+    let Some(path) = found else {
         return Err(tool_error(&format!(
-            "{task}: no media at {reff} (a camera still may have faded; a drive path may be \
-             mistyped — pass the ref whole, channel or `drive/` included)"
+            "{task}: no media at {reff} (an att: id may be mistyped; a camera still may have \
+             faded; a drive path may be mistyped — pass the ref whole, channel or `drive/` \
+             included)"
         )));
     };
     let bytes = match tokio::fs::read(&path).await {
@@ -3515,38 +3524,40 @@ async fn read_ref(data_dir: &Path, task: &str, reff: &str) -> Result<(Bytes, Str
     Ok((bytes, mime))
 }
 
-/// File generated stills in the drive and report their refs.
+/// Place generated stills and report their ids.
 ///
-/// `slug` is the prompt, which becomes part of the filename — the tree stays legible
-/// to a human scrolling it a year later, which an opaque id would not be.
+/// **What was made is an attachment from the moment it exists** (`docs/arch/showing.md`).
+/// It used to be filed in `drive/generated/`, which is the agents' own cabinet, and the
+/// only way to put it in front of the person was to build a view with an `<img>` in it.
+/// Now the id it comes back with is the one Reaction shows, a line carries, a message
+/// hands over and a share publishes. `slug` — the prompt — is what a refusal calls it and
+/// nothing else: the bytes are named by their own content.
 async fn land_images(
     data_dir: &Path,
     task: &str,
     slug: &str,
     images: Vec<image_gen::GeneratedImage>,
 ) -> Value {
-    let now = chrono::Utc::now();
     let mut lines = Vec::new();
     for image in images {
         let ext = image_gen::extension_for(&image.mime);
-        let reff = match crate::mind::memory::media::store_artifact(
-            data_dir, now, slug, ext, &image.bytes,
-        )
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => return tool_error(&format!("{task}: the image was made but not saved: {e}")),
-        };
-        let path = crate::mind::memory::media::resolve_ref(data_dir, &reff)
-            .await
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        lines.push(format!("⟨ref: {reff}⟩\n  file: {path}\n  url: /api/drive/file/{}", &reff[6..]));
+        let named = format!("{}.{ext}", crate::mind::memory::media::slugify(slug));
+        match crate::foundation::attachments::place_bytes(data_dir, &image.bytes, &named).await {
+            Ok(placed) => lines.push(format!(
+                "{}{} · {}",
+                crate::foundation::attachments::PREFIX,
+                placed.id,
+                placed.probe.describe()
+            )),
+            Err(refused) => {
+                return tool_error(&format!("{task}: the image was made but not kept: {refused}"));
+            }
+        }
     }
     tool_ok(&format!(
-        "{}\n\nFiled in the drive, which does not fade. Pass a ref to `hi_image_to_image` to \
-         change it, to `hi_image_text_to_text` to look at what you made, or report it to \
-         whoever asked so they can put it on screen.",
+        "{}\n\nKept. Pass an id to `hi_image_to_image` to change it, to \
+         `hi_image_text_to_text` to look at what you made, carry it on a line with \
+         `hi_task_note`, or report the id to whoever asked — it goes on the screen as it is.",
         lines.join("\n")
     ))
 }
@@ -3635,7 +3646,7 @@ fn spawn_video_poller(
         let message = match outcome {
             Ok(video_gen::VideoStatus::Succeeded { video_url, .. }) => {
                 match land_clip(&data_dir, &video_url, &slug).await {
-                    Ok(reff) => format!("The clip you asked {task} for is ready: ⟨ref: {reff}⟩"),
+                    Ok(named) => format!("The clip you asked {task} for is ready: {named}"),
                     Err(e) => format!("The {task} clip finished but could not be saved: {e}"),
                 }
             }
@@ -3658,19 +3669,20 @@ fn spawn_video_poller(
     });
 }
 
-/// Download a finished clip into the drive. Prompt, because the vendor's `video_url`
+/// Download a finished clip and place it. Prompt, because the vendor's `video_url`
 /// expires roughly a day after it is issued.
 async fn land_clip(data_dir: &Path, url: &str, slug: &str) -> anyhow::Result<String> {
     let bytes = video_gen::fetch(url).await?;
-    let reff = crate::mind::memory::media::store_artifact(
-        data_dir,
-        chrono::Utc::now(),
-        slug,
-        "mp4",
-        &bytes,
-    )
-    .await?;
-    Ok(reff)
+    let named = format!("{}.mp4", crate::mind::memory::media::slugify(slug));
+    let placed = crate::foundation::attachments::place_bytes(data_dir, &bytes, &named)
+        .await
+        .map_err(|refused| anyhow::anyhow!("{refused}"))?;
+    Ok(format!(
+        "{}{} · {}",
+        crate::foundation::attachments::PREFIX,
+        placed.id,
+        placed.probe.describe()
+    ))
 }
 
 async fn do_text_to_video(data_dir: &Path, session: Option<crate::foundation::registry::SessionSlug>, args: &Value) -> Value {
@@ -3691,7 +3703,7 @@ async fn do_text_to_video(data_dir: &Path, session: Option<crate::foundation::re
             );
             tool_ok(&format!(
                 "Generating ({id}). This runs for minutes; the clip will arrive as a message \
-                 with its ⟨ref: …⟩ when it is done, so carry on with something else — there is \
+                 with its `att:` id when it is done, so carry on with something else — there is \
                  nothing to poll and nothing to wait for."
             ))
         }
@@ -3723,7 +3735,7 @@ async fn do_image_to_video(data_dir: &Path, session: Option<crate::foundation::r
             );
             tool_ok(&format!(
                 "Animating ({id}). This runs for minutes; the clip will arrive as a message \
-                 with its ⟨ref: …⟩ when it is done."
+                 with its `att:` id when it is done."
             ))
         }
         Err(e) => tool_error(&format!("hi_image_to_video failed: {e}")),

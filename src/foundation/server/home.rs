@@ -258,15 +258,26 @@ pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Writte
 /// cropped to its centred square, scaled to [`ICON_PX`] and filed under a fresh name, so the
 /// original can be edited, moved or deleted without the screen changing.
 async fn file_icon(data_dir: &Path, offered: &str) -> anyhow::Result<String> {
-    let Some(rel) = offered.strip_prefix(DRIVE_PREFIX) else {
-        anyhow::bail!("`{offered}` is not a `drive/…` ref");
+    // What the mind just drew is an attachment (`docs/arch/showing.md`); what a previous pass
+    // filed is already an icon-sized copy in the drive. Both are read the same way from here.
+    let source = match crate::foundation::attachments::parse_id(offered) {
+        Some(id) => match crate::foundation::attachments::object(data_dir, id).await {
+            Some((path, _)) => path,
+            None => anyhow::bail!("`{offered}` is not an attachment this agent holds"),
+        },
+        None => {
+            let Some(rel) = offered.strip_prefix(DRIVE_PREFIX) else {
+                anyhow::bail!("`{offered}` is neither an att: id nor a `drive/…` ref");
+            };
+            if rel.starts_with(&format!("{ICONS_DIR}/")) {
+                return Ok(offered.to_owned());
+            }
+            match media::resolve_in_drive(data_dir, rel).await {
+                Some(path) => path,
+                None => anyhow::bail!("nothing is filed at `{offered}`"),
+            }
+        }
     };
-    let Some(source) = media::resolve_in_drive(data_dir, rel).await else {
-        anyhow::bail!("nothing is filed at `{offered}`");
-    };
-    if rel.starts_with(&format!("{ICONS_DIR}/")) {
-        return Ok(offered.to_owned());
-    }
     let bytes = tokio::fs::read(&source).await?;
     let png = tokio::task::spawn_blocking(move || icon_sized(&bytes))
         .await?
@@ -725,6 +736,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.grouping.groups[0].icon.as_deref(), Some(icon.as_str()));
+    }
+
+    /// An icon the mind drew is an attachment now (`docs/arch/showing.md`), so the id it was
+    /// handed is what it offers — and what is recorded is still an icon-sized copy in the
+    /// drive, because that is the picture Home draws on every open.
+    #[tokio::test]
+    async fn an_icon_offered_as_an_attachment_is_filed_the_same_way() {
+        let dir = tempfile::tempdir().unwrap();
+        task(dir.path(), "kt8-046").await;
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(1024, 1024)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let placed = crate::foundation::attachments::place_bytes(dir.path(), &png, "a-microphone.png")
+            .await
+            .unwrap();
+        let offered = format!("{}{}", crate::foundation::attachments::PREFIX, placed.id);
+        let written =
+            write(dir.path(), Grouping { groups: vec![with_icon(group("KTV", &["kt8-046"]), &offered)] })
+                .await
+                .unwrap();
+        let icon = written.grouping.groups[0].icon.clone().unwrap();
+        assert!(icon.starts_with("drive/home/icons/"), "{icon}");
+        let copy = media::resolve_ref(dir.path(), &icon).await.unwrap();
+        let img = image::open(copy).unwrap();
+        assert_eq!((img.width(), img.height()), (ICON_PX, ICON_PX));
+        assert!(written.refused_icons.is_empty(), "{:?}", written.refused_icons);
+        // The attachment is untouched: it is what the record of drawing it points at.
+        assert!(crate::foundation::attachments::object(dir.path(), &placed.id).await.is_some());
     }
 
     /// **Rearranging is not redrawing.** The arrangement is replaced whole every pass, so an

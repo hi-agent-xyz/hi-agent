@@ -70,7 +70,7 @@ pub async fn create_blob(
 /// That is not hypothetical for either half. Overwriting a per-minute name is how
 /// ~30 % of one day's mic audio was lost (2026-09-10; [`MediaSlot::InputStream`]'s
 /// grid was renamed in the same change so collisions are rare as well as harmless).
-/// And [`store_artifact`] had already met it from the other side and grown its own
+/// The drive's own artifact writer had met it from the other side and grown its own
 /// suffix loop — a `try_exists` check followed by a create, which is the same idea
 /// said twice and racy the second time. It says it here now, once, and atomically:
 /// `create_new` is what makes two callers racing for one name resolve instead of
@@ -195,11 +195,6 @@ pub async fn resolve(
 /// folder. Includes the separator so `strip_prefix` yields the drive-relative path.
 pub const DRIVE_PREFIX: &str = "drive/";
 
-/// Where [`store_artifact`] files what the agent produced, under [`drive_root`].
-/// A day folder keeps a long-lived tree browsable; the alternative — one flat
-/// directory — is fine for a week and unopenable after a year.
-const GENERATED_DIR: &str = "generated";
-
 /// `<data_dir>/drive` — the agent's own filing cabinet (`docs/arch/data.md#drive`).
 /// Sibling of the memory store, not part of it: nothing here is consolidated and
 /// nothing here fades.
@@ -322,38 +317,6 @@ pub fn content_type(path: &str) -> &'static str {
     }
 }
 
-/// Persist an artifact the agent produced — a generated image, a rendered clip — under
-/// `drive/generated/<day>/<HHMMSS>-<slug>.<ext>`, and return the [`drive_ref`] that
-/// addresses it.
-///
-/// **The drive, not the raw store, and that is the point.** Raw holds what was
-/// *perceived* and [fades](super::decay) once its day is cold; this holds what was
-/// *made*, and a picture that evaporates a week after it was drawn is not a picture
-/// anybody kept. `docs/arch/data.md#drive` already names this tree the home for
-/// "artifacts and bytes it produced or was given".
-///
-/// `slug` is free text (a prompt) and is reduced to something filename-safe; a
-/// same-second collision takes a `-2`, `-3` suffix rather than overwriting ([`claim`]),
-/// because two images generated in one second is an ordinary batch, not an error.
-pub async fn store_artifact(
-    data_dir: &Path,
-    ts: DateTime<Utc>,
-    slug: &str,
-    ext: &str,
-    bytes: &[u8],
-) -> anyhow::Result<String> {
-    let dir_rel = format!("{GENERATED_DIR}/{}", layout::day_key(ts));
-    let dir = drive_root(data_dir).join(&dir_rel);
-    tokio::fs::create_dir_all(&dir).await?;
-
-    let stem = format!("{}-{}", ts.format("%H%M%S"), slugify(slug));
-    let (name, mut f) = claim(&dir, &format!("{stem}.{ext}")).await?;
-    f.write_all(bytes).await?;
-    f.flush().await?;
-    f.sync_data().await?;
-    Ok(drive_ref(&format!("{dir_rel}/{name}")))
-}
-
 /// The locator for a file in the drive: `drive/<path>`, the counterpart of
 /// [`signal_ref`]. Wrapped as `⟨ref: …⟩` by whoever writes the sentence.
 pub fn drive_ref(rel: &str) -> String {
@@ -368,7 +331,7 @@ pub fn drive_ref(rel: &str) -> String {
 /// slug is that a human scanning the tree recognises the file. Text with nothing
 /// alphanumeric in it falls back to `image`, since an empty segment fails
 /// [`safe_rel_path`].
-fn slugify(s: &str) -> String {
+pub(crate) fn slugify(s: &str) -> String {
     let mut out = String::new();
     for ch in s.chars().filter(|c| !c.is_control()) {
         if ch.is_alphanumeric() {
@@ -489,104 +452,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_stored_artifact_resolves_through_the_ref_it_returns() {
-        let dir = tempfile::tempdir().unwrap();
-        let reff = store_artifact(dir.path(), ts(), "a red bicycle", "png", b"x").await.unwrap();
-
-        assert_eq!(reff, "drive/generated/2026-06-25/142307-a-red-bicycle.png");
-        let path = resolve_ref(dir.path(), &reff).await.expect("must resolve");
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"x");
-    }
-
-    /// Two images in one second is an ordinary batch (`n=2`), not an error — the
-    /// second must not land on top of the first.
-    #[tokio::test]
-    async fn a_same_second_artifact_takes_a_suffix_rather_than_the_other_s_place() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = store_artifact(dir.path(), ts(), "a cat", "png", b"one").await.unwrap();
-        let second = store_artifact(dir.path(), ts(), "a cat", "png", b"two").await.unwrap();
-
-        assert_ne!(first, second);
-        assert!(second.ends_with("142307-a-cat-2.png"), "{second}");
-        let path = resolve_ref(dir.path(), &first).await.unwrap();
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"one", "the first was overwritten");
-    }
-
-    /// The bug this whole change is about, at the layer it actually lives in: a
-    /// stream flushed twice inside one minute — a rollover, then a socket close —
-    /// must not write the second fragment over the first. Before 2026-09-10 it did,
-    /// and ~30 % of that day's mic audio went with it.
-    #[tokio::test]
-    async fn a_second_flush_in_one_minute_keeps_the_first_one_s_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputStream, "wav", b"one")
-            .await
-            .unwrap();
-        let b = store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputStream, "wav", b"two")
-            .await
-            .unwrap();
-
-        assert_ne!(a, b, "the second flush took the first one's name");
-        let day = layout::channel_day_dir(dir.path(), Channel::Audio, ts());
-        assert_eq!(tokio::fs::read(day.join(&a)).await.unwrap(), b"one");
-        assert_eq!(tokio::fs::read(day.join(&b)).await.unwrap(), b"two");
-    }
-
-    /// A streamed stretch is named by where it starts, and lives under `stream/` so a
-    /// posted clip landing in the same second cannot address the same file.
-    #[tokio::test]
-    async fn a_streamed_stretch_and_a_clip_in_one_second_do_not_share_a_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let stream =
-            store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputStream, "wav", b"mic")
-                .await
-                .unwrap();
-        let clip =
-            store_blob(dir.path(), Channel::Audio, ts(), MediaSlot::InputOneOff, "wav", b"clip")
-                .await
-                .unwrap();
-
-        assert!(stream.contains("/stream/"), "{stream}");
-        assert_ne!(stream, clip);
-        let day = layout::channel_day_dir(dir.path(), Channel::Audio, ts());
-        assert_eq!(tokio::fs::read(day.join(&stream)).await.unwrap(), b"mic");
-        assert_eq!(tokio::fs::read(day.join(&clip)).await.unwrap(), b"clip");
-    }
-
-    /// A slug is derived from a prompt, and a prompt is whatever the person said. A
-    /// Chinese one must still name its file — dropping to ASCII would leave every
-    /// Chinese generation called `image`.
-    #[test]
-    fn a_slug_keeps_the_letters_it_is_given() {
-        assert_eq!(slugify("A Red Bicycle!"), "a-red-bicycle");
-        assert_eq!(slugify("  ...  "), "image");
-        assert_eq!(slugify("一只猫"), "一只猫");
-        assert!(slugify(&"x".repeat(200)).chars().count() <= 40);
-        assert!(safe_rel_path(&slugify("../../etc/passwd")));
-    }
-
-    /// The drive tree's names come from the agent, so the ref that addresses it is an
-    /// attack surface. Both guards are load-bearing: `..` is syntax, a symlink is not.
-    #[tokio::test]
-    async fn a_drive_ref_cannot_address_anything_outside_the_drive() {
-        let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("secret"), b"s").await.unwrap();
-        let root = drive_root(dir.path());
-        tokio::fs::create_dir_all(&root).await.unwrap();
-
-        assert!(resolve_ref(dir.path(), "drive/../secret").await.is_none(), "climbed out");
-
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(dir.path().join("secret"), root.join("link")).unwrap();
-            assert!(
-                resolve_ref(dir.path(), "drive/link").await.is_none(),
-                "a symlink out of the drive has no `..` for the syntactic guard to catch"
-            );
-        }
-    }
-
     /// The two roots share one grammar, so each must keep resolving where it lives —
     /// a channel ref must not start reading the drive, or the reverse.
     #[tokio::test]
@@ -596,7 +461,10 @@ mod tests {
             .await
             .unwrap();
         let signal = signal_ref(Channel::Vision, ts(), &rel);
-        let artifact = store_artifact(dir.path(), ts(), "made", "png", b"a").await.unwrap();
+        let made = drive_root(dir.path()).join("kept/made.png");
+        tokio::fs::create_dir_all(made.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&made, b"a").await.unwrap();
+        let artifact = drive_ref("kept/made.png");
 
         let from_signal = resolve_ref(dir.path(), &signal).await.unwrap();
         assert_eq!(tokio::fs::read(from_signal).await.unwrap(), b"v");

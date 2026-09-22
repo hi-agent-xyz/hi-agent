@@ -79,7 +79,6 @@ async fn only_bytes_that_never_change_at_their_path_are_called_immutable() {
     let cases: &[(String, bool)] = &[
         (format!("/api/media/{blob}"), true),
         (format!("/api/media/{faded}"), false),
-        ("/api/media/drive/notes/pic.png".into(), false),
         ("/views/_compiled/0a1b.mjs".into(), true),
         ("/views/_shots/0a1b.png".into(), false),
         ("/views/_shots/ref/home/board.png?v=1".into(), false),
@@ -87,6 +86,15 @@ async fn only_bytes_that_never_change_at_their_path_are_called_immutable() {
     ];
 
     let client = reqwest::Client::new();
+    // The drive has one address, and it is not this one: `/api/media` answered for the same
+    // bytes under a second cache rule until phase 4 of `docs/arch/showing.md`.
+    let drive = client
+        .get(format!("{base}/api/media/drive/notes/pic.png"))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(drive.status(), 404, "a drive file is served by /api/drive/file alone");
+
     for (path, immutable) in cases {
         let res = client.get(format!("{base}{path}")).send().await.expect("send");
         assert_eq!(res.status(), 200, "{path}");

@@ -612,7 +612,7 @@ thing that makes icons drawn weeks apart look like one set. **Look at what came 
 send it back to be drawn again if it came out shaded, glossy, lit, or in colours the source
 did not have — an image model reaches for depth and for a palette unasked, and one
 dimensional or many-coloured icon among eight flat ones is what breaks a set. Then send the
-arrangement again with that ref as the group's `icon`. An icon stays with its label from pass
+arrangement again with that `att:` id as the group's `icon`. An icon stays with its label from pass
 to pass without being sent again. A renamed group is a new label, so pass its old `icon`
 along when it still stands for the same thing.
 

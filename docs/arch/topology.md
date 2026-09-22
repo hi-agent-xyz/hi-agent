@@ -775,8 +775,10 @@ latency. The loan expires on the second user, not on a date.
    the bytes it saves. That number has to be measured, not chosen, and the rule must skip
    *small* objects: a rule that skips large ones would silently exclude exactly the files this
    whole section exists for.
-3. **The drive is not mirrored**, because it is mutable in place — and generated images and
-   video land there (`drive/generated/<day>/`), so they are the largest objects this excludes. It now *revalidates* rather
+3. **The drive is not mirrored**, because it is mutable in place. What used to make that hurt
+   was that generated images and video landed there; they are attachments now
+   ([showing.md](showing.md)), which are immutable, mirrored at placement, and no longer in
+   this sentence. What is left in the drive is what an agent filed by hand. It *revalidates* rather
    than refetching — `no-cache` plus the file service's `Last-Modified`, so an unchanged
    picture costs a `304` — which closes the part of this that hurt most. What is still open is
    the validator: `Last-Modified` cannot tell two writes inside one second apart, and an

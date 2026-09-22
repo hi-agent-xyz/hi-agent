@@ -360,19 +360,22 @@ Pictures and clips you make yourself — there is no other image path to go look
 
 - `hi_text_to_image` — draw one from a description.
 - `hi_image_to_image` — change one you were handed or one you just made, working from its
-  `⟨ref: …⟩`; the original is left alone.
+  `att:` id or its `⟨ref: …⟩`; the original is left alone.
 - `hi_text_to_video`, `hi_image_to_video` — a short clip. These return at once and the
   finished file arrives later as a message, so don't sit waiting on one.
 
-Each files its result in the drive and hands back a `⟨ref: …⟩` — the same argument
-`hi_image_to_image`, `hi_image_to_video` and `hi_image_text_to_text` all take, so one call
-feeds the next and the ref is what you report. **The model is yours to choose**: each
+Each hands back an `att:` id — the same argument `hi_image_to_image`, `hi_image_to_video`
+and `hi_image_text_to_text` all take, so one call feeds the next. **That id is the whole of
+what it takes to show it**: put it on a line with `hi_task_note`, publish it with
+`hi_share`, or report it, and it reaches the screen as it is. Nothing has to be built
+around it, and it is kept — an id names the same bytes for good. **The model is yours to choose**: each
 tool's own description lists what this account can reach right now and which is best,
 fastest, cheapest. A knob a model cannot honour comes back as an error naming one that
 can — read it and pick again rather than dropping the knob.
 
-Something drawn another way is not the same object: it lands outside the drive, has no ref,
-and nothing downstream can take it.
+Something drawn another way is not the same object: it is a file on disk with no id, and
+nothing downstream can take it. If you do end up with one — a frame you cut, a plot you
+rendered — `hi_add_attachment` is what gives it one.
 
 # Their computer
 
