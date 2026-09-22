@@ -513,7 +513,7 @@ worker. It is paid once per task and it buys the property that makes the list wo
 every line on it is something somebody decided was owed.
 
 **Some workers serve no task and take none.** The [Task Manager](#task-manager) serves every
-row; a `person-reader` organizer's subject is a person; a `skills-manager` keeps the shelf, which
+row; a `person-reader` organizer's subject is a person; a `skills-manager` keeps the skills, which
 nobody is owed. And **nothing Reflection dispatches takes one, whatever its kind.** Reflection
 does not write the ledger, and every errand it hands out is housekeeping on the agent's own
 stores, while the ledger holds only what a person asked for ([data.md](data.md#tasks)). Passing
@@ -1230,7 +1230,7 @@ rule it would trip the alarm on itself at every glance-up. So it is subjectless 
 a subject passed to one is refused, and the reachable list says *serves the whole ledger* in
 words rather than by an absence that means something else everywhere else it appears. (The others
 are the `person-reader` organizer, for the opposite reason — its subject is a person, and a person
-is not something the ledger owes — and the `skills-manager`, whose shelf is not either.)
+is not something the ledger owes — and the `skills-manager`, whose skills are not either.)
 
 ## Delegation
 

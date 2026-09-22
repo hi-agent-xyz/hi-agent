@@ -369,7 +369,7 @@ fn row(task: &Task, malformed: bool, views: &std::collections::HashSet<String>) 
 /// **Not a listing of the folder, deliberately.** A task folder is where the work
 /// happened, not a shelf of deliverables: one live store holds 39,946 files under
 /// `tasks/` — cloned repos, `__pycache__`, scraped HTML — and a single task's *top level*
-/// holds 114. Listing that is showing somebody the workshop floor when they asked what
+/// holds 114. Listing that is showing somebody every scratch file when they asked what
 /// was made. What they came back for is the file the record names — *"the completed
 /// report is `inspection-report.md` in this task directory"* — and until that sentence is
 /// reachable, the panel is pointing at something the reader cannot open.

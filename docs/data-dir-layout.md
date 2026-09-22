@@ -5,7 +5,7 @@
 The data dir is **the agent's computer** — the one place every durable thing about the
 agent lives. This document is the durable contract for *what each place is for and why*,
 organized so the whole tree reads like a person's machine: a mind, a Documents folder, a
-view workshop, a manual it was handed at the factory, and the runtime it thinks in.
+views folder, a manual it was handed at the factory, and the runtime it thinks in.
 
 The guiding test, as everywhere in hi-agent, is **fidelity to the human metaphor** — where
 the layout diverges from how a person organizes their own computer, the divergence is named
@@ -44,7 +44,7 @@ data/
       secrets/       #   one ordinary owner-only .txt file per retained credential
     …                #   the agent makes folders like a person organizes Documents
 
-  views/             # the view workshop — disposable, gitignored, regenerable   (replaced workspace/)
+  views/             # where views are built — disposable, gitignored, regenerable   (replaced workspace/)
     <project>/       #   ad-hoc views: source + build, until the source graduates to drive/projects/
     <toolchain>      #   esbuild + the headless-preview harness + node_modules — once, shared (NOT per-project)
 
@@ -66,7 +66,7 @@ Five **kinds**, each a place on a person's computer:
 1. **memory/** — the mind. Everything that crossed the agent's boundary, in and out (`raw/`), what it understands of it (`episodes`, `facets`), what it owes (`tasks/`), and and nothing that exists to prime a session — a seed is a digest *over* this record and lives in `prompts/seed/`. Mostly reconstructive: reflection summarizes and regenerates the understanding.
 2. **drive/** — Documents + the notebook. What the agent deliberately keeps,
    **verbatim**, including ordinary credential files under `accounts/secrets/`.
-3. **views/** — the view workshop. Where views are built; safe to wipe.
+3. **views/** — where views are built; safe to wipe.
 4. **prompts/** — what a session is handed. `factory/` is the manual handed over at the factory: how to be, read-only to the agent and reinstalled from the binary every boot. `seed/` beside it is what the agent wrote for itself, fed as the thread's first message.
 5. **codex-home/ + sessions.jsonl** — the OS/process the mind runs in, and the logbook.
 
@@ -126,7 +126,7 @@ A drive entry is addressed **from memory** — a facet claim carries the path (`
 drive/notes/facedet`). An orphan drive file nothing in memory points at is a note you forgot
 you took: dead weight. Memory is the index; the drive holds the bytes memory refuses to blur.
 
-### views/ — the view workshop (disposable)
+### views/ — the views folder (disposable)
 
 Where views are built, and the one fully-disposable tree: everything here is regenerable and
 gitignored, so there is **no `.cache` dotdir** — the whole tree is the cache.

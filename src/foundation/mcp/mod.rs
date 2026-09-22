@@ -153,20 +153,23 @@ fn create_worker_tool() -> Value {
                 "servers": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Registered MCP servers this errand needs, by skill name —                                     the name you see on its line in your workshop. A skill                                     carrying an `mcp:` endpoint is a service reachable as                                     real tools, and naming it here attaches it to this                                     worker's session: it gets that server's own verbs, with                                     their real schemas, alongside its usual toolset. Name                                     only what this job needs — a worker that will not touch                                     a phone should not carry a phone's tools. Omit for most                                     work.",
+                    "description": "Registered MCP servers this errand needs, by skill name — the name on its line in your skills. A skill carrying an `mcp:` endpoint is a service reachable as real tools, and naming it here attaches it to this worker's session: it gets that server's own verbs, with their real schemas, alongside its usual toolset. Name only what this job needs — a worker that will not touch a phone should not carry a phone's tools. Omit for most work.",
                 },
                 "title": {
                     "type": "string",
-                    "description": "What this errand is, in **one short line** — how you would \
-                                    name it to a colleague in passing, not the first sentence of \
-                                    the brief. This is the only part of this call anyone ever \
-                                    reads: it is the line the session shows up as on the \
-                                    person's screen, in your own window, and in the offer made \
-                                    back to you if a restart kills it. So write the subject and \
-                                    the verb — \"recover the stalled xyz deploy\", \"chase the \
-                                    group listener that went quiet\" — and leave out paths, ids, \
-                                    digests and preamble. 40-60 characters is the target; past \
-                                    72 it is cut.",
+                    "description": "What this errand is, in **one short line** — what is being \
+                                    done, in words the person would use themselves, knowing \
+                                    nothing of how the agent works inside; not the first \
+                                    sentence of the brief. This is the only part of this call \
+                                    anyone ever reads: it is the line the session shows up as \
+                                    on the person's screen, in your own window, and in the offer \
+                                    made back to you if a restart kills it. So lead with the \
+                                    verb and say what it is done to — \"recover the stalled xyz \
+                                    deploy\", \"chase the group listener that went quiet\", \
+                                    \"sum up a skill: check a detector sees the target first\" — \
+                                    and leave out paths, ids, digests, preamble, and every name \
+                                    we use for our own machinery: the person has never heard \
+                                    those. 40-60 characters is the target; past 72 it is cut.",
                 },
                 "task": {
                     "type": "string",
@@ -2014,8 +2017,8 @@ async fn dispatch_tool(
             let title = arg_str("title");
             if title.trim().is_empty() {
                 return tool_error(
-                    "hi_create_worker requires a one-line `title` — what this errand is, in the \
-                     words you would use to a colleague. It is what the person sees on their \
+                    "hi_create_worker requires a one-line `title` — what is being done, in the \
+                     words the person would use themselves. It is what they see on their \
                      screen; the brief goes in `task`.",
                 );
             }
@@ -4075,7 +4078,7 @@ mod surface_tests {
     /// the other side.** A `task-manager` handed a subject would tie the whole ledger to one
     /// row; a `person-reader`'s subject is a person, and accepting it would open a task named
     /// after a human being — four calls on the measured install passed one; a
-    /// `skills-manager` keeps a shelf nobody is owed.
+    /// `skills-manager` keeps skills nobody is owed.
     #[tokio::test]
     async fn the_kinds_that_serve_no_one_task_are_refused_a_subject() {
         let dir = tempfile::tempdir().unwrap();
@@ -4129,7 +4132,7 @@ mod surface_tests {
                 "reflection",
                 json!({
                     "title": "place a note",
-                    "task": "put it on the shelf",
+                    "task": "write it up as a skill",
                     "type": kind,
                     "subject": "ship-the-flash-cards",
                 }),

@@ -89,9 +89,9 @@ A share grants exactly:
 /assets/*                               React, the stylesheet: the same build every install ships
 ```
 
-and nothing else. Never `/api/*`, never another project's folder, never the workshop root —
+and nothing else. Never `/api/*`, never another project's folder, never the `views/` root —
 `/views/{*path}` is one wildcard route with every view's source and every build artifact behind
-it, and opening that would hand over the workshop to share one poster.
+it, and opening that would hand over every view the agent has built to share one poster.
 
 The list is derived from the ref, so it needs no bookkeeping and cannot drift from what the
 view actually is. It is enforced in the gate, and stated again to the browser as

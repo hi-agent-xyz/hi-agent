@@ -819,7 +819,7 @@ pub fn build(
         // Every channel, observed live as one merged presence stream — the channel
         // inspector's window onto the whole conversation, in and out.
         .route("/api/channels", get(channels::get_channels))
-        // The agent's view workshop on disk (under data_dir) — compiled view modules,
+        // The agent's views folder on disk (under data_dir) — compiled view modules,
         // images, and build-agent artifacts. Served here, not in the appearance
         // router, because that router is embed-only and stateless.
         //

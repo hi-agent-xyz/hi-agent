@@ -65,13 +65,13 @@ export function declaredTv(search: string = window.location.search): boolean {
 
 // The room a view is composed for. `view_render`'s `DEFAULT_WIDTH` is this number —
 // the frame a review falls back to when no face has reported one — so it is the width
-// the workshop's output is implicitly aimed at.
+// every view the agent builds is implicitly aimed at.
 //
 // **A room narrower than this is told this number anyway, and drawn to fit.** The shape
 // flag above already decided that a phone turned sideways stops being a phone and the
 // room is a room again; the host rearranges on it, and the view did not, because the
 // view was reading raw pixels. 852 of them land above 33 of the breakpoints written
-// across this workshop's views and below 37, so which arrangement a person got by
+// across the views this agent has built and below 37, so which arrangement a person got by
 // turning their phone was a coin flip per view — and the one arrangement they could
 // never get was the one the view was composed for.
 //

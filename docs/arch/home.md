@@ -653,7 +653,7 @@ is a shaded picture.
   reference by the next restart.
 - **Code draws no group of its own, and the agent's own upkeep always has one: the
   task-manager keeps it.** Reflection, a `task-manager` sweeping the ledger, a `skills-manager`
-  writing a skill note, a `person-reader` reading a person's record, a `drive-organizer`
+  writing a skill, a `person-reader` reading a person's record, a `drive-organizer`
   tidying the drive: none of it has a row ([data.md](data.md#tasks)) and dispatch refuses it a
   `subject` ([agents.md](agents.md)), so no `members` entry can name it. A group carrying
   `upkeep: true` draws those sessions after its own tasks. **Every arrangement a manager writes
@@ -673,7 +673,7 @@ is a shaded picture.
     on a group the person kept for hi-agent, and otherwise left the upkeep loose. On the
     install that asked for the merge, the heading then disappeared: its record carried no
     mark, the one manager that ran afterwards had been started to close a row and did not
-    touch the arrangement, and Reflection, a skill note being written and a read of the
+    touch the arrangement, and Reflection, a skill being written and a read of the
     person's own record hung off the core as three cards the person could not tell from
     their own tasks (2026-09-22). A heading that exists only once the person has asked for it
     makes the person the one sorting hi-agent's housekeeping. The upkeep is always there, so

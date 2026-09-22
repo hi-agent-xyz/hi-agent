@@ -170,7 +170,7 @@ directions — one asserts something false, the other withholds something true.
 | Meaning and bytes go to different places | A digest cannot be un-digested; the original is the only thing that stays true |
 | There is no "import" | Perception, then deliberate retention — not an ETL pipeline |
 | Reflection never prunes an open task | Curation must not be able to garbage-collect a promise |
-| **A task row traces to something a person asked for** | The board is theirs. A mind can decide it owes itself something, and the rows that produced — workshop errands, defects in the host's own source — were ones the person could neither act on nor trace. A fault the agent finds in its own product stays in the episode that recorded it; there is no second store for it |
+| **A task row traces to something a person asked for** | The board is theirs. A mind can decide it owes itself something, and the rows that produced — errands to write skills, defects in the host's own source — were ones the person could neither act on nor trace. A fault the agent finds in its own product stays in the episode that recorded it; there is no second store for it |
 | An agent-written value that steers code is **parsed**, and unparseable means **absent** | The writer has a shell and the field is prose; absent has to fail toward redoing work, because redundant work is visible and skipped work is silent |
 | Where code cannot resolve a name, it **narrows the question and hands it back** | Spelling is code's to fold; meaning is not. A confidently wrong record is worse than a missing one, and only the reader has the conversation |
 | **Nobody writes their own seed** | The moment a seed exists to survive is the moment that takes the judgment needed to write one. Cognition writes Reaction's; Reflection writes Cognition's |
@@ -563,8 +563,8 @@ idea they parked on purpose, or the unfinished half of one of those that a resta
 *Somebody decided it was owed* is not enough by itself, because a mind can decide it owes
 itself something, and the board is the person's: a row they cannot trace to anything they said
 is one they have to decode before they can ignore it. What that leaves out is everything the
-agent finds on its own account — a fault a pass turned up in its own machinery, a note the
-workshop should hold, a drive that has drifted. Those are real, and none of them is owed to
+agent finds on its own account — a fault a pass turned up in its own machinery, a skill
+worth writing, a drive that has drifted. Those are real, and none of them is owed to
 anyone. Housekeeping is dispatched without a row: nothing Reflection hands out takes a
 `subject` ([agents.md](agents.md#cognition--minutes-and-beyond)). A fault in the product stays
 where it was found, in the episode that recorded it with its evidence, and gets no store of its
@@ -739,7 +739,7 @@ its writer happened to leave on top.
 
 **A record indexes its own artifacts, and nothing else does.** A task's folder is where the work
 happened — one live store holds 39,946 files under `tasks/`, and a single task's top level holds
-114 — so listing it shows the workshop floor to somebody who asked what was made. What is
+114 — so listing it shows every scratch file to somebody who asked what was made. What is
 authoritative is the file the prose *names*: *"the completed report is `inspection-report.md` in
 this task directory"*. The surface therefore resolves the record's own inline-code tokens against
 the folder and makes the ones that exist openable, rather than growing a second listing beside
@@ -1086,8 +1086,8 @@ record ever received it.
 
 ## `skills/`
 
-The workshop. Procedures in the agent's own words, deposited when a job was **hard, will
-recur, and succeeded** — not from every task, or the workshop fills with noise.
+The skills. Procedures in the agent's own words, deposited when a job was **hard, will
+recur, and succeeded** — not from every task, or the notes fill with noise.
 
 - **A skill is a starting point, not truth.** Its durable half is used as-is; its perishable
   half is re-verified every time.

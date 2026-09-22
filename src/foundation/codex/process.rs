@@ -93,7 +93,7 @@ pub struct SessionOpts {
     /// **Consumed by the agent layer, not sent on the wire** — the same standing as
     /// `resume` below. It is a list of *skill names* because that is what the rung
     /// dispatching the work knows; turning one into a URL is a lookup against the
-    /// workshop, and the workshop is not this layer's business.
+    /// skills, and those are not this layer's business.
     pub mcp_servers: Vec<String>,
 
     /// Sandbox mode for the thread's own tools, as codex spells it: `read-only`,

@@ -1653,14 +1653,14 @@ Added September 8, 2026.
 
 **Every view owns the frame it is handed** — this document has said so since the room lost
 its regions, and `ui/ViewSlot.tsx` says it again at the top of the mount. What neither said
-is *how a view is supposed to find out how big that frame is*, and the answer everything in
-the workshop reached for was `@media` and `vw`. Both answer about the browser window.
+is *how a view is supposed to find out how big that frame is*, and the answer every view the
+agent had built reached for was `@media` and `vw`. Both answer about the browser window.
 
 The window and the slot are the same number often enough to hide it, and then they are not:
 the slot is about 380px in the menu-bar popover, where a view matched the phone's rules —
 the same collision `lib/shape.ts` records for the host's own controls, arriving a second
 time by a different door. And a phone turned sideways hands every view 852 raw pixels, which
-lands above 33 of the `max-width` breakpoints written across this workshop's views and below
+lands above 33 of the `max-width` breakpoints written across the agent's views and below
 37 of them. **Which arrangement a person got by rotating their phone was a coin flip per
 view**, and the one arrangement they could not get was the one the view was composed for.
 
@@ -1671,7 +1671,7 @@ the same CSS asking a different thing.
 
 **What that buys is a knob the host did not have: it can now tell a view a number.** A room
 too small to lay a view out in is told the room the view was composed for — `VIEW_TARGET`,
-1280, which is `view_render`'s `DEFAULT_WIDTH` and so the width the whole workshop is
+1280, which is `view_render`'s `DEFAULT_WIDTH` and so the width every view the agent builds is
 implicitly aimed at — and drawn scaled to fit. On a phone in landscape that is the desktop
 composition on 2556 device pixels at 2 device pixels per CSS pixel, held at 30cm instead of
 50cm, which lands within a few percent of a laptop's *angular* text size. Nothing is shrunk;

@@ -45,7 +45,7 @@ const REACTION_BASE: &str = include_str!("reaction.md");
 const REFLECTION_BASE: &str = include_str!("reflection.md");
 
 /// The reflection prompt, for the cross-tree test in [`crate::mind::skills`]: the
-/// workshop's cost rules are enforced there, and the rung that applies them is here.
+/// skills' cost rules are enforced there, and the rung that applies them is here.
 #[cfg(test)]
 pub(crate) fn reflection_base() -> &'static str {
     REFLECTION_BASE
@@ -67,9 +67,9 @@ const WORKER_TASK_MANAGER_BASE: &str = include_str!("workers/task-manager.md");
 const WORKER_SKILLS_MANAGER_BASE: &str = include_str!("workers/skills-manager.md");
 
 /// Every prompt, for the cross-tree test in [`crate::mind::skills`]. **The list is of
-/// all of them rather than of the ones that see the workshop**, and the test picks its
+/// all of them rather than of the ones that see the skills**, and the test picks its
 /// own subjects out of it by looking for `{skills_dir}` — so a prompt that grows a
-/// workshop section later is covered by having grown one, with nothing to remember to
+/// skills section later is covered by having grown one, with nothing to remember to
 /// add here.
 ///
 /// That distinction is the whole point of the accessor. The paragraph carrying the
@@ -99,7 +99,7 @@ pub(crate) fn all_bases() -> [(&'static str, &'static str); 11] {
 ///
 /// **These are not [`Role`]s.** A role's prompt is what a session *is*, loaded whole
 /// before it does anything; a craft page is something it goes and opens, the way it
-/// opens a view already in the workshop. Keeping them out of `Role::ALL` is what lets
+/// opens a view already in `views/`. Keeping them out of `Role::ALL` is what lets
 /// the set grow without every session paying for the ones it never reads —
 /// `view-builder.md` names the page and the session decides.
 const CRAFT_PAGES: &[(&str, &str)] = &[
@@ -241,13 +241,13 @@ pub enum WorkerType {
     /// may write a task's `status`. Split out of Cognition because the rung that hands
     /// work out is the worst-placed one to rule that its own errand ended.
     TaskManager,
-    /// Answers *"here is what I want to do"* out of the workshop, and holds the pen for
-    /// what goes on the shelf (`docs/arch/tools.md#the-skills-manager`).
+    /// Answers *"here is what I want to do"* out of the skills, and holds the pen for
+    /// what goes into them (`docs/arch/tools.md#the-skills-manager`).
     ///
     /// **It exists because of a window, not an authority.** Every other rung carries a
-    /// cut of the workshop — the recently-used end, capped at a budget — so no other rung
+    /// cut of the skills — the recently-used end, capped at a budget — so no other rung
     /// can see a duplicate or judge where a new note belongs. This one goes and reads all
-    /// of it, which is affordable exactly once: inside a session of its own, answering
+    /// of them, which is affordable exactly once: inside a session of its own, answering
     /// the asker in one message.
     SkillsManager,
 }
@@ -317,7 +317,7 @@ impl WorkerType {
     /// subject whatever its kind, which `hi_create_worker` decides from the caller's role, since
     /// a kind cannot know its owner.)
     ///
-    /// `skills-manager` keeps the workshop shelf, and a shelf is not something anyone is owed.
+    /// `skills-manager` keeps the skills, and those are not something anyone is owed.
     ///
     /// `person-reader` is one of Reflection's **organizers** (`docs/arch/agents.md`) —
     /// housekeeping keyed to a `people/<name>` facet, dispatched one per person present in a
@@ -674,7 +674,7 @@ async fn interpolate(data_dir: &Path, text: String) -> String {
         //
         // Named for what it holds, which is notes — every resident one, including a
         // procedure that runs nothing. It was `{tools_in_hand}`, and that promised a
-        // classification the workshop does not have: a tool is a note that happens to
+        // classification the skills do not have: a tool is a note that happens to
         // name a command, not a second kind of thing.
         .replace(
             "{in_hand}",
@@ -1169,7 +1169,7 @@ mod soul_tests {
             assert!(!text.contains("{conversation_memory}"));
             // Reflection carries this one too, and needs it: it is the rung told to merge
             // duplicate notes, and it was the one rung whose prompt showed it none of the
-            // shelf. A placeholder that reached the model raw would read as an empty shelf,
+            // skills. A placeholder that reached the model raw would read as no notes,
             // which is the same confusion — absent entry versus absent tool — that the
             // inventory exists to prevent.
             assert!(!text.contains("{in_hand}"), "an unresolved placeholder reached the rung");
@@ -1400,7 +1400,7 @@ mod soul_tests {
         assert!(WORKER_GENERAL_BASE.contains("Never wait for an answer"));
     }
 
-    /// **A worker must scan the workshop before reporting it cannot do something.**
+    /// **A worker must scan the skills before reporting it cannot do something.**
     ///
     /// The registry is derived, never an index file (`docs/arch/tools.md`), which is
     /// only worth anything if some rung is actually told to run the scan — the same
@@ -1414,24 +1414,24 @@ mod soul_tests {
     /// Five things are pinned, because the failure needs all five to be closed: the scan
     /// itself, the rule about when to run it, `--help` as the source of a tool's
     /// arguments (a flag list copied into a note is a second truth that drifts), and —
-    /// for the case where the workshop genuinely has nothing — the two halves of what to
+    /// for the case where the skills genuinely have nothing — the two halves of what to
     /// do about a step only the person can take. It is asked for **at the wall**, rather
     /// than assumed past and answered with something thinner; and it is asked for at all,
     /// rather than helped to out of their browser profile, cookie store or keychain.
     #[test]
-    fn a_worker_scans_the_workshop_before_saying_it_cannot() {
-        // **The subjects are derived, not listed** — every rung that sees the workshop,
+    fn a_worker_scans_the_skills_before_saying_it_cannot() {
+        // **The subjects are derived, not listed** — every rung that sees the skills,
         // found by looking for `{skills_dir}`, the same way the cross-tree test in
         // `mind::skills` picks its own. An enumerated list is what shipped the gap this
         // test now closes: it named `general` and `cognition`, the two that happened to
         // be open, while `view-builder`, `task-manager` and `drive-organizer` carried the
-        // workshop pointer and no way to read it. Watched 2026-09-07 — a view-builder
+        // skills pointer and no way to read it. Watched 2026-09-07 — a view-builder
         // researching 小红书 drove `/Applications/Google Chrome.app/...` by absolute path
         // into a private profile, never learning that `browser` and its signed-in profile
         // under `drive/` existed, because nothing on its rung had ever named one.
         //
-        // Reflection is out for the same reason it is out there: it writes the workshop
-        // and runs no errands.
+        // Reflection is out for the same reason it is out there: it decides what the skill
+        // notes hold and runs no errands.
         //
         // Prose wraps, so a pinned sentence is matched against the base with its runs of
         // whitespace collapsed — otherwise re-flowing a paragraph breaks a test that has
@@ -1446,12 +1446,12 @@ mod soul_tests {
             checked += 1;
             assert!(
                 base.contains("^(purpose|description):"),
-                "{name} sees the workshop; the derived registry needs a reader on this rung"
+                "{name} sees the skills; the derived registry needs a reader on this rung"
             );
             // Both spellings, because the scan must find a note the agent runtime's own
             // skills feature taught it to write. Watched 2026-08-27: a worker produced a
             // `SKILL.md` with `description:` and no `use:`, and a scan anchored on
-            // `purpose:` alone would report the workshop as empty of it.
+            // `purpose:` alone would report the skills as empty of it.
             assert!(
                 base.contains("description"),
                 "{name} scans for one spelling; the common one must be scanned too"
@@ -1509,7 +1509,7 @@ mod soul_tests {
         // **And Cognition, because it is the rung that was actually in the path.**
         // Watched 2026-08-26 on an isolated instance: asked to read a page, Cognition
         // ran `curl … | sed -n '1,90p'` itself, never created a worker, never scanned
-        // the workshop, and reported the second Hacker News item as the first. The
+        // the skills, and reported the second Hacker News item as the first. The
         // scan had been written into `general.md` alone, so it sat on a rung that
         // never opened — this repo's oldest failure, an instruction handed to nobody.
         // Cognition holds codex's own shell, so it can and must find a tool too.
@@ -1519,7 +1519,7 @@ mod soul_tests {
         );
     }
 
-    /// **The four copies of the workshop section are one text, or they are four texts.**
+    /// **The four copies of the skills section are one text, or they are four texts.**
     ///
     /// Retiring `common.md` made duplication the accepted price and named these tests as
     /// what holds it (see [`install_prompts`]). `contains` on a few sentences catches a
@@ -1527,7 +1527,7 @@ mod soul_tests {
     /// section is compared whole: edit it in `general.md` and copy it across, or the diff
     /// says which rung disagrees and about what.
     #[test]
-    fn the_workshop_section_has_not_drifted_between_the_worker_copies() {
+    fn the_skills_section_has_not_drifted_between_the_worker_copies() {
         const START: &str = "## Some of those notes are tools you can run";
         let section = |base: &'static str| -> &'static str {
             let i = base.find(START).expect("every subject carries the section");
@@ -1546,7 +1546,7 @@ mod soul_tests {
             assert_eq!(
                 section(base),
                 canonical,
-                "{name}'s copy of the workshop section has drifted from general.md's"
+                "{name}'s copy of the skills section has drifted from general.md's"
             );
         }
         assert!(copies >= 3, "only {copies} copies compared; the filter stopped matching");
@@ -1763,7 +1763,7 @@ mod soul_tests {
     /// That only holds while the prompt still asks for the line, so the ask is pinned.
     ///
     /// `factory/` is pinned with it, and it is the sharper one. Those views sit inside
-    /// the workshop the builder is now told to scan, and the binary rewrites them on
+    /// the views folder the builder is now told to scan, and the binary rewrites them on
     /// every boot ([`crate::mind::views::install_factory_views`]) — so a builder that
     /// adapts one in place loses the work at the next start, silently. Telling it to
     /// read the tree without telling it about that folder is the hazard this pass
@@ -2348,7 +2348,7 @@ mod soul_tests {
     /// **Reflection is pinned the other way round.** Every worker it starts is refused a
     /// subject, because its errands are housekeeping and the ledger holds only what a person
     /// asked for — and the way past the old fence, *open a row first*, is exactly the sentence
-    /// that put nine workshop errands on one person's board. So it must be told the refusal,
+    /// that put nine skill errands on one person's board. So it must be told the refusal,
     /// and it must not be told how to open a row.
     #[test]
     fn each_dispatching_rung_knows_where_it_stands_on_subject() {

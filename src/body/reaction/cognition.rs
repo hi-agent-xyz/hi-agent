@@ -622,7 +622,7 @@ async fn open_session(
                 SessionOpts {
                     system_prompt: Some(system_prompt),
                     // The data dir: the ledger it writes lives under it, and it has no
-                    // view workshop to work in — it delegates the making of things.
+                    // views folder to work in — it delegates the making of things.
                     cwd: Some(data_dir.to_path_buf()),
                     // Left at the adapter's defaults so Cognition can read and write its
                     // ledger. Delegation remains prompt guidance rather than a tool rail.

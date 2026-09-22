@@ -1,4 +1,4 @@
-//! `skills/` — the workshop, and its factory seed layer.
+//! `skills/` — the skills, and their factory seed layer.
 //!
 //! A skill is a short note in the agent's own words on how a kind of job was done:
 //! the steps that worked, the tools, the traps, what good looked like. It is a
@@ -16,7 +16,7 @@
 //!
 //! The `factory/` prefix is the same convention the views tree already uses
 //! ([`crate::mind::views::install_factory_views`]) — chosen over a sibling directory
-//! so the workshop stays *one* place to look: a worker greps `skills/` and finds both
+//! so the skills stay *one* place to look: a worker greps `skills/` and finds both
 //! its own notes and the seeded ones, while an upgrade still has a single subtree it
 //! owns and may clobber.
 //!
@@ -95,8 +95,8 @@ const DRIVING_A_DESKTOP: &str = include_str!("driving-a-desktop.md");
 /// job is being planned.
 const ASKING_TYPED_QUESTIONS: &str = include_str!("asking-typed-questions.md");
 
-/// Seeded skill: how to equip a tool the workshop does not have yet — the *writing*
-/// half of the workshop, and the only path by which a learnt tool ever exists.
+/// Seeded skill: how to equip a tool the skills do not cover yet — the *writing*
+/// half of `skills/`, and the only path by which a learnt tool ever exists.
 const EQUIPPING_A_TOOL: &str = include_str!("equipping-a-tool.md");
 
 /// Seeded **tool**: an Android handset under a stable name. Carries `purpose:` and
@@ -119,7 +119,7 @@ const PHONE: &str = include_str!("phone.md");
 /// tool as an ordinary procedure. What makes a note runnable is that its prose says
 /// how to run it, which is where the format rule wanted it anyway.
 ///
-/// One parser, shared by the workshop API and the tests, for the same reason
+/// One parser, shared by the skills API and the tests, for the same reason
 /// [`crate::foundation::codex::messages::kind_of`] is shared: two copies of a
 /// vocabulary are free to disagree about what a note *is*.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -213,7 +213,7 @@ pub fn split_front_matter(note: &str) -> (FrontMatter, &str) {
 pub fn mcp_server(data_dir: &Path, name: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
     let mut suffix_match = None;
     for note in notes(data_dir).unwrap_or_default() {
-        // One unreadable note must not answer for the whole workshop: `?` here would
+        // One unreadable note must not answer for every other note: `?` here would
         // report "no such server" for a permissions error three files away.
         let Ok(text) = std::fs::read_to_string(&note.path) else { continue };
         let (fm, _) = split_front_matter(&text);
@@ -258,7 +258,7 @@ pub fn mcp_server(data_dir: &Path, name: &str) -> Option<serde_json::Map<String,
 /// still comes from the tree, one level up.
 pub const SKILL_FILE: &str = "SKILL.md";
 
-/// One note in the workshop: what it is called, where it is, and when it last changed.
+/// One note under `skills/`: what it is called, where it is, and when it last changed.
 #[derive(Debug, Clone)]
 pub struct NoteRef {
     /// Path under `skills/` with no `.md` — and for the directory shape, the directory
@@ -268,7 +268,7 @@ pub struct NoteRef {
     pub modified: std::time::SystemTime,
 }
 
-/// Every note in the workshop, in no particular order.
+/// Every note under `skills/`, in no particular order.
 ///
 /// **The one place that decides what counts as a note**, so the API listing, the
 /// registry and any future reader cannot disagree. Two shapes: a `.md` file, or a
@@ -276,7 +276,7 @@ pub struct NoteRef {
 /// because everything beside the note is the tool's payload rather than reading
 /// material. Walking in once listed a vendored `LICENSE.md` as a skill.
 ///
-/// Dotfiles are skipped as editor litter. A missing root is an empty workshop, not an
+/// Dotfiles are skipped as editor litter. A missing root means no notes yet, not an
 /// error — nothing has been learnt yet.
 pub fn notes(data_dir: &Path) -> io::Result<Vec<NoteRef>> {
     let root = skills_dir(data_dir);
@@ -320,7 +320,7 @@ fn push_note(out: &mut Vec<NoteRef>, path: PathBuf, rel: String) {
     out.push(NoteRef { id, path, modified });
 }
 
-/// How many bytes of workshop inventory a session may carry.
+/// How many bytes of skill inventory a session may carry.
 ///
 /// **The cap is the budget, and the unit is bytes rather than a count** because one
 /// note with a two-hundred-word purpose line costs what five terse ones do
@@ -360,14 +360,14 @@ pub const HOT_BUDGET_BYTES: usize = 1536;
 /// have no browser" going back — reintroduced as the default state.
 ///
 /// **Whatever was left out is said, however it was left out.** A cut for budget and a
-/// cut for never having been run are the same fact to the reader — that this is not the
-/// workshop — and the failure this repo has paid for is the silent one. So a fresh
+/// cut for never having been run are the same fact to the reader — that this is not every
+/// note there is — and the failure this repo has paid for is the silent one. So a fresh
 /// install, where nothing has been run yet, interpolates the invitation rather than
 /// nothing: an empty spot under "what you have in hand" reads as *you have nothing*,
 /// and that is precisely the confusion between an absent entry and an absent tool that
 /// killed the truncated middle tier.
 ///
-/// Returns an empty string only for a genuinely empty workshop — no notes at all —
+/// Returns an empty string only for a genuinely empty `skills/` — no notes at all —
 /// where there is nothing to scan and so nothing to say.
 /// How often this note's tool was actually reached for.
 ///
@@ -385,10 +385,10 @@ pub const HOT_BUDGET_BYTES: usize = 1536;
 /// for a second example.
 ///
 /// A zero ranks last; it does not exclude. Note what the arithmetic can and cannot
-/// see: a note naming no command can never accrue a count, so once a workshop outgrows
-/// its budget a pure procedure sorts below every tool and falls out first, however
+/// see: a note naming no command can never accrue a count, so once the notes outgrow
+/// their budget a pure procedure sorts below every tool and falls out first, however
 /// often it was *read* — reading one is credited to `sed`, not to the note. Whether
-/// that matters is a question for a workshop big enough to cut, and the answer if it
+/// that matters is a question for a set of notes big enough to cut, and the answer if it
 /// does is to count opens, which the frame logs already record. Meanwhile the floor
 /// under it is the scan, which is why every seeded note carries a `purpose:` line: the
 /// scan greps for exactly that, and a note without one is invisible to it.
@@ -417,12 +417,12 @@ pub fn hot_inventory(
         let (fm, _) = split_front_matter(&text);
         entries.push((used_count(&note, &fm, usage), note, fm));
     }
-    // An empty workshop has nothing to say and nothing to scan; the caller
+    // No notes at all means nothing to say and nothing to scan; the caller
     // interpolates it without special-casing a fresh install.
     if entries.is_empty() {
         return String::new();
     }
-    let in_workshop = entries.len();
+    let in_skills = entries.len();
 
     // Most-used first, then freshest, then the id so the output is stable rather than
     // filesystem-ordered — two identical installs should produce the same prompt, and
@@ -451,14 +451,14 @@ pub fn hot_inventory(
     // The scan is the floor underneath either way: what is not in hand is one grep
     // away, and saying so is what keeps an absent *entry* from reading as an absent
     // *tool*.
-    if in_hand < in_workshop {
+    if in_hand < in_skills {
         // `in_hand == 0` needs its own wording rather than "more": nothing is shown, so
         // there is no "more" to be had than. It takes a note whose purpose line alone
         // outgrows the whole budget, which is rare and not worth a confusing sentence.
         out.push_str(if in_hand == 0 {
-            "- (the workshop is one scan away)\n"
+            "- (your skills are one scan away)\n"
         } else {
-            "- (more in the workshop — scan it)\n"
+            "- (more skills — scan for them)\n"
         });
     }
     out
@@ -469,13 +469,13 @@ fn non_empty(v: &str) -> Option<String> {
     (!v.is_empty()).then(|| v.to_string())
 }
 
-/// `<data_dir>/skills/` — the workshop root. Agent-written skills live directly
+/// `<data_dir>/skills/` — the skills' root. Agent-written skills live directly
 /// under here; the factory seeds live in the `factory/` subdirectory.
 pub fn skills_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("skills")
 }
 
-/// Create the workshop and write the bundled seed skills into
+/// Create `skills/` and write the bundled seed skills into
 /// `<data_dir>/skills/factory/`, overwriting each on every boot so a binary update
 /// reseeds the latest (mirrors [`crate::identity::install_prompts`] and
 /// [`crate::mind::views::install_factory_views`]).
@@ -732,7 +732,7 @@ mod tests {
         assert!(body.starts_with("# Just a skill"));
 
         // An unterminated block is not front matter. Treating it as one would eat the
-        // whole note and leave the workshop view blank.
+        // whole note and leave the skills view blank.
         let (fm, body) = split_front_matter("---\npurpose: oops\nno end marker\n");
         assert_eq!(fm, FrontMatter::default());
         assert!(body.starts_with("---"));
@@ -803,7 +803,7 @@ mod tests {
 
     /// **The cap is the budget, and a budget that is not a test is not a budget.**
     /// "Add tools continuously" is pressure on exactly this tier, so the failure mode
-    /// to prevent is a workshop that quietly grows the opening prompt forever.
+    /// to prevent is a set of notes that quietly grows the opening prompt forever.
     #[test]
     fn the_inventory_is_capped_and_says_what_it_dropped() {
         let dir = tempfile::tempdir().unwrap();
@@ -825,7 +825,7 @@ mod tests {
         );
         // Silently stopping at a cap is the failure shape this repo has paid for.
         assert!(
-            out.contains("more in the workshop"),
+            out.contains("more skills — scan"),
             "a truncated inventory must say so: {out}"
         );
         assert!(out.lines().count() < 80, "it did not actually cut anything");
@@ -855,7 +855,7 @@ mod tests {
         // bare name rather than vanishing.
         assert!(cold.contains("drive a real Chrome"), "{cold}");
         // Nothing was left out, so nothing claims it was.
-        assert!(!cold.contains("more in the workshop"), "a complete set says nothing: {cold}");
+        assert!(!cold.contains("more skills — scan"), "a complete set says nothing: {cold}");
 
         // Nothing stored: a note written now appears at the next build, no bookkeeping.
         let learnt = skills_dir(dir.path()).join("just-learnt.md");
@@ -894,7 +894,7 @@ mod tests {
             "a much-used tool leads a fresher, less-used one: {after}"
         );
 
-        // An empty workshop interpolates to nothing rather than to an apology: there is
+        // An empty `skills/` interpolates to nothing rather than to an apology: there is
         // no scan to send anyone on.
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(hot_inventory(empty.path(), HOT_BUDGET_BYTES, &Default::default()), "");
@@ -1140,14 +1140,14 @@ mod tests {
         assert_eq!(fm.run, None);
     }
 
-    /// Writing the workshop belongs to reflection, and nowhere else may claim it —
+    /// Writing the skills belongs to reflection, and nowhere else may claim it —
     /// a note as much as a tool. The argument was always general: a note written from
     /// inside one job is written without the evidence that would justify it, and the
     /// rung that just did something once cannot know it was the fifth time. It used to
     /// be applied to tools only, so two prompts asked the hands to leave a note behind
     /// while the note they read on the way told them not to.
     #[test]
-    fn the_hands_do_not_write_the_workshop() {
+    fn the_hands_do_not_write_the_skills() {
         let reflection = crate::identity::reflection_base();
         assert!(
             reflection.contains("an intention is not evidence"),
@@ -1164,22 +1164,22 @@ mod tests {
         // Being the only entrance is load-bearing and has to be said as such: whatever
         // this pass does not write down is what the agent forgets.
         assert!(
-            reflection.contains("nothing that does the work writes the workshop"),
+            reflection.contains("nothing that does the work writes the skills"),
             "the rule has to be stated where it is applied"
         );
 
-        // Every prompt that has a workshop section, found by having one rather than by
+        // Every prompt that has a skills section, found by having one rather than by
         // being listed here — the paragraph is copied verbatim across four workers, and
         // fixing the ones that came to mind left three of them contradicting the note
         // those same workers read on the way in.
         //
         // **Two rungs are exempt, and they are exempt for different halves of one act.**
-        // Reflection decides what the shelf should hold, because it alone sees the same
-        // shape come up four times in a month; the Skills Manager writes it, because it
-        // alone holds the whole shelf and so is the only one that can see where a note
+        // Reflection decides what the skills should hold, because it alone sees the
+        // same shape come up four times in a month; the Skills Manager writes them, because
+        // it alone reads all of them and so is the only one that can see where a note
         // belongs or what it duplicates (`docs/arch/tools.md#the-skills-manager`). What
         // the rule protects is unchanged and is what this test is now named for: the rungs
-        // *doing jobs* do not write the workshop, because a note written from inside one
+        // *doing jobs* do not write the skills, because a note written from inside one
         // errand is written without the evidence that would justify it.
         let mut checked = 0;
         for (name, base) in crate::identity::all_bases() {
@@ -1191,12 +1191,12 @@ mod tests {
             }
             checked += 1;
             assert!(
-                base.contains("Reading the workshop is yours; writing it is not"),
-                "{name} sees the workshop and is not told which half is its"
+                base.contains("Reading skills is yours; writing them is not"),
+                "{name} sees the skills and is not told which half is its"
             );
             assert!(
                 !base.contains("leave a note behind") && !base.contains("leave a short note"),
-                "{name} still asks the hands to write the workshop mid-errand"
+                "{name} still asks the hands to write the skills mid-errand"
             );
         }
         assert!(checked >= 5, "only {checked} prompts checked; the filter stopped matching");

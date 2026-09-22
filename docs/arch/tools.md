@@ -6,7 +6,7 @@ costs to be able to find it again.
 [`foundation.md`](foundation.md#tools) already sorts tools by **who had to be present** to
 equip them — bundled, user-added, agent-learnt — and covers devices, gates and honesty about
 reach. That classification is unchanged and is not restated here. This doc is the other
-question: the workshop is meant to grow without bound, and a growing workshop that is loaded
+question: the skills are meant to grow without bound, and a growing set of notes that is loaded
 eagerly is a context leak that gets worse the more the agent learns.
 
 ## The shape of the problem
@@ -18,7 +18,7 @@ Those numbers are far apart. One attached MCP server publishes tens of schemas �
 tokens. A one-line index entry is roughly twelve. So an index is cheap, and **the invariant is
 not "keep the tool set small"**.
 
-But an index being cheap is not the binding constraint, because the workshop does not grow one
+But an index being cheap is not the binding constraint, because the skills do not grow one
 learnt tool at a time. [An MCP server is a skill](#carriers), and that makes adding tools nearly free:
 someone who points at twenty servers contributes hundreds of tools in an afternoon, with no
 learning loop at all. The cheapest way to add a tool is therefore also what forces this doc's
@@ -66,12 +66,12 @@ hand-curated, and hand-curated is the drift this whole doc is written against.
 ### Why there is no layer between hot and asking
 
 The obvious middle tier — the next N tools at a line each, or a summary of what kinds of thing
-the workshop covers — was designed and cut. It is the first thing anyone will try to add back,
+the skills cover — was designed and cut. It is the first thing anyone will try to add back,
 so the reason is here rather than in a commit message.
 
 **A partial list is a surface that can be consulted and found empty.** The agent checks it,
 does not see what it needs, and concludes it cannot — and absence from a truncated list is
-indistinguishable, from the inside, from absence from the workshop. That is precisely how
+indistinguishable, from the inside, from absence from `skills/`. That is precisely how
 [journey 07](../user-journeys/07-browser-errand.md) failed live: the agent reported having no
 browser while a provisioned Chromium sat on the same disk. A middle tier does not fix that
 failure. It gives it a respectable-looking place to happen.
@@ -156,7 +156,7 @@ judge each time — and the answer everywhere else in this system is guidance pl
 
 ### A tool is an investment, and most of the time it does not pay
 
-**The default is not to build one.** This doc is about a workshop that grows without bound,
+**The default is not to build one.** This doc is about skills that grow without bound,
 and it is easy to read that as a goal; it is not. A tool costs a session to build, costs
 reading and trusting a note every time it is used, and once listed costs **a line in the window
 of every session from then on — including every session about something else.** That last one
@@ -191,12 +191,13 @@ is about a command: a rung that has just done something once cannot know it was 
 whichever kind of thing it is thinking of writing down. Scoping it to tools left two rules for
 one act, and the seam showed — four worker prompts asked the hands to leave a note behind while
 `equipping-a-tool.md`, which those same workers read on the way in, told them not to. So the
-hands **read** the workshop and never write it; what they owe is a report saying what was hard,
+hands **read** the skills and never write them; what they owe is a report saying what was hard,
 what worked, and whether the shape looked familiar. Reflection is the only entrance.
 
 What differs between the two is not who decides but **what it costs, and therefore the bar**. A
 note is a few lines and a place in the resident set, and nothing about it can break: the bar is
-that it was hard-won and likely to recur, and reflection writes it itself. A tool is a build
+that it was hard-won and likely to recur, and reflection hands it to the
+[Skills Manager](#the-skills-manager) to write. A tool is a build
 session, an install, something to trust, and a line in every future window: it keeps all three
 conditions above, and a worker to build it.
 
@@ -205,7 +206,7 @@ conditions above, and a worker to build it.
 Not a plan that should work. `foundation.md`'s verification rule, pointed at tools: research
 it, ask the person once and concretely if only they can do a step, install, configure, and
 **exercise a real call** — *then* write the note. This is the same discipline as "an artifact
-is not shipped until it has been looked at", and it is what keeps the workshop from filling
+is not shipped until it has been looked at", and it is what keeps the skills from filling
 with capabilities that were never tried.
 
 ## Running one
@@ -257,7 +258,7 @@ build artifact — neither foundation's pen nor an agent's judgment — and it i
 
 That is affordable because **the note carries how to rebuild**, which is the *perishable half
 must be marked* rule pointed at implementation instead of facts. So a fresh install has the
-entire workshop's knowledge and none of its binaries, and recovers each one the first time it
+knowledge of every skill and none of its binaries, and recovers each one the first time it
 is actually needed. Nothing merges, nothing conflicts, and there is no upgrade story to get
 wrong.
 
@@ -311,7 +312,7 @@ Scan the notes, take each `purpose`, emit `name — purpose`. One line per tool.
 
 **Derived, never an index file.** [`views/`](data.md#views) already argued this and the
 argument transfers exactly: an index is bookkeeping kept by judgment, and it drifts silently —
-a missed entry reads as *never built* while the file sits right there, so the workshop would
+a missed entry reads as *never built* while the file sits right there, so the skills would
 get less trustworthy the more it accumulated. Derived from the tree, a missing line degrades to
 a bare filename. It never becomes a confident wrong answer.
 
@@ -349,7 +350,7 @@ answered out of the agent runtime's own bundled skill, naming a vendor's models,
 `hi_text_to_image` sat bundled one rung down and was never called. The tools were built. No
 prompt had ever named one.
 
-**This is not the middle tier this doc cuts.** That ban is about the [workshop](#the-registry) —
+**This is not the middle tier this doc cuts.** That ban is about the [skills](#the-registry) —
 unbounded, per-install, growing without us, where any summary is a surface that can be consulted
 and found empty. The bundled half is the opposite object on every axis: authored here, fixed at
 compile time, identical on every install, and small enough to name *whole*. Named whole, it
@@ -357,7 +358,7 @@ cannot be found short. And it is written as what the body **makes**, never as th
 can do, so a miss is still *hand it on* rather than a "no".
 
 **Only the bundled half may be written into a prompt.** Hot is derived per install and the
-workshop grows on machines we never see; a prompt naming either is a claim that goes stale
+skills grow on machines we never see; a prompt naming either is a claim that goes stale
 somewhere else. What ships in the binary changes only when we change it — and
 `no_prompt_names_a_tool_that_does_not_exist` fails the build if a prompt names an `hi_` tool no
 role declares, which is what makes the naming safe rather than another thing to keep in step by
@@ -463,14 +464,14 @@ doc runs on:
 | Act | Whose | What its window must hold |
 |---|---|---|
 | Getting hold of what a job needs — install, configure, exercise a real call | the **asking worker** | the job |
-| Deciding the workshop should hold it at all | [**Reflection**](agents.md#reflection--background) | the recurrence, across days |
-| Where it goes, how it is phrased, what it duplicates, what retires | **this rung** | the whole shelf |
+| Deciding it should become a skill at all | [**Reflection**](agents.md#reflection--background) | the recurrence, across days |
+| Where it goes, how it is phrased, what it duplicates, what retires | **this rung** | every skill |
 
 The middle one is Reflection's because nothing else can see the same shape come up four times in a
 month. The last one is not, and the reason is measurable rather than theoretical: Reflection is
 told to *"merge two notes that are really the same skill"* while being the one rung whose prompt
-carries no inventory at all — on one install, 68 skills on the shelf and the scan it would have to
-fall back on finding six of them. Deduplicating a shelf you cannot see is not a job.
+carries no inventory at all — on one install, 68 skills and the scan it would have to
+fall back on finding six of them. Deduplicating notes you cannot see is not a job.
 
 **And the duplicate signal is a by-product of lookup, not a sweep.** The rung answering *"do I
 have something for this?"* all day is the one that keeps landing on two notes that answer the same
@@ -537,10 +538,10 @@ not be given a partial list is the one whose answer decides whether anyone goes 
 | Lookup and authorship are **separate tempos** | Lookup is in every job's critical path; installing software is not |
 | Residency is **economy, not permission** | Everything reaches everything; only *in hand* differs |
 | A tool is **an investment reflection decides**, not a job-time reflex | Only the rung reading across days can see recurrence; inside one job the guess always resolves to build |
-| **Reflection decides what the workshop should hold; the Skills Manager writes it** | Split by window, not authority: recurrence is only visible across days, and duplication is only visible from the whole shelf |
+| **Reflection decides what the skills should hold; the Skills Manager writes them** | Split by window, not authority: recurrence is only visible across days, and duplication is only visible from all the notes at once |
 | Cost sets **the bar**, never **the owner** | A note risks a line and cannot break; a tool risks a session, an install and every future window |
 | **Existing** and **in hand** are separate questions | Whether a tool should exist is judgment over patterns; whether it is carried is arithmetic over use |
-| **Bundled tools may be named in another rung's prompt**; hot and the workshop may not | A rung that cannot look must be told what its hands make — and only the compile-time half is the same on every install |
+| **Bundled tools may be named in another rung's prompt**; hot and the skills may not | A rung that cannot look must be told what its hands make — and only the compile-time half is the same on every install |
 | **Driving a machine is a note over what that machine has**, never a capability here | The mechanism multiplies by platform and the judgment does not: capture, input and the accessibility tree are four different things across macOS, X11, Wayland and Windows, each with its own grants, while reading a screenshot is the same code everywhere. `browser` and `phone` bind one binary each and are cheap; a `desktop` shim would be the multiplier wearing a stable name |
 
 ## What this deliberately does not have
@@ -582,7 +583,7 @@ goal for some time.
 - **Usage counting cannot see an attached server.** [Hot](#bundled-and-hot) ranks a note by the
   calls to the command its `use:` names, or failing that by its own filename. An MCP skill names
   no command, and the calls that happen carry the *server's* verb names (`screenshot`, `tap`) and
-  not the skill's. So it scores zero forever and falls out first once the workshop outgrows its
+  not the skill's. So it scores zero forever and falls out first once the skills outgrow their
   budget — however recently the person used it.
 - **Pruning what stopped paying.** A note nobody has run in a long time still costs its line in
   every session. Reflection is told to notice; nothing acts on it, and no rung deletes a learnt
@@ -594,10 +595,10 @@ goal for some time.
   key that broke this doc's own format rule — front matter is only what code reads, and nothing
   but a badge ever read `use:` while the *mind* reads it to run the thing. Dropping it to one key
   reverses a decision taken 2026-08-26, so it is not to be taken quietly.
-- **The runtime ships a workshop of its own.** codex installs a `.system` skill set into
+- **The runtime ships skills of its own.** codex installs a `.system` skill set into
   `CODEX_HOME` on upgrade — `imagegen`, `openai-docs`, `skill-creator` and more — and advertises
   it to every rung in a system prompt we never see on the wire. So every session carries a second
-  workshop we did not author, do not version, and cannot read from here. On 2026-08-31 it is what
+  set of skills we did not author, do not version, and cannot read from here. On 2026-08-31 it is what
   answered a question about the body's own image models, with another vendor's model list.
   Naming what the body makes fixes *not knowing*; whether the ambient set should be wiped at boot
   is undecided.

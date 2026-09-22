@@ -107,7 +107,7 @@ pub fn spawn(bus: ViewBus, data_dir: PathBuf, compiler: ViewCompiler) {
 
 /// The ref a written path names, or `None` for anything that is not a view's source.
 ///
-/// The compiled modules, the thumbnails and the workshop's other scratch dirs all sit
+/// The compiled modules, the thumbnails and the other scratch dirs all sit
 /// *inside* the views tree, and the compiler writes to `_compiled` constantly — so
 /// everything under a leading `_` is skipped, or a recompile would trigger the watch
 /// that triggered it.
@@ -130,7 +130,7 @@ fn ref_of(root: &Path, path: &Path) -> Option<String> {
 
 /// Recompile `view_ref` and swap it under the layers showing it, if any are.
 ///
-/// The screen is asked first so a builder saving its way through a workshop of views
+/// The screen is asked first so a builder saving its way through a folder of views
 /// nobody is looking at never spawns a compiler. A source that does not compile — which
 /// is every intermediate save of a file being written — leaves the screen alone.
 async fn follow(bus: &ViewBus, data_dir: &Path, compiler: &ViewCompiler, view_ref: &str) {

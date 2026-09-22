@@ -36,37 +36,37 @@ _机制:技能(怎么开这类页)+ effector(浏览器)。可行性:**可行**�
 
 ## 复测 2026-08-26 · 隔离实例 `--data-dir /tmp/hi-tools2`
 
-浏览器现在是工作间里的一条**工具笔记**:`skills/factory/browser.md` 带 `purpose:`/`use: browser`,
+浏览器现在是技能里的一条**工具笔记**:`skills/factory/browser.md` 带 `purpose:`/`use: browser`,
 `<data_dir>/bin` 进了每个 session 的 PATH,`bin/browser` 在**调用时**才解析这台机器上的
 Chrome(所以从不开网页的机器不会白下 100 MB)。
 
 - 🔴 **第一次跑,暴露的是老毛病:指令挂在了不在路径上的那一节。** "去看下这个页面"这类活,
-  Cognition **自己**用 `curl … | sed -n '1,90p'` 办了,**一个 worker 都没建**,工作间从没被扫过,
+  Cognition **自己**用 `curl … | sed -n '1,90p'` 办了,**一个 worker 都没建**,技能从没被扫过,
   结果把 HN 第二条当成了第一条。扫描规则当时只写在 `general.md`(worker 的 prompt)里。
   修复:Cognition 手上有 codex 自带的 shell,规则同时写进 `cognition.md`,由
-  `identity::tests::a_worker_scans_the_workshop_before_saying_it_cannot` 钉住。
+  `identity::tests::a_worker_scans_the_skills_before_saying_it_cannot` 钉住。
 - ✅ **修完之后,发现—读笔记—用工具整条链路实测通过。** 纯文本页面上它先
-  `grep -rn "^purpose:"` 扫工作间、`sed` 打开 `browser.md` 再动手,然后**正确地用了 `curl`**
+  `grep -rn "^purpose:"` 扫技能、`sed` 打开 `browser.md` 再动手,然后**正确地用了 `curl`**
   ——笔记本身就说"页面只是文本时,普通抓取才是对的工具"。换成前端渲染的页面
   (`hi-agent.xyz`,`curl` 只拿到 789 字节空壳),它先试 `curl`、看出是空的,
   **再落到 `browser --dump-dom`**,把 4 条 FAQ 原文一字不差取了回来。
   便宜的路走不通才伸手拿工具,正是笔记要的那个次序。
 - 🟠 **本 journey 的正题仍未测:点、填、多步操作。** 两次都是"读一个页面",而且两次
   Cognition 都自己干了、没派 worker——prompt 里"真正的差事仍旧交给 worker"这句写了但没被验证。
-- 🟠 **缺工具时主动置备**依然未测(见上一次实测的同一条),那是工作间的"写"那一半,尚未建。
+- 🟠 **缺工具时主动置备**依然未测(见上一次实测的同一条),那是技能的"写"那一半,尚未建。
 
 ## 复测 2026-09-07 · 本机 dev 实例 `--port 12358`
 
 一次真实差事:"你可以去小红书上探索一下相关的话题,然后整理总结给我吗"。派了 `view-builder`。
 
-- 🔴 **第三次同一个形状:规则挂在不在路径上的那一节。** worker 全程没扫过工作间,直接
+- 🔴 **第三次同一个形状:规则挂在不在路径上的那一节。** worker 全程没扫过技能,直接
   `'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --dump-dom`,
   拿回 "安全限制 / IP at risk" 之后又 `mktemp -d /tmp/xhs-chrome-profile.XXXXXX` 起了个私有
   profile。它探测浏览器时试的是 `command -v chromium || chromium-browser || google-chrome ||
   playwright`——**唯独没有 `browser`**,所以也不知道 `drive/` 下那个留得住登录的 profile 存在。
-  原因在测试里:`a_worker_scans_the_workshop_before_saying_it_cannot` **枚举**主体,只写了
+  原因在测试里:`a_worker_scans_the_skills_before_saying_it_cannot` **枚举**主体,只写了
   `WORKER_GENERAL_BASE` 和 `COGNITION_BASE`;而 `view-builder`/`task-manager`/`drive-organizer`
-  三份 prompt 都带 `{skills_dir}` 工作间指针,却没有 `{in_hand}` 清单、没有扫描规则。
+  三份 prompt 都带 `{skills_dir}` 技能指针,却没有 `{in_hand}` 清单、没有扫描规则。
   2026-08-26 那次修复补的是"当时恰好开着的那两节"。
 
 - 🔴 **撞上只有人能过的门,它知道,但谁也没告诉。** 18:41:12 它自己用 CDP 读到页面正文
@@ -103,11 +103,11 @@ Chrome(所以从不开网页的机器不会白下 100 MB)。
   的 prompt 而不是留在 note 里——关于人的凭据的边界,不该只躺在一份 session 可能永远不打开的
   文件中。**沙箱不动**:按"先找它没看见什么,而不是收窄它的工具"。测试改为从
   `all_bases()` 按 `{skills_dir}` **推导**主体(仓库自己的结论:*An enumerated list of subjects
-  would have shipped that*),另加 `the_workshop_section_has_not_drifted_between_the_worker_copies`
+  would have shipped that*),另加 `the_skills_section_has_not_drifted_between_the_worker_copies`
   做整节逐字比对。
 
 - 🟠 **没有看着它跑过。** 以上全是 prompt 改动,`make test` 全绿只证明字在那儿。要复测的是同一件事:
-  派一个 view-builder 去一个要登录的站点,看它是否先扫工作间、用 `browser --headed` 把窗口递出来、
+  派一个 view-builder 去一个要登录的站点,看它是否先扫技能、用 `browser --headed` 把窗口递出来、
   在撞墙当场开口,并且**不去碰人的 profile**。
 
 - 🟠 **本次产出的可信度另计。** `xhs-observations.md` 的 15 条是用人的登录态取的,其中的

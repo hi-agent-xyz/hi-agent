@@ -1133,7 +1133,7 @@ struct ReactionInner {
     /// Precompiled full-screen managed-energy view. The stable id deliberately
     /// remains `vendor-outage` so old retained snapshots can be reconciled away.
     energy_view: ViewEnvelope,
-    /// Absolute path to the agent's view workshop (`<data_dir>/views`).
+    /// Absolute path to the agent's views folder (`<data_dir>/views`).
     /// Handed to every worker session as its `cwd`, so a build sub-agent works in a
     /// real project dir — `ls`-ing existing projects, writing source — like a human
     /// in their repo. Absolutized at startup (the child may run with a different cwd).

@@ -1,4 +1,4 @@
-//! `GET /views/<path>` — serve a file from the agent's view workshop on disk (where
+//! `GET /views/<path>` — serve a file from the agent's views folder on disk (where
 //! `AppState.data_dir` is in scope, unlike the embed-only appearance router):
 //! compiled view modules ([`crate::mind::views::ViewCompiler`] writes them under
 //! `_compiled/`), images a build sub-agent downloaded, and anything else it
@@ -21,7 +21,7 @@ fn safe_views_path(path: &str) -> bool {
     !path.is_empty() && path.split('/').all(|seg| !seg.is_empty() && seg != "..")
 }
 
-/// Best-effort `Content-Type` by extension for view-workshop files.
+/// Best-effort `Content-Type` by extension for files in the views folder.
 fn views_content_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
         "mjs" | "js" => "application/javascript; charset=utf-8",
@@ -36,7 +36,7 @@ fn views_content_type(path: &str) -> &'static str {
     }
 }
 
-/// `GET /views/<path>` — serve a file from the agent's view workshop: a compiled view
+/// `GET /views/<path>` — serve a file from the agent's views folder: a compiled view
 /// module from `_compiled/`, an image, or any artifact a build sub-agent wrote.
 /// The views tree is single-user and trusted, so it's served whole; the only guard is
 /// against `..` traversal out of the root.

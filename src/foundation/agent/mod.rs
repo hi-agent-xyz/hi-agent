@@ -599,7 +599,7 @@ mod tests {
         layer_at(PathBuf::from("/tmp/hi-agent-test"), shutdown)
     }
 
-    /// A layer rooted at a real directory, for the tests that need the workshop on disk.
+    /// A layer rooted at a real directory, for the tests that need `skills/` on disk.
     fn layer_at(data_dir: PathBuf, shutdown: crate::foundation::shutdown::Shutdown) -> AgentLayer {
         AgentLayer::new(
             SpawnConfig {

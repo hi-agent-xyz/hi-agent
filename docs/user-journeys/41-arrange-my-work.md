@@ -65,7 +65,7 @@ agent 自己身上的几个毛病是另一摊。
 
 ### Case E · hi-agent 自己的活有一组,没人需要开口
 
-1. 回顾(Reflection)、写一条技能笔记、读某个人的记录、整理 drive、task-manager 自己清账 ——
+1. 回顾(Reflection)、总结一项技能、读某个人的记录、整理 drive、task-manager 自己清账 ——
    这些是 hi-agent 自己的维护活,没有任务行,所以没有哪个 `members` 能点到它们。
 2. **task-manager 每次跑都是一次整理**,不管它是被叫来干什么的(哪怕只是关一行):读
    `groups.json`,对照在办的行和 `grouping.md`,不合适就整份重写。每份排布都有一组带
@@ -165,7 +165,7 @@ hi-agent 的事就标那一组,没有就让这些会话散在核心上"。起因
 - `home/groups.json` 最后一次写入是 09-20 15:06Z,早于改动,**没有一组带 `upkeep`**。
 - 改动后只跑过一个 task-manager(09-22 04:54Z),是被叫去关「重画 home 的分组图标」那一行的,
   没碰排布。
-- 于是 Reflection(卡片标题「回顾」)、一个写技能笔记的 `skills-manager`、一个读他本人记录的
+- 于是 Reflection(卡片标题「回顾」)、一个总结技能的 `skills-manager`、一个读他本人记录的
   `person-reader` 三张卡挂在核心上,他分不出哪张是他的任务。
 - `grouping.md` 里 09-18 那一节把「就一起就行」记反了(「跟他让改的那一组不是一回事」),
   所以就算有 manager 整理,结果往哪边偏也说不准。

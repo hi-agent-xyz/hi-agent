@@ -133,7 +133,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         }
     };
 
-    // The agent's view workshop — the disposable tree where views are built. It's
+    // The agent's views folder — the disposable tree where views are built. It's
     // every worker's cwd (so a build sub-agent works in a real project dir) and where
     // it writes view source (`<project>/<name>.jsx`). Absolutized as above; also the
     // root the server serves at `/views/*` (compiled modules land in `_compiled`).
@@ -154,8 +154,8 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // disposable, so a binary update reseeds the latest.
     mind::views::install_factory_views(&config.data_dir).context("installing built-in views")?;
 
-    // The agent's skill workshop. Seeds the factory layer under `skills/factory/`
-    // (rewritten each boot) and creates the tree, so the workshop exists before the
+    // The agent's skills. Seeds the factory layer under `skills/factory/`
+    // (rewritten each boot) and creates the tree, so `skills/` exists before the
     // first note is written. Agent-written skills land alongside and are never touched.
     mind::skills::install_factory_skills(&config.data_dir).context("installing built-in skills")?;
 

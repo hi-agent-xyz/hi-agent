@@ -23,7 +23,7 @@ a recurring shape, say so in your report and leave it there.
     grep -rn "^purpose:" {skills_dir}
 
 You may already have something. A tool built for a neighbouring job often covers this one, and
-a second tool that overlaps an existing one makes the workshop harder to search for everybody
+a second tool that overlaps an existing one makes the skills harder to search for everybody
 who comes after.
 
 ## 2. Work out what to get
@@ -133,8 +133,8 @@ false confidence: the note reads as settled, the next job trusts it, and the fai
 somewhere far away with no clue it started here. Getting a `--version` to print is not a call.
 Doing the smallest real version of the actual job is.
 
-If it doesn't work, that is still this step — read the error, fix it, run it again. The
-workshop only wants notes about things that worked.
+If it doesn't work, that is still this step — read the error, fix it, run it again. A skill
+note is only worth writing about something that worked.
 
 ## 7. Don't write it up
 

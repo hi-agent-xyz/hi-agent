@@ -39,7 +39,7 @@ fn path_of(url: &str) -> String {
 /// the view is: this view's own compiled module, this view's own folder, and the
 /// build's shared assets. **Never `/views/` at large** — that is one wildcard route
 /// with every view's source and every build artifact behind it, and opening it would
-/// hand over the workshop to share one poster.
+/// hand over every view the agent has built to share one poster.
 fn in_scope(path: &str, view_ref: &str, module_url: &str) -> bool {
     if path == module_url {
         return true;
@@ -530,7 +530,7 @@ mod tests {
         // Its own picture, for the link preview.
         assert!(in_scope("/views/_shots/ref/badminton-top10/leader.png", r, m));
 
-        // Another view's folder, another view's module, and the workshop at large.
+        // Another view's folder, another view's module, and `/views/` at large.
         assert!(!in_scope("/views/autumn-milk-tea/cup.jpg", r, m));
         assert!(!in_scope("/views/_compiled/ff99.mjs", r, m));
         // Somebody else's picture is somebody else's.

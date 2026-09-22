@@ -1,11 +1,11 @@
-//! Skill-workshop endpoints — the backend for the view that reads and prunes
+//! Skills endpoints — the backend for the view that reads and prunes
 //! `<data_dir>/skills/`.
 //!
 //! A skill is a plain `.md` note the agent wrote about how a kind of job was done
 //! ([`crate::mind::skills`]). Nothing in the running system re-checks one: a worker
 //! reads a skill and follows it. So a skill that has gone stale — a dead endpoint, a
 //! price that moved, a step that no longer applies — silently poisons every later run
-//! of that job. The user needs a way to see what is in the workshop and delete the
+//! of that job. The user needs a way to see what is in `skills/` and delete the
 //! entry that is wrong; that is the whole point of this surface, and why `DELETE` is
 //! here while no write verb is (the agent writes its own skills; the human corrects).
 //!
@@ -38,7 +38,7 @@ use crate::foundation::server::AppState;
 use crate::mind::skills::skills_dir;
 
 /// How much prose the list carries per skill. Enough for the view to show what a note
-/// is about without opening it; short enough that the whole workshop stays one small
+/// is about without opening it; short enough that the whole of `skills/` stays one small
 /// response.
 const EXCERPT_CHARS: usize = 160;
 
@@ -49,7 +49,7 @@ const FACTORY: &str = "factory";
 
 /// The traversal guard for every wildcard route in this module: reject an empty path
 /// and any segment that is empty, `.` or `..`, so the joined path cannot climb out of
-/// the workshop root. Same rule as [`crate::foundation::server::generated`] uses for
+/// the `skills/` root. Same rule as [`crate::foundation::server::generated`] uses for
 /// the views tree — an absolute path fails it too, because a leading `/` produces an
 /// empty first segment.
 fn safe_rel_path(path: &str) -> bool {
@@ -201,9 +201,9 @@ struct SkillDto {
     sort_key: SystemTime,
 }
 
-/// Walk the workshop and read every note in it. Iterative (a stack of dirs) rather
+/// Walk `skills/` and read every note in it. Iterative (a stack of dirs) rather
 /// than recursive so no boxing is needed; dotfiles are skipped as editor/OS litter.
-/// A missing root is an empty workshop, not an error — nothing has been learnt yet.
+/// A missing root means no notes, not an error — nothing has been learnt yet.
 ///
 /// Two passes: the walk decides *which files are notes* (a `.md`, or a directory's
 /// `SKILL.md`, which also ends the descent), then each note is read. Splitting them
@@ -236,7 +236,7 @@ async fn walk_skills(data_dir: &std::path::Path) -> std::io::Result<Vec<SkillDto
     }
     // Learnt skills first, freshest first: the note the agent just wrote is the one
     // most likely being looked for. The path breaks ties so two installs with the same
-    // workshop produce the same order.
+    // notes produce the same order.
     found.sort_by(|a, b| {
         a.builtin
             .cmp(&b.builtin)
@@ -247,7 +247,7 @@ async fn walk_skills(data_dir: &std::path::Path) -> std::io::Result<Vec<SkillDto
 }
 
 
-/// `GET /api/skills` — the whole workshop, learnt notes first, freshest first.
+/// `GET /api/skills` — every skill, learnt notes first, freshest first.
 pub async fn get_skills(State(state): State<Arc<AppState>>) -> Response {
     match walk_skills(&state.data_dir).await {
         Ok(skills) => Json(serde_json::json!({ "skills": skills })).into_response(),
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn walk_of_a_missing_workshop_is_empty_not_an_error() {
+    async fn walk_of_a_missing_skills_dir_is_empty_not_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let skills = walk_skills(dir.path()).await.unwrap();
         assert!(skills.is_empty());

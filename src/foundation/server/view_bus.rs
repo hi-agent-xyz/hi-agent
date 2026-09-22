@@ -550,7 +550,7 @@ impl ViewBus {
     /// slot, or the destination the cursor is parked on.
     ///
     /// Read by [`view_watch`](super::view_watch) before it spawns a compiler: a builder
-    /// saves its way through a workshop of views nobody is looking at, and the only ones
+    /// saves its way through a folder of views nobody is looking at, and the only ones
     /// worth recompiling on a write are the two that are on a screen.
     pub async fn shows_ref(&self, view_ref: &str) -> bool {
         let map = self.inner.lock().await;
