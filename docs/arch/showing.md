@@ -74,7 +74,7 @@ Underneath, the machinery for showing has grown one path per consumer:
 | | Today |
 |---|---|
 | Ways to address a thing to show | view ref · compiled module URL · shot URL (two forms) · drive ref · signal ref · task-folder path · a view's own asset path |
-| Routes serving bytes | `/views/*`, `/api/media`, `/api/drive/file`, `/api/tasks/{s}/files`, `/api/people/…` — and the same drive bytes under two of them with opposite policies: `no-cache` on `/api/drive/file`, `immutable` on `/api/media/drive/…`, which is a claim a file edited in place cannot keep, and one the edge mirror would believe |
+| Routes serving bytes | `/views/*`, `/api/media`, `/api/drive/file`, `/api/tasks/{s}/files`, `/api/people/…` — and the same drive bytes under two of them. `/api/media/drive/…` was served `immutable` until 2026-09-22, a claim a file edited in place cannot keep and one the edge mirror would have believed; it is `no-cache` now, like `/api/drive/file` |
 | MIME tables | four; the one on `/views/*` serves mp4 and fonts as `text/plain` |
 | Range, ETag, streaming | streaming and ranges on `/api/media` and `/api/drive/file` since `server::disk_file`; the task-files route and `/views/*` still read whole files into memory; no `ETag` anywhere |
 | Headless renders | four paths (review ×2 skins, show shot, ref shot, share check), each a fresh Chromium process, one of them under a lock |
@@ -452,8 +452,8 @@ In the phase that replaces each, never after it:
   call; a worker that wants to keep one places it.
 - `drive/generated/` as the landing place for `hi_text_to_image` and its siblings, which
   produce attachments at birth; the drive keeps what somebody decides to keep, which is what the
-  drive is. With it goes `/api/media` answering `drive/…` refs as `immutable`: drive bytes are
-  served by `/api/drive/file`, revalidated, and only an attachment claims never to change.
+  drive is. With it goes `/api/media` answering `drive/…` refs at all: drive bytes are served by
+  `/api/drive/file`, revalidated, and only an attachment claims never to change.
 
 ## Phases
 
