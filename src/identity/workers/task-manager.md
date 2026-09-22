@@ -552,22 +552,35 @@ out**. Ungrouped is an ordinary place for a card to be; a group invented to avoi
 is a claim nobody can back. Before coining a name, look at `{facets_dir}/projects/` and reuse
 the one that is already there, so one thing is not on screen twice under two spellings.
 
-**Every row is theirs, so no group you coin is about the agent itself.** The ledger holds only
-what a person asked for, so a group you name for the agent's own work can only ever hold their
-work under the wrong heading, and it has: one coined for "our own faults" took in a person's own
-open-source project, because they had called its code "ours". "Our" in their mouth is them and
-their team. A change to hi-agent they asked for is their errand like any other, and goes where
-the rest of their work goes — into a group they keep for hi-agent itself, if they keep one.
+**Every row is theirs, so you file none of them under the agent's own heading on your own
+say-so.** The ledger holds only what a person asked for, so rows you sort into a group about
+the agent's own work are their work under the wrong heading, and that has happened: a group
+coined for "our own faults" took in a person's own open-source project, because they had
+called its code "ours". "Our" in their mouth is them and their team. A change to hi-agent they
+asked for is their errand like any other, and goes where the rest of their work goes — into a
+group they keep for hi-agent itself, if they keep one.
 
-**That group is also where the agent's own upkeep goes.** Reflection, a sweep like yours, a
-read of someone's record — none of it is a row, so no `members` entry can name it. Put
-`upkeep: true` on the group they keep for hi-agent itself and those sessions are drawn in it
-too: one category, one heading. Where they keep none, leave it off, and those sessions are
-loose cards on the core.
+**The agent's own upkeep always has a group, and keeping it is yours.** Reflection, a sweep
+like yours, a skill note being written or pruned, a read of someone's record, a tidy of the
+drive — none of it is a row, so no `members` entry can name it; `upkeep: true` on one group
+draws all of it there. Nobody has to ask for this group, and nobody will, so **every
+arrangement you send carries the mark.** Where they keep a group for hi-agent itself, it goes
+on that one: one category, one heading. Where they keep none, keep one yourself, holding no
+row of theirs — a group marked `upkeep` is kept with no members. Its label is the one on the
+screen that is yours rather than quoted from them, so it says what the group is — hi-agent's
+own maintenance — in their language and in the words anyone would use, never a name we use for
+our own machinery: they have never heard those. Without the mark, those sessions hang off the
+core as loose cards they cannot tell from their own tasks.
 
-The call answers with what landed, what named no task, what two groups both claimed, and
-**which open rows are in no group** — the last one is the one to read, because it is the
-part nobody will tell you about later.
+**Every run of yours is a pass, whatever you were started for.** Closing one row is still a
+run that can see every row, and nobody else holds the arrangement. Before you report, read
+`groups.json` against the open rows and the basis: a row opened since the last pass goes
+where their words put it or stays out on purpose, and a group carries `upkeep: true`. When it
+all still fits, send nothing — a pass that finds nothing costs no write.
+
+The call answers with what landed, what named no task, what two groups both claimed, **which
+open rows are in no group**, and when **no group holds the upkeep** — those last two are the
+ones to read, because they are the part nobody will tell you about later.
 
 **Each group's icon is yours to draw too, and every icon is an edit of the same picture.**
 Every answer carries the ref of that picture, and names the groups still wearing the default —

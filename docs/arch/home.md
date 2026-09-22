@@ -427,7 +427,8 @@ theirs.
 - A session's `subject` joins it to a task. A subject whose task is not drawn connects the
   session to the core, where it keeps its own title. **A session with no subject, and
   Reflection, are the agent's own upkeep**: they sit in the group the arrangement marks
-  `upkeep`, and on the core when none is (§ *What the surface does with it*). Its technical
+  `upkeep`, which the task-manager always keeps, and on the core only while no record carries
+  the mark (§ *What the surface does with it*). Its technical
   `owner` remains inspectable but does not determine semantic
   placement or create a new task grouping.
 - **A task sits in a group when the grouping record puts it in one — under every group that
@@ -551,8 +552,8 @@ moment of grouping rather than kept — a stored copy is a second ledger, going 
                 "icon": "drive/home/icons/0199568a….png",
                 "members": ["<task subject>", "<task subject>"],
                 "groups": [ { "label": "<project>", "members": ["<task subject>"] } ] },
-              { "label": "<their group for hi-agent itself>",
-                "members": ["<task subject>"],
+              { "label": "<hi-agent's own maintenance, in plain words>",
+                "members": [],
                 "upkeep": true } ] }
 ```
 
@@ -566,7 +567,8 @@ saying why this group exists; it is optional and it is read, as the label's hove
 person reviewing the arrangement can see what it was based on. `icon` is optional too, and
 belongs to its label at whatever depth the label sits; see § *Icons*. `upkeep` is optional
 and omitted when false: the group carrying it also holds the agent's own upkeep, which has no
-row a member could name, and a group holding that and nothing else is still kept. Where two
+row a member could name, and a group holding that and nothing else is still kept — which is
+the ordinary case, since the group the manager keeps holds no row of the person's. Where two
 carry it, the first read — in the order members are claimed — holds it. There is no `version`
 and no `updated_at`: the writer and the reader ship in one binary, and the file's mtime is
 already the time it was written.
@@ -649,24 +651,42 @@ is a shaded picture.
   inside that task's branch, so it is in the task's group. One whose task is not drawn stays
   at the core: its identity is run-scoped, so a durable record naming it would be a dangling
   reference by the next restart.
-- **Code draws no group of its own; the agent's own upkeep goes where the arrangement puts
-  it.** Reflection, a `task-manager` sweeping the ledger, a `person-reader` reading a person's
-  record: none of it has a row ([data.md](data.md#tasks)) and dispatch refuses it a `subject`
-  ([agents.md](agents.md)), so no `members` entry can name it. A group carrying `upkeep: true`
-  draws those sessions after its own tasks; with none carrying it they are cards on the core.
-  Reflection is one of those cards rather than a role in the core's strip: the core is the
-  conversation and the coordination.
+- **Code draws no group of its own, and the agent's own upkeep always has one: the
+  task-manager keeps it.** Reflection, a `task-manager` sweeping the ledger, a `skills-manager`
+  writing a skill note, a `person-reader` reading a person's record, a `drive-organizer`
+  tidying the drive: none of it has a row ([data.md](data.md#tasks)) and dispatch refuses it a
+  `subject` ([agents.md](agents.md)), so no `members` entry can name it. A group carrying
+  `upkeep: true` draws those sessions after its own tasks. **Every arrangement a manager writes
+  carries that mark, on every install, whether or not the person has ever mentioned it.** Where
+  the person keeps a group for hi-agent itself, the mark goes on that one — one category, one
+  heading. Where they keep none, the manager keeps one, labelled plainly in the person's
+  language as what it is, hi-agent's own maintenance, and holding no row of theirs. The view
+  puts upkeep on the core only while no record carries the mark: before the first pass, or
+  when the record cannot be read. Reflection is one of those cards rather than a role in the
+  core's strip: the core is the conversation and the coordination.
   - *Why code has none.* It had one: 「自身维护」, holding every live session with no subject.
     Its rule was exact about which sessions it held, and it was still wrong. A person whose
     arrangement had its own group for hi-agent's upkeep saw one category under two headings,
     and nothing they said could merge them, because one heading was the code's. Which group
     the agent's own upkeep belongs in is the same kind of call as where any task goes.
-  - **Nor does a mind coin a group for the agent's own work.** Every ledger row is something a
-    person asked for, a change to hi-agent included, so it is grouped along their axis like
-    the rest of their work. Asked to organise "the rest", a grouping mind once coined
+  - *Why the person does not keep it either.* The first version of this rule put the mark only
+    on a group the person kept for hi-agent, and otherwise left the upkeep loose. On the
+    install that asked for the merge, the heading then disappeared: its record carried no
+    mark, the one manager that ran afterwards had been started to close a row and did not
+    touch the arrangement, and Reflection, a skill note being written and a read of the
+    person's own record hung off the core as three cards the person could not tell from
+    their own tasks (2026-09-22). A heading that exists only once the person has asked for it
+    makes the person the one sorting hi-agent's housekeeping. The upkeep is always there, so
+    its group is too; what the person decides is what it is called and where it sits, and
+    saying so is the same kind of sentence as for any other group.
+  - **A mind files no row of the person's under it on its own say-so.** Every ledger row is
+    something a person asked for, a change to hi-agent included, so it is grouped along their
+    axis like the rest of their work, and goes in the upkeep group only where their words put
+    it there. Asked to organise "the rest", a grouping mind once coined
     「自己身上的毛病」 for the agent's own faults — a phrase this document and its prompt had
     quoted as if a person had said it — and then filed a person's own open-source project
-    there, because they had called its code "ours".
+    there, because they had called its code "ours". The group the manager keeps is for the
+    sessions that have no row.
 - **A record that cannot be read leaves no groups.** A missing file, malformed JSON, or an
   unusable shape degrades to every task on the core — the surface as it was — with the fault
   in the server's log and nothing about it on screen.
@@ -697,8 +717,12 @@ for being the exception.
    basis **in that turn**, then starts a `task-manager` (or hands the ask to the one already
    running) to rearrange. Basis first: it is what makes the ask stand for next month's task,
    and it must not depend on the worker getting that far.
-2. **A manager runs.** It reads the basis whole — standing instruction, not a log — and
-   replaces the arrangement. A first arrangement is written the first time this happens.
+2. **A manager runs — for any reason.** Every run is a pass, including one started to close a
+   single row: it reads the basis whole — standing instruction, not a log — and where the
+   arrangement no longer fits, replaces it. A row opened since the last pass is placed or
+   left out on purpose, and a group carries `upkeep: true`. A first arrangement is written
+   the first time this happens. The pass costs no turn of its own: the manager is already in
+   one, and only a change it finds costs a write.
 3. **A task is filed.** It is **not** grouped then. Placing a row is not part of opening one,
    and a spun-up session per filing buys a placement nobody is waiting on. A new task sits by
    itself until the next pass, which is also the honest picture: it is new, and nobody has

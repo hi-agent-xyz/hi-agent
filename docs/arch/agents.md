@@ -1216,7 +1216,11 @@ already supplies it. Cognition still owns the sentence the person said, written 
 basis file in the turn it is heard; what it hands down is the rearranging. That is the same
 division as the ledger's, minus the conflict of interest — grouping is not a ruling on
 whether anybody's errand ended — and it holds for the other half of the reason: a
-whole-ledger judgment is an errand, and the dispatcher hands errands out.
+whole-ledger judgment is an errand, and the dispatcher hands errands out. **Every run is an
+arrangement pass**, whatever the run was started for, and every arrangement it writes gives the
+agent's own upkeep a group — the person's group for hi-agent if they keep one, otherwise one
+it keeps itself ([home.md](home.md#what-the-surface-does-with-it)). Nobody has to ask for
+that group, and nobody should have to.
 
 **It names no subject, and is one of the kinds that may not.** `CreateWorker(subject)`
 binds a worker to a single ledger task and is required of every kind that serves the ledger;

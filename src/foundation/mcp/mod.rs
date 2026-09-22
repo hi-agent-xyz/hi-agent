@@ -723,11 +723,13 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                  the records. A task you cannot place belongs in no group: leave it out rather \
                  than inventing a home for it. Pass `groups: []` to clear the arrangement. A \
                  group's `icon` is the ref of one you drew for it; leave it out to keep the icon \
-                 that label already has. `upkeep: true` on a group puts the agent's own upkeep \
-                 (Reflection, and sessions on no task) in it; with none marked, those are loose \
-                 cards on the core. The answer says what landed, what named no task, what two \
-                 groups both claimed, which open work is in no group, and which groups still wear \
-                 the default icon.",
+                 that label already has. Every arrangement marks one group `upkeep: true`: it \
+                 holds the agent's own upkeep (Reflection, and sessions on no task) — the \
+                 person's group for hi-agent itself if they keep one, otherwise one you keep, \
+                 plainly named and holding none of their tasks. The answer says what landed, \
+                 what named no task, what two groups both claimed, which open work is in no \
+                 group, when no group holds the upkeep, and which groups still wear the default \
+                 icon.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -742,7 +744,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                                     "icon": { "type": "string", "description": "Optional: the ⟨ref: drive/…⟩ of an icon you drew for this group. Omit to keep the one the label already has." },
                                     "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
                                     "groups": { "type": "array", "items": { "type": "object" }, "description": "Groups inside this one — each a group of this same shape (label, note, icon, members, groups, upkeep). Omit when there are none." },
-                                    "upkeep": { "type": "boolean", "description": "True on the group that also holds the agent's own upkeep. Omit elsewhere." },
+                                    "upkeep": { "type": "boolean", "description": "True on the one group that holds the agent's own upkeep. Omit elsewhere." },
                                 },
                                 "required": ["label"],
                             },
@@ -2675,6 +2677,14 @@ async fn set_home_groups(data_dir: &std::path::Path, writer: &str, args: &Value)
     say(&mut out, "dropped — no such task", &written.unknown);
     say(&mut out, "kept in the first group only", &written.duplicated);
     say(&mut out, "open and in no group", &written.ungrouped);
+    // The other half nobody will say later: the agent's own sessions have no row, so no
+    // `ungrouped` line can name them, and an arrangement with no group marked leaves them
+    // hanging off the core looking like the person's tasks.
+    if !holds_upkeep(&written.grouping.groups) {
+        out.push_str(
+            "\nno group holds the agent's own upkeep — Reflection and sessions on no task hang off the core",
+        );
+    }
     say(&mut out, "icon not used, the label keeps what it had", &written.refused_icons);
     // **The ref is on every answer, and the anchor is filed on every write.** Both used to be
     // conditional on a group wearing the default, which quietly made a *redraw* impossible:
@@ -2889,6 +2899,11 @@ fn group_shape(groups: &[crate::foundation::server::home::Group]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Whether any group, at any depth, is marked to hold the agent's own upkeep.
+fn holds_upkeep(groups: &[crate::foundation::server::home::Group]) -> bool {
+    groups.iter().any(|g| g.upkeep || holds_upkeep(&g.groups))
 }
 
 /// `hi_name_person`: rename a person's cluster (face or voice) from its `id` (or
@@ -3904,6 +3919,41 @@ mod surface_tests {
         assert_ne!(got.get("isError").and_then(Value::as_bool), Some(true), "{got}");
         let text = got["content"][0]["text"].as_str().unwrap_or_default();
         assert_eq!(text.lines().next(), Some("home groups: Client work (1: Site (1))"), "{text}");
+    }
+
+    /// **An arrangement with no group holding the upkeep is told so**, because nothing else
+    /// will: those sessions have no row, so the in-no-group line can never name them. A mark
+    /// at any depth counts, and a group holding only the upkeep lands with no members.
+    #[tokio::test]
+    async fn the_answer_says_when_no_group_holds_the_upkeep() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::mind::memory::tasks::write_raw(dir.path(), "rollup",
+            "---\nstatus: doing\ntitle: t\n---\n\nbody\n",
+        )
+        .await
+        .unwrap();
+        let text = |got: Value| got["content"][0]["text"].as_str().unwrap_or_default().to_owned();
+
+        let unmarked = text(
+            set_home_groups(dir.path(), "task-manager-1",
+                &json!({ "groups": [{ "label": "Client work", "members": ["rollup"] }] }),
+            )
+            .await,
+        );
+        assert!(unmarked.contains("no group holds the agent's own upkeep"), "{unmarked}");
+
+        let nested = text(
+            set_home_groups(dir.path(), "task-manager-1",
+                &json!({ "groups": [{ "label": "Client work", "members": ["rollup"],
+                    "groups": [{ "label": "Upkeep", "upkeep": true }] }] }),
+            )
+            .await,
+        );
+        assert!(!nested.contains("no group holds"), "{nested}");
+        assert_eq!(nested.lines().next(), Some("home groups: Client work (1: Upkeep (0 + upkeep))"), "{nested}");
+
+        let cleared = text(set_home_groups(dir.path(), "task-manager-1", &json!({ "groups": [] })).await);
+        assert!(cleared.contains("no group holds the agent's own upkeep"), "{cleared}");
     }
 
     /// Everything `hi_create_worker` needs that is not the errand itself, called as Cognition.
