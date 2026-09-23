@@ -1,12 +1,13 @@
-//! Prepared branches — `hi_prepare`, and what the person's next message does with it.
+//! Prepared branches — `hi_prepare`, and what the person's messages do with it.
 //!
-//! **`hi_say` is the reply to this moment; `hi_prepare` is where the conversation may go
-//! next.** One call is one choice: a few mutually exclusive branches, each a condition — where
-//! the person's next message goes, in Reaction's own words — and the actions Reaction would
-//! take there, written exactly as it would call them. When that message lands, one System One
-//! call says which branch it met and whether it qualified it; a met branch runs at once, in
-//! order, stopping at the first action that does not happen; and the message then drives an
-//! ordinary turn, which is told what ran. See `docs/arch/agents.md` § *Prepared branches*.
+//! **`hi_say` is the reply to this moment; `hi_prepare` is where a matter may go next.** One
+//! call is one matter's choice: a few mutually exclusive branches, each a condition — where the
+//! person takes that matter, in Reaction's own words — and the actions Reaction would take
+//! there, written exactly as it would call them. When a message of theirs lands, one System One
+//! call reads it against every matter prepared: which branch it met, whether it qualified it,
+//! and which matters it took up at all. A met branch runs at once, in order, stopping at the
+//! first action that does not happen; and the message then drives an ordinary turn, which is
+//! told what ran. See `docs/arch/agents.md` § *Prepared branches*.
 //!
 //! **Why this exists.** Everything Reaction does in answer to a message starts with a
 //! generation, and a generation has a floor no prompt moves — 13.8 s to a first line, one
@@ -14,8 +15,18 @@
 //! (`docs/user-journeys/measuring.md`). The only way under it is to have decided before the
 //! message came, and to spend the moment it comes only on recognizing which decision it was.
 //! A generation cannot recognize in time and its self-reported confidence compares to
-//! nothing; System One answers in well under a second with a number that means the same
-//! thing on every call, so the cut here is a policy about how often a met branch may be wrong.
+//! nothing; System One answers in about a second with a number that means the same thing on
+//! every call, so the cut here is a policy about how often a met branch may be wrong.
+//!
+//! **A set belongs to a matter, not to the next message.** People step away from a subject and
+//! come back to it, and what was ready for it is still ready when they do. So a set waits until
+//! a message takes its matter up: met, it runs and is used up; taken somewhere no branch
+//! describes, it is used up without running, because the matter has moved past it. A message
+//! about something else leaves it where it is. Reports, other turns, lines on other matters and
+//! restarts do not touch it — the sets are kept on disk ([`FILE`]) — and every turn's window
+//! lists them, so the one thing that can go stale behind a set, what Reaction would now do,
+//! is Reaction's to clear or replace. The count is bounded ([`MAX_MATTERS`], [`MAX_BRANCHES`]),
+//! oldest out first. None of this is a timer.
 //!
 //! What keeps it from doing harm:
 //!
@@ -25,20 +36,22 @@
 //!   the person, a view on their screen, a message to another rung. Anything outward is a
 //!   worker's, behind Cognition's judgment, exactly as when the same message is handed down
 //!   in a turn;
-//! - **a set is good for one message**: that message resolves it, and anything that happens
-//!   first voids it — another turn starting, a line sent after it. It lives in memory, so a
-//!   restart drops it. None of these is a timer;
+//! - **a set is read with where its matter was left**: the lines it was prepared after ride
+//!   into the reading beside the lines the message answers, so a bare 行 said after something
+//!   else was proposed reads as agreeing to that, not to a matter an hour old;
 //! - **one switch** — `prepared_branches` = `off` prepares nothing; otherwise a met branch runs.
 //!
 //! **Built and unit-tested; never watched on a live turn** — journey 43 is the spec, and the
 //! events it records (`branches_prepared` / `branches_resolved` / `branches_voided`) are the
 //! count to read it by.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
@@ -58,31 +71,48 @@ pub(crate) const SWITCH_KEY: &str = "prepared_branches";
 /// The `app_settings` key moving the cut.
 pub(crate) const THRESHOLD_KEY: &str = "prepared_branches_threshold";
 
+/// Where the sets are kept, under the data dir, so a restart does not lose what was ready.
+const FILE: &str = "memory/prepared.json";
+
 /// How much of the choice's mass a branch must carry to run, and how little `qualified` may.
 /// A starting value: every reading's whole mass is recorded, so where the cut should sit is
 /// read off what the readings actually were, not argued.
 const THRESHOLD: f64 = 0.9;
 
-/// How long the reading may take. System One answered the speech check's questions in p50
-/// 0.53 s, p99 2.2 s on this install; a reading asked during the settle has most of this
-/// already behind it by the time the batch closes. Past it the message takes today's path.
-const BUDGET: Duration = Duration::from_secs(1);
+/// How sure the reading must be that a message took a matter up for that matter's set to be
+/// used up. Half, not the run cut: a set used up wrongly costs a turn preparing it again, and
+/// one kept wrongly is a stale set waiting for a message to mistake.
+const TAKEN_UP: f64 = 0.5;
 
-/// More directions than this is a fan, not a guess — and System One loses accuracy on a
-/// padded question as it does on a padded state.
+/// How long the reading may take. System One answered the speech check's questions in p50
+/// 0.53 s, p99 2.2 s on this install, and the two readings that answered on live messages took
+/// 0.70 s and 0.72 s — against a one-second budget the other two ran out of. A reading asked
+/// during the settle has most of this already behind it by the time the batch closes. Past it
+/// the message takes today's path.
+const BUDGET: Duration = Duration::from_secs(2);
+
+/// More directions than this, across every matter, is a fan, not a guess — and System One
+/// loses accuracy on a padded question as it does on a padded state.
 const MAX_BRANCHES: usize = 8;
+
+/// How many matters are kept ready at once. A few, like what a person holds in mind; the
+/// oldest goes first.
+const MAX_MATTERS: usize = 4;
 
 /// How long [`Prepared::settled`] waits for a reading before letting the turn run anyway: the
 /// longest a batch can be held open, the reading's budget, and a second of slack. A reading
 /// that outlives this is abandoned by nobody — it finishes and records — but no turn waits on it.
-const SETTLED_WITHIN: Duration = Duration::from_secs(7);
+const SETTLED_WITHIN: Duration = Duration::from_secs(8);
 
-/// The key the one `choice` is asked under; its branch options are `b1`, `b2`, … in order.
+/// The key the one `choice` is asked under; its branch options are `b1`, `b2`, … in order,
+/// across every matter.
 const WHICH: &str = "which";
 /// The option meaning none of the branches.
 const REST: &str = "rest";
-/// The key the one `noul` is asked under.
+/// The key the one `noul` about the met branch is asked under.
 const QUALIFIED: &str = "qualified";
+/// The prefix of the `noul` asked per matter: `on1`, `on2`, … in the sets' order.
+const ON: &str = "on";
 
 /// Whether branches are prepared at all, from the switch.
 pub fn enabled() -> bool {
@@ -98,7 +128,8 @@ fn threshold() -> f64 {
 }
 
 /// One action in a branch — one of Reaction's own calls, with its arguments.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "tool", rename_all = "snake_case")]
 pub enum Action {
     Say { text: String },
     Show { id: Option<String>, op: String, view_ref: Option<String>, source: String },
@@ -106,7 +137,7 @@ pub enum Action {
 }
 
 impl Action {
-    /// The action as one line, for the event log and for the turn told what ran.
+    /// The action as one line, for the event log, the window, and the turn told what ran.
     fn describe(&self) -> String {
         match self {
             Action::Say { text } => format!("hi_say \"{}\"", clip(text, 120)),
@@ -121,8 +152,8 @@ impl Action {
     }
 }
 
-/// One direction: where their next message would go, and what to do there.
-#[derive(Clone, Debug, PartialEq)]
+/// One direction: where they take the matter, and what to do there.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Branch {
     pub condition: String,
     pub actions: Vec<Action>,
@@ -137,15 +168,21 @@ impl Branch {
     }
 }
 
-/// Read a `hi_prepare` call's arguments into branches, **checking every action the way its own
-/// tool would** — a line within `say_max`, a `ref` that resolves, a `to` that is live — so a
-/// branch that could not run is found in the turn that can still fix it, not at the reply.
-/// Any failure refuses the whole call, naming where: a choice with one option missing is a
-/// different choice. An empty list is valid, and clears.
-pub async fn parse(args: &Value, data_dir: &Path, say_max: usize) -> Result<Vec<Branch>, String> {
+/// Read a `hi_prepare` call's arguments into its matter and branches, **checking every action
+/// the way its own tool would** — a line within `say_max`, a `ref` that resolves, a `to` that
+/// is live — so a branch that could not run is found in the turn that can still fix it, not at
+/// the reply. Any failure refuses the whole call, naming where: a choice with one option
+/// missing is a different choice. An empty list is valid, and clears the matter.
+pub async fn parse(args: &Value, data_dir: &Path, say_max: usize) -> Result<(String, Vec<Branch>), String> {
+    let matter = args.get("matter").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+    if matter.is_empty() {
+        return Err("hi_prepare needs a `matter`: a few words naming what these branches are about, \
+                    so they wait for that matter and preparing it again replaces them"
+            .into());
+    }
     let Some(list) = args.get("branches").and_then(Value::as_array) else {
         return Err("hi_prepare needs `branches`: a list of {condition, actions} — an empty list \
-                    clears what is prepared"
+                    clears what is prepared for the matter"
             .into());
     };
     if list.len() > MAX_BRANCHES {
@@ -161,34 +198,37 @@ pub async fn parse(args: &Value, data_dir: &Path, say_max: usize) -> Result<Vec<
         let condition = b.get("condition").and_then(Value::as_str).map(str::trim).unwrap_or_default();
         if condition.is_empty() {
             return Err(format!(
-                "branch {n} has no `condition` — say, in plain words, where their next message \
-                 would go. Nothing was prepared."
+                "branch {n} has no `condition` — say, in plain words, where they would take it. \
+                 Nothing was prepared."
             ));
         }
-        let actions = match b.get("actions") {
-            None | Some(Value::Null) => Vec::new(),
-            Some(Value::Array(list)) => {
-                let mut actions = Vec::with_capacity(list.len());
-                for (j, a) in list.iter().enumerate() {
-                    match parse_action(a, data_dir, say_max).await {
-                        Ok(action) => actions.push(action),
-                        Err(why) => {
-                            return Err(format!(
-                                "branch {n} (\"{condition}\"), action {}: {why}. Nothing was prepared.",
-                                j + 1
-                            ));
-                        }
-                    }
-                }
-                actions
+        let list = match b.get("actions") {
+            Some(Value::Array(list)) if !list.is_empty() => list,
+            Some(Value::Array(_)) | None | Some(Value::Null) => {
+                return Err(format!(
+                    "branch {n} (\"{condition}\") has no actions — a direction with nothing ready \
+                     runs nothing when met, so it is no branch; leave it out. Nothing was prepared."
+                ));
             }
             Some(_) => {
                 return Err(format!("branch {n}: `actions` is a list. Nothing was prepared."));
             }
         };
+        let mut actions = Vec::with_capacity(list.len());
+        for (j, a) in list.iter().enumerate() {
+            match parse_action(a, data_dir, say_max).await {
+                Ok(action) => actions.push(action),
+                Err(why) => {
+                    return Err(format!(
+                        "branch {n} (\"{condition}\"), action {}: {why}. Nothing was prepared.",
+                        j + 1
+                    ));
+                }
+            }
+        }
         branches.push(Branch { condition: condition.to_string(), actions });
     }
-    Ok(branches)
+    Ok((matter.to_string(), branches))
 }
 
 async fn parse_action(a: &Value, data_dir: &Path, say_max: usize) -> Result<Action, String> {
@@ -241,11 +281,19 @@ async fn parse_action(a: &Value, data_dir: &Path, say_max: usize) -> Result<Acti
     }
 }
 
-/// What a set is read against, kept from the moment it was prepared.
+/// One matter's set, and where the matter was left when it was prepared.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Set {
+    matter: String,
     branches: Vec<Branch>,
-    /// What the agent had said since the person last wrote — what their next message answers.
+    /// What the agent had said since the person last wrote — where the matter was left, and
+    /// what a message taking it up answers.
     said: Vec<String>,
+    at: DateTime<Utc>,
+    /// Which set this is within the run, so a reading removes the sets it read and not ones
+    /// prepared again while it ran. Not kept: numbered again on load.
+    #[serde(skip)]
+    id: u64,
 }
 
 /// Where a met branch runs: the mouth's own sequencer and count, and who a message goes as.
@@ -259,7 +307,9 @@ struct Runner {
 
 #[derive(Default)]
 struct State {
-    set: Option<Set>,
+    /// Oldest first.
+    sets: Vec<Set>,
+    next_id: u64,
     /// The reading in flight, if any: further messages of the same batch go to it.
     reading: Option<mpsc::UnboundedSender<Message>>,
     /// What the last reading ran, for the turn its message drives.
@@ -267,23 +317,67 @@ struct State {
     runner: Option<Runner>,
 }
 
-/// The one set of prepared branches, and the reading of the message that resolves it.
+impl State {
+    fn number(&mut self, mut set: Set) -> Set {
+        self.next_id += 1;
+        set.id = self.next_id;
+        set
+    }
+}
+
+/// The matters prepared, and the reading of the message that meets them.
 pub struct Prepared {
     state: std::sync::Mutex<State>,
     observatory: Observatory,
+    /// `None` keeps nothing on disk — tests.
+    path: Option<PathBuf>,
     /// `true` while no reading is in flight. The loop waits on it before a turn, so the turn a
     /// message drives always starts after that message's reading — never beside it.
     idle: watch::Sender<bool>,
 }
 
 impl Prepared {
-    pub fn new(observatory: Observatory) -> Self {
+    /// Stand up with what was kept under `data_dir`, if anything. A file that does not read is
+    /// logged and started over: what was ready is a convenience, never load-bearing.
+    pub fn new(observatory: Observatory, data_dir: Option<&Path>) -> Self {
         let (idle, _) = watch::channel(true);
-        Self { state: std::sync::Mutex::new(State::default()), observatory, idle }
+        let path = data_dir.map(|d| d.join(FILE));
+        let mut state = State::default();
+        if let Some(path) = &path {
+            match std::fs::read(path) {
+                Ok(bytes) => match serde_json::from_slice::<Vec<Set>>(&bytes) {
+                    Ok(sets) => {
+                        let numbered: Vec<Set> = sets.into_iter().map(|s| state.number(s)).collect();
+                        state.sets = numbered;
+                    }
+                    Err(err) => tracing::warn!(error = %err, path = %path.display(), "prepared branches: kept file unreadable; starting empty"),
+                },
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => tracing::warn!(error = %err, path = %path.display(), "prepared branches: kept file unreadable; starting empty"),
+            }
+        }
+        Self { state: std::sync::Mutex::new(state), observatory, path, idle }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Write the sets as they stand. Called under the lock, so writes land in the order the
+    /// changes did; the file is a few kilobytes at most.
+    fn keep(&self, sets: &[Set]) {
+        let Some(path) = &self.path else { return };
+        let write = || -> std::io::Result<()> {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            let tmp = path.with_extension("json.tmp");
+            std::fs::write(&tmp, serde_json::to_vec_pretty(sets).unwrap_or_default())?;
+            std::fs::rename(&tmp, path)
+        };
+        if let Err(err) = write() {
+            tracing::warn!(error = %err, path = %path.display(), "prepared branches: could not keep the sets");
+        }
     }
 
     /// Where a met branch's actions go. Called once, by the loop standing up.
@@ -291,20 +385,74 @@ impl Prepared {
         self.lock().runner = Some(Runner { beats, said, from });
     }
 
-    /// Replace the set. An empty list clears it.
-    pub(super) async fn set(&self, branches: Vec<Branch>, said: Vec<String>) {
-        let directions = branches.iter().map(Branch::direction).collect();
-        self.lock().set = (!branches.is_empty()).then_some(Set { branches, said });
-        self.observatory.record(EventKind::BranchesPrepared { directions }).await;
+    /// Prepare `matter`: replace whatever was set for it, or clear it when `branches` is empty.
+    /// The newest goes last; past [`MAX_MATTERS`] or [`MAX_BRANCHES`], the oldest go. Returns
+    /// the matters that went to make room.
+    pub(super) async fn set(&self, matter: &str, branches: Vec<Branch>, said: Vec<String>) -> Vec<String> {
+        let directions: Vec<BranchDirection> = branches.iter().map(Branch::direction).collect();
+        let (cleared, evicted) = {
+            let mut st = self.lock();
+            let before = st.sets.len();
+            st.sets.retain(|s| !same_matter(&s.matter, matter));
+            let cleared = st.sets.len() < before;
+            let mut evicted = Vec::new();
+            if !branches.is_empty() {
+                let set = st.number(Set { matter: matter.to_string(), branches, said, at: Utc::now(), id: 0 });
+                st.sets.push(set);
+                while st.sets.len() > MAX_MATTERS
+                    || st.sets.iter().map(|s| s.branches.len()).sum::<usize>() > MAX_BRANCHES
+                {
+                    evicted.push(st.sets.remove(0).matter);
+                }
+            }
+            self.keep(&st.sets);
+            (cleared, evicted)
+        };
+        if directions.is_empty() {
+            if cleared {
+                self.observatory
+                    .record(EventKind::BranchesVoided { matter: Some(matter.to_string()), reason: "cleared".into() })
+                    .await;
+            }
+        } else {
+            self.observatory
+                .record(EventKind::BranchesPrepared { matter: matter.to_string(), directions })
+                .await;
+        }
+        for gone in &evicted {
+            self.observatory
+                .record(EventKind::BranchesVoided {
+                    matter: Some(gone.clone()),
+                    reason: "the oldest, to make room".into(),
+                })
+                .await;
+        }
+        evicted
     }
 
-    /// Void whatever is set, recording why. Nothing set, nothing recorded.
-    pub(super) async fn void(&self, reason: &str) {
-        let had = self.lock().set.take().is_some();
-        if had {
-            tracing::info!(reason, "prepared branches voided");
-            self.observatory.record(EventKind::BranchesVoided { reason: reason.to_string() }).await;
+    /// What is ready, as every turn's window carries it. Absolute times, so the text changes
+    /// only when the sets do.
+    pub(super) fn render(&self) -> String {
+        use std::fmt::Write as _;
+        let st = self.lock();
+        let mut s = String::from("## What you have ready\n");
+        if st.sets.is_empty() {
+            s.push_str("(nothing prepared)");
+            return s;
         }
+        s.push_str(
+            "Branches you prepared, matter by matter. Each waits until they take its matter up: \
+             met, it runs; taken anywhere else, it is used up. What would no longer be right to \
+             do or say, clear (hi_prepare with that matter and no branches) or prepare again.\n",
+        );
+        for set in &st.sets {
+            let _ = writeln!(s, "\n### {} — prepared {}", set.matter, set.at.format("%m-%d %H:%MZ"));
+            for b in &set.branches {
+                let actions = b.actions.iter().map(Action::describe).collect::<Vec<_>>().join("; ");
+                let _ = writeln!(s, "- {} → {actions}", b.condition);
+            }
+        }
+        s
     }
 
     /// What the last reading ran, for the turn its message drives. Taken once.
@@ -323,17 +471,34 @@ impl Prepared {
         let mut idle = self.idle.subscribe();
         let _ = tokio::time::timeout(SETTLED_WITHIN, idle.wait_for(|idle| *idle)).await;
     }
+
+    /// Remove the sets a reading used up, by id: one prepared again while it ran is a
+    /// different set and stays.
+    fn use_up(&self, ids: &[u64]) {
+        if ids.is_empty() {
+            return;
+        }
+        let mut st = self.lock();
+        st.sets.retain(|s| !ids.contains(&s.id));
+        self.keep(&st.sets);
+    }
+}
+
+/// Two names for one matter: the same words, spacing and case aside.
+fn same_matter(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.split_whitespace().collect::<String>().to_lowercase();
+    norm(a) == norm(b)
 }
 
 /// What to do about one message from the person, decided under the lock.
 enum OnMessage {
     Nothing,
-    Void(&'static str),
-    Read(Set, mpsc::UnboundedReceiver<Message>),
+    SwitchedOff(Vec<String>),
+    Read(Vec<Set>, mpsc::UnboundedReceiver<Message>),
 }
 
-/// A message from the person landed. It joins a reading in flight; otherwise, if a set is
-/// waiting, a reading of it starts.
+/// A message from the person landed. It joins a reading in flight; otherwise, if anything is
+/// prepared, a reading of every matter starts.
 ///
 /// **Called from [`Reaction::deliver`] before the message is queued for the loop**, so the
 /// loop's wait for the reading ([`Prepared::settled`]) can never miss one that has begun.
@@ -345,32 +510,47 @@ pub(super) async fn on_message(reaction: &Reaction, message: &Message) {
             // The batch is still open; the reading asks again over the whole of it.
             let _ = reading.send(message.clone());
             OnMessage::Nothing
+        } else if st.sets.is_empty() {
+            OnMessage::Nothing
+        } else if !enabled() {
+            let gone = std::mem::take(&mut st.sets).into_iter().map(|s| s.matter).collect();
+            prepared.keep(&st.sets);
+            OnMessage::SwitchedOff(gone)
         } else {
-            match st.set.take() {
-                None => OnMessage::Nothing,
-                Some(_) if !enabled() => OnMessage::Void("prepared branches are switched off"),
-                Some(set) => {
-                    let (tx, rx) = mpsc::unbounded_channel();
-                    st.reading = Some(tx);
-                    st.ran = None;
-                    OnMessage::Read(set, rx)
-                }
-            }
+            let (tx, rx) = mpsc::unbounded_channel();
+            st.reading = Some(tx);
+            st.ran = None;
+            OnMessage::Read(st.sets.clone(), rx)
         }
     };
     match next {
         OnMessage::Nothing => {}
-        OnMessage::Void(reason) => {
-            prepared.observatory.record(EventKind::BranchesVoided { reason: reason.to_string() }).await;
+        OnMessage::SwitchedOff(gone) => {
+            for matter in gone {
+                prepared
+                    .observatory
+                    .record(EventKind::BranchesVoided {
+                        matter: Some(matter),
+                        reason: "prepared branches are switched off".into(),
+                    })
+                    .await;
+            }
         }
-        OnMessage::Read(set, rx) => {
+        OnMessage::Read(sets, rx) => {
             prepared.idle.send_replace(false);
-            tokio::spawn(read(reaction.clone(), set, message.clone(), rx));
+            let recent = reaction.inner.speech.said_since_their_last();
+            tokio::spawn(read(reaction.clone(), sets, recent, message.clone(), rx));
         }
     }
 }
 
-/// Read the person's message against the set, run the branch it met, and record it all.
+/// Every branch across the sets, flattened in order: `b1` is `options[0]`, as (set, branch).
+fn options(sets: &[Set]) -> Vec<(usize, usize)> {
+    sets.iter().enumerate().flat_map(|(k, s)| (0..s.branches.len()).map(move |i| (k, i))).collect()
+}
+
+/// Read the person's message against every matter prepared, run the branch it met, use up
+/// the matters it took up, and record it all.
 ///
 /// **The question is asked as soon as the message lands, and the answer is used only once the
 /// batch has closed** — the same settle a turn waits out, held open while they are still
@@ -378,18 +558,24 @@ pub(super) async fn on_message(reaction: &Reaction, message: &Message) {
 /// message that joins the batch asks again over the whole of it. So on a typed message the
 /// reading is mostly hidden inside a window the turn waits through anyway, and a miss costs
 /// nothing.
-async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::UnboundedReceiver<Message>) {
+async fn read(
+    reaction: Reaction,
+    sets: Vec<Set>,
+    recent: Vec<String>,
+    first: Message,
+    mut more: mpsc::UnboundedReceiver<Message>,
+) {
     let arrived = Instant::now();
     let floor = reaction.inner.floor.clone();
-    let questions = Arc::new(questions(&set.branches));
+    let questions = Arc::new(questions(&sets));
     let mut messages = vec![first];
-    let mut asking = ask(&set.said, &messages, &questions);
+    let mut asking = ask(&sets, &recent, &messages, &questions);
     // **A microphone hears the whole room**, and a line nobody spoke to the agent is not their
-    // next message: it must neither run a branch — 行，就这样 said across the dinner table —
-    // nor use the set up. So a batch that is only room asks the room screen's own question
-    // beside this one ([`super::room`]), at every arrival, as the loop does. It cannot wait
-    // for the loop's answer: while a turn is running the loop screens nothing, and that is
-    // exactly when a spoken reply lands.
+    // message: it must neither run a branch — 行，就这样 said across the dinner table — nor use
+    // a set up. So a batch that is only room asks the room screen's own question beside this
+    // one ([`super::room`]), at every arrival, as the loop does. It cannot wait for the loop's
+    // answer: while a turn is running the loop screens nothing, and that is exactly when a
+    // spoken reply lands.
     let as_batch = |messages: &[Message]| -> Vec<super::LoopInput> {
         messages.iter().cloned().map(super::LoopInput::Message).collect()
     };
@@ -405,7 +591,7 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
                     if let Some(a) = asking.take() {
                         a.abort();
                     }
-                    asking = ask(&set.said, &messages, &questions);
+                    asking = ask(&sets, &recent, &messages, &questions);
                     super::room::ask(&mut room, &reaction.inner.memory, &as_batch(&messages));
                     settle_at = Instant::now() + super::RESPONSE_SETTLE;
                 }
@@ -422,9 +608,9 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
             }
         }
     }
-    // Side talk: nothing runs, and the set waits for the message that is theirs. Anything
-    // short of a clear answer from the screen reads as someone talking with the agent, the
-    // way the loop reads it — the branch question below still has to be met.
+    // Side talk: nothing runs and nothing is used up. Anything short of a clear answer from
+    // the screen reads as someone talking with the agent, the way the loop reads it — the
+    // branch question below still has to be met.
     if !super::room::wakes(&mut room, &reaction.inner.memory, &as_batch(&messages)).await {
         if let Some(a) = asking {
             a.abort();
@@ -435,6 +621,7 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
             .record(EventKind::BranchesResolved {
                 message: render_messages(&messages),
                 outcome: "side talk".into(),
+                matter: None,
                 direction: None,
                 p: None,
                 qualified: None,
@@ -443,15 +630,10 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
                 decided_ms: arrived.elapsed().as_millis() as u64,
                 first_action_ms: None,
                 ran: Vec::new(),
+                used_up: Vec::new(),
             })
             .await;
-        {
-            let mut st = reaction.inner.prepared.lock();
-            st.reading = None;
-            if st.set.is_none() {
-                st.set = Some(set);
-            }
-        }
+        reaction.inner.prepared.lock().reading = None;
         reaction.inner.prepared.idle.send_replace(true);
         return;
     }
@@ -465,17 +647,17 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
         },
     };
     let decided_ms = arrived.elapsed().as_millis() as u64;
-    let reading = Reading::of(&answer, set.branches.len(), threshold());
+    let flat = options(&sets);
+    let reading = Reading::of(&answer, flat.len(), sets.len(), threshold());
+    let met = reading.met.map(|i| flat[i]);
     let mut outcome = reading.outcome.to_string();
     let mut ran: Vec<(String, Result<String, String>)> = Vec::new();
     let mut first_action_ms = None;
-    if let Some(i) = reading.met {
-        let branch = &set.branches[i];
+    if let Some((k, i)) = met {
+        let branch = &sets[k].branches[i];
         let now = Instant::now();
         let runner = reaction.inner.prepared.lock().runner.clone();
-        if branch.actions.is_empty() {
-            outcome = "met, nothing prepared".into();
-        } else if floor.voice_active(now).await || floor.typing_active(now).await {
+        if floor.voice_active(now).await || floor.typing_active(now).await {
             // They are not done. The floor is asked once, for the branch as a whole, before
             // any of it runs — a refusal is not a hold, so the branch is simply not run.
             outcome = "still going".into();
@@ -488,16 +670,27 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
             outcome = "no mouth".into();
         }
     }
+    // The matter a met branch belongs to is used up whether or not the branch got to run —
+    // the message took it up — and so is every other matter the message took up at all.
+    // An unread reply uses nothing up: nothing is known about where the message went.
+    let used_up: Vec<&Set> = sets
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| met.is_some_and(|(m, _)| m == *k) || reading.on.get(*k).copied().flatten().is_some_and(|p| p >= TAKEN_UP))
+        .map(|(_, s)| s)
+        .collect();
+    reaction.inner.prepared.use_up(&used_up.iter().map(|s| s.id).collect::<Vec<_>>());
     if let Some(err) = &reading.error {
         tracing::warn!(error = %err, "prepared branches: the reading failed; the message takes the ordinary path");
     }
-    let direction = reading.met.map(|i| set.branches[i].condition.clone());
     tracing::info!(
         outcome = %outcome,
         p = ?reading.p,
         qualified = ?reading.qualified,
         decided_ms,
         ran = ran.len(),
+        used_up = used_up.len(),
+        kept = sets.len() - used_up.len(),
         "prepared branches: their message read"
     );
     reaction
@@ -506,7 +699,8 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
         .record(EventKind::BranchesResolved {
             message: render_messages(&messages),
             outcome,
-            direction,
+            matter: met.map(|(k, _)| sets[k].matter.clone()),
+            direction: met.map(|(k, i)| sets[k].branches[i].condition.clone()),
             p: reading.p,
             qualified: reading.qualified,
             mass: reading.mass,
@@ -520,14 +714,18 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
                     Err(why) => format!("{action}: {why}"),
                 })
                 .collect(),
+            used_up: used_up.iter().map(|s| s.matter.clone()).collect(),
         })
         .await;
-    let direction = reading.met.map(|i| set.branches[i].condition.clone());
     {
         let mut st = reaction.inner.prepared.lock();
         st.reading = None;
-        st.ran = match (direction, ran.is_empty()) {
-            (Some(condition), false) => Some(Ran { condition, ran }),
+        st.ran = match (met, ran.is_empty()) {
+            (Some((k, i)), false) => Some(Ran {
+                matter: sets[k].matter.clone(),
+                condition: sets[k].branches[i].condition.clone(),
+                ran,
+            }),
             _ => None,
         };
     }
@@ -537,14 +735,15 @@ async fn read(reaction: Reaction, set: Set, first: Message, mut more: mpsc::Unbo
 /// Ask the questions about the messages so far, inside the budget. `None` when nothing is
 /// configured to ask — then the reading is a miss before it begins.
 fn ask(
-    said: &[String],
+    sets: &[Set],
+    recent: &[String],
     messages: &[Message],
     questions: &Arc<Map<String, Value>>,
 ) -> Option<JoinHandle<anyhow::Result<decision::Reply>>> {
     if !decision::available() {
         return None;
     }
-    let state = Value::String(state(said, messages));
+    let state = Value::String(state(sets, recent, messages));
     let questions = questions.clone();
     Some(tokio::spawn(async move {
         tokio::time::timeout(BUDGET, decision::ask(&state, &questions, None))
@@ -560,13 +759,17 @@ enum Unread {
     Error(String),
 }
 
-/// A reply read: which branch was met, if any, and every number that decided it.
+/// A reply read: which branch was met, if any, which matters the message took up, and every
+/// number that decided it.
 #[derive(Debug, Default, PartialEq)]
 struct Reading {
+    /// Into the flattened options ([`options`]).
     met: Option<usize>,
     outcome: &'static str,
     p: Option<f64>,
     qualified: Option<f64>,
+    /// Per matter, in the sets' order: how sure it is the message took that matter up.
+    on: Vec<Option<f64>>,
     mass: Option<Value>,
     model: Option<String>,
     error: Option<String>,
@@ -574,8 +777,9 @@ struct Reading {
 
 impl Reading {
     /// A branch is met when its option carries at least `tau` of the choice's mass and
-    /// `qualified` carries at most `1 − tau`. A reply that cannot be read runs nothing.
-    fn of(answer: &Result<decision::Reply, Unread>, branches: usize, tau: f64) -> Self {
+    /// `qualified` carries at most `1 − tau`. A reply that cannot be read runs nothing and
+    /// uses nothing up.
+    fn of(answer: &Result<decision::Reply, Unread>, branches: usize, matters: usize, tau: f64) -> Self {
         let reply = match answer {
             Ok(reply) => reply,
             Err(Unread::Unavailable) => return Self { outcome: "unavailable", ..Self::default() },
@@ -585,14 +789,16 @@ impl Reading {
             }
         };
         let model = Some(reply.model.clone());
-        let qualified = match reply.answers.get(QUALIFIED) {
+        let noul = |key: &str| match reply.answers.get(key) {
             Some(decision::Answer::Noul { p }) => Some(*p),
             _ => None,
         };
+        let qualified = noul(QUALIFIED);
+        let on: Vec<Option<f64>> = (1..=matters).map(|k| noul(&format!("{ON}{k}"))).collect();
         let Some(decision::Answer::Choice { probabilities: Some(Value::Object(mass)), .. }) =
             reply.answers.get(WHICH)
         else {
-            return Self { outcome: "error", model, qualified, error: Some("no choice in the reply".into()), ..Self::default() };
+            return Self { outcome: "error", model, qualified, on, error: Some("no choice in the reply".into()), ..Self::default() };
         };
         let whole = Some(Value::Object(mass.clone()));
         let best = mass
@@ -600,9 +806,18 @@ impl Reading {
             .filter_map(|(option, p)| Some((option.as_str(), p.as_f64()?)))
             .max_by(|a, b| a.1.total_cmp(&b.1));
         let Some((option, p)) = best else {
-            return Self { outcome: "error", model, qualified, mass: whole, error: Some("an empty choice".into()), ..Self::default() };
+            return Self { outcome: "error", model, qualified, on, mass: whole, error: Some("an empty choice".into()), ..Self::default() };
         };
-        let read = |outcome, met| Self { met, outcome, p: Some(p), qualified, mass: whole.clone(), model: model.clone(), error: None };
+        let read = |outcome, met| Self {
+            met,
+            outcome,
+            p: Some(p),
+            qualified,
+            on: on.clone(),
+            mass: whole.clone(),
+            model: model.clone(),
+            error: None,
+        };
         if option == REST {
             return read("rest", None);
         }
@@ -625,14 +840,16 @@ fn branch_index(option: &str) -> Option<usize> {
     option.strip_prefix('b')?.parse::<usize>().ok()?.checked_sub(1)
 }
 
-/// The two questions, in `judges/prepared.md`'s words, with one option per branch.
-fn questions(branches: &[Branch]) -> Map<String, Value> {
+/// The questions, in `judges/prepared.md`'s words: one choice over every branch of every
+/// matter, whether the met one was qualified, and per matter whether the message took it up.
+fn questions(sets: &[Set]) -> Map<String, Value> {
     let rubric = crate::identity::judges::PREPARED;
     let part = |heading: &str| crate::identity::rubric_section(rubric, heading).unwrap_or_default();
     let frame = part("Frame");
     let mut criteria = Map::new();
-    for (i, b) in branches.iter().enumerate() {
-        criteria.insert(format!("b{}", i + 1), Value::from(b.condition.clone()));
+    for (n, (k, i)) in options(sets).into_iter().enumerate() {
+        let set = &sets[k];
+        criteria.insert(format!("b{}", n + 1), Value::from(format!("{} — {}", set.matter, set.branches[i].condition)));
     }
     criteria.insert(REST.into(), Value::from(part("Rest")));
     let mut asked = Map::new();
@@ -644,19 +861,42 @@ fn questions(branches: &[Branch]) -> Map<String, Value> {
         QUALIFIED.into(),
         json!({ "type": "noul", "instructions": format!("{frame} {}", part("Qualified")) }),
     );
+    for (k, set) in sets.iter().enumerate() {
+        asked.insert(
+            format!("{ON}{}", k + 1),
+            json!({
+                "type": "noul",
+                "instructions": format!("{frame} {} The matter: {}", part("Took it up"), set.matter),
+            }),
+        );
+    }
     asked
 }
 
-/// The state a reading is about: what the agent said since the person last wrote, then what
-/// they wrote. Nothing else — System One loses accuracy on a padded state.
-fn state(said: &[String], messages: &[Message]) -> String {
-    let mut s = String::from("## What the assistant said\n");
-    if said.is_empty() {
+/// The state a reading is about: where each matter was left, what the agent has said since
+/// the person last wrote, then what they wrote. Nothing else — System One loses accuracy on a
+/// padded state, which is also why a matter left by the very lines the message answers says
+/// so instead of repeating them.
+fn state(sets: &[Set], recent: &[String], messages: &[Message]) -> String {
+    let lines = |said: &[String]| -> String {
+        said.iter().map(|l| format!("< {}\n", l.replace('\n', "\n  "))).collect()
+    };
+    let mut s = String::from("## Where each matter was left\n");
+    for set in sets {
+        s.push_str(&format!("### {}\n", set.matter));
+        if set.said.is_empty() {
+            s.push_str("(nothing the assistant said)\n");
+        } else if set.said == recent {
+            s.push_str("(the most recent lines, below)\n");
+        } else {
+            s.push_str(&lines(&set.said));
+        }
+    }
+    s.push_str("\n## What the assistant said most recently\n");
+    if recent.is_empty() {
         s.push_str("(nothing since the person last spoke)\n");
     }
-    for line in said {
-        s.push_str(&format!("< {}\n", line.replace('\n', "\n  ")));
-    }
+    s.push_str(&lines(recent));
     s.push_str("\n## What the person said next\n");
     s.push_str(&render_messages(messages));
     s.push('\n');
@@ -757,8 +997,10 @@ async fn run(reaction: &Reaction, runner: &Runner, branch: &Branch) -> Vec<(Stri
     ran
 }
 
-/// A branch that ran: where the message went, and each action with what became of it.
+/// A branch that ran: its matter, where the message took it, and each action with what
+/// became of it.
 pub(super) struct Ran {
+    matter: String,
     condition: String,
     ran: Vec<(String, Result<String, String>)>,
 }
@@ -768,8 +1010,10 @@ impl Ran {
     /// `reaction.md`'s.
     pub(super) fn for_reaction(&self) -> String {
         format!(
-            "\n## What your prepared branch did\nTheir message went where you had prepared for: \
-             \"{}\". Before this turn began, that branch ran, in order:\n{}",
+            "\n## What your prepared branch did\nTheir message took \"{}\" where you had prepared \
+             for: \"{}\". Before this turn began, that branch ran, in order:\n{}What you had \
+             prepared for that matter is used up.\n",
+            self.matter,
             self.condition,
             self.lines()
         )
@@ -817,7 +1061,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    fn reply(which: Value, qualified: Option<f64>) -> decision::Reply {
+    fn reply(which: Value, qualified: Option<f64>, on: &[f64]) -> decision::Reply {
         let mut answers = BTreeMap::new();
         answers.insert(
             WHICH.to_string(),
@@ -826,11 +1070,22 @@ mod tests {
         if let Some(p) = qualified {
             answers.insert(QUALIFIED.to_string(), decision::Answer::Noul { p });
         }
+        for (k, p) in on.iter().enumerate() {
+            answers.insert(format!("{ON}{}", k + 1), decision::Answer::Noul { p: *p });
+        }
         decision::Reply { model: "jev-1.13.0".into(), answers, usage: decision::Usage::default() }
     }
 
     fn read(which: Value, qualified: Option<f64>) -> Reading {
-        Reading::of(&Ok(reply(which, qualified)), 2, 0.9)
+        Reading::of(&Ok(reply(which, qualified, &[0.9])), 2, 1, 0.9)
+    }
+
+    fn say(text: &str) -> Vec<Action> {
+        vec![Action::Say { text: text.into() }]
+    }
+
+    fn branch(condition: &str) -> Branch {
+        Branch { condition: condition.into(), actions: say("好") }
     }
 
     #[test]
@@ -849,92 +1104,168 @@ mod tests {
 
         let rest = read(json!({"b1": 0.1, "b2": 0.1, "rest": 0.8}), Some(0.1));
         assert_eq!((rest.met, rest.outcome), (None, "rest"));
+        assert_eq!(rest.on, vec![Some(0.9)], "whether each matter was taken up is read either way");
     }
 
     #[test]
-    fn a_reply_that_cannot_be_read_runs_nothing() {
+    fn a_reply_that_cannot_be_read_runs_nothing_and_uses_nothing_up() {
         assert_eq!(read(json!({"b1": 0.99}), None).outcome, "error", "no `qualified`, no vouching");
         assert_eq!(read(json!({"b7": 0.99}), Some(0.0)).outcome, "error", "an option nobody asked");
         assert_eq!(read(json!({}), Some(0.0)).outcome, "error");
-        assert_eq!(Reading::of(&Err(Unread::Timeout), 2, 0.9).outcome, "timeout");
-        assert_eq!(Reading::of(&Err(Unread::Unavailable), 2, 0.9).outcome, "unavailable");
-        for r in [read(json!({"b1": 0.99}), None), Reading::of(&Err(Unread::Timeout), 2, 0.9)] {
+        let timeout = Reading::of(&Err(Unread::Timeout), 2, 1, 0.9);
+        assert_eq!(timeout.outcome, "timeout");
+        assert!(timeout.on.is_empty(), "nothing known about where it went, so nothing is used up");
+        assert_eq!(Reading::of(&Err(Unread::Unavailable), 2, 1, 0.9).outcome, "unavailable");
+        for r in [read(json!({"b1": 0.99}), None), timeout] {
             assert_eq!(r.met, None);
         }
     }
 
+    fn set(matter: &str, conditions: &[&str], said: &[&str]) -> Set {
+        Set {
+            matter: matter.into(),
+            branches: conditions.iter().map(|c| branch(c)).collect(),
+            said: said.iter().map(|s| s.to_string()).collect(),
+            at: Utc::now(),
+            id: 0,
+        }
+    }
+
     #[test]
-    fn options_are_the_branches_in_order_and_the_rest() {
-        let branches = vec![
-            Branch { condition: "同意 A、没加条件".into(), actions: vec![] },
-            Branch { condition: "选 B".into(), actions: vec![] },
-        ];
-        let asked = questions(&branches);
+    fn options_run_across_every_matter_in_order_and_each_matter_is_asked_about() {
+        let sets = vec![set("VLX 要不要试", &["让试 VLX"], &[]), set("A 还是 B", &["同意 A", "选 B"], &[])];
+        assert_eq!(options(&sets), vec![(0, 0), (1, 0), (1, 1)]);
+        let asked = questions(&sets);
         let criteria = asked[WHICH]["criteria"].as_object().unwrap();
-        assert_eq!(criteria.keys().collect::<Vec<_>>(), vec!["b1", "b2", "rest"]);
-        assert_eq!(criteria["b1"], "同意 A、没加条件");
+        assert_eq!(criteria.keys().collect::<Vec<_>>(), vec!["b1", "b2", "b3", "rest"]);
+        assert_eq!(criteria["b2"], "A 还是 B — 同意 A", "a condition is read with its matter");
         assert!(!criteria["rest"].as_str().unwrap().is_empty(), "the rubric's Rest is read");
         assert_eq!(asked[QUALIFIED]["type"], "noul");
-        assert!(asked[WHICH]["instructions"].as_str().unwrap().contains("Which of these directions"));
+        assert_eq!(asked["on1"]["type"], "noul");
+        assert!(asked["on2"]["instructions"].as_str().unwrap().ends_with("The matter: A 还是 B"));
+        assert!(!asked["on1"]["instructions"].as_str().unwrap().contains("  The matter:"), "Took it up is read");
         assert_eq!(branch_index("b1"), Some(0));
         assert_eq!(branch_index("b0"), None);
         assert_eq!(branch_index("rest"), None);
     }
 
+    #[test]
+    fn a_matter_is_read_with_where_it_was_left() {
+        let sets = vec![set("VLX", &["让试"], &["VLX 跑得动，你要试吗？"]), set("A/B", &["同意 A"], &["我倾向 A"])];
+        let s = state(&sets, &["我倾向 A".to_string()], &[]);
+        assert!(s.contains("### VLX\n< VLX 跑得动，你要试吗？"), "{s}");
+        assert!(s.contains("### A/B\n(the most recent lines, below)"), "not repeated: {s}");
+        assert!(s.find("## What the assistant said most recently").unwrap() < s.find("## What the person said next").unwrap());
+    }
+
     #[tokio::test]
-    async fn a_call_is_one_choice_checked_whole() {
+    async fn a_call_is_one_matter_checked_whole() {
         let dir = std::env::temp_dir();
-        let ok = parse(
-            &json!({"branches": [
-                {"condition": "agrees to A", "actions": [{"tool": "hi_say", "text": "好，A。"}]},
-                {"condition": "picks B"}
+        let (matter, ok) = parse(
+            &json!({"matter": " A 还是 B ", "branches": [
+                {"condition": "agrees to A", "actions": [{"tool": "hi_say", "text": "好，A。"}]}
             ]}),
             &dir,
             400,
         )
         .await
         .unwrap();
-        assert_eq!(ok.len(), 2);
-        assert_eq!(ok[0].actions, vec![Action::Say { text: "好，A。".into() }]);
-        assert!(ok[1].actions.is_empty(), "a direction with nothing ready is a valid option");
+        assert_eq!(matter, "A 还是 B");
+        assert_eq!(ok[0].actions, say("好，A。"));
 
-        assert!(parse(&json!({"branches": []}), &dir, 400).await.unwrap().is_empty(), "empty clears");
+        let (_, cleared) = parse(&json!({"matter": "x", "branches": []}), &dir, 400).await.unwrap();
+        assert!(cleared.is_empty(), "empty clears");
 
         let refused = |args: Value| {
             let dir = dir.clone();
             async move { parse(&args, &dir, 400).await.unwrap_err() }
         };
-        assert!(refused(json!({})).await.contains("branches"));
-        assert!(refused(json!({"branches": [{"actions": []}]})).await.contains("no `condition`"));
-        let long = refused(json!({"branches": [{"condition": "x", "actions": [{"tool": "hi_say", "text": "字".repeat(401)}]}]})).await;
+        assert!(refused(json!({"branches": []})).await.contains("`matter`"));
+        assert!(refused(json!({"matter": "x"})).await.contains("branches"));
+        assert!(refused(json!({"matter": "x", "branches": [{"actions": []}]})).await.contains("no `condition`"));
+        for empty in [json!({"condition": "picks B"}), json!({"condition": "picks B", "actions": []})] {
+            let why = refused(json!({"matter": "x", "branches": [empty]})).await;
+            assert!(why.contains("no actions") && why.contains("Nothing was prepared"), "{why}");
+        }
+        let long = refused(json!({"matter": "x", "branches": [{"condition": "x", "actions": [{"tool": "hi_say", "text": "字".repeat(401)}]}]})).await;
         assert!(long.contains("too long") && long.contains("Nothing was prepared"), "{long}");
-        assert!(refused(json!({"branches": [{"condition": "x", "actions": [{"tool": "hi_prepare"}]}]})).await.contains("cannot prepare"));
-        assert!(refused(json!({"branches": [{"condition": "x", "actions": [{"tool": "shell"}]}]})).await.contains("cannot be prepared"));
-        assert!(refused(json!({"branches": [{"condition": "x", "actions": [{"tool": "hi_show"}]}]})).await.contains("needs a `ref`"));
-        assert!(refused(json!({"branches": [{"condition": "x", "actions": [{"tool": "hi_send_message", "to": "nobody-here", "message": "go"}]}]})).await.contains("nothing live"));
-        let fan: Vec<Value> = (0..=MAX_BRANCHES).map(|i| json!({"condition": format!("d{i}")})).collect();
-        assert!(refused(json!({"branches": fan})).await.contains("a fan"));
+        assert!(refused(json!({"matter": "x", "branches": [{"condition": "x", "actions": [{"tool": "hi_prepare"}]}]})).await.contains("cannot prepare"));
+        assert!(refused(json!({"matter": "x", "branches": [{"condition": "x", "actions": [{"tool": "shell"}]}]})).await.contains("cannot be prepared"));
+        assert!(refused(json!({"matter": "x", "branches": [{"condition": "x", "actions": [{"tool": "hi_show"}]}]})).await.contains("needs a `ref`"));
+        assert!(refused(json!({"matter": "x", "branches": [{"condition": "x", "actions": [{"tool": "hi_send_message", "to": "nobody-here", "message": "go"}]}]})).await.contains("nothing live"));
+        let fan: Vec<Value> = (0..=MAX_BRANCHES).map(|i| json!({"condition": format!("d{i}"), "actions": [{"tool": "hi_say", "text": "好"}]})).collect();
+        assert!(refused(json!({"matter": "x", "branches": fan})).await.contains("a fan"));
+    }
+
+    fn matters(p: &Prepared) -> Vec<String> {
+        p.lock().sets.iter().map(|s| s.matter.clone()).collect()
     }
 
     #[tokio::test]
-    async fn a_set_is_replaced_whole_and_voided_once() {
-        let prepared = Prepared::new(Observatory::new(None));
-        let one = vec![Branch { condition: "agrees".into(), actions: vec![] }];
-        prepared.set(one.clone(), vec!["我倾向 A".into()]).await;
-        assert_eq!(prepared.lock().set.as_ref().map(|s| s.branches.clone()), Some(one));
-        prepared.set(vec![], vec![]).await;
-        assert!(prepared.lock().set.is_none(), "an empty list clears");
+    async fn matters_stand_side_by_side_and_one_prepared_again_is_replaced() {
+        let p = Prepared::new(Observatory::new(None), None);
+        p.set("A 还是 B", vec![branch("同意 A")], vec!["我倾向 A".into()]).await;
+        p.set("VLX", vec![branch("让试")], vec![]).await;
+        assert_eq!(matters(&p), vec!["A 还是 B", "VLX"]);
 
-        prepared.set(vec![Branch { condition: "agrees".into(), actions: vec![] }], vec![]).await;
-        prepared.void("another turn started").await;
-        assert!(prepared.lock().set.is_none());
-        prepared.void("again").await; // nothing set: nothing recorded, nothing panics
-        assert_eq!(prepared.observatory.event_count().await, 4, "three prepared, one voided");
+        // The same matter, spaced differently, is the same matter: replaced, and newest last.
+        p.set("A还是B", vec![branch("选 B")], vec![]).await;
+        assert_eq!(matters(&p), vec!["VLX", "A还是B"]);
+        assert_eq!(p.lock().sets[1].branches[0].condition, "选 B");
+
+        p.set("vlx", vec![], vec![]).await;
+        assert_eq!(matters(&p), vec!["A还是B"], "an empty list clears that matter only");
+    }
+
+    #[tokio::test]
+    async fn the_oldest_goes_to_make_room() {
+        let p = Prepared::new(Observatory::new(None), None);
+        for m in ["一", "二", "三", "四"] {
+            assert!(p.set(m, vec![branch("x")], vec![]).await.is_empty());
+        }
+        assert_eq!(p.set("五", vec![branch("x")], vec![]).await, vec!["一"], "past the matters kept");
+        let wide: Vec<Branch> = (0..6).map(|i| branch(&format!("d{i}"))).collect();
+        assert_eq!(p.set("六", wide, vec![]).await, vec!["二", "三"], "past the branches kept");
+        assert_eq!(matters(&p), vec!["四", "五", "六"]);
+    }
+
+    #[tokio::test]
+    async fn what_is_ready_outlives_a_restart_and_a_reading_uses_up_only_what_it_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Prepared::new(Observatory::new(None), Some(dir.path()));
+        p.set("VLX", vec![branch("让试")], vec!["跑得动".into()]).await;
+        p.set("A/B", vec![branch("同意 A")], vec![]).await;
+        drop(p);
+
+        let p = Prepared::new(Observatory::new(None), Some(dir.path()));
+        assert_eq!(matters(&p), vec!["VLX", "A/B"], "kept on disk, in order");
+        assert_eq!(p.lock().sets[0].said, vec!["跑得动"]);
+        let read = p.lock().sets.clone();
+        // Prepared again while the reading ran: a different set, which stays.
+        p.set("A/B", vec![branch("选 B")], vec![]).await;
+        p.use_up(&read.iter().map(|s| s.id).collect::<Vec<_>>());
+        assert_eq!(matters(&p), vec!["A/B"]);
+        assert_eq!(p.lock().sets[0].branches[0].condition, "选 B");
+
+        let p = Prepared::new(Observatory::new(None), Some(dir.path()));
+        assert_eq!(matters(&p), vec!["A/B"], "what was used up stays used up");
+    }
+
+    #[test]
+    fn the_window_lists_what_is_ready_and_says_when_nothing_is() {
+        let p = Prepared::new(Observatory::new(None), None);
+        assert_eq!(p.render(), "## What you have ready\n(nothing prepared)");
+        p.lock().sets.push(set("VLX 要不要试", &["让试 VLX"], &[]));
+        let s = p.render();
+        assert!(s.contains("### VLX 要不要试 — prepared "), "{s}");
+        assert!(s.contains("- 让试 VLX → hi_say \"好\""), "{s}");
+        assert!(s.contains("no branches"), "how to clear one is said: {s}");
     }
 
     #[test]
     fn what_ran_says_where_it_stopped() {
         let stopped = Ran {
+            matter: "A/B".into(),
             condition: "想看两边的数".into(),
             ran: vec![(
                 "hi_show show plan/compare".to_string(),
@@ -943,9 +1274,11 @@ mod tests {
         };
         let s = stopped.for_reaction();
         assert!(s.contains("## What your prepared branch did"));
-        assert!(s.contains("想看两边的数"));
+        assert!(s.contains("想看两边的数") && s.contains("A/B"));
         assert!(s.contains("It stopped there"));
+        assert!(s.contains("used up"));
         let ok = Ran {
+            matter: "A/B".into(),
             condition: "agrees".into(),
             ran: vec![
                 ("hi_send_message → cognition: \"按 A 开工\"".to_string(), Ok("delivered".to_string())),

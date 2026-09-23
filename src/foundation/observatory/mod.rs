@@ -188,24 +188,26 @@ pub enum EventKind {
         delivery: crate::foundation::registry::Delivery,
         message: String,
     },
-    /// Reaction prepared for where the conversation may go next (`hi_prepare`): the whole
-    /// set, which replaces whatever was set before. An empty `directions` is a clear.
+    /// Reaction prepared for where a matter may go next (`hi_prepare`): the matter's whole
+    /// set, which replaces whatever was set for it before. A clear is `BranchesVoided`.
     ///
     /// These three events are the count `docs/arch/agents.md` § *Prepared branches* names
     /// for the person tuning it — prepared, met, voided by reason — so each carries its
     /// content whole, like `MessageSent`: a number you cannot open is not a number you can
     /// tune against.
-    BranchesPrepared { directions: Vec<BranchDirection> },
-    /// The person's next message was read against the set. `outcome` is what became of it
-    /// — `met` (and ran), `met, nothing prepared`, `rest`, `below`, `qualified`, `timeout`,
-    /// `error`, `unavailable`, `still going`, `a line landed after the batch`, `no mouth`, or
-    /// `side talk` (room nobody spoke to the agent, which leaves the set in place) —
-    /// and the numbers are System One's, kept whole so the cut can move without asking
-    /// again. `decided_ms` runs from their message reaching the host to the verdict;
-    /// `first_action_ms` to the first action, when one ran.
+    BranchesPrepared { matter: String, directions: Vec<BranchDirection> },
+    /// A message of the person's was read against every matter prepared. `outcome` is what
+    /// became of it — `met` (and ran), `rest`, `below`, `qualified`, `timeout`, `error`,
+    /// `unavailable`, `still going`, `a line landed after the batch`, `no mouth`, or `side
+    /// talk` (room nobody spoke to the agent, which uses nothing up) — and the numbers are
+    /// System One's, kept whole so the cut can move without asking again. `matter` and
+    /// `direction` name the met branch; `used_up` the matters the message took up, the met
+    /// one among them. `decided_ms` runs from their message reaching the host to the
+    /// verdict; `first_action_ms` to the first action, when one ran.
     BranchesResolved {
         message: String,
         outcome: String,
+        matter: Option<String>,
         direction: Option<String>,
         p: Option<f64>,
         qualified: Option<f64>,
@@ -214,9 +216,11 @@ pub enum EventKind {
         decided_ms: u64,
         first_action_ms: Option<u64>,
         ran: Vec<String>,
+        used_up: Vec<String>,
     },
-    /// A set was voided before the person's next message came, and why.
-    BranchesVoided { reason: String },
+    /// A matter's set went without a message taking it up — cleared by Reaction, pushed out
+    /// to make room, or switched off — and why.
+    BranchesVoided { matter: Option<String>, reason: String },
 }
 
 /// One prepared direction as the event log shows it: the condition as Reaction wrote it,

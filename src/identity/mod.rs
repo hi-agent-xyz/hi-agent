@@ -147,7 +147,7 @@ pub mod judges {
     /// Whether a batch that is only room is anyone talking with the agent — one typed question,
     /// by [`super::rubric_section`].
     pub const ROOM: &str = include_str!("judges/room.md");
-    /// Where the person's next message went, against the branches Reaction prepared for it
+    /// Where the person's message went, against the branches Reaction prepared, matter by matter
     /// — as typed questions, by [`super::rubric_section`].
     pub const PREPARED: &str = include_str!("judges/prepared.md");
 }

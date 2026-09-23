@@ -147,9 +147,9 @@ and costs a supersede rule, an expiry rule and a release timer in every case tha
 **The one thing that waits for them is not a draft waiting for silence** — it is a
 [prepared branch](agents.md#prepared-branches), and it waits on *what* they say. The argument
 above is why that is the only kind. A branch prepared for the message that selects it is not
-made stale by that message; the message chooses it. And it needs none of the three: the
-message resolves the set either way, the next turn to start voids it, and nothing runs a
-branch but the message.
+made stale by that message; the message chooses it. And it needs none of the three: a message
+taking its matter up resolves the set either way, Reaction clears what it can see has gone
+stale, and nothing runs a branch but the message.
 
 **One bound, because a refusal has no ceiling of its own.** Someone who speaks during every
 generation refuses every reply, and total silence is a worse failure than a slightly late

@@ -306,7 +306,7 @@ host fences anyone out.
 
 | Role | Default surface | Why that size |
 |---|---|---|
-| **Reaction** | `hi_say` · `hi_show` · `hi_prepare` · `SendMessage`, and **no built-ins at all** | its expression channels, what they will do if the next message goes where it expects ([prepared branches](agents.md#prepared-branches)), and the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
+| **Reaction** | `hi_say` · `hi_show` · `hi_prepare` · `SendMessage`, and **no built-ins at all** | its expression channels, what they will do when the person takes a matter where it expects ([prepared branches](agents.md#prepared-branches)), and the ability to hand work down. It cannot read, fetch, or run anything — that is why it is fast |
 | **Cognition** | `SendMessage` · `CreateWorker` · session reads · **opening** a ledger row (`hi_task_open`) | it delegates rather than does, and it may create a duty but never retire one — that goes to a [Task Manager](agents.md#task-manager) |
 | **Reflection** | as Cognition, plus memory curation | it curates `data/`; duties are not its to record |
 | **Task Manager** | a worker's surface, aimed at one dimension | the only role that may **change** a task's `status` — close, reopen, stand down; it files and delivers none of it |

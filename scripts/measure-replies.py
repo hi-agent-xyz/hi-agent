@@ -228,7 +228,10 @@ def main(root):
         sets = [e for e in events if e["event"] == "branches_prepared" and e.get("directions")]
         read = [e for e in events if e["event"] == "branches_resolved"]
         voided = [e for e in events if e["event"] == "branches_voided"]
-        pct("备下的组 → 被他的下一句读到", len(read), len(sets))
+        # A set now waits for its matter, so one set can be read against many messages:
+        # the two counts sit side by side, not as a ratio.
+        print(f"  备下的组 {len(sets)} · 有备着的组时他说的话 {len(read)}")
+        pct("  其中谈到了备着的事(用掉)", sum(1 for e in read if e.get("used_up")), len(read))
         outcomes = {}
         for e in read:
             outcomes[e.get("outcome", "?")] = outcomes.get(e.get("outcome", "?"), 0) + 1

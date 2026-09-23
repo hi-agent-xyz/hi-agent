@@ -184,9 +184,8 @@ pub(super) struct Mouth {
     pub(super) speech: Arc<super::legibility::Speech>,
     /// The messages sent since the person last sent one ([`super::unanswered`]).
     pub(super) unanswered: Arc<super::unanswered::Unanswered>,
-    /// Where the conversation may go next, as Reaction last prepared it
-    /// ([`super::prepared`]). On the mouth because both halves of it are here: `prepare`
-    /// sets it, and a line `say` sends after it voids it.
+    /// What Reaction has prepared, matter by matter ([`super::prepared`]). On the mouth
+    /// because `prepare` sets it, and its checks are the mouth's.
     pub(super) prepared: Arc<super::prepared::Prepared>,
     /// The screen, asked by `show` whether a view goes in front of them or into their list
     /// ([`crate::foundation::server::ViewBus::claim`]).
@@ -398,41 +397,39 @@ impl ToolSink {
                 .map_err(|_| anyhow::anyhow!("sequencer gone; hand-over dropped"))?;
             mouth.unanswered.note_sent();
         }
-        // Branches prepared before this line were prepared for a moment that is no longer
-        // the last thing said.
-        mouth.prepared.void("a message was sent after the one they follow").await;
         Ok(Said { spoken: Spoken::Sent })
     }
 
-    /// Prepare for where the conversation may go next (the `prepare` tool): `args` carries the
-    /// whole set, which is read and checked action by action ([`super::prepared::parse`]) and
-    /// replaces whatever was set. Returns the literal the tool answers with; a set that does
-    /// not parse is an error, naming where, and nothing is set.
+    /// Prepare for where a matter may go next (the `prepare` tool): `args` carries the matter
+    /// and its whole set, which is read and checked action by action
+    /// ([`super::prepared::parse`]) and replaces whatever was set for that matter. Returns the
+    /// literal the tool answers with; a set that does not parse is an error, naming where, and
+    /// nothing is set.
     ///
-    /// Refused, with nothing set, when they have already replied since this turn began —
-    /// branches are for their *next* message, and that one has come. Each branch's lines are
-    /// then read by the pre-send check ([`super::legibility::Speech::review_prepared`]),
-    /// together and off the serial lock; a branch whose line is sent back keeps its condition
-    /// and loses its actions, and the answer says which and why.
+    /// Refused, with nothing set, when they have already replied since this turn began — the
+    /// lines were written for a moment that has passed. Each branch's lines are then read by
+    /// the pre-send check ([`super::legibility::Speech::review_prepared`]), together and off
+    /// the serial lock; a branch whose line is sent back is left out, and the answer says which
+    /// and why.
     pub async fn prepare(&self, args: &serde_json::Value, data_dir: &std::path::Path) -> anyhow::Result<String> {
         let mouth = self
             .mouth
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("this rung has no mouth; there is nothing to prepare"))?;
-        let mut branches = super::prepared::parse(args, data_dir, SAY_MAX_CHARS)
+        let (matter, branches) = super::prepared::parse(args, data_dir, SAY_MAX_CHARS)
             .await
             .map_err(anyhow::Error::msg)?;
         const ALREADY: &str = "not prepared — they have already replied since this turn began; \
                                their message drives your next turn";
         if branches.is_empty() {
-            mouth.prepared.set(branches, Vec::new()).await;
-            return Ok("cleared — nothing is prepared".into());
+            mouth.prepared.set(&matter, branches, Vec::new()).await;
+            return Ok(format!("cleared — nothing is prepared for \"{matter}\""));
         }
         if !super::prepared::enabled() {
             return Ok("not prepared — prepared branches are switched off on this install".into());
         }
         if !crate::body::capabilities::decision::available() {
-            return Ok("not prepared — nothing is configured to read their next message against \
+            return Ok("not prepared — nothing is configured to read their messages against \
                        these, so none of them could run"
                 .into());
         }
@@ -450,31 +447,44 @@ impl ToolSink {
             async move { (i, speech.review_prepared(&condition, &text).await) }
         }))
         .await;
-        let mut sent_back = Vec::new();
+        let mut sent_back = std::collections::BTreeMap::new();
         for (i, review) in reads {
-            if let super::legibility::check::Review::SendBack(note) = review
-                && !branches[i].actions.is_empty()
-            {
-                branches[i].actions.clear();
-                sent_back.push(format!("the line for \"{}\" was sent back ({note})", branches[i].condition));
+            if let super::legibility::check::Review::SendBack(note) = review {
+                sent_back.entry(i).or_insert(note);
             }
         }
         // The reads take time, and they may have replied during it.
         if mouth.floor.unheard() {
             return Ok(ALREADY.into());
         }
-        let (directions, ready) =
-            (branches.len(), branches.iter().filter(|b| !b.actions.is_empty()).count());
-        mouth.prepared.set(branches, mouth.speech.said_since_their_last()).await;
-        let mut ack = format!(
-            "prepared — {directions} direction{}, {ready} with actions; their next message runs \
-             at most one, and your next turn is told what ran",
-            if directions == 1 { "" } else { "s" }
-        );
-        if !sent_back.is_empty() {
+        let notes: Vec<String> = sent_back
+            .iter()
+            .map(|(i, note)| format!("the line for \"{}\" was sent back ({note})", branches[*i].condition))
+            .collect();
+        let kept: Vec<_> = branches
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !sent_back.contains_key(i))
+            .map(|(_, b)| b)
+            .collect();
+        let directions = kept.len();
+        let evicted = mouth.prepared.set(&matter, kept, mouth.speech.said_since_their_last()).await;
+        let mut ack = if directions == 0 {
+            format!("not prepared — every line was sent back, so nothing is prepared for \"{matter}\"")
+        } else {
+            format!(
+                "prepared \"{matter}\" — {directions} direction{}; it waits until they take this \
+                 matter up, runs at most one, and your next turn is told what ran",
+                if directions == 1 { "" } else { "s" }
+            )
+        };
+        if !notes.is_empty() {
+            ack.push_str(&format!(". {} — so that direction is left out; prepare again to change it", notes.join("; ")));
+        }
+        if !evicted.is_empty() {
             ack.push_str(&format!(
-                ". {} — so that direction runs nothing; prepare again to change it",
-                sent_back.join("; ")
+                ". To make room, what was prepared for {} is gone",
+                evicted.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ")
             ));
         }
         Ok(ack)
@@ -609,6 +619,7 @@ mod tests {
                 unanswered: Arc::new(super::super::unanswered::Unanswered::default()),
                 prepared: Arc::new(super::super::prepared::Prepared::new(
                     crate::foundation::observatory::Observatory::new(None),
+                    None,
                 )),
                 // An empty screen: a claim reads it and nothing here ever writes one.
                 views: crate::foundation::server::ViewBus::load(std::path::Path::new(

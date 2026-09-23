@@ -1014,7 +1014,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // described the wrong rung in the wrong place.
         //
         // `hi_prepare` is not a third expression channel. It says and shows nothing itself: it
-        // sets what the other two will do if the person's next message goes where Reaction
+        // sets what the other two will do when the person takes a matter where Reaction
         // expects (`docs/arch/agents.md#prepared-branches`), which is why it is Reaction's —
         // the words and the screen are.
         Some("reaction") => vec![say_tool(), show_tool(), prepare_tool(), send_message_tool()],
@@ -1385,50 +1385,52 @@ fn system_one_tool() -> Value {
     )
 }
 
-/// The `hi_show` tool — put a view on the screen. The reaction's one expression
-/// tool beyond speech: it shows a view a worker already built (by `ref`), or a
-/// trivial inline one. Shared by the reaction surface and the legacy fallback.
-/// `hi_prepare` — where the conversation may go next, and what Reaction would do there.
+/// `hi_prepare` — where a matter may go next, and what Reaction would do there.
 ///
 /// **Not a message, so not `hi_say`.** A message is an act — now, final. A prepared set is a
-/// state: one choice about a moment that may come next, replaced whole by calling again, run
-/// only if the person's next message meets one of its branches, and usually discarded. The
-/// two meet only when a branch runs, and then its lines are ordinary messages. See
-/// `docs/arch/agents.md#prepared-branches`.
+/// state: one matter's choice about a moment that may come, replaced whole by preparing that
+/// matter again, run only if a message of the person's meets one of its branches, and used up
+/// once one takes the matter anywhere. The two meet only when a branch runs, and then its
+/// lines are ordinary messages. See `docs/arch/agents.md#prepared-branches`.
 fn prepare_tool() -> Value {
     tool(
         "hi_prepare",
-        "Prepare for where the conversation may go next, so that if their next message goes \
-         there, you act at once instead of a whole turn later. Call it after hi_say, when what \
-         you just said leaves a narrow next move — you proposed something, asked a question \
-         with a small answer space, handed over something whose follow-up is obvious. One call \
-         is the whole set: a few mutually exclusive branches, each a `condition` (where their \
-         next message goes, in plain words — 'agrees to A and attaches nothing', 'asks to see \
-         the numbers') and the `actions` you would take there, in order, written exactly as \
-         you would call them: {tool: 'hi_say', text}, {tool: 'hi_show', ref, op, id}, {tool: \
-         'hi_send_message', to, message}. Their next message runs at most one branch, and only \
-         when it plainly goes there without attaching a condition — otherwise nothing runs and \
-         your next turn is as always. A branch with no actions is a direction you recognize \
-         but would think about; list it, so it is not mistaken for another. Calling again \
-         replaces the set; an empty list clears it; anything else that happens before their \
-         message — a line you send after this, another turn — voids it. A line may claim only \
-         what is true the instant it runs: after a hi_send_message, 'I'm on it' is true and \
-         'done' is not. When a branch runs, your next turn is told what ran — carry on from \
-         there, don't repeat it. Every action is checked now; one that could not run refuses \
-         the whole call.",
+        "Prepare for where a matter may go next, so that when they take it there you act at \
+         once instead of a whole turn later. Call it after hi_say, when what you just said leaves \
+         a narrow next move — you proposed something, asked a question with a small answer \
+         space, handed over something whose follow-up is obvious. One call is one `matter` (a \
+         few words naming what it is about) and its whole set: a few mutually exclusive \
+         branches, each a `condition` (where they take it, in plain words — 'agrees to A and \
+         attaches nothing', 'asks to see the numbers') and the `actions` you would take there, \
+         in order, written exactly as you would call them: {tool: 'hi_say', text}, {tool: \
+         'hi_show', ref, op, id}, {tool: 'hi_send_message', to, message}. Every branch has \
+         actions; a direction you would only think about is no branch — leave it out. A set \
+         waits for its matter, across other subjects, turns and restarts: when a message of \
+         theirs plainly goes one of its ways without attaching a condition, that branch runs; \
+         when one takes the matter anywhere else, the set is used up and your turn is as \
+         always; a message about something else leaves it. Preparing the same matter again \
+         replaces its set; an empty list clears it; your window lists what is ready — clear \
+         or replace what would no longer be right. A line may claim only what is true the \
+         instant it runs: after a hi_send_message, 'I'm on it' is true and 'done' is not. \
+         When a branch runs, your next turn is told what ran — carry on from there, don't \
+         repeat it. Every action is checked now; one that could not run refuses the whole call.",
         json!({
             "type": "object",
             "properties": {
+                "matter": {
+                    "type": "string",
+                    "description": "What these branches are about, in a few words. The same words replace its set."
+                },
                 "branches": {
                     "type": "array",
-                    "description": "The whole set, mutually exclusive. Empty clears.",
+                    "description": "The matter's whole set, mutually exclusive. Empty clears it.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "condition": { "type": "string", "description": "Where their next message goes, in plain words, specific enough that agreement with a condition attached does not fit it." },
+                            "condition": { "type": "string", "description": "Where they take the matter, in plain words, specific enough that agreement with a condition attached does not fit it." },
                             "actions": {
                                 "type": "array",
-                                "description": "In order; the first that does not happen stops the rest. Empty: recognized, nothing ready.",
+                                "description": "In order, at least one; the first that does not happen stops the rest.",
                                 "items": {
                                     "type": "object",
                                     "properties": {
@@ -1445,15 +1447,18 @@ fn prepare_tool() -> Value {
                                 }
                             }
                         },
-                        "required": ["condition"]
+                        "required": ["condition", "actions"]
                     }
                 }
             },
-            "required": ["branches"],
+            "required": ["matter", "branches"],
         }),
     )
 }
 
+/// The `hi_show` tool — put a view on the screen. The reaction's one expression
+/// tool beyond speech: it shows a view a worker already built (by `ref`), or a
+/// trivial inline one. Shared by the reaction surface and the legacy fallback.
 fn show_tool() -> Value {
     tool(
         "hi_show",
