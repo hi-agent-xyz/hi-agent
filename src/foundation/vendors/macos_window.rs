@@ -10,13 +10,14 @@
 //! on its own, but [`KeyWindow`] still overrides `canBecomeKeyWindow` /
 //! `canBecomeMainWindow` as a belt-and-braces guarantee that the web view's text input
 //! takes keystrokes even though the app runs Accessory (no Dock icon). The mask carries
-//! `Titled | Closable | Miniaturizable | Resizable`, so the standard titlebar handles
-//! dragging and the traffic lights close/minimize the window. The window opts into
+//! `Titled | Closable | Miniaturizable | Resizable`, so the window is movable
+//! and resizable and the traffic lights close/minimize the window. The window opts into
 //! `FullScreenPrimary` collection behavior so the green button enters native full-screen
-//! (⌥-click still zooms). Double-clicking the title-bar strip zooms (maximize / restore):
-//! AppKit's own handler for that never fires because `FullSizeContentView` puts our
-//! content under the transparent titlebar, so [`KeyWindow`] catches the double-click in
-//! `sendEvent:` and drives `zoom:` itself.
+//! (⌥-click still zooms). Dragging the title-bar strip moves the window and
+//! double-clicking it zooms (maximize / restore): AppKit's own handlers for both never
+//! fire because `FullSizeContentView` puts our content under the transparent titlebar,
+//! so [`KeyWindow`] catches the mouse-down in `sendEvent:` and drives
+//! `performWindowDragWithEvent:` / `zoom:` itself.
 //!
 //! **The frame is the user's, not ours.** Moving and resizing a window is the person
 //! arranging their own desktop, so the window keeps the frame they left it at — every
@@ -37,8 +38,8 @@
 //! the page turns into a [`BAR_H`]-tall top inset every occupant of the stage pads by, agent
 //! views included. Background still paints through it; nothing readable sits in it. Because
 //! the web view
-//! now covers the titlebar's drag region, a transparent [`DragView`] strip on top restores
-//! window dragging; the window background colour ([`apply_face_theme`]) survives only as the
+//! now covers the titlebar's drag region, [`KeyWindow`] restores window dragging in the
+//! strip itself; the window background colour ([`apply_face_theme`]) survives only as the
 //! pre-paint / live-resize fallback, and the centered `NSTextField` title floats over the
 //! page, clearing the traffic lights on the left.
 //!
@@ -264,31 +265,40 @@ define_class!(
             true
         }
 
-        /// Double-click the title-bar strip to zoom (maximize) and back — the standard
-        /// macOS title-bar gesture. AppKit's own handler for it never fires here: with
-        /// `FullSizeContentView` the content view (our web view + centered label) spans
-        /// under the transparent titlebar, so the double-click lands on our content, not
-        /// the native title-bar view. We catch it in the window's event funnel instead —
-        /// `sendEvent:` sees every event dispatched to the window regardless of which
-        /// subview would handle it — and drive `zoom:` ourselves.
+        /// Drag the title-bar strip to move the window; double-click it to zoom
+        /// (maximize) and back — the standard macOS title-bar gestures. AppKit's own
+        /// handlers never fire here: with `FullSizeContentView` the content view (our web
+        /// view + centered label) spans under the transparent titlebar, so the mouse-down
+        /// lands on our content, not the native title-bar view. We catch it in the
+        /// window's event funnel instead — `sendEvent:` sees every event dispatched to the
+        /// window regardless of which subview would handle it.
+        ///
+        /// The drag is started explicitly with `performWindowDragWithEvent:` rather than
+        /// left to a transparent overlay answering `mouseDownCanMoveWindow`: that implicit
+        /// drag region stopped moving the window on macOS 27, and the explicit call does
+        /// not depend on how AppKit computes one.
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
-            // A left double-click landing in the title-bar strip (top `BAR_H` points),
-            // but clear of the traffic lights on the left. `locationInWindow` is in base
+            // A left mouse-down landing in the title-bar strip (top `BAR_H` points), but
+            // clear of the traffic lights on the left. `locationInWindow` is in base
             // coordinates (origin bottom-left); with `FullSizeContentView` the content
             // view spans the full height, so the strip is the top `BAR_H` of it.
-            let in_titlebar_zoom_zone = event.r#type() == NSEventType::LeftMouseDown
-                && event.clickCount() == 2
-                && {
-                    let loc = event.locationInWindow();
-                    let height = self.contentView().map_or(0.0, |v| v.bounds().size.height);
-                    loc.y >= height - BAR_H && loc.x >= TRAFFIC_LIGHT_W
-                };
-            if in_titlebar_zoom_zone {
-                // SAFETY: main-thread AppKit call; `zoom:` toggles between the user frame
-                // and the zoomed (standard) frame, i.e. maximize / restore.
-                unsafe {
-                    let _: () = msg_send![self, zoom: core::ptr::null_mut::<AnyObject>()];
+            let in_titlebar_strip = event.r#type() == NSEventType::LeftMouseDown && {
+                let loc = event.locationInWindow();
+                let height = self.contentView().map_or(0.0, |v| v.bounds().size.height);
+                loc.y >= height - BAR_H && loc.x >= TRAFFIC_LIGHT_W
+            };
+            if in_titlebar_strip {
+                if event.clickCount() == 2 {
+                    // SAFETY: main-thread AppKit call; `zoom:` toggles between the user
+                    // frame and the zoomed (standard) frame, i.e. maximize / restore.
+                    unsafe {
+                        let _: () = msg_send![self, zoom: core::ptr::null_mut::<AnyObject>()];
+                    }
+                } else {
+                    // Runs AppKit's own window-move tracking loop until mouse-up; a click
+                    // that never moves is simply a no-op.
+                    self.performWindowDragWithEvent(event);
                 }
                 return;
             }
@@ -297,28 +307,6 @@ define_class!(
             unsafe {
                 let _: () = msg_send![super(self), sendEvent: event];
             }
-        }
-    }
-);
-
-define_class!(
-    // A transparent strip laid over the top `BAR_H` of the web view to restore window
-    // dragging there. Once the web view fills the whole window it covers the titlebar's
-    // native drag region, and `WKWebView` (interactive content) reports
-    // `mouseDownCanMoveWindow == false`, so a drag on the strip would otherwise be eaten
-    // by the page instead of moving the window. This view draws nothing (the web view
-    // shows through it) and just answers `true`, handing drags in the strip back to the
-    // window. Double-clicks still zoom: `KeyWindow::send_event` catches those in the
-    // window's event funnel before they ever reach a subview.
-    #[unsafe(super(NSView))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "HiAgentTitlebarDrag"]
-    struct DragView;
-
-    impl DragView {
-        #[unsafe(method(mouseDownCanMoveWindow))]
-        fn mouse_down_can_move_window(&self) -> bool {
-            true
         }
     }
 );
@@ -578,25 +566,10 @@ pub fn install(mtm: MainThreadMarker, url: &str, data_dir: PathBuf) {
         // theme setting) so the native chrome matches the web content.
         apply_face_theme(&window, &label, &data_dir);
 
-        // Transparent drag strip across the top `BAR_H`, pinned to the top edge and
-        // stretching horizontally — restores window dragging over the region the web view
-        // now covers (see [`DragView`]). Draws nothing, so the page shows through.
-        let drag: Retained<DragView> = msg_send![
-            DragView::alloc(mtm),
-            initWithFrame: NSRect::new(
-                NSPoint::new(0.0, WINDOW_H - BAR_H),
-                NSSize::new(WINDOW_W, BAR_H),
-            )
-        ];
-        drag.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewMinYMargin,
-        );
-
-        // Content view, back to front: the full-window web view, the transparent drag strip
-        // over its top edge, then the title label floating above both in the bar strip.
+        // Content view, back to front: the full-window web view, then the title label
+        // floating above it in the bar strip. Dragging that strip is [`KeyWindow`]'s.
         let container = NSView::initWithFrame(NSView::alloc(mtm), full);
         container.addSubview(&webview);
-        container.addSubview(&drag);
         container.addSubview(&label);
         let _: () = msg_send![&*window, setContentView: &*container];
         std::mem::forget(container);
