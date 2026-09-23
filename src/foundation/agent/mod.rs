@@ -77,6 +77,10 @@ pub struct SpawnConfig {
     pub program: PathBuf,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// Codex's own state directory (also on the env as `CODEX_HOME`). Held here as a
+    /// path rather than read back out of the env because this is where each spawn
+    /// writes its model catalog — see [`AgentConfig::catalog_arg`].
+    pub codex_home: PathBuf,
 }
 
 /// The per-session subprocess spawner. Cloneable handle; clones share one config.
@@ -227,10 +231,28 @@ impl AgentLayer {
         let mut env = spawn.env.clone();
         env.extend(cfg.auth_child_env());
 
+        // The model catalog is re-written and re-named here for the same reason the key
+        // is re-read: both describe the model this child is about to run, and both can
+        // change under a live host. It rides the command line rather than the thread
+        // config because codex reads it once at startup — see `AgentConfig::catalog_arg`.
+        //
+        // **Ahead of the subcommand**, which is where `codex -c key=value app-server`
+        // documents it. The flag is `global`, so clap would take it after `app-server`
+        // too, but the documented position is the one the next codex bump is least
+        // likely to move.
+        let args = match cfg.catalog_arg(&spawn.codex_home) {
+            Some(arg) => {
+                let mut with_catalog = vec!["-c".to_string(), arg];
+                with_catalog.extend(spawn.args.iter().cloned());
+                with_catalog
+            }
+            None => spawn.args.clone(),
+        };
+
         tracing::info!(role = role.as_str(), cwd = ?cwd, "spawning codex subprocess for session");
         let (process, rx) = CodexProcess::spawn(
             spawn.program.clone(),
-            spawn.args.clone(),
+            args,
             env,
             self.inner.tap.clone(),
             role.as_str().to_string(),
@@ -606,6 +628,7 @@ mod tests {
                 program: PathBuf::from("/bin/false"),
                 args: Vec::new(),
                 env: Vec::new(),
+                codex_home: data_dir.join("codex-home"),
             },
             data_dir,
             WireTap::new(),

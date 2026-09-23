@@ -351,6 +351,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
             program: runtime.codex_bin.clone(),
             args: vec!["app-server".to_string(), "--stdio".to_string()],
             env: child_env,
+            codex_home: codex_home.clone(),
         },
         config.data_dir.clone(),
         wire_tap,

@@ -13,6 +13,8 @@
 
 use std::path::Path;
 
+pub mod catalog;
+
 /// Default upstream base URL when the stored LLM base URL is empty.
 ///
 /// Codex speaks the OpenAI **Responses** wire, so this is a `/v1` provider root, not a
@@ -246,6 +248,10 @@ pub struct AgentConfig {
     pub small: Option<String>,
     pub effort: Option<String>,
     pub upstream_key: String,
+    /// What `model` is made of, as the broker published it — the input to
+    /// [`catalog::install`]. Unknown under BYOK and on any model the broker has no
+    /// number for; codex then keeps its own fallback metadata.
+    pub facts: crate::foundation::credentials::ModelFacts,
 }
 
 // Hand-written so the upstream credential never lands in logs (`Config` derives
@@ -258,6 +264,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("small", &self.small)
             .field("effort", &self.effort)
             .field("upstream_key", &"<redacted>")
+            .field("facts", &self.facts)
             .finish()
     }
 }
@@ -293,13 +300,19 @@ impl AgentConfig {
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty());
         use crate::foundation::credentials::get_setting;
-        Self::new(
+        let facts = llm.facts;
+        let mut cfg = Self::new(
             model,
             small,
             get_setting(data_dir, KEY_EFFORT),
             llm.base_url,
             llm.api_key,
-        )
+        );
+        // Set after `new` rather than through it: the facts describe the model that
+        // came out of the store, and every other caller of `new` is building a config
+        // by hand, where there is no model to have facts about.
+        cfg.facts = facts;
+        cfg
     }
 
     /// Whether an upstream key is configured. When false the agent is inert: it
@@ -329,7 +342,28 @@ impl AgentConfig {
             small,
             effort,
             upstream_key,
+            facts: Default::default(),
         }
+    }
+
+    /// Write this spawn's model catalog into `codex_home` and return the `-c` argument
+    /// naming it, or `None` when there is nothing to say about the model (see
+    /// [`catalog::render`]).
+    ///
+    /// The third output of this type, beside [`thread_config`](Self::thread_config) and
+    /// [`child_env`](Self::child_env), and the only one that is neither: codex reads
+    /// `model_catalog_json` once, when the process builds its models manager, so it can
+    /// ride neither the per-thread config map nor the environment. A command-line
+    /// override is the startup layer a host can still reach.
+    ///
+    /// **The path is left unquoted on purpose.** Codex parses a `-c` value as TOML and
+    /// keeps the raw string when that fails, which is what an absolute path does. Adding
+    /// quotes to "be safe" makes it worse, not better: a Windows path inside a TOML
+    /// basic string turns `C:\Users` into an invalid `\U` escape, so the parse fails and
+    /// the literal that survives still has the quote marks in it.
+    pub fn catalog_arg(&self, codex_home: &Path) -> Option<String> {
+        let path = catalog::install(codex_home, self.model.as_deref(), self.facts)?;
+        Some(format!("{}={}", catalog::CONFIG_KEY, path.display()))
     }
 
     /// The codex config overrides a thread should open with: which model, over which

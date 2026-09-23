@@ -17,7 +17,8 @@ use anyhow::Context;
 use serde::Deserialize;
 
 use crate::foundation::credentials::{
-    Credentials, Energy, Identity, LlmCredentials, Managed, ModelOffer, Mode, Tokens, VendorKey,
+    Credentials, Energy, Identity, LlmCredentials, Managed, ModelFacts, ModelOffer, Mode, Tokens,
+    VendorKey,
 };
 
 /// Env override for the broker base URL (default [`DEFAULT_BROKER_URL`]).
@@ -119,6 +120,14 @@ struct ModelDto {
     /// the client reuses `model` for that slot. Only meaningful on the LLM task.
     #[serde(default)]
     small: String,
+    /// Total context window in tokens, 0 when the broker has no number for this
+    /// model. A *fact*, unlike the scores below — see
+    /// [`ModelFacts`](crate::foundation::credentials::ModelFacts).
+    #[serde(default)]
+    context: i64,
+    /// Whether the model has a reasoning mode.
+    #[serde(default)]
+    reasoning: bool,
     #[serde(default)]
     quality: i64,
     // Parsed for round-trip + a future weighted policy; selection uses quality today.
@@ -170,12 +179,30 @@ fn openai_responses_base(url: &str) -> String {
 ///
 /// Takes the highest-`quality` model on that wire, plus its optional `small` companion
 /// for the background slot.
-fn pick_llm_wire(c: &ConfigsDto) -> Option<(String, String, Option<String>, Option<String>)> {
+///
+/// The chosen model's **facts** ride along, and only that model's: this slot names one
+/// model to run, so the menu's other rows describe models nothing here will open.
+/// (`small` gets none of its own — nothing runs it as a thread model today; it is the
+/// fallback `reaction_model` reaches for only when no main model is configured at all.)
+fn pick_llm_wire(c: &ConfigsDto) -> Option<LlmCredentials> {
     let w = c.get("text-generation")?.get(BROKER_LLM_WIRE)?;
     let best = w.models.iter().max_by_key(|m| m.quality);
     let model = best.map(|m| m.model.trim().to_string()).filter(|s| !s.is_empty());
     let small = best.map(|m| m.small.trim().to_string()).filter(|s| !s.is_empty());
-    Some((openai_responses_base(w.url.trim()), w.api_key.clone(), model, small))
+    // Facts belong to the model, so they only travel with one. A wire that offered no
+    // usable model name leaves them unknown rather than describing nothing.
+    let facts = match (&model, best) {
+        (Some(_), Some(m)) => ModelFacts { context: m.context.max(0), reasoning: m.reasoning },
+        _ => ModelFacts::default(),
+    };
+    Some(LlmCredentials {
+        wire: BROKER_LLM_WIRE.to_string(),
+        base_url: openai_responses_base(w.url.trim()),
+        api_key: w.api_key.clone(),
+        model,
+        small,
+        facts,
+    })
 }
 
 /// Collapse the broker menu into the internal per-slot [`Managed`], selecting the
@@ -236,15 +263,7 @@ fn managed_from(c: &ConfigsDto) -> Managed {
         });
         slots
     };
-    let llm = pick_llm_wire(c)
-        .map(|(base_url, api_key, model, small)| LlmCredentials {
-            wire: BROKER_LLM_WIRE.to_string(),
-            base_url,
-            api_key,
-            model,
-            small,
-        })
-        .unwrap_or_default();
+    let llm = pick_llm_wire(c).unwrap_or_default();
     Managed {
         llm,
         stt: wires_for("automatic-speech-recognition"),
@@ -862,6 +881,39 @@ mod tests {
         assert_eq!(managed.llm.api_key, "tok");
         assert_eq!(managed.llm.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(managed.llm.small, None);
+    }
+
+    /// The model's facts ride the same pick its name does, and they belong to *that*
+    /// model — the runner-up's window must not follow the winner's name.
+    #[test]
+    fn the_chosen_models_facts_come_with_it() {
+        let configs: ConfigsDto = serde_json::from_value(serde_json::json!({
+            "text-generation": {
+                "openai-responses": {
+                    "url": "https://songguo.example/v1/responses",
+                    "api_key": "tok",
+                    "models": [
+                        { "model": "gpt-5.5", "quality": 96, "context": 1_050_000, "reasoning": true },
+                        { "model": "gpt-5.4-mini", "quality": 78, "context": 400_000, "reasoning": true }
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+
+        let managed = managed_from(&configs);
+        assert_eq!(managed.llm.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(managed.llm.facts.context, 1_050_000);
+        assert!(managed.llm.facts.reasoning);
+    }
+
+    /// A broker too old to publish facts is not an error and not a guess: the slot
+    /// reads unknown, and codex keeps its own fallback metadata.
+    #[test]
+    fn an_older_broker_publishes_no_facts_and_that_is_fine() {
+        let managed = managed_from(&text_generation_configs());
+        assert_eq!(managed.llm.model.as_deref(), Some("gpt-5.5"));
+        assert!(managed.llm.facts.is_unknown());
     }
 
     /// The broker still lists `anthropic-messages` for installs that used to drive

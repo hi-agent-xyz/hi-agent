@@ -404,6 +404,24 @@ capability, silently, at boot. The LLM is the one
 deliberate exception — its wire *is* the agent runtime, so a second wire there is a second
 engine, not a second config.
 
+**The menu carries facts about a model as well as scores.** How big a model's context
+window is, and whether it reasons at all, are not editorial the way quality and price
+are — they are properties of the thing, and getting them wrong is not a worse choice but
+a broken one. They ride the menu because **the menu is the only place that knows which
+models exist**: it is served, it changes without a client release, and a table compiled
+into the client is wrong about precisely the models added after it shipped. A model the
+broker has no number for says so, and every reader then falls back to its own default
+rather than to our guess dressed as a fact.
+
+That matters most for the LLM slot, because the agent runtime keeps its own model
+metadata and quietly assumes a small window for anything it does not recognise — which,
+for a runtime built around one vendor's models, is every model we run. An agent told its
+window is a quarter of its real size discards three quarters of its context, on every
+session, and reports nothing. So the broker's facts are rendered into whatever shape the
+runtime wants and handed over at spawn. **Rendering is the client's job, not the
+broker's**: the broker describes a model as its vendor sells it, and which runtime is
+being fed is not a thing it should have to know.
+
 ## User-added
 
 Equipped by the person, because only they can: an account logged in, an API key handed over,

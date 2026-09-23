@@ -189,6 +189,39 @@ pub struct LlmCredentials {
     /// Only the managed (broker) path sets this today.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub small: Option<String>,
+    /// What `model` is *made of*, as the broker published it — see [`ModelFacts`].
+    /// Default (an unknown window) under BYOK, where nobody published anything.
+    #[serde(default, skip_serializing_if = "ModelFacts::is_unknown")]
+    pub facts: ModelFacts,
+}
+
+/// The facts about a model that its *runtime* needs and cannot work out: how many
+/// tokens it holds, and whether it reasons at all.
+///
+/// Here rather than in codex's vocabulary because these describe the model as the
+/// vendor sells it. Codex wants a much larger metadata record and hi-agent renders one
+/// from these (see [`crate::foundation::config::catalog`]); the broker publishes the
+/// two things it actually knows.
+///
+/// **Unknown is a real state and stays one.** A context window nobody published is 0,
+/// and the renderer writes no catalog entry at all rather than inventing a number —
+/// codex's own fallback is then what applies, which is the behaviour we already have.
+#[derive(Clone, Copy, Default, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct ModelFacts {
+    /// Total context window in tokens; 0 = nobody told us.
+    pub context: i64,
+    /// Whether the model has a reasoning mode. Meaningless when `context` is 0 —
+    /// the two only ever arrive together, from the broker's menu.
+    pub reasoning: bool,
+}
+
+impl ModelFacts {
+    /// Whether these facts say anything. A zero window means the model was never
+    /// described, and every consumer treats that as "use your own default".
+    pub fn is_unknown(&self) -> bool {
+        self.context <= 0
+    }
 }
 
 impl LlmCredentials {
@@ -451,6 +484,7 @@ impl std::fmt::Debug for LlmCredentials {
             .field("api_key", &redact(&self.api_key))
             .field("model", &self.model)
             .field("small", &self.small)
+            .field("facts", &self.facts)
             .finish()
     }
 }
@@ -531,6 +565,13 @@ mod db {
             -- `capabilities::init` loads back, so anything not written is simply
             -- gone by the time the capability asks.
             models   TEXT,
+            -- What `model` is made of (see `ModelFacts`), stored for the same reason
+            -- `models` is: `AgentConfig` re-reads this row at every codex spawn, not
+            -- just the boot that fetched it, so a fact left unwritten is gone by the
+            -- second session. NULL/0 = never published (BYOK, or a model the broker
+            -- has no number for).
+            context   INTEGER,
+            reasoning INTEGER,
             -- Keyed by wire as well as feature: one capability holds one row per wire
             -- its source offers, and the capability picks among them. See `Managed`.
             PRIMARY KEY (mode, feature, wire)
@@ -599,6 +640,12 @@ mod db {
         if !column_exists(conn, "credential", "models")? {
             conn.execute_batch("ALTER TABLE credential ADD COLUMN models TEXT")?;
         }
+        if !column_exists(conn, "credential", "context")? {
+            conn.execute_batch("ALTER TABLE credential ADD COLUMN context INTEGER")?;
+        }
+        if !column_exists(conn, "credential", "reasoning")? {
+            conn.execute_batch("ALTER TABLE credential ADD COLUMN reasoning INTEGER")?;
+        }
         widen_credential_key(conn)?;
         drop_credential_carrier(conn)?;
         Ok(())
@@ -611,6 +658,12 @@ mod db {
     /// changed: an old store held at most one row per `(mode, feature)`, which is
     /// exactly one row per `(mode, feature, wire)` too — and the broker refills the
     /// managed rows at boot anyway.
+    ///
+    /// **This table must list every column [`migrate`] adds above it**, because it
+    /// rebuilds the table from scratch *after* those adds have run: a column missing
+    /// here is one that gets added and then silently dropped again, on exactly the old
+    /// stores the add was written for, and `migrate` has already passed the branch that
+    /// would put it back.
     fn widen_credential_key(conn: &Connection) -> anyhow::Result<()> {
         if key_includes_wire(conn)? {
             return Ok(());
@@ -618,18 +671,20 @@ mod db {
         conn.execute_batch(
             "BEGIN;
              CREATE TABLE credential_new (
-                 mode     TEXT NOT NULL,
-                 feature  TEXT NOT NULL,
-                 wire     TEXT NOT NULL DEFAULT '',
-                 base_url TEXT NOT NULL DEFAULT '',
-                 api_key  TEXT NOT NULL DEFAULT '',
-                 model    TEXT,
-                 small    TEXT,
-                 models   TEXT,
+                 mode      TEXT NOT NULL,
+                 feature   TEXT NOT NULL,
+                 wire      TEXT NOT NULL DEFAULT '',
+                 base_url  TEXT NOT NULL DEFAULT '',
+                 api_key   TEXT NOT NULL DEFAULT '',
+                 model     TEXT,
+                 small     TEXT,
+                 models    TEXT,
+                 context   INTEGER,
+                 reasoning INTEGER,
                       PRIMARY KEY (mode, feature, wire)
              );
-             INSERT INTO credential_new (mode, feature, wire, base_url, api_key, model, small, models)
-                 SELECT mode, feature, wire, base_url, api_key, model, small, models FROM credential;
+             INSERT INTO credential_new (mode, feature, wire, base_url, api_key, model, small, models, context, reasoning)
+                 SELECT mode, feature, wire, base_url, api_key, model, small, models, context, reasoning FROM credential;
              DROP TABLE credential;
              ALTER TABLE credential_new RENAME TO credential;
              COMMIT;",
@@ -851,21 +906,6 @@ mod db {
         Ok(out)
     }
 
-    /// The `(wire, base_url, api_key, model, small)` tuple for one `(mode, feature)`,
-    /// or `None` when no row exists. `small` is only meaningful for the llm feature.
-    fn read_row(
-        conn: &Connection,
-        mode: Mode,
-        feature: &str,
-    ) -> anyhow::Result<Option<(String, String, String, Option<String>, Option<String>)>> {
-        Ok(conn
-            .query_row(
-                "SELECT wire, base_url, api_key, model, small FROM credential WHERE mode = ?1 AND feature = ?2",
-                params![mode_str(mode), feature],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
-            .optional()?)
-    }
 
     /// Every wire stored for one `(mode, feature)`, in the order they were written —
     /// which is the order the source ranked them, so the first is the best.
@@ -902,15 +942,30 @@ mod db {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// The one LLM row for `(mode, feature)`, or the unconfigured default when no row
+    /// exists. `small` and `facts` are only meaningful for the llm feature, which is
+    /// the only feature stored this way.
     fn read_llm(conn: &Connection, mode: Mode, feature: &str) -> anyhow::Result<LlmCredentials> {
-        Ok(read_row(conn, mode, feature)?
-            .map(|(wire, base_url, api_key, model, small)| LlmCredentials {
-                wire,
-                base_url,
-                api_key,
-                model,
-                small,
-            })
+        Ok(conn
+            .query_row(
+                "SELECT wire, base_url, api_key, model, small, context, reasoning
+                 FROM credential WHERE mode = ?1 AND feature = ?2",
+                params![mode_str(mode), feature],
+                |r| {
+                    Ok(LlmCredentials {
+                        wire: r.get(0)?,
+                        base_url: r.get(1)?,
+                        api_key: r.get(2)?,
+                        model: r.get(3)?,
+                        small: r.get(4)?,
+                        facts: ModelFacts {
+                            context: r.get::<_, Option<i64>>(5)?.unwrap_or_default(),
+                            reasoning: r.get::<_, Option<bool>>(6)?.unwrap_or_default(),
+                        },
+                    })
+                },
+            )
+            .optional()?
             .unwrap_or_default())
     }
 
@@ -985,35 +1040,24 @@ mod db {
         // key, changing wires under an upsert leaves the old row behind as a second
         // answer to a question that has one.
         clear_feature(conn, mode, feature)?;
-        write_row(
-            conn,
-            mode,
-            feature,
-            &llm.wire,
-            &llm.base_url,
-            &llm.api_key,
-            llm.model.as_deref(),
-            llm.small.as_deref(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn write_row(
-        conn: &Connection,
-        mode: Mode,
-        feature: &str,
-        wire: &str,
-        base_url: &str,
-        api_key: &str,
-        model: Option<&str>,
-        small: Option<&str>,
-    ) -> anyhow::Result<()> {
         conn.execute(
-            "INSERT INTO credential (mode, feature, wire, base_url, api_key, model, small) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO credential (mode, feature, wire, base_url, api_key, model, small, context, reasoning)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(mode, feature, wire) DO UPDATE SET
                  base_url = excluded.base_url, api_key = excluded.api_key,
-                 model = excluded.model, small = excluded.small",
-            params![mode_str(mode), feature, wire, base_url, api_key, model, small],
+                 model = excluded.model, small = excluded.small,
+                 context = excluded.context, reasoning = excluded.reasoning",
+            params![
+                mode_str(mode),
+                feature,
+                llm.wire,
+                llm.base_url,
+                llm.api_key,
+                llm.model.as_deref(),
+                llm.small.as_deref(),
+                llm.facts.context,
+                llm.facts.reasoning,
+            ],
         )?;
         Ok(())
     }
@@ -1182,6 +1226,61 @@ mod tests {
         assert_eq!(back.energy.as_ref().unwrap().remaining, 70);
         assert_eq!(back.identity.as_ref().unwrap().email, "iloahz@example.com");
         assert_eq!(back.identity.as_ref().unwrap().tier, "standard");
+    }
+
+    /// **Why the facts are columns and not derived at boot.** `AgentConfig` re-reads
+    /// this store at every codex spawn, not only on the boot that fetched the menu, so
+    /// a fact the store drops is a fact the second session of the day does not have —
+    /// and that session would silently run on codex's fallback window with nothing
+    /// saying why.
+    #[test]
+    fn model_facts_survive_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        Credentials {
+            mode: Mode::Xiaoyuanzhu,
+            managed: Some(Managed {
+                llm: LlmCredentials {
+                    base_url: "https://songguo.xiaoyuanzhu.com/v1".into(),
+                    api_key: "sg-secret".into(),
+                    model: Some("deepseek-v4-flash".into()),
+                    facts: ModelFacts { context: 1_000_000, reasoning: true },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .save(dir.path())
+        .unwrap();
+
+        let back = Credentials::load(dir.path());
+        let llm = back.effective().unwrap().llm.clone();
+        assert_eq!(llm.model.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(llm.facts, ModelFacts { context: 1_000_000, reasoning: true });
+        assert!(!llm.facts.is_unknown());
+    }
+
+    /// A BYOK row stores no facts and must read back as *unknown*, not as a zero that
+    /// some later reader mistakes for a real window.
+    #[test]
+    fn byok_stores_no_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        Credentials {
+            mode: Mode::Byok,
+            llm: LlmCredentials {
+                api_key: "sk-byok".into(),
+                model: Some("some-local-model".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .save(dir.path())
+        .unwrap();
+
+        let back = Credentials::load(dir.path());
+        let llm = back.effective().unwrap().llm.clone();
+        assert_eq!(llm.model.as_deref(), Some("some-local-model"));
+        assert!(llm.facts.is_unknown());
     }
 
     #[test]
