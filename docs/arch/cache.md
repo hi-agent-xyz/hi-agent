@@ -88,8 +88,13 @@ no signature, and is served by the core as before. The edge does not know shares
 |---|---|---|---|
 | **master** | the broker, the edge function (as a secret) | derives every handle's key | never leaves the community |
 | **`K_handle` = HMAC-SHA256(master, handle)** | that handle's core | signs its session cookies | reads of its own `cache/<handle>/` at the edge |
-| **COS read key** | the edge function (as a secret) | reads the bucket | `cache/*`, read-only |
+| **the community's COS key** | the broker, the edge function | mints STS credentials; reads the bucket | the whole bucket — never on a person's machine |
 | **STS write credential** | the core, ~1 hour, refreshed | puts objects | `cache/<handle>/*`, write-only |
+
+**The edge reads with the community's own COS key, not a read-only key of its own.** Both
+places it lives — the broker's box and the edge function — are inside the community's cloud
+account, and whoever can read a secret out of one can reach the other; a second, narrower key
+would guard nothing an attacker in either place does not already have.
 
 **A person can see only their own keys, and their own keys open only their own bytes.** A core
 runs on its owner's machine, so its owner can read `K_handle` and the STS credential out of
