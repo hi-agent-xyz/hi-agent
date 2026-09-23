@@ -218,7 +218,7 @@ pub async fn get_drive_file(
         // A `Last-Modified` validator is second-best to an `ETag` — a file written
         // twice inside one second is indistinguishable — but this server has no
         // ETag anywhere to build on, and second-best revalidation beats none.
-        // `docs/arch/topology.md` § *Content* Open 3 carries the rest.
+        // `docs/arch/cache.md` § *Open* 5 carries the rest.
         "no-cache",
         "not found\n",
     )

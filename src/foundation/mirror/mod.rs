@@ -1,90 +1,64 @@
-//! Mirroring — immutable bytes leave this machine ahead of being asked for, and a
-//! request that came through the tunnel for one is answered with a redirect to the
-//! community's cache instead of the bytes.
+//! Mirroring — immutable bytes leave this machine ahead of being asked for, so the
+//! edge in front of `<handle>.hi-agent.xyz` can answer them at this core's own
+//! paths, from the community's bucket, instead of through the tunnel.
 //!
-//! See `docs/arch/topology.md` § *Content*. The short of it: the relay is an
-//! 11 Mbps box, a conversation fits through it and a photograph does not, so
-//! content takes a second path — uploaded from here straight to a bucket, over an
-//! uplink that is otherwise idle, and fetched by the app from the edge in front of
-//! that bucket.
+//! See `docs/arch/cache.md`. The short of it: the relay is an 11 Mbps box, a
+//! conversation fits through it and a photograph does not. So an edge function
+//! sits in front of the fronted paths (`/api/media/*`, `/api/attachments/*`) and,
+//! for a session cookie this core signed, answers from the bucket what is there;
+//! anything else comes on to the core, as it always did. **This core never
+//! redirects and never knows whether the edge answered** — a page asks the same
+//! URL on loopback, on a custom domain, and through the community.
 //!
-//! **On this core's own origin.** The edge already fronts `<handle>.hi-agent.xyz`;
-//! it answers `/cache/*` there from the bucket and passes everything else to the
-//! relay. So the redirect is root-relative — `/cache/<handle>/<path>?auth_key=…`,
-//! whose path is the object's key exactly — and the page never meets a second
-//! origin: no CORS, no second name, nothing a view has to know.
+//! This module is the core's whole part in that, and it has two jobs:
+//!
+//! - **Hold the keys.** One answer from the community carries both: `K_handle`,
+//!   which [`crate::foundation::surfaces`] signs `hi_surface` with ([`session_key`]),
+//!   and an hour's STS credential that can only put objects under `cache/<handle>/`.
+//!   Asked for when there is something to upload or no key in hand, never on a
+//!   clock, and kept only in memory. **A refusal withdraws both.**
+//! - **Upload.** At the write ([`enqueue`]), for what a person handed over and for
+//!   an attachment at placement; and on a **miss** ([`layer`]) — a relayed request
+//!   carrying a token signed under this core's current key, for a fronted path,
+//!   reaching the core at all, means the edge looked and did not find it.
 //!
 //! ## What may be mirrored: the response already says
 //!
-//! **A response whose `Cache-Control` says `immutable` may be mirrored, and nothing
-//! else may.** Not a list of routes: the one judgment a person has to make — *do
-//! these bytes ever change?* — is the one that header already asks, and a route
-//! that forgets to say so costs acceleration and nothing else.
+//! **A response under a fronted path, whose `Cache-Control` says `immutable`, at
+//! a plain-ASCII path, is copied, and nothing else is.** Not a list of routes: the
+//! one judgment a person has to make — *do these bytes ever change?* — is the one
+//! that header already asks, and a route that forgets to say so costs acceleration
+//! and nothing else. The key is `cache/<handle>/<request path>`, which the edge
+//! builds from the host and the path it was asked for; plain ASCII so the two
+//! agree byte for byte.
 //!
-//! Two narrower conditions ride on top, both about *serving* from another origin
-//! rather than about the bytes:
-//!
-//! - **The content type is one that cannot resolve anything against its own URL**
-//!   — pictures, sound, video, fonts, PDF. The redirect changes the URL a response
-//!   is read from, and the signature is in its query, so a stylesheet's `url(./x)`
-//!   or a module's `import "./x.js"` would resolve beside it at the edge *without*
-//!   a signature and be refused. Script, style and markup stay here.
-//! - **The path is plain ASCII**, so the path the edge hashes is unambiguously the
-//!   path that was signed.
-//!
-//! ## Only requests that came through the tunnel are redirected
-//!
-//! The cache exists to take content off the tunnel. A request that arrived on a
-//! public bind or over the home network has no tunnel to relieve, and a phone on
-//! the same Wi-Fi would be sent from a local link to a remote edge. So the
-//! redirect needs the [`Relayed`] marker the tunnel puts on what it routes in;
-//! loopback and every other listener are served as they always were.
-//!
-//! ## The two branches
-//!
-//! For a relayed `GET`, the route runs as it always did, and then:
-//!
-//! - mirrored → the body is dropped and a `302` to `/cache/…`, signed, goes back;
-//! - not yet → the bytes go back, as today, and the path is queued for upload.
-//!
-//! **The second branch is a degradation, not an error**: an object that is not
-//! mirrored is exactly as slow as it was before any of this, so there is no flag
-//! day and nothing to migrate. A core with no handle, or a community with no
-//! cache configured, simply takes it forever.
-//!
-//! **Running the route first is what makes the redirect safe.** It costs a `stat`
-//! and an open, and it means the core has checked, at the moment of redirecting,
-//! that the object still exists, still calls itself immutable, and is still the
-//! length that was uploaded. A file deleted here stops being redirected to at
-//! once; one that faded to a keepsake stops claiming immutability and its row is
-//! forgotten; and one whose bytes changed *while still claiming* immutability is
-//! caught, logged by path, and never mirrored again.
+//! **The bucket's copy outlives what the core would still serve** — a faded day,
+//! a deleted file — until its lifecycle drops it. That is accepted
+//! (`docs/arch/cache.md` § *What this accepts*), and nothing here deletes.
 
 mod cos;
 mod credential;
-mod edge;
 mod record;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, LOCATION};
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use axum::middleware::Next;
-use axum::response::{IntoResponse as _, Response};
+use axum::response::Response;
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt as _;
-use axum::body::HttpBody as _;
 use tokio::sync::mpsc;
 use tower::ServiceExt as _;
 
-use crate::foundation::surfaces::Acceptor;
+use crate::foundation::surfaces::{self, Acceptor};
 use crate::foundation::tunnel::{self, Relayed};
 use credential::{Answer, Grant};
 use record::{Records, Row};
@@ -93,10 +67,10 @@ use record::{Records, Row};
 /// so a home connection that drops mid-video loses one part, not the video.
 ///
 /// **That is the whole of the resumability today.** An upload cut off by a restart,
-/// or abandoned after a part failed three times, starts again from nothing the next
-/// time the object is asked for; the parts it left are removed by the bucket's
-/// rule for incomplete uploads. Resuming across a restart would mean keeping the
-/// upload id and part list in the record, which nothing does yet.
+/// or abandoned after a part failed three times, starts again from nothing on the
+/// next miss; the parts it left are removed by the bucket's rule for incomplete
+/// uploads. Resuming across a restart would mean keeping the upload id and part
+/// list in the record, which nothing does yet.
 const PART: usize = 8 * 1024 * 1024;
 
 /// Renew the write key this long before it runs out, so a part is never sent on
@@ -104,10 +78,14 @@ const PART: usize = 8 * 1024 * 1024;
 const WRITE_KEY_MARGIN: chrono::Duration = chrono::Duration::minutes(5);
 
 /// How long to stop asking after the community declined, or could not be reached.
-/// Only demand asks at all — a queued upload, or a request for something already
-/// mirrored — so this bounds how often demand turns into a call, not a timer.
+/// Only demand asks at all — something to upload, or a relayed request while no
+/// key is in hand — so this bounds how often demand turns into a call, not a timer.
 const DECLINED_FOR: Duration = Duration::from_secs(15 * 60);
 const UNREACHABLE_FOR: Duration = Duration::from_secs(5 * 60);
+
+/// A row stops vouching this long before the bucket's lifecycle would drop its
+/// object, for however the bucket rounds its expiry to a day.
+const LIFECYCLE_SLACK: i64 = 86_400;
 
 static MIRROR: OnceLock<Mirror> = OnceLock::new();
 
@@ -115,14 +93,23 @@ struct Mirror {
     data_dir: PathBuf,
     records: Records,
     /// The keys, once the community has handed them over. Read on every relayed
-    /// request for something mirrorable, written about once an hour.
+    /// request and every cookie the gate checks, written about once an hour.
     grant: RwLock<Option<Arc<Grant>>>,
-    queue: mpsc::UnboundedSender<String>,
+    queue: mpsc::UnboundedSender<Job>,
     /// Paths queued and not yet done, so a page of forty pictures asked for twice
     /// queues forty uploads, not eighty.
     pending: Mutex<HashSet<String>>,
+    /// A [`Job::Keys`] is queued and not yet done.
+    asking: AtomicBool,
     /// Unix seconds before which asking again is pointless.
     quiet_until: AtomicI64,
+}
+
+enum Job {
+    /// Put this request path in the bucket, if it wants to be there.
+    Mirror(String),
+    /// Get keys: none are in hand, or the write key has run out.
+    Keys,
 }
 
 /// Start mirroring for this core: open the record and run the uploader.
@@ -146,6 +133,7 @@ pub fn start(data_dir: &Path, router: Router) {
         grant: RwLock::new(None),
         queue,
         pending: Mutex::new(HashSet::new()),
+        asking: AtomicBool::new(false),
         quiet_until: AtomicI64::new(0),
     };
     if MIRROR.set(mirror).is_err() {
@@ -154,114 +142,96 @@ pub fn start(data_dir: &Path, router: Router) {
     tokio::spawn(work(router, rx));
 }
 
+/// The key this core signs session cookies with, while the community grants one.
+///
+/// `None` before the first grant, after a refusal, and on every core the community
+/// is not in front of — whose sessions are then plain ids, as they always were.
+pub fn session_key() -> Option<Arc<[u8]>> {
+    MIRROR.get()?.grant().map(|g| g.sign_key.clone())
+}
+
 /// Queue `path` — a request path this core serves — to be mirrored.
 ///
 /// What a write calls, right after the bytes are durable: **the trigger is the
 /// core writing the file, not someone asking for it.** A photo that arrives is
-/// uploaded while nobody is looking, which is the whole advantage over a cache in
-/// front of the tunnel — that could only ever speed up the second look, and in a
-/// life record the first look is the common case.
+/// uploaded while nobody is looking, so the first look — the common one in a life
+/// record — already finds it at the edge.
 ///
 /// Free when mirroring is off, and harmless for a path that turns out not to be
 /// mirrorable: the uploader asks the route and drops what it will not vouch for.
 pub fn enqueue(path: &str) {
     let Some(m) = MIRROR.get() else { return };
-    if chrono::Utc::now().timestamp() < m.quiet_until.load(Ordering::Relaxed) || !signable(path) {
+    if m.quiet() || !signable(path) {
         return;
     }
     let fresh = m.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_string());
     if fresh {
-        let _ = m.queue.send(path.to_string());
+        let _ = m.queue.send(Job::Mirror(path.to_string()));
     }
 }
 
-/// The layer: between the gate and the routes, so nothing unauthorized is ever
-/// redirected and the route has already answered by the time this decides.
+/// The layer: between the gate and the routes, and only for what came through the
+/// tunnel — nothing else passed an edge that could have answered it.
+///
+/// A relayed request asks for keys when none are in hand, so a core that restarted
+/// signs again from about its first request. And a relayed `GET` whose session is
+/// signed under this core's current key, for a fronted path, is a **miss**: the
+/// edge would have answered it from the bucket had the object been there. If the
+/// route calls its answer immutable, the object goes up.
 pub async fn layer(req: Request, next: Next) -> Response {
-    let relayed = req.extensions().get::<Relayed>().is_some();
-    let Some(m) = MIRROR.get().filter(|_| relayed && req.method() == Method::GET) else {
+    let Some(m) = MIRROR.get().filter(|_| req.extensions().get::<Relayed>().is_some()) else {
         return next.run(req).await;
     };
+    m.want_keys();
     let path = req.uri().path().to_string();
+    let missed = req.method() == Method::GET
+        && m.grant().is_some_and(|g| g.fronts(&path) && surfaces::signed_session(req.headers(), &g.sign_key));
     let resp = next.run(req).await;
-    m.answer(&path, resp)
+    if missed && matches!(resp.status(), StatusCode::OK | StatusCode::PARTIAL_CONTENT) && immutable(resp.headers()) {
+        enqueue(&path);
+    }
+    resp
 }
 
 impl Mirror {
-    fn answer(&self, path: &str, resp: Response) -> Response {
-        let seen = Seen::of(&resp);
-        if !seen.worth_a_look() {
-            return resp;
-        }
-        let row = self.records.get(path);
-        let grant = self.grant.read().unwrap_or_else(|e| e.into_inner()).clone();
-        let now = chrono::Utc::now().timestamp();
-        // **Reads re-ask too, about once an hour.** The grant is otherwise renewed only
-        // for an upload, and a core that is only being looked at would go on signing
-        // for a bucket the community has replaced, or a handle it has renamed, or
-        // after the community stopped granting at all. Once the write key has run out,
-        // a request for anything mirrorable queues its path; the uploader renews on
-        // the way to finding the row fresh, and this request is still redirected on
-        // the keys in hand, so asking costs nobody a wait.
-        if grant.as_ref().is_some_and(|g| g.write.expires_at.timestamp() < now) && row.is_some() {
-            enqueue(path);
-        }
-        match decide(path, &seen, row.as_ref(), grant.as_deref(), now) {
-            Verdict::Serve => resp,
-            Verdict::Enqueue => {
-                enqueue(path);
-                resp
-            }
-            Verdict::Forget => {
-                self.records.forget(path);
-                resp
-            }
-            Verdict::Changed => {
-                // The one failure this design can have, caught: a route that says
-                // its bytes never change, whose bytes changed. The cure is at the
-                // route, and this names it.
-                tracing::warn!(
-                    path,
-                    uploaded = ?row.map(|r| r.len),
-                    now = ?seen.len,
-                    "a response marked immutable changed length; never mirroring it again"
-                );
-                self.records.changed(path);
-                resp
-            }
-            Verdict::Redirect { url, max_age } => {
-                let mut r = StatusCode::FOUND.into_response();
-                if let Ok(v) = HeaderValue::from_str(&url) {
-                    r.headers_mut().insert(LOCATION, v);
-                } else {
-                    return resp;
-                }
-                // Browser-cacheable, so a redirect's round trip is paid once per
-                // object per device, not once per render. `private`: it was issued
-                // because a credential checked out.
-                if let Ok(v) = HeaderValue::from_str(&format!("private, max-age={max_age}")) {
-                    r.headers_mut().insert(CACHE_CONTROL, v);
-                }
-                r
-            }
+    fn grant(&self) -> Option<Arc<Grant>> {
+        self.grant.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn quiet(&self) -> bool {
+        chrono::Utc::now().timestamp() < self.quiet_until.load(Ordering::Relaxed)
+    }
+
+    fn quiet_for(&self, d: Duration) {
+        let until = chrono::Utc::now().timestamp() + d.as_secs() as i64;
+        self.quiet_until.store(until, Ordering::Relaxed);
+    }
+
+    /// Queue a request for keys if none are in hand or the write key has run out —
+    /// the second is also how a refusal, a rotated key or a renamed handle reaches
+    /// a core that is only being looked at, about once an hour.
+    fn want_keys(&self) {
+        let stale = self.grant().is_none_or(|g| g.write.expires_at - chrono::Utc::now() <= WRITE_KEY_MARGIN);
+        if stale && !self.quiet() && !self.asking.swap(true, Ordering::Relaxed) {
+            let _ = self.queue.send(Job::Keys);
         }
     }
 
-    /// The keys for an upload: the ones in hand if they are for this handle and
-    /// have a while left to run, otherwise fresh ones. `None` when there is nothing
+    /// The keys, with a write key that has a while left to run: the ones in hand if
+    /// they are for this handle, otherwise fresh ones. `None` when there is nothing
     /// to upload for — no handle served, or the community declined.
-    async fn grant_for_upload(&self) -> Option<Arc<Grant>> {
+    async fn keys(&self) -> Option<Arc<Grant>> {
         let now = chrono::Utc::now();
-        if now.timestamp() < self.quiet_until.load(Ordering::Relaxed) {
+        if self.quiet() {
             return None;
         }
-        // Nobody can reach this core by name, so nothing will ever be redirected.
+        // Nobody can reach this core by name, so no edge is in front of it.
         let Some(handle) = tunnel::chosen(&self.data_dir).filter(|_| tunnel::on(&self.data_dir))
         else {
-            self.quiet(DECLINED_FOR);
+            self.quiet_for(DECLINED_FOR);
             return None;
         };
-        if let Some(g) = self.grant.read().unwrap_or_else(|e| e.into_inner()).clone() {
+        if let Some(g) = self.grant() {
             if g.handle == handle && g.write.expires_at - now > WRITE_KEY_MARGIN {
                 return Some(g);
             }
@@ -274,54 +244,46 @@ impl Mirror {
                 Some(g)
             }
             Ok(Answer::Declined(why)) => {
-                // Declining to mint is how a core's access is withdrawn, so the read
-                // key goes too: no redirect is issued on the strength of old keys.
+                // Declining to mint is how a core's access is withdrawn, so the sign
+                // key goes too: no session is signed on the strength of old keys.
                 tracing::info!(%handle, %why, "the community declined a cache grant; serving every object from here");
                 *self.grant.write().unwrap_or_else(|e| e.into_inner()) = None;
-                self.quiet(DECLINED_FOR);
+                self.quiet_for(DECLINED_FOR);
                 None
             }
             Err(e) => {
-                // Unreachable is not declined: keep signing redirects for what is
-                // already up there, and try again shortly.
+                // Unreachable is not declined: keep signing with the key in hand, and
+                // try again shortly.
                 tracing::warn!(%handle, error = %format!("{e:#}"), "could not get a cache grant");
-                self.quiet(UNREACHABLE_FOR);
+                self.quiet_for(UNREACHABLE_FOR);
                 None
             }
         }
     }
 
-    fn quiet(&self, d: Duration) {
-        let until = chrono::Utc::now().timestamp() + d.as_secs() as i64;
-        self.quiet_until.store(until, Ordering::Relaxed);
-    }
-
     /// Mirror one path, if it wants mirroring and the keys are to hand.
     async fn mirror_one(&self, router: &Router, path: &str) -> anyhow::Result<()> {
-        let Some(grant) = self.grant_for_upload().await else { return Ok(()) };
+        let Some(grant) = self.keys().await else { return Ok(()) };
         let now = chrono::Utc::now().timestamp();
-        if let Some(row) = self.records.get(path) {
-            if row.changed || (row.target == grant.target() && fresh(&row, &grant, now)) {
-                return Ok(());
-            }
+        if !grant.fronts(path) || self.records.get(path).is_some_and(|row| fresh(&row, &grant, now)) {
+            return Ok(());
         }
 
         let mut req = Request::get(path).body(Body::empty())?;
         req.extensions_mut().insert(Acceptor::Loopback);
         let resp = router.clone().oneshot(req).await.unwrap_or_else(|e| match e {});
-        let seen = Seen::of(&resp);
-        if seen.status != StatusCode::OK || !seen.immutable || !seen.mirrorable {
+        if resp.status() != StatusCode::OK || !immutable(resp.headers()) {
             return Ok(());
         }
-        let content_type = header(&resp, CONTENT_TYPE);
-        let cache_control = header(&resp, CACHE_CONTROL);
+        let content_type = header(resp.headers(), CONTENT_TYPE);
+        let cache_control = header(resp.headers(), CACHE_CONTROL);
         let meta = cos::Meta { content_type: &content_type, cache_control: &cache_control };
 
         let key = grant.key(path);
         let target = grant.target();
         let bucket = Renewing { mirror: self, current: tokio::sync::Mutex::new(None), grant };
         let total = upload(&bucket, &key, &meta, resp.into_body()).await?;
-        self.records.uploaded(path, &target, total, chrono::Utc::now().timestamp());
+        self.records.uploaded(path, &target, chrono::Utc::now().timestamp());
         tracing::info!(path, bytes = total, "mirrored");
         Ok(())
     }
@@ -408,7 +370,7 @@ impl Renewing<'_> {
             None if lasts(&self.grant) => self.grant.clone(),
             _ => self
                 .mirror
-                .grant_for_upload()
+                .keys()
                 .await
                 .ok_or_else(|| anyhow::anyhow!("the write key ran out and no new one was granted"))?,
         };
@@ -442,20 +404,28 @@ impl Bucket for Renewing<'_> {
     }
 }
 
-/// The uploader: one object at a time, in the order they were written.
+/// The uploader: one job at a time, in the order they came.
 ///
 /// **One at a time is the whole of "low priority" today.** The design asks for
 /// uploads to run when the uplink is otherwise idle, and nothing here measures
 /// that yet: a large upload does share the uplink with the tunnel while it runs.
 /// Sequential bounds that to one stream; watching the tunnel's own traffic is what
 /// would finish the job.
-async fn work(router: Router, mut rx: mpsc::UnboundedReceiver<String>) {
+async fn work(router: Router, mut rx: mpsc::UnboundedReceiver<Job>) {
     let Some(m) = MIRROR.get() else { return };
-    while let Some(path) = rx.recv().await {
-        if let Err(e) = m.mirror_one(&router, &path).await {
-            tracing::warn!(path, error = %format!("{e:#}"), "mirroring failed; it is served from here until asked for again");
+    while let Some(job) = rx.recv().await {
+        match job {
+            Job::Keys => {
+                m.keys().await;
+                m.asking.store(false, Ordering::Relaxed);
+            }
+            Job::Mirror(path) => {
+                if let Err(e) = m.mirror_one(&router, &path).await {
+                    tracing::warn!(path, error = %format!("{e:#}"), "mirroring failed; it is served from here until the next miss");
+                }
+                m.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&path);
+            }
         }
-        m.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&path);
     }
 }
 
@@ -479,107 +449,21 @@ where
     unreachable!()
 }
 
-/// What a response says about itself, as far as mirroring cares.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Seen {
-    status: StatusCode,
-    immutable: bool,
-    mirrorable: bool,
-    /// The whole object's length — the body's for a `200`, `Content-Range`'s
-    /// total for a `206`. Unknown for a compressed body, which none of the
-    /// mirrorable types get.
-    len: Option<u64>,
-}
-
-impl Seen {
-    fn of(resp: &Response) -> Self {
-        let h = resp.headers();
-        let len = if resp.status() == StatusCode::PARTIAL_CONTENT {
-            text(h, CONTENT_RANGE).rsplit('/').next().and_then(|t| t.trim().parse().ok())
-        } else {
-            text(h, CONTENT_LENGTH).parse().ok().or_else(|| resp.body().size_hint().exact())
-        };
-        Seen {
-            status: resp.status(),
-            immutable: text(h, CACHE_CONTROL).to_ascii_lowercase().contains("immutable"),
-            mirrorable: mirrorable(text(h, CONTENT_TYPE)),
-            len,
-        }
-    }
-
-    /// Everything else — every API call, every page — is passed straight through
-    /// without touching the record.
-    fn worth_a_look(&self) -> bool {
-        matches!(self.status, StatusCode::OK | StatusCode::PARTIAL_CONTENT) && self.mirrorable
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Verdict {
-    Serve,
-    Enqueue,
-    Forget,
-    Changed,
-    Redirect { url: String, max_age: u64 },
-}
-
-fn decide(path: &str, seen: &Seen, row: Option<&Row>, grant: Option<&Grant>, now: i64) -> Verdict {
-    if !seen.worth_a_look() {
-        return Verdict::Serve;
-    }
-    if !seen.immutable || !signable(path) {
-        // It was mirrored and no longer claims to be immutable — a picture that
-        // faded to its keepsake. Stop naming the copy.
-        return match row {
-            Some(r) if !r.changed => Verdict::Forget,
-            _ => Verdict::Serve,
-        };
-    }
-    let Some(row) = row else { return Verdict::Enqueue };
-    if row.changed {
-        return Verdict::Serve;
-    }
-    if seen.len.is_some_and(|len| len != row.len) {
-        return Verdict::Changed;
-    }
-    // Mirrored, but the keys are not in hand yet — after a restart, typically.
-    // Queueing is what fetches them; the uploader will find the row and stop there.
-    let Some(grant) = grant else { return Verdict::Enqueue };
-    if row.target != grant.target() || !fresh(row, grant, now) {
-        return Verdict::Enqueue;
-    }
-    Verdict::Redirect {
-        url: grant.read.signed_url(&format!("/{}", grant.key(path)), now),
-        max_age: grant.read.redirect_max_age(),
-    }
-}
-
-/// Is the bucket still certain to hold what was uploaded, for as long as a redirect
-/// issued now can be followed?
+/// Is the bucket still certain to hold what was uploaded under this grant?
 ///
-/// Its lifecycle rule expires an object `lifetime` after upload. A redirect issued
-/// now names a URL that works for up to one signature validity, so a row stops
-/// vouching that long before the lifecycle — and a day more, for however the
-/// bucket rounds its expiry to a day. A lifetime too short to leave anything is
-/// never fresh: every object is served from here, which is slow and correct.
+/// Its lifecycle rule expires an object `lifetime` after upload; a row stops
+/// vouching a day before that. A lifetime too short to leave anything is never
+/// fresh, and every miss uploads again — slow and correct.
 fn fresh(row: &Row, grant: &Grant, now: i64) -> bool {
-    let lifetime = grant.lifetime.as_secs() as i64;
-    let margin = grant.read.valid.as_secs() as i64 + 86_400;
-    row.uploaded_at + lifetime - margin > now
+    row.target == grant.target() && row.uploaded_at + grant.lifetime.as_secs() as i64 - LIFECYCLE_SLACK > now
 }
 
-/// Pictures, sound, video, fonts, PDF: bytes that cannot resolve anything against
-/// the URL they were read from. See the module docs for why that is the line.
-fn mirrorable(content_type: &str) -> bool {
-    let t = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
-    (t.starts_with("image/") && t != "image/svg+xml")
-        || t.starts_with("video/")
-        || t.starts_with("audio/")
-        || t.starts_with("font/")
-        || t == "application/pdf"
+fn immutable(h: &HeaderMap) -> bool {
+    header(h, CACHE_CONTROL).to_ascii_lowercase().contains("immutable")
 }
 
-/// Plain enough that the path the edge hashes is, byte for byte, the one signed.
+/// Plain enough that the key the edge builds from the path it was asked for is,
+/// byte for byte, the one uploaded.
 fn signable(path: &str) -> bool {
     path.len() <= 1024
         && path.starts_with('/')
@@ -588,12 +472,8 @@ fn signable(path: &str) -> bool {
         && !path.split('/').any(|s| s == "." || s == "..")
 }
 
-fn text(h: &HeaderMap, name: HeaderName) -> &str {
-    h.get(name).and_then(|v| v.to_str().ok()).unwrap_or("")
-}
-
-fn header(resp: &Response, name: HeaderName) -> String {
-    text(resp.headers(), name).to_string()
+fn header(h: &HeaderMap, name: HeaderName) -> String {
+    h.get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -604,148 +484,72 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    fn seen(status: u16, immutable: bool, len: Option<u64>) -> Seen {
-        Seen { status: StatusCode::from_u16(status).unwrap(), immutable, mirrorable: true, len }
-    }
-
     fn grant() -> Grant {
         Grant {
             handle: "ana".into(),
             bucket: "cache-1".into(),
             region: "ap-beijing".into(),
             prefix: "cache/ana/".into(),
+            paths: vec!["/api/media/".into(), "/api/attachments/".into()],
             write: cos::WriteKey {
                 secret_id: "id".into(),
                 secret_key: "k".into(),
                 token: "t".into(),
                 expires_at: chrono::Utc::now(),
             },
-            read: edge::ReadKey {
-                param: "auth_key".into(),
-                key: "k".into(),
-                valid: Duration::from_secs(86_400),
-            },
+            sign_key: Arc::from(&b"k"[..]),
             lifetime: Duration::from_secs(30 * 86_400),
         }
-    }
-
-    fn row(len: u64, uploaded_at: i64) -> Row {
-        Row { target: "cache-1/cache/ana/".into(), len, uploaded_at, changed: false }
     }
 
     const P: &str = "/api/media/file/2026-09-22/14/03-22.jpg";
     const NOW: i64 = 1_800_000_000;
 
     #[test]
-    fn a_mirrored_object_is_redirected_to_its_own_key() {
+    fn the_key_is_the_request_path_under_the_handle() {
+        assert_eq!(grant().key(P), "cache/ana/api/media/file/2026-09-22/14/03-22.jpg");
+    }
+
+    #[test]
+    fn only_fronted_paths_are_mirrored() {
         let g = grant();
-        match decide(P, &seen(200, true, Some(10)), Some(&row(10, NOW)), Some(&g), NOW) {
-            Verdict::Redirect { url, max_age } => {
-                // Root-relative: the edge answers `/cache/*` on this core's own origin.
-                assert!(url.starts_with(
-                    "/cache/ana/api/media/file/2026-09-22/14/03-22.jpg?auth_key="
-                ));
-                assert_eq!(max_age, 43_200);
-            }
-            v => panic!("{v:?}"),
-        }
+        assert!(g.fronts(P));
+        assert!(g.fronts("/api/attachments/ab12/preview"));
+        assert!(!g.fronts("/views/_shots/0a1b.png"));
+        assert!(!g.fronts("/assets/index.js"));
     }
 
-    /// A seek is a `206`; its length is the whole object's, from `Content-Range`.
+    /// A row vouches until a day before the lifecycle drops its object, and only
+    /// for the bucket and prefix it went up under.
     #[test]
-    fn a_range_request_is_redirected_too() {
+    fn a_row_is_fresh_for_its_own_target_until_a_day_before_the_lifecycle() {
         let g = grant();
-        let v = decide(P, &seen(206, true, Some(10)), Some(&row(10, NOW)), Some(&g), NOW);
-        assert!(matches!(v, Verdict::Redirect { .. }));
+        let row = |at| Row { target: "cache-1/cache/ana/".into(), uploaded_at: at };
+        assert!(fresh(&row(NOW), &g, NOW));
+        assert!(fresh(&row(NOW - 29 * 86_400 + 60), &g, NOW));
+        assert!(!fresh(&row(NOW - 29 * 86_400), &g, NOW));
+        let other = Row { target: "cache-1/cache/bob/".into(), uploaded_at: NOW };
+        assert!(!fresh(&other, &g, NOW));
     }
 
     #[test]
-    fn nothing_mirrored_yet_serves_the_bytes_and_queues_the_upload() {
-        assert_eq!(decide(P, &seen(200, true, Some(10)), None, Some(&grant()), NOW), Verdict::Enqueue);
-    }
-
-    /// After a restart the record is there and the keys are not: serve, and let
-    /// queueing fetch them.
-    #[test]
-    fn a_mirrored_object_without_keys_in_hand_is_served_here() {
-        assert_eq!(decide(P, &seen(200, true, Some(10)), Some(&row(10, NOW)), None, NOW), Verdict::Enqueue);
-    }
-
-    #[test]
-    fn the_route_decides_what_is_mirrorable_not_the_path() {
-        assert_eq!(decide(P, &seen(200, false, Some(10)), None, Some(&grant()), NOW), Verdict::Serve);
-        let mut s = seen(200, true, Some(10));
-        s.mirrorable = false;
-        assert_eq!(decide(P, &s, None, Some(&grant()), NOW), Verdict::Serve);
-        assert_eq!(decide(P, &seen(404, true, None), Some(&row(10, NOW)), Some(&grant()), NOW), Verdict::Serve);
-    }
-
-    /// A picture faded to its keepsake no longer says immutable; the copy of the
-    /// original must stop being named at once.
-    #[test]
-    fn a_path_that_stops_claiming_immutable_is_forgotten() {
-        assert_eq!(
-            decide(P, &seen(200, false, Some(3)), Some(&row(10, NOW)), Some(&grant()), NOW),
-            Verdict::Forget
-        );
+    fn immutable_is_read_off_cache_control() {
+        let mut h = HeaderMap::new();
+        assert!(!immutable(&h));
+        h.insert(CACHE_CONTROL, "private, max-age=31536000, Immutable".parse().unwrap());
+        assert!(immutable(&h));
+        h.insert(CACHE_CONTROL, "private, max-age=31536000".parse().unwrap());
+        assert!(!immutable(&h));
     }
 
     #[test]
-    fn a_length_that_changed_under_an_immutable_label_is_caught() {
-        assert_eq!(
-            decide(P, &seen(200, true, Some(11)), Some(&row(10, NOW)), Some(&grant()), NOW),
-            Verdict::Changed
-        );
-        let mut r = row(10, NOW);
-        r.changed = true;
-        assert_eq!(decide(P, &seen(200, true, Some(10)), Some(&r), Some(&grant()), NOW), Verdict::Serve);
-    }
-
-    /// A renamed handle or a new bucket reads as not mirrored; so does a row the
-    /// bucket's lifecycle is about to catch up with.
-    #[test]
-    fn a_row_for_another_target_or_near_its_expiry_is_uploaded_again() {
-        let mut other = row(10, NOW);
-        other.target = "cache-1/cache/bob/".into();
-        assert_eq!(decide(P, &seen(200, true, Some(10)), Some(&other), Some(&grant()), NOW), Verdict::Enqueue);
-        // 30-day lifecycle, 1-day signatures: a row vouches for 28 days.
-        let old = row(10, NOW - 28 * 86_400);
-        assert_eq!(decide(P, &seen(200, true, Some(10)), Some(&old), Some(&grant()), NOW), Verdict::Enqueue);
-        let young = row(10, NOW - 28 * 86_400 + 60);
-        assert!(matches!(
-            decide(P, &seen(200, true, Some(10)), Some(&young), Some(&grant()), NOW),
-            Verdict::Redirect { .. }
-        ));
-    }
-
-    /// A redirect is followable for a whole signature validity after it is issued, so
-    /// a lifecycle that leaves no room for one never redirects at all.
-    #[test]
-    fn a_lifetime_shorter_than_a_signature_redirects_nothing() {
-        let mut g = grant();
-        g.lifetime = Duration::from_secs(2 * 86_400);
-        assert_eq!(decide(P, &seen(200, true, Some(10)), Some(&row(10, NOW)), Some(&g), NOW), Verdict::Enqueue);
-    }
-
-    #[test]
-    fn only_plain_paths_are_signed() {
+    fn only_plain_paths_are_mirrored() {
         assert!(signable(P));
-        assert!(signable("/views/_shots/0a1b.png"));
         assert!(!signable("/api/media/drive/照片.jpg"));
         assert!(!signable("/api/media/a%20b.jpg"));
         assert!(!signable("/api/media/../x"));
         assert!(!signable("api/media/x"));
         assert!(!signable("/a//b"));
-    }
-
-    #[test]
-    fn only_bytes_that_resolve_nothing_are_mirrorable() {
-        for t in ["image/jpeg", "video/mp4", "audio/mpeg", "font/woff2", "application/pdf", "image/png; x=y"] {
-            assert!(mirrorable(t), "{t}");
-        }
-        for t in ["text/javascript", "text/css", "text/html", "image/svg+xml", "application/json", ""] {
-            assert!(!mirrorable(t), "{t}");
-        }
     }
 
     /// Records every call, and fails the part numbered `fail_part` every time.
@@ -844,19 +648,5 @@ mod tests {
         assert_eq!(calls.iter().filter(|c| c.starts_with("part U 2")).count(), 3, "{calls:?}");
         assert_eq!(calls.last().map(String::as_str), Some("abort U"));
         assert!(!calls.iter().any(|c| c.starts_with("complete")));
-    }
-
-    #[test]
-    fn seen_reads_the_whole_length_off_a_range() {
-        let r = axum::http::Response::builder()
-            .status(206)
-            .header(CONTENT_RANGE, "bytes 0-1/481633429")
-            .header(CONTENT_TYPE, "video/mp4")
-            .header(CACHE_CONTROL, "private, max-age=31536000, immutable")
-            .body(Body::from("01"))
-            .unwrap();
-        let s = Seen::of(&r);
-        assert_eq!(s.len, Some(481_633_429));
-        assert!(s.immutable && s.mirrorable);
     }
 }

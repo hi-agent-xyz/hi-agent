@@ -200,9 +200,10 @@ pub fn revoke(data_dir: &Path, id: &str) -> anyhow::Result<bool> {
 
 // ── sessions ─────────────────────────────────────────────────────────────────
 
-/// One live session: the hash of its token, the credential it stands on, and when
-/// it lapses. Never carries the token — that exists once, in the `Set-Cookie` that
-/// hands it over, exactly like a credential.
+/// One live session: the hash of its id — the token's `<id>` part, or the whole of
+/// an unsigned one — the credential it stands on, and when it lapses. Never
+/// carries the id — that exists only in the `Set-Cookie` that hands it over,
+/// exactly like a credential.
 #[derive(Debug, Clone)]
 pub struct Session {
     pub hash: String,

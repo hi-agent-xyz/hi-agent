@@ -856,9 +856,10 @@ pub fn build(
     };
 
     // The mirror, just inside the gate: a request reaches it only once it is
-    // authorized, and it decides after the route has answered — a relayed request
-    // for an immutable picture that is already in the community's cache gets a
-    // redirect there instead of the bytes. See [`crate::foundation::mirror`].
+    // authorized, and it reads the route's answer — a relayed request for an
+    // immutable picture the edge should have answered from the community's bucket
+    // puts that picture there. It never changes a response. See
+    // [`crate::foundation::mirror`].
     let router = router.layer(axum::middleware::from_fn(crate::foundation::mirror::layer));
 
     // The gate, outside every route including the appearance router and the

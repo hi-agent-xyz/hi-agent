@@ -52,8 +52,9 @@ const REDIAL_MAX: Duration = Duration::from_secs(60);
 
 /// Marks a request as routed in over the tunnel — the one fact the mirror needs
 /// that [`Acceptor`] does not carry. Both a public bind and the tunnel are off-box;
-/// only the tunnel runs through an 11 Mbps relay, so only a request that took it
-/// is worth sending to the cache instead. See [`crate::foundation::mirror`].
+/// only the tunnel has the community's edge in front of it, so only a request that
+/// took it can be one the edge should have answered. See
+/// [`crate::foundation::mirror`].
 #[derive(Debug, Clone, Copy)]
 pub struct Relayed;
 

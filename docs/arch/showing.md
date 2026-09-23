@@ -146,7 +146,7 @@ bubble and on a shared page, and improving the video player improves it everywhe
    Changing how a thumbnail is made is a spec version, never a migration.
 5. **One address, one route, one type table.** Every byte the face fetches for an attachment comes
    from one handler that streams, answers ranges, and declares `immutable` — which is true by
-   construction, and is what [topology.md](topology.md#content) uses to mirror content to the
+   construction, and is what [cache.md](cache.md) uses to mirror content to the
    edge before anybody asks for it.
 6. **Pull is free to fill; push is judgment.** A worker puts evidence on its task's record
    without asking anyone — that surface is visited, not imposed, and visited more than the
@@ -189,8 +189,9 @@ original changes; elsewhere it costs the bytes, and the same picture placed twic
 object.
 
 **Kept.** Objects are not collected: keep-biased, as the rest of `data/` is ([Forgetting](data.md#forgetting)).
-Removing one is an explicit forget, and a forget reaches the edge's mirror too
-([topology.md § Open](topology.md#open)). The derived cache has a size bound and evicts least
+Removing one is an explicit forget. A copy already mirrored is not deleted with it — the core
+stops serving it at once, and the bucket's lifecycle drops the copy within 30 days
+([cache.md § What this accepts](cache.md#what-this-accepts)). The derived cache has a size bound and evicts least
 recently used entries **when it writes**, never on a timer.
 
 ### What the host does at placement
@@ -261,7 +262,7 @@ mark before pictures existed; the preview replaces it when it lands.
   `Content-Security-Policy: sandbox`; an SVG's preview is a raster. Something meant to run is a
   view, and views have their own path.
 - **Mirrored like everything immutable.** Placement enqueues the upload
-  ([topology.md § Uploading](topology.md#uploading-a-queue-with-that-second-branch-as-its-backstop)),
+  ([cache.md § Uploading](cache.md#uploading)),
   so by the time the person opens Home on their phone the bytes are at the edge. Through the
   tunnel a 39 MB clip is 28 seconds at the measured 11 Mbps; from the edge it is not the
   tunnel's problem.
@@ -528,7 +529,7 @@ Each phase compiles, ships, and is worth having without the next.
 - [`surfaces.md`](surfaces.md) § *Channels*: the rich-content row takes an attachment or a view.
 - [`message.md`](message.md): an agent's `Content::File` exists.
 - [`sharing.md`](sharing.md): a share is of an attachment or a view.
-- [`topology.md`](topology.md) § *Content*: the attachment routes in the mirrored table.
+- [`cache.md`](cache.md): the attachment routes in the mirrored table.
 - [`stage.md`](stage.md) § 1: the attachment viewer is bundled, beside the conversation.
 - [`arch.md`](arch.md) § *Contents*: this document; [`../data-dir-layout.md`](../data-dir-layout.md): the tree.
 

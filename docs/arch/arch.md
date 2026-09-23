@@ -179,6 +179,7 @@ Each is a statement we can test, and each has a real failure behind it.
 | Doc | Covers |
 |---|---|
 | [`topology.md`](topology.md) | core, app and community — where the parts run, how a person is addressed, how an app proves it may reach one |
+| [`cache.md`](cache.md) | a core's pictures served from the edge at the core's own paths — the signed session, the keys, what is mirrored and when |
 | [`surfaces.md`](surfaces.md) | surfaces, channels, carriers — how the world reaches the agent and back |
 | [`mechanisms.md`](mechanisms.md) | the one seam where the core does the asking — reaching an app's screen, input and accessibility across the process boundary |
 | [`signal-attribution.md`](signal-attribution.md) | who a signal came from — the three source classes, the owner, and keeping "unknown" |

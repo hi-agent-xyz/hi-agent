@@ -43,6 +43,12 @@
 //! alternative — a second refresh token — would add a credential type to do what
 //! extending one row does.
 //!
+//! **The cookie carries its own proof** — `<id>.<exp>.<sig>`, the signature an
+//! HMAC under this core's key from the community — so the edge in front of
+//! `<handle>.hi-agent.xyz` can serve mirrored bytes to it without asking here
+//! (`docs/arch/cache.md` § *The credential*). This module never trusts the
+//! signature: it looks up `<id>`, and a token with no dots is all `<id>`.
+//!
 //! ## Three ways a surface is admitted
 //!
 //! A credential, a one-time pairing code, or **asking**: an unadmitted device
@@ -128,7 +134,7 @@ pub fn accepted_on(router: axum::Router, acceptor: Acceptor) -> axum::Router {
 }
 
 /// What a successful authorization was: which credential, how it was presented,
-/// and whether the presented session just had its life extended.
+/// and the session token to hand back, if the presented one should be replaced.
 ///
 /// The presentation matters — a bearer header cannot be sent ambiently by another
 /// site, so CSRF only applies to the cookie.
@@ -136,9 +142,9 @@ pub fn accepted_on(router: axum::Router, acceptor: Acceptor) -> axum::Router {
 struct Authorized {
     presented: Presented,
     credential_id: String,
-    /// The gate re-sends the cookie when this is set, so the browser's copy agrees
-    /// with the row behind it.
-    renewed: bool,
+    /// Set when the session was extended, or is not signed under this core's
+    /// current key and could be — the gate re-sends the cookie with this token.
+    reissue: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,14 +325,11 @@ impl Surfaces {
         };
 
         store::touch(&self.data_dir, &credential_id);
-        let session = random_token();
-        store::session_insert(
-            &self.data_dir,
-            &hash(&session),
-            &credential_id,
-            Utc::now() + delta(SESSION_TTL),
-        )
-        .ok()?;
+        let id = random_token();
+        let expires_at = Utc::now() + delta(SESSION_TTL);
+        store::session_insert(&self.data_dir, &hash(&id), &credential_id, expires_at).ok()?;
+        let key = crate::foundation::mirror::session_key();
+        let session = session_token(&id, expires_at.timestamp(), key.as_deref());
         Some((session, credential_id, minted))
     }
 
@@ -349,18 +352,20 @@ impl Surfaces {
                 return Some(Authorized {
                     presented: Presented::Bearer,
                     credential_id: id,
-                    renewed: false,
+                    reissue: None,
                 });
             }
             self.note_failure();
         }
         if let Some(session) = cookie(headers, SESSION_COOKIE) {
-            if let Some((id, renewed)) = self.session_of(&session) {
-                store::touch(&self.data_dir, &id);
+            if let Some(live) = self.session_of(&session) {
+                store::touch(&self.data_dir, &live.credential_id);
+                let key = crate::foundation::mirror::session_key();
+                let reissue = reissue(&session, &live, key.as_deref());
                 return Some(Authorized {
                     presented: Presented::Cookie,
-                    credential_id: id,
-                    renewed,
+                    credential_id: live.credential_id,
+                    reissue,
                 });
             }
             self.note_failure();
@@ -368,22 +373,21 @@ impl Surfaces {
         None
     }
 
-    /// Resolve a presented session, extending it when it is far enough into its
-    /// life. Returns `(credential_id, renewed)`.
+    /// Resolve a presented session by its `<id>`, extending it when it is far
+    /// enough into its life.
     ///
-    /// **The same token is re-sent, not rotated.** Rotation would break concurrent
-    /// in-flight requests from one page — several fetches start before any of them
-    /// returns the new cookie, and whichever lands last wins — for a guarantee
-    /// nothing here relies on: the row is what revocation removes, and it is
-    /// removed by id either way.
+    /// **Renewing changes the token, and that breaks nothing.** The new one carries
+    /// the new `<exp>`, but the old one still names the same row here and an
+    /// unexpired `<exp>` at the edge, so the fetches a page already has in flight
+    /// with it all succeed, and whichever `Set-Cookie` lands last is fine.
     ///
     /// How far into its life is read off `expires_at` rather than a second column:
     /// the row was written with `expires_at = written + SESSION_TTL`, so the
     /// subtraction says when, and it stays right after a renewal with nothing to
     /// keep in step. A failed renewal write reports `false` rather than re-sending
     /// a cookie that claims more than the row does.
-    fn session_of(&self, token: &str) -> Option<(String, bool)> {
-        let want = hash(token);
+    fn session_of(&self, token: &str) -> Option<Live> {
+        let want = hash(session_id(token));
         let rows = store::session_live(&self.data_dir).ok()?;
         let mut found = None;
         for s in rows {
@@ -395,10 +399,15 @@ impl Surfaces {
 
         let now = Utc::now();
         let written = session.expires_at - delta(SESSION_TTL);
+        let extended = now + delta(SESSION_TTL);
         let renewed = now - written > delta(RENEW_AFTER)
-            && store::session_renew(&self.data_dir, &session.hash, now + delta(SESSION_TTL))
-                .is_ok();
-        Some((session.credential_id, renewed))
+            && store::session_renew(&self.data_dir, &session.hash, extended).is_ok();
+        Some(Live {
+            id: session_id(token).to_string(),
+            credential_id: session.credential_id,
+            expires_at: if renewed { extended } else { session.expires_at }.timestamp(),
+            renewed,
+        })
     }
 
     /// Ask to be let in under `label`, returning `(id, code, secret)` — or `None`
@@ -563,6 +572,67 @@ impl Surfaces {
     }
 }
 
+/// A presented session that checked out.
+#[derive(Debug)]
+struct Live {
+    /// The `<id>` part of the token — the whole token, for an unsigned one.
+    id: String,
+    credential_id: String,
+    /// Unix seconds, after any renewal.
+    expires_at: i64,
+    renewed: bool,
+}
+
+/// The token to replace a presented one with, if any: after a renewal, so the
+/// browser's `<exp>` agrees with the row; and whenever this core holds a key the
+/// presented token is not signed under — a session from before the key arrived, or
+/// before it rotated — so it heals on its next request and nobody signs in again.
+fn reissue(presented: &str, live: &Live, key: Option<&[u8]>) -> Option<String> {
+    let unsigned = key.is_some_and(|k| !signed_by(presented, k));
+    (live.renewed || unsigned).then(|| session_token(&live.id, live.expires_at, key))
+}
+
+/// `<id>.<exp>.<hex hmac-sha256(key, "<id>.<exp>")>`, or the bare `<id>` without a
+/// key. `<id>` is [`random_token`], which is base64url and so never holds a dot.
+///
+/// The edge function checks the same bytes (`edge/cache.js` in the site repo); the
+/// test vector in this module's tests is shared with its test.
+pub(crate) fn session_token(id: &str, exp: i64, key: Option<&[u8]>) -> String {
+    match key {
+        Some(key) => {
+            let signed = format!("{id}.{exp}");
+            let sig = hmac_hex(key, &signed);
+            format!("{signed}.{sig}")
+        }
+        None => id.to_string(),
+    }
+}
+
+/// Whether `token` carries a signature `key` made. Says nothing about whether the
+/// session is live — only the row says that.
+pub(crate) fn signed_by(token: &str, key: &[u8]) -> bool {
+    let Some((signed, sig)) = token.rsplit_once('.') else { return false };
+    signed.contains('.') && ct_eq(hmac_hex(key, signed).as_bytes(), sig.as_bytes())
+}
+
+/// Whether the session cookie a request carries is signed under `key` — what the
+/// mirror reads a miss off: the edge would have answered this request itself.
+pub(crate) fn signed_session(headers: &HeaderMap, key: &[u8]) -> bool {
+    cookie(headers, SESSION_COOKIE).is_some_and(|t| signed_by(&t, key))
+}
+
+/// The `<id>` a token names: everything before the first dot.
+fn session_id(token: &str) -> &str {
+    token.split('.').next().unwrap_or(token)
+}
+
+fn hmac_hex(key: &[u8], message: &str) -> String {
+    use hmac::{Hmac, Mac as _};
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes a key of any length");
+    mac.update(message.as_bytes());
+    mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// The surface credential a request authenticated with. Present only on off-box
 /// requests that passed the gate; absent on loopback, which presents none.
 ///
@@ -660,15 +730,15 @@ pub async fn gate(
             // the credential is checked once, and a handler cannot re-derive it
             // without the token. A loopback request never reaches this line and so
             // never carries one — it has no credential to be registered.
-            let renewed = a.renewed.then(|| cookie(&headers, SESSION_COOKIE)).flatten();
+            let reissue = a.reissue;
             let secure = over_tls(&headers);
             let mut req = req;
             req.extensions_mut().insert(SurfaceId(a.credential_id));
             let mut res = next.run(req).await;
-            // The row behind this cookie was just extended, so say so to the browser
-            // holding it — the same token, with a fresh `Max-Age`. Appended rather
-            // than set: a handler may have its own `Set-Cookie` to send.
-            if let Some(session) = renewed {
+            // The row behind this cookie was just extended, or the cookie can now be
+            // signed: hand the browser the token that says so. Appended rather than
+            // set: a handler may have its own `Set-Cookie` to send.
+            if let Some(session) = reissue {
                 if let Ok(value) =
                     axum::http::HeaderValue::from_str(&session_cookie(&session, secure))
                 {
@@ -1004,7 +1074,7 @@ mod tests {
         let after = Surfaces::new(dir);
         let authorized = after.authorize(&cookie_headers(&session)).expect("still admitted");
         assert_eq!(authorized.presented, Presented::Cookie);
-        assert!(!authorized.renewed, "a session used the same minute is not rewritten");
+        assert_eq!(authorized.reissue, None, "a session used the same minute is not rewritten");
     }
 
     /// Renewal is a use far enough into the session's life, and it moves the row.
@@ -1015,21 +1085,80 @@ mod tests {
         let (id, token) = s.mint("the browser").unwrap();
         let (session, _, _) = s.exchange(&token, "x").unwrap();
 
-        let (_, renewed) = s.session_of(&session).expect("live");
-        assert!(!renewed, "fresh sessions are left alone");
+        assert!(!s.session_of(&session).expect("live").renewed, "fresh sessions are left alone");
 
         // Backdate the row to two days into its life by pulling its expiry in.
         let aged = Utc::now() + delta(SESSION_TTL) - delta(Duration::from_secs(2 * 24 * 3600));
         store::session_renew(s.data_dir(), &hash(&session), aged).unwrap();
 
-        let (who, renewed) = s.session_of(&session).expect("still live");
-        assert_eq!(who, id);
-        assert!(renewed, "and a use two days in extends it");
+        let live = s.session_of(&session).expect("still live");
+        assert_eq!(live.credential_id, id);
+        assert!(live.renewed, "and a use two days in extends it");
 
         let rows = store::session_live(s.data_dir()).unwrap();
         assert_eq!(rows.len(), 1, "extended, not replaced");
         assert!(rows[0].expires_at > aged);
-        assert!(!s.session_of(&session).unwrap().1, "and it settles down again");
+        assert_eq!(live.expires_at, rows[0].expires_at.timestamp());
+        assert!(!s.session_of(&session).unwrap().renewed, "and it settles down again");
+    }
+
+    /// Shared with `edge/cache.test.mjs` in the site repo: the same key, id and
+    /// expiry must sign to the same bytes on both sides of the edge. The key is
+    /// `hmac-sha256("m", "ana")`, which is what the community hands `ana`'s core
+    /// for a master of `m`.
+    #[test]
+    fn a_signed_session_matches_the_edge_functions_vector() {
+        let key = hex_bytes("8a3131de9ce55e583b3e3a4996dbdb976d3cb452b03b3964a5b7e9bb79f8d7ec");
+        let token = session_token("abc_-9", 1_800_003_600, Some(&key));
+        assert_eq!(token, "abc_-9.1800003600.90cde60969d835913cfc976ba8371d05a01b0ab0989807732daff7a55d811af8");
+        assert!(signed_by(&token, &key));
+        assert_eq!(session_id(&token), "abc_-9");
+    }
+
+    fn hex_bytes(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    #[test]
+    fn a_token_is_signed_only_by_the_key_that_signed_it() {
+        let token = session_token("id", 10, Some(b"k"));
+        assert!(signed_by(&token, b"k"));
+        assert!(!signed_by(&token, b"other"));
+        assert!(!signed_by("id", b"k"), "an unsigned token is not signed");
+        assert!(!signed_by(&token.replace(".10.", ".11."), b"k"), "the expiry is signed too");
+        assert_eq!(session_token("id", 10, None), "id");
+    }
+
+    /// A session from before the key arrived is still a session, and is handed a
+    /// signed token for the same row on its next request.
+    #[test]
+    fn an_unsigned_session_is_admitted_and_signed_once_a_key_is_held() {
+        let s = surfaces();
+        let (_, token) = s.mint("the browser").unwrap();
+        let (session, _, _) = s.exchange(&token, "x").unwrap();
+        assert!(!session.contains('.'), "no key held in a test: the token is all id");
+
+        let live = s.session_of(&session).expect("live");
+        assert_eq!(reissue(&session, &live, None), None, "nothing to sign with");
+        let signed = reissue(&session, &live, Some(b"k")).expect("signed now");
+        assert!(signed_by(&signed, b"k"));
+        assert_eq!(session_id(&signed), session);
+
+        // The signed token names the same row, and is left alone from then on — until
+        // the key rotates.
+        let again = s.session_of(&signed).expect("the same session");
+        assert_eq!(again.credential_id, live.credential_id);
+        assert_eq!(reissue(&signed, &again, Some(b"k")), None);
+        assert!(reissue(&signed, &again, Some(b"rotated")).is_some());
+    }
+
+    /// The core never takes a signature for a session: a well-signed token whose row
+    /// is gone is refused, which is what makes revocation immediate here.
+    #[test]
+    fn a_signature_alone_admits_nothing() {
+        let s = surfaces();
+        let forged = session_token("no-such-row", Utc::now().timestamp() + 3600, Some(b"k"));
+        assert_eq!(s.authorize(&cookie_headers(&forged)), None);
     }
 
     #[test]

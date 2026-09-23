@@ -325,7 +325,7 @@ pub async fn get_media(
     };
     // **Only one of the two things a ref can name is immutable at its path**, and
     // `immutable` is now what decides whether bytes leave this machine at all, so it
-    // is said of that one alone (`docs/arch/topology.md` § *Content*):
+    // is said of that one alone (`docs/arch/cache.md`):
     //
     // - a signal's own blob, addressed `<channel>/<date>/<HH>/<MM>-<SS>.<ext>` and
     //   written once — immutable, kept forever by a browser, mirrorable;

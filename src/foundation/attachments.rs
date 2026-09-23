@@ -17,7 +17,7 @@
 //! **Addressed by content, so `immutable` is true by construction.** The same bytes attached
 //! twice are one object, and the route serving them can promise they never change — which
 //! is what lets a browser keep them forever and what marks them mirrorable at all
-//! (`docs/arch/topology.md` § *Content*).
+//! (`docs/arch/cache.md`).
 //!
 //! **The host's pen.** Nothing else writes under `data/attachments/`; it is written at a seam,
 //! the way the log is, and kept the way text is kept. `derived/` beside the objects is a
@@ -436,7 +436,7 @@ async fn finish(
         elapsed_ms = started.elapsed().as_millis() as u64,
         "attached"
     );
-    // **Placing is the write that mirrors it** (`docs/arch/topology.md` § *Content*): the
+    // **Placing is the write that mirrors it** (`docs/arch/cache.md`): the
     // bytes cross the uplink while nobody is looking, so by the time the person opens Home on
     // their phone the picture is at the edge. Free when mirroring is off.
     crate::foundation::mirror::enqueue(&url(&placed.id));

@@ -27,7 +27,7 @@
 //! text) and they are what the `⟨ref⟩` grammar agrees with. And `Cache-Control`
 //! is a policy decision per route, which is now load-bearing twice over: it
 //! drives the browser cache, and `immutable` is what marks a response eligible
-//! to be mirrored off the machine at all (`docs/arch/topology.md` § *Content*).
+//! to be mirrored off the machine at all (`docs/arch/cache.md`).
 //!
 //! **Not used for `/views/*`**, deliberately. That route sits inside a
 //! `CompressionLayer`, and a compressed `206` would carry a `Content-Range`

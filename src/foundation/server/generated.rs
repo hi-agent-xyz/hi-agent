@@ -58,7 +58,7 @@ pub async fn views_file(
     // again with live data, and `_shots/ref/` is re-taken on a clock and told apart only
     // by the `?v=<mtime>` its URL carries. `immutable` vouches for the *path* now,
     // because the path is what a mirror of this response is keyed on
-    // (`docs/arch/topology.md` § *Content*).
+    // (`docs/arch/cache.md`).
     let cache = if path.starts_with("_compiled/") {
         "private, max-age=31536000, immutable"
     } else if path.starts_with("_shots/") {

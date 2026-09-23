@@ -5,7 +5,7 @@
 //! bytes, so nothing different can ever be served at that path; the preview's URL carries
 //! its spec, so a new way of drawing previews is a new URL rather than new bytes behind an
 //! old one. That is what lets a browser keep either forever, and what marks both as
-//! mirrorable off the machine (`docs/arch/topology.md` § *Content*).
+//! mirrorable off the machine (`docs/arch/cache.md`).
 //!
 //! Served through [`disk_file`](super::disk_file) like the media and drive routes, so a clip
 //! streams and seeks — WebKit opens a `<video>` by asking for `bytes=0-1`.
