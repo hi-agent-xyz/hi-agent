@@ -1199,13 +1199,15 @@ function writePlace(place) {
 }
 
 export default function Home() {
-  const { openRef, trail } = useViews();
+  // Not `trail`: that name is the path back out of a centred group, and shadowing it here made
+  // every window with a kept centre throw on its first render and leave the stage empty.
+  const { openRef, trail: viewTrail } = useViews();
   const { messages } = useMessages();
   // What was put up while they were on another page and has not been opened since — the
   // screen's list says so, and a task that made one wears a dot until it is opened.
   const unopened = useMemo(
-    () => new Set((trail || []).filter((entry) => entry.unopened && entry.view_ref).map((entry) => entry.view_ref)),
-    [trail],
+    () => new Set((viewTrail || []).filter((entry) => entry.unopened && entry.view_ref).map((entry) => entry.view_ref)),
+    [viewTrail],
   );
   const [source, setSource] = useState({ tasks: [], workers: [], groups: [] });
   const [loaded, setLoaded] = useState(false);
@@ -1365,7 +1367,7 @@ export default function Home() {
   // After the centring above, never before it: a glide starts from where a card was on screen,
   // and needs the scroll this drawing ends up at to say where that is now.
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const glide = useGlide({ chart, scale, offset, frame, viewport, stage: stageRef,
+  const glides = useGlide({ chart, scale, offset, frame, viewport, stage: stageRef,
     ready: loaded && frameMeasured && !mobile && !still });
   // Another centre is another chart, and it opens whole.
   const centreOn = useCallback((next) => {
@@ -1442,7 +1444,7 @@ export default function Home() {
         </span>)}
       </nav>}
       <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
-        onScroll={glide.onScroll} onPointerDown={(e) => {
+        onScroll={glides.onScroll} onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
         const el = e.currentTarget;
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1485,7 +1487,7 @@ export default function Home() {
           <div className="hi-work__stage" ref={stageRef} style={{ left: offset.x, top: offset.y, width: chart.width, height: chart.height,
             transform: `scale(${scale})` }}>
             <svg className="hi-work__wires" width={chart.width} height={chart.height} aria-hidden>
-              {glide.wires.map(({ wire, leaving, delay }) => <path key={wire.id} data-edge={wire.id}
+              {glides.wires.map(({ wire, leaving, delay }) => <path key={wire.id} data-edge={wire.id}
                 data-leaving={leaving ? "" : undefined} d={wire.d}
                 style={{ stroke: wire.paint, "--enter-delay": `${delay}ms` }} />)}
             </svg>
@@ -1493,7 +1495,7 @@ export default function Home() {
                 of its heading that faces the core — see `.hi-work__group > button` in the CSS.
                 A row on its way out is still a row, so its card keeps its element and its
                 picture while it fades; it just cannot be pressed. */}
-            {glide.rows.map(({ row, leaving, delay }) => <div key={row.node.id} className="hi-work__position"
+            {glides.rows.map(({ row, leaving, delay }) => <div key={row.node.id} className="hi-work__position"
               data-row={row.node.id} data-dir={row.dir} data-leaving={leaving ? "" : undefined} inert={leaving}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
                 "--enter-delay": `${delay}ms` }}>

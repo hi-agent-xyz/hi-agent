@@ -58,6 +58,26 @@ function assertConnected(model) {
   }
 }
 
+// Everything above tests the pure section on its own, so a name the component binds over one
+// of its functions passes here and throws in the browser — where the view's error boundary
+// swallows it and the stage is simply empty. `trail` did exactly that.
+test("the component never binds a name the pure section declares as a function", () => {
+  const declared = new Set([...pure.matchAll(/^(?:async )?function (\w+)/gm)].map((m) => m[1]));
+  const body = source.slice(source.indexOf("export default function Home"));
+  const bound = new Set();
+  for (const [, names] of body.matchAll(/\b(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) {
+    for (const part of names.split(",")) {
+      const name = part.split(":").pop().split("=")[0].trim();
+      if (name) bound.add(name);
+    }
+  }
+  for (const [, name] of body.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=/g)) bound.add(name);
+  for (const [, names] of body.matchAll(/\b(?:const|let|var)\s*\[([^\]]*)\]\s*=/g)) {
+    for (const part of names.split(",")) if (part.trim()) bound.add(part.trim());
+  }
+  assert.deepEqual([...bound].filter((name) => declared.has(name)).sort(), []);
+});
+
 test("what is open is in hand however old it is; what is closed answers to the work, not the clock", () => {
   const model = project({ tasks: [
     task("stale-but-open", "todo", 900), task("serving", "serving", 900),
