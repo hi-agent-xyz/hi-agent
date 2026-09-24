@@ -26,11 +26,12 @@ use tokio::sync::{Mutex, Notify};
 /// How long a parked read waits before answering "nothing yet, ask again".
 ///
 /// **A long-poll that only ever answers is a long-poll a proxy kills.** Off-box these run
-/// through something that gives up on a request producing no bytes — the observed failures
-/// were 524s at around thirty seconds — and a request killed at the edge tells the client
-/// nothing about whether it was ever registered. So this answers first, well under any such
-/// limit, with the one fact the client cannot infer: that it is still current.
-pub const WAIT: Duration = Duration::from_secs(25);
+/// through something that gives up on a request producing no bytes — the edge in front of a
+/// named core waits ~15 s for a head, retries once, then answers `524` — and a request killed
+/// at the edge tells the client nothing about whether it was ever registered. So this answers
+/// first, under that limit, with the one fact the client cannot infer: that it is still
+/// current. The same bound as every other long-poll ([`super::held::LONG_POLL`]).
+pub const WAIT: Duration = super::held::LONG_POLL;
 
 /// One counter per store, and one place to park on any of them.
 ///

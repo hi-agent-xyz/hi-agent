@@ -1309,12 +1309,12 @@ pub async fn get_out_audio(
     //
     // For at most [`super::held::LONG_POLL`]: a turn that has not started by then is
     // a `204`, and the page asks again. Unbounded, a quiet agent held this past the
-    // 30 s the edge in front of a named core waits for a head — a `524` per silence.
+    // ~15 s the edge in front of a named core waits for a head — a `524` per silence.
     //
     // Not free: a turn whose `Start` lands in the round trip between this `204` and
     // the page's next ask is skipped whole on that device, because a late subscriber
     // cannot join a turn mid-way (above). Before, that gap came after every turn
-    // only; it now also comes every twenty seconds of silence. Off-box it replaces a
+    // only; it now also comes every ten seconds of silence. Off-box it replaces a
     // `524` plus the page's 1.5 s error backoff every 30 s, which was a wider gap.
     let first_turn = async {
         loop {

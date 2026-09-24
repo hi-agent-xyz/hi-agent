@@ -500,11 +500,12 @@ tunnel hangs until one end notices; the community's own ping failing is what clo
 **Redialing backs off only for a community that cannot be reached.** A tunnel that opened
 and later died — cleanly or silently — redials at the minimum, because it was working.
 
-**Every hop holds a response open only so long.** The community's edge answers `524` to a
-request with no response head within 30 s, and cuts a body that sends nothing for about 15 s
-(measured 2026-09-24). So every response this core holds open speaks every 5 s — an SSE
-comment, or an empty NDJSON line, which every reader already skips — and a long-poll answers
-`204` after 20 s and is asked again (`src/foundation/server/held.rs`). The alternative, raising
+**Every hop holds a response open only so long.** The community's edge waits about 15 s for
+the origin's next byte — a response head, or more of a body. A request with no head by then is
+retried once and then answered `524` (so it surfaces at 30 s, which is not the limit), and a
+body quiet that long is cut (measured 2026-09-24). So every response this core holds open
+speaks every 5 s — an SSE comment, or an empty NDJSON line, which every reader already skips —
+and a long-poll answers `204` after 10 s and is asked again (`src/foundation/server/held.rs`). The alternative, raising
 the edge's limits, is configuration that lives in someone's console and has to be remembered
 for every edge a core is ever put behind.
 

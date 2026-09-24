@@ -45,7 +45,7 @@ pub async fn get_out_view(
 
     // Parked for at most [`held::LONG_POLL`], then "nothing yet" as a `204` the page
     // answers by asking again with the same `since`. Unbounded, a quiet screen held
-    // this past the 30 s the edge in front of a named core waits for a head, and every
+    // this past the ~15 s the edge in front of a named core waits for a head, and every
     // remote page load saw a `524` for it.
     match tokio::time::timeout(held::LONG_POLL, state.views.wait_state(query.since)).await {
         Ok(snapshot) => axum::Json(snapshot).into_response(),

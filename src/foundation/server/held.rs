@@ -2,17 +2,24 @@
 //! between a person and this core puts on them.
 //!
 //! A core reached by name is behind the community's CDN (EdgeOne), and that edge
-//! measures a held response two ways. Measured 2026-09-24 against
-//! `iloahz.hi-agent.xyz`:
+//! gives the origin **about 15 s to say anything** — a head, or the next bytes of a
+//! body. Measured 2026-09-24 against `iloahz.hi-agent.xyz`:
 //!
-//! - **No head within 30 s is a `524`.** A long-poll that parks before answering at
-//!   all — `/api/out/view?since=`, `/api/out/audio` waiting for a turn — was answered
-//!   by the edge at 30.1 s, every time, with the core still holding it.
+//! - **No head within 15 s is a retry, and two of them are a `524`.** A long-poll
+//!   that parks before answering — `/api/out/view?since=`, `/api/out/audio` waiting
+//!   for a turn — came back from the edge at 30.1 s, every time. That read as a 30 s
+//!   limit and a 20 s long-poll was sized under it; it still got a `524` every time.
+//!   Watched from the origin box, the one request was two: Caddy's connection to the
+//!   relay was dropped at ~15 s and a fresh one opened for the same request, which
+//!   was dropped at ~15 s again — while the relay, asked directly, answered `204` at 20 s.
 //! - **A body that sends nothing for ~15 s is cut.** `/api/out/text` sends its window
 //!   and then nothing until somebody speaks; it died at 16–17 s as an HTTP/2 stream
 //!   reset, and the page reconnected and fetched the whole 68 KB window again. SSE
 //!   with axum's default 15 s keepalive died on a keepalive, at 15.4, 30.1 and 45.1 s:
 //!   the limit and the interval were the same number, so every tick was a coin toss.
+//!
+//! One limit, then, not two: the edge waits ~15 s for the origin's next byte, whether
+//! that byte starts the head or continues the body.
 //!
 //! Loopback has neither limit, and a public bind may have others; these numbers are
 //! chosen to sit well inside the tightest measured one so no carrier has to be told
@@ -31,8 +38,8 @@ use futures::{Stream, StreamExt};
 pub const KEEPALIVE: Duration = Duration::from_secs(5);
 
 /// How long a long-poll parks before answering "nothing yet" and letting the client
-/// ask again. Under the edge's 30 s with room for the tunnel's own latency.
-pub const LONG_POLL: Duration = Duration::from_secs(20);
+/// ask again. Under the edge's ~15 s with room for a slow tunnel to carry the `204`.
+pub const LONG_POLL: Duration = Duration::from_secs(10);
 
 /// An SSE keepalive at [`KEEPALIVE`], for every event stream this core serves.
 pub fn sse_keep_alive() -> KeepAlive {
