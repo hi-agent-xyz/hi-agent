@@ -488,6 +488,14 @@ from a remote surface are exactly the traffic that would ride it.
 **The connection is the liveness signal**, and the only one: a handle with no live connection
 is asleep, not lost. There is no heartbeat and nothing to renew.
 
+That leaves one failure each end has to notice for itself: a connection that dies *without
+closing*. A redeploy behind the CDN, or a local proxy holding its own half of the socket open,
+leaves the core reading a socket nobody is on while the community answers "asleep". The
+community's yamux keepalive pings every 30 s, and a ping is a binary frame that crosses every
+hop, so the core treats **90 s of total silence as a closed tunnel** and redials. That is the
+transport noticing its own death, not a liveness report: nothing is sent to say the core is
+alive, and nothing is renewed.
+
 Dialing out is what makes this work behind NAT with no configuration: anywhere the core can
 already reach the community, it can be reached back.
 
