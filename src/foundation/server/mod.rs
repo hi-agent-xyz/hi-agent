@@ -826,16 +826,19 @@ pub fn build(
         // images, and build-agent artifacts. Served here, not in the appearance
         // router, because that router is embed-only and stateless.
         //
-        // Its own `Router` purely so the compressor can be scoped to it. `views_file`
-        // reads a whole file and hands back one buffered body, so it compresses like
-        // the embedded assets do — but it is the only route on this router that may
-        // be wrapped, which is why it cannot simply be a `.layer` on the parent:
-        // every `/api/*` neighbour above is a long-poll or SSE body that a
-        // compressor would buffer.
+        // Its own `Router` purely so the compressor can be scoped to it: every
+        // `/api/*` neighbour above is a long-poll or SSE body that a compressor would
+        // buffer. The compressor leaves alone what it would break or not help — a
+        // `206`, whose `Content-Range` describes the uncompressed bytes, and video and
+        // audio, which are compressed already. A view's text still compresses.
         .merge(
             Router::new()
                 .route("/views/{*path}", get(generated::views_file))
-                .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6))),
+                .layer(
+                    CompressionLayer::new()
+                        .quality(CompressionLevel::Precise(6))
+                        .compress_when(views_compress_when()),
+                ),
         )
         // A shared view is answered here rather than from a route of its own, so a
         // published name can never shadow something this core serves — whatever is
@@ -907,3 +910,14 @@ pub struct ServerSeams {
     pub state: Arc<AppState>,
 }
 
+/// What the `/views/*` compressor may touch: the default rule, minus any ranged
+/// response and any video or audio.
+fn views_compress_when() -> impl tower_http::compression::Predicate {
+    use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate as _};
+    DefaultPredicate::new()
+        .and(NotForContentType::const_new("video/"))
+        .and(NotForContentType::const_new("audio/"))
+        .and(|_: axum::http::StatusCode, _: axum::http::Version, h: &axum::http::HeaderMap, _: &axum::http::Extensions| {
+            !h.contains_key(axum::http::header::CONTENT_RANGE)
+        })
+}

@@ -1,9 +1,10 @@
 # Cache — a core's pictures served from the edge, at the core's own paths
 
-A core mirrors its immutable bytes — photos, video, audio, attachments — into a bucket. When
-an app reaches that core by its name, the edge in front of `<handle>.hi-agent.xyz` answers
-those paths from the bucket instead of sending the bytes down the tunnel. Nothing about the
-URL changes, and the core still decides who may read.
+A core mirrors its bytes — photos, video, audio, attachments, and the files its views and its
+drive show — into a bucket. When an app reaches that core by its name, the edge in front of
+`<handle>.hi-agent.xyz` answers those paths from the bucket instead of sending the bytes down
+the tunnel. Nothing about the URL changes, and the core still decides who may read and whether
+a copy is current.
 
 This is the goal state, in the present tense, as design here always is. Where the tunnel and
 the community sit is [topology.md](topology.md); what an attachment is, [showing.md](showing.md).
@@ -31,22 +32,61 @@ against a bandwidth gate. So content leaves the tunnel, under three constraints:
 GET https://ana.hi-agent.xyz/api/media/file/2026-09-22/14/03-22.jpg
     Cookie: hi_surface=<id>.<exp>.<sig>                 ← the one session cookie, as today
   │
-  └─ the edge function (in front of /api/media/* and /api/attachments/*)
-       ├─ signature valid for "ana", not expired, and the object is in the bucket
-       │     → the bytes, from cos://…/cache/ana/api/media/file/2026-09-22/14/03-22.jpg
-       └─ anything else
-             → on to the relay → the core, as today
-                   the core checks the session, serves the bytes,
-                   and puts the object up if the edge should have had it
+  └─ the edge function
+       ├─ no valid signature for "ana"      → on to the relay → the core, as today
+       │
+       ├─ /api/media/*, /api/attachments/*  — bytes that never change
+       │     object in the bucket  → the bytes, from cos://…/cache/ana/api/media/file/…/03-22.jpg
+       │     not there             → on to the core, which serves it and puts it up
+       │
+       └─ /views/*, /api/drive/file/*       — bytes that change in place
+             ask the core first, headers only (x-hi-cache: ask)
+             304 + x-hi-cache: bucket  → the bytes, from the bucket
+             anything else             → that answer, as the core gave it
 ```
 
 **The edge never refuses.** A missing, expired or foreign signature, or an object not up
 there yet, sends the request on unchanged, and whatever answers is the core's. The worst the
 edge can do is be as slow as last week; a `401` only ever comes from the core.
 
-**The edge only fronts paths where a copy can exist**: `/api/media/*` and `/api/attachments/*`.
-Everything else on the hostname — the page, the API, the SSE streams — goes to the relay
-untouched, so a miss costs a bucket lookup only where one could have hit.
+**The edge only fronts paths where a copy can exist**: `/api/media/*`, `/api/attachments/*`,
+`/views/*` and `/api/drive/file/*`. Everything else on the hostname — the page, the API, the
+SSE streams — goes to the relay untouched.
+
+## Two ways a copy is trusted
+
+**Bytes that never change are served on the edge's word alone.** A response marked
+`immutable` names bytes that will be at that path for as long as the path exists, so a copy is
+correct forever and the edge serves it without asking anyone — which is also why these keep
+being served while the core is asleep.
+
+**Bytes that change in place are served on the core's word, each time.** A view's clip, a
+picture a build worker downloaded, a video in the drive: an agent rewrites these under the same
+name, with a shell, not through any route the core sees, so the core cannot know when a copy
+went stale — and a copy nobody can invalidate is wrong for up to its whole life. So for these
+paths the edge **asks the core first**, with the browser's own request plus `x-hi-cache: ask`,
+and the core answers the one question only it can:
+
+- the route answers as it always does — a `304` to the browser's own `If-None-Match`, a `401`,
+  a `404` — and **that answer goes back unchanged**;
+- the bytes it would send carry an `ETag`, and the copy it last put in the bucket carried the
+  same one → **`304` with `x-hi-cache: bucket`** and the `ETag`, and no body: the edge reads the
+  bytes from the bucket and hands them over under that `ETag`;
+- otherwise the core sends the bytes, as today, and puts the current version up behind them.
+
+The round trip is headers only, so what crosses the tunnel is a few hundred bytes where it was
+the file. **A stale copy cannot be served**, because the core compares versions on every
+request; **revocation is immediate** on these paths, because the core checks the session on
+every request; and **the core's `ETag` is the one the browser keeps**, so a second look on one
+device is a plain `304` from the core and no bytes from anywhere.
+
+If the bucket turns out not to hold what the core vouched for — the lifecycle ran early, or
+somebody emptied `cache/` — the edge asks again with `x-hi-cache: missing`; the core forgets
+its record of the object, serves the bytes and puts them back up.
+
+**The `ETag` is the file's length and modification time**, weak (`W/"…"`) because a compressed
+and an uncompressed response share it. Every file route serves one and honours
+`If-None-Match`.
 
 **A core the edge is not in front of is simply the second branch forever**: same code, same
 URLs, correct in every deployment. A self-hosted core never mirrors anything, because nothing
@@ -115,27 +155,30 @@ has something to upload or no key in hand, never on a clock, and keeps nothing o
 
 ## What may be mirrored
 
-The property that makes bytes safe to copy is that **the bytes at this path never change**,
-and every route that serves such bytes already says so:
-
 | Route | Declares | Mirrored |
 |---|---|---|
-| `/api/media/{ref}`, a signal's own blob | `private, max-age=31536000, immutable` | yes |
+| `/api/media/{ref}`, a signal's own blob | `private, max-age=31536000, immutable` | yes, trusted by the edge |
 | `/api/media/{ref}`, the keepsake a faded day left | `private, max-age=31536000` | no — the ref named the original first |
-| `/api/attachments/*` | `private, max-age=31536000, immutable` | yes — content-addressed, uploaded at placement ([showing.md](showing.md#serving)) |
-| `/views/_shots/*` | `private, max-age=31536000` | no — re-taken in place |
-| `/views/_compiled/*` | `private, max-age=31536000, immutable` | not fronted (Open 4) |
+| `/api/attachments/*` | `private, max-age=31536000, immutable` | yes, trusted by the edge — content-addressed, uploaded at placement ([showing.md](showing.md#serving)) |
+| `/views/*`, a view's own files | `no-cache` + `ETag` | yes, checked with the core — from 256 KiB |
+| `/views/_shots/*` | `private, max-age=31536000` + `ETag` | yes, checked with the core — from 256 KiB |
+| `/views/_compiled/*` | `private, max-age=31536000, immutable` | no — tens of kilobytes, under the floor |
+| `/api/drive/file/*` | `no-cache` + `ETag` | yes, checked with the core — from 256 KiB |
 | `/assets/*` | `private, max-age=31536000, immutable` | not fronted (Open 4) |
-| `/views/*` (source), `/api/drive/file/*` | `no-store`, `no-cache` | no |
 
-**So: a response under a fronted path, marked `immutable`, at a plain-ASCII path, is copied;
-nothing else is.** Not a list of directories — the one judgment a person has to make, *do these
-bytes ever change?*, is the one the header already asks, and a route that forgets to say it
-costs acceleration and nothing else.
+**Under the paths the edge trusts, a response marked `immutable`, at a plain-ASCII path, is
+copied; nothing else is.** Not a list of directories — the one judgment a person has to make,
+*do these bytes ever change?*, is the one the header already asks, and a route that forgets to
+say it costs acceleration and nothing else. **`immutable` vouches for the path, not the URL**,
+because the path is the key: a route re-taken in place and told apart by a query string must
+not say it.
 
-**`immutable` vouches for the path, not the URL**, because the path is the key. A route
-re-taken in place and told apart by a query string must not say it, and neither may a route
-that answers one path with two sets of bytes over its life. A test pins every such case.
+**Under the paths the edge checks, a response with an `ETag`, of at least 256 KiB, at a
+plain-ASCII path, is copied.** Nothing about it has to be true forever, because nothing trusts
+it past the next request. The floor is there because each of these costs a round trip to the
+core *and* a bucket read: below it, the tunnel's own bytes are cheaper (Open 3). A drive file
+whose name is not ASCII is not copied at all, which is most of what a Chinese-speaking owner
+keeps there; that is Open 5.
 
 **The key is the request path**, under the handle: `cache/<handle>/<request path>`. The edge
 builds it from the host and the path it was asked for; the core from the path it served. No
@@ -151,11 +194,17 @@ before then. Something the core perceived — a camera still, a mic clip — wai
 look.
 
 **A miss is the backstop.** A request that reaches the core carrying a token signed with this
-core's own key, for an immutable fronted path, is one the edge looked for and did not find — so
-the core puts it up. That catches whatever predates the feature, failed to upload, or expired
+core's own key, for an immutable path the edge trusts, is one the edge looked for and did not
+find — so the core puts it up. That catches whatever predates the feature, failed to upload, or expired
 from the bucket, and it means the backlog is never migrated: everything older crosses over the
 first time someone looks at it. The core remembers what it uploaded recently, so a missing edge
 rule does not become an upload per look.
+
+**A changing file goes up the first time each version is looked at.** Nothing sees an agent
+write it, so there is no earlier moment: the edge's question is the trigger. The first look at a
+new version crosses the tunnel as it always did, and every look after that — on any device —
+comes from the bucket. The core records each upload's `ETag` beside its path, which is what it
+compares when it is asked.
 
 **The uploader fetches each object through the core's own router**, as a loopback request, and
 puts exactly that response in the bucket, `Content-Type` and `Cache-Control` included. It goes
@@ -181,8 +230,12 @@ by its core, and goes back up.
 - **Forgetting does not reach the bucket.** A faded day or a deleted object stops being served
   by the core at once; a copy already in the bucket can still be read at the edge, by the
   owner's own signed-in devices, until the lifecycle drops it.
-- **A core that is asleep still has its mirrored pictures served.** The edge does not ask the
-  core, so a phone keeps seeing what is up there while the laptop is closed.
+- **A core that is asleep still has its mirrored pictures served** — the immutable ones. The
+  edge does not ask the core about those, so a phone keeps seeing them while the laptop is
+  closed. A view's files and the drive are not: the edge asks the core about every one, and a
+  core that cannot answer serves nothing, exactly as without a cache.
+- **A changing file's first look per version is as slow as before.** The copy exists only once
+  someone has asked for that version.
 
 ## Decisions
 
@@ -195,7 +248,8 @@ by its core, and goes back up.
 | **A key per handle, derived from a master** | A core's key is visible to its owner. Derived per handle, it opens only what its owner already owns, and the edge derives it from the host with nothing stored per handle |
 | **The edge never refuses** | It can only ever be slower, never wrong about access |
 | **Mirror ahead of demand** | A cache in front of the tunnel speeds up only the second fetch, and in a life record the first is the common case |
-| **`immutable` decides, under the paths the edge fronts** | The annotation already asserts what a copy needs; the fronted paths are where a copy could ever be served |
+| **`immutable` decides, under the paths the edge trusts** | The annotation already asserts what a copy needs; the fronted paths are where a copy could ever be served |
+| **Files that change in place are checked with the core, not trusted** | Agents rewrite them with a shell, so nothing can tell the edge a copy went stale. Asking the core costs a headers-only round trip — hundreds of bytes where the file was — and makes a stale copy impossible. It is where the largest bytes are: a view's clips, the drive's videos |
 | **Write credentials are STS, per handle, an hour** | No long-lived storage key on a person's machine, and declining to mint is revocation |
 
 ## Open
@@ -205,12 +259,13 @@ by its core, and goes back up.
    device without the bucket.
 2. **Forgetting that reaches the bucket.** A delete and a fade could remove their copies too,
    closing the 30 days above.
-3. **A size floor.** Below some size the bucket's round trip costs more than the tunnel's bytes.
-   It has to be measured, and the rule must skip *small* objects, never large ones.
+3. **The size floor.** 256 KiB for checked paths is a guess, not a measurement: it has to be set
+   by timing a checked hit against the tunnel at a few sizes. Immutable paths have none.
 4. **The bundle and compiled views.** `/assets/*` is identical for every core and nobody's
    personal data, so one public copy per release — not a copy per core — is the better shape,
    and it has the largest effect on the cold path. Compiled views would be one more fronted
    path. Once `/assets/*` is served at the edge, `VIEW_PRELOAD_SPECIFIERS`' exclusion of
    `motion/react` — correct at 11 Mbps — should reverse.
-5. **The drive.** It is mutable in place, so it is not mirrored — and generated images and video
-   land there, so they are the largest objects this leaves on the tunnel.
+5. **Paths that are not ASCII.** The key must be the same bytes at the edge and at the core, so
+   only plain ASCII paths are copied, and a drive file named in Chinese is not. Percent-encoding
+   the key on both sides the same way would close it.

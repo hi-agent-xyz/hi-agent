@@ -17,6 +17,13 @@
 //! 3. **No conditional request.** Nothing emitted `Last-Modified`, so no client
 //!    could ever be told "you already have this".
 //!
+//! **Every response carries an `ETag`**, the file's length and modification time,
+//! weak because a compressed and an uncompressed body share it, and `If-None-Match`
+//! is answered here before the file service sees the request. That is a sharper
+//! validator than `Last-Modified` — a file written twice inside a second is two
+//! versions — and it is what the community's edge compares on every request for a
+//! file that changes in place (`docs/arch/cache.md` § *Two ways a copy is trusted*).
+//!
 //! [`ServeFile`] answers all three and is far better tested than a hand-rolled
 //! range parser would be, which is the whole reason to reach for it: `Range`,
 //! `If-Modified-Since`, `416` on an unsatisfiable range, and a streaming body.
@@ -29,16 +36,15 @@
 //! drives the browser cache, and `immutable` is what marks a response eligible
 //! to be mirrored off the machine at all (`docs/arch/cache.md`).
 //!
-//! **Not used for `/views/*`**, deliberately. That route sits inside a
-//! `CompressionLayer`, and a compressed `206` would carry a `Content-Range`
-//! describing bytes that are not the bytes in the body. Compiled modules are
-//! tens of kilobytes of text where compression is the win and ranges are never
-//! asked for, so it keeps the whole-body read and this module stays out of it.
+//! **`/views/*` uses it too**, inside a `CompressionLayer` whose predicate leaves
+//! alone any response carrying a `Content-Range` — a compressed `206` would
+//! describe bytes that are not the bytes in its body — and any video or audio,
+//! which gains nothing from it.
 
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use tower::ServiceExt as _;
 use tower_http::services::ServeFile;
@@ -51,12 +57,30 @@ use tower_http::services::ServeFile;
 ///
 /// The response is streamed: nothing here holds the file.
 pub async fn serve(
-    req: Request,
+    mut req: Request,
     path: &std::path::Path,
     content_type: &'static str,
     cache_control: &'static str,
     missing: &'static str,
 ) -> Response {
+    let Ok(meta) = tokio::fs::metadata(path).await else {
+        return (StatusCode::NOT_FOUND, missing).into_response();
+    };
+    let tag = etag(&meta);
+    if req.headers().contains_key(IF_NONE_MATCH) {
+        if matches(req.headers(), &tag) {
+            let mut resp = StatusCode::NOT_MODIFIED.into_response();
+            let headers = resp.headers_mut();
+            headers.insert(ETAG, tag);
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+            return resp;
+        }
+        // RFC 9110 § 13.2.2: with `If-None-Match` present, `If-Modified-Since` is
+        // ignored — it is the coarser of the two, and would call a file rewritten
+        // inside the same second unchanged.
+        req.headers_mut().remove(IF_MODIFIED_SINCE);
+    }
+
     // `ServeFile::new` guesses a content type from the extension and we then
     // replace it. The guess is wasted work of no measurable size, and taking the
     // guessing path keeps us off the `mime` crate as a direct dependency for a
@@ -80,7 +104,30 @@ pub async fn serve(
     let headers = resp.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    headers.insert(ETAG, tag);
     resp
+}
+
+/// `W/"<length>-<mtime in nanoseconds>"`, both hex. A file whose modification time
+/// cannot be read gets its length alone, which is weaker and still never wrong in
+/// the direction that matters: two different lengths are never the same tag.
+fn etag(meta: &std::fs::Metadata) -> HeaderValue {
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    HeaderValue::from_str(&format!("W/\"{:x}-{mtime:x}\"", meta.len())).expect("hex is a valid header")
+}
+
+/// Whether `If-None-Match` names `tag`, by weak comparison, or is `*`.
+fn matches(headers: &HeaderMap, tag: &HeaderValue) -> bool {
+    let want = tag.to_str().unwrap_or("").trim_start_matches("W/");
+    headers.get_all(IF_NONE_MATCH).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(',')).any(|t| {
+        let t = t.trim();
+        t == "*" || t.trim_start_matches("W/") == want
+    })
 }
 
 #[cfg(test)]
@@ -151,6 +198,40 @@ mod tests {
         let (_d, path) = write(b"0123456789");
         let resp = serve(get(None), &path, "video/mp4", "no-store", "gone").await;
         assert_eq!(resp.headers()[ACCEPT_RANGES], "bytes");
+    }
+
+    /// A second look names the version it has, and is told it still has it — no body.
+    /// A rewritten file is a new tag, so the same question gets the bytes.
+    #[tokio::test]
+    async fn an_etag_answers_if_none_match() {
+        let (_d, path) = write(b"0123456789");
+        let first = serve(get(None), &path, "video/mp4", "no-cache", "gone").await;
+        let tag = first.headers()[ETAG].clone();
+        assert!(tag.to_str().unwrap().starts_with("W/\"a-"), "{tag:?}");
+
+        let again = |tag: HeaderValue| {
+            let mut r = get(None);
+            r.headers_mut().insert(IF_NONE_MATCH, tag);
+            r
+        };
+        let resp = serve(again(tag.clone()), &path, "video/mp4", "no-cache", "gone").await;
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(resp.headers()[ETAG], tag);
+        assert!(body_bytes(resp).await.is_empty());
+
+        std::fs::write(&path, b"01234567890").unwrap();
+        let resp = serve(again(tag.clone()), &path, "video/mp4", "no-cache", "gone").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_ne!(resp.headers()[ETAG], tag);
+    }
+
+    /// A range carries the tag too: the edge compares it on a seek as on a first look.
+    #[tokio::test]
+    async fn a_range_carries_the_etag() {
+        let (_d, path) = write(b"0123456789");
+        let resp = serve(get(Some("bytes=0-1")), &path, "video/mp4", "no-cache", "gone").await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(resp.headers().contains_key(ETAG));
     }
 
     /// A missing file keeps the caller's own 404 wording rather than the file

@@ -6,10 +6,8 @@
 
 use std::sync::Arc;
 
-use axum::body::Body;
-use axum::extract::{Path, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode};
+use axum::extract::{Path, Request, State};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 use crate::foundation::server::AppState;
@@ -22,57 +20,64 @@ fn safe_views_path(path: &str) -> bool {
 }
 
 /// `GET /views/<path>` — serve a file from the agent's views folder: a compiled view
-/// module from `_compiled/`, an image, or any artifact a build sub-agent wrote.
+/// module from `_compiled/`, an image, a clip, or any artifact a build sub-agent wrote.
 /// The views tree is single-user and trusted, so it's served whole; the only guard is
 /// against `..` traversal out of the root.
+///
+/// Through [`disk_file`](super::disk_file), like every other file route: streamed, so a
+/// clip in a view's folder seeks instead of arriving whole, and with an `ETag`, which is
+/// what the community's edge checks before it serves a view's clip from the bucket
+/// (`docs/arch/cache.md` § *Two ways a copy is trusted*).
 pub async fn views_file(
     State(state): State<Arc<AppState>>,
     Path(path): Path<String>,
+    req: Request,
 ) -> Response {
     if !safe_views_path(&path) {
         return (StatusCode::NOT_FOUND, "not found\n").into_response();
     }
-
     let full = state.data_dir.join("views").join(&path);
-    let bytes = match tokio::fs::read(&full).await {
-        Ok(bytes) => bytes,
-        Err(_) => return (StatusCode::NOT_FOUND, "not found\n").into_response(),
-    };
+    super::disk_file::serve(req, &full, crate::mind::memory::media::content_type(&path), cache_control(&path), "not found\n")
+        .await
+}
 
-    let mut resp = Response::new(Body::from(bytes));
-    resp.headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(crate::mind::memory::media::content_type(&path)));
-    // Compiled modules under _compiled/ are content-addressed → immutable; source files
-    // change in place, so they must not be cached.
-    //
-    // **`private`, because this is the agent's own code, written for one person.**
-    // Content-addressing makes a module safe to cache *forever*; it does not make
-    // it safe to cache *shared*. This path is gated, so `public` would let a CDN
-    // store a view it only received because a credential checked out, and then
-    // serve it to a request carrying none. Same reasoning, and the same fix, as
-    // the embedded assets in `appearance::serve_embedded`.
-    //
-    // **Their pictures under `_shots/` are kept a year but not called immutable**, because
-    // the bytes at a picture's path do change: a record shot an older renderer left in
-    // the wrong shape is healed in place, one pruned past the keep limit is rendered
-    // again with live data, and `_shots/ref/` is re-taken on a clock and told apart only
-    // by the `?v=<mtime>` its URL carries. `immutable` vouches for the *path* now,
-    // because the path is what a mirror of this response is keyed on
-    // (`docs/arch/cache.md`).
-    let cache = if path.starts_with("_compiled/") {
+/// Compiled modules under `_compiled/` are content-addressed → immutable. A view's own
+/// files change in place, so they are `no-cache`: kept, and revalidated against their
+/// `ETag` on every use — an unchanged clip costs a `304`, an edited one is fetched again.
+///
+/// **`private`, because this is the agent's own code, written for one person.**
+/// Content-addressing makes a module safe to cache *forever*; it does not make it safe
+/// to cache *shared*. This path is gated, so `public` would let a CDN store a view it
+/// only received because a credential checked out, and then serve it to a request
+/// carrying none. Same reasoning, and the same fix, as the embedded assets in
+/// `appearance::serve_embedded`.
+///
+/// **Their pictures under `_shots/` are kept a year but not called immutable**, because
+/// the bytes at a picture's path do change: a record shot an older renderer left in the
+/// wrong shape is healed in place, one pruned past the keep limit is rendered again
+/// with live data, and `_shots/ref/` is re-taken on a clock and told apart only by the
+/// `?v=<mtime>` its URL carries. `immutable` vouches for the *path*, because the path
+/// is what a mirror of this response is keyed on (`docs/arch/cache.md`).
+fn cache_control(path: &str) -> &'static str {
+    if path.starts_with("_compiled/") {
         "private, max-age=31536000, immutable"
     } else if path.starts_with("_shots/") {
         "private, max-age=31536000"
     } else {
-        "no-store"
-    };
-    resp.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static(cache));
-    resp
+        "no-cache"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_compiled_modules_are_called_immutable() {
+        assert!(cache_control("_compiled/0a1b.mjs").contains("immutable"));
+        assert!(!cache_control("_shots/ref/x.png").contains("immutable"));
+        assert_eq!(cache_control("badminton/clips/a.mp4"), "no-cache");
+    }
 
     #[test]
     fn views_path_blocks_traversal() {

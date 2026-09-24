@@ -4,11 +4,18 @@
 //!
 //! See `docs/arch/cache.md`. The short of it: the relay is an 11 Mbps box, a
 //! conversation fits through it and a photograph does not. So an edge function
-//! sits in front of the fronted paths (`/api/media/*`, `/api/attachments/*`) and,
-//! for a session cookie this core signed, answers from the bucket what is there;
-//! anything else comes on to the core, as it always did. **This core never
-//! redirects and never knows whether the edge answered** — a page asks the same
-//! URL on loopback, on a custom domain, and through the community.
+//! sits in front of the fronted paths and, for a session cookie this core signed,
+//! answers from the bucket what is there; anything else comes on to the core, as it
+//! always did. **This core never redirects** — a page asks the same URL on
+//! loopback, on a custom domain, and through the community.
+//!
+//! **Two ways a copy is trusted.** Under `/api/media/*` and `/api/attachments/*`
+//! the bytes never change, so the edge serves a copy on its own word and this core
+//! never hears of it. Under `/views/*` and `/api/drive/file/*` an agent rewrites
+//! files in place, so the edge asks first — the browser's request plus
+//! `x-hi-cache: ask` — and [`layer`] answers `304` with `x-hi-cache: bucket` when
+//! the copy it put up carries the `ETag` the route would send now. That makes a
+//! stale copy impossible and costs a headers-only round trip.
 //!
 //! This module is the core's whole part in that, and it has two jobs:
 //!
@@ -19,18 +26,19 @@
 //!   clock, and kept only in memory. **A refusal withdraws both.**
 //! - **Upload.** At the write ([`enqueue`]), for what a person handed over and for
 //!   an attachment at placement; and on a **miss** ([`layer`]) — a relayed request
-//!   carrying a token signed under this core's current key, for a fronted path,
-//!   reaching the core at all, means the edge looked and did not find it.
+//!   carrying a token signed under this core's current key, for an immutable path,
+//!   reaching the core at all, means the edge looked and did not find it; for a
+//!   changing path, an `ask` this core could not answer with `bucket` is the same.
 //!
 //! ## What may be mirrored: the response already says
 //!
-//! **A response under a fronted path, whose `Cache-Control` says `immutable`, at
-//! a plain-ASCII path, is copied, and nothing else is.** Not a list of routes: the
-//! one judgment a person has to make — *do these bytes ever change?* — is the one
-//! that header already asks, and a route that forgets to say so costs acceleration
-//! and nothing else. The key is `cache/<handle>/<request path>`, which the edge
-//! builds from the host and the path it was asked for; plain ASCII so the two
-//! agree byte for byte.
+//! **Trusted: a response whose `Cache-Control` says `immutable`. Checked: a
+//! response with an `ETag`, of at least [`CHECKED_FLOOR`].** Both under a fronted
+//! path, at a plain-ASCII path. Not a list of routes: the one judgment a person has
+//! to make — *do these bytes ever change?* — is the one that header already asks,
+//! and a route that forgets to say so costs acceleration and nothing else. The key
+//! is `cache/<handle>/<request path>`, which the edge builds from the host and the
+//! path it was asked for; plain ASCII so the two agree byte for byte.
 //!
 //! **The bucket's copy outlives what the core would still serve** — a faded day,
 //! a deleted file — until its lifecycle drops it. That is accepted
@@ -49,10 +57,11 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
-use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
+use axum::body::HttpBody as _;
+use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse as _, Response};
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt as _;
 use tokio::sync::mpsc;
@@ -87,7 +96,28 @@ const UNREACHABLE_FOR: Duration = Duration::from_secs(5 * 60);
 /// object, for however the bucket rounds its expiry to a day.
 const LIFECYCLE_SLACK: i64 = 86_400;
 
+/// The smallest checked object worth copying. Each checked hit costs a round trip to
+/// this core *and* a bucket read; below this the tunnel's own bytes are cheaper.
+/// **A guess, not a measurement** — `docs/arch/cache.md` § *Open* 3.
+const CHECKED_FLOOR: u64 = 256 * 1024;
+
+/// The request header the edge asks with — `ask`, or `missing` when the bucket did
+/// not hold what this core vouched for — and the response header this core answers
+/// `bucket` in. `edge/cache.js` in the site repo reads and writes the same name.
+const X_HI_CACHE: &str = "x-hi-cache";
+
 static MIRROR: OnceLock<Mirror> = OnceLock::new();
+
+/// How the edge will trust a copy of a path — which decides what the uploader
+/// requires of the response before it copies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Served on the edge's word alone: the response must say `immutable`.
+    Trusted,
+    /// Served only after this core says the copy is current: the response must carry
+    /// an `ETag`, and be at least [`CHECKED_FLOOR`].
+    Checked,
+}
 
 struct Mirror {
     data_dir: PathBuf,
@@ -107,7 +137,7 @@ struct Mirror {
 
 enum Job {
     /// Put this request path in the bucket, if it wants to be there.
-    Mirror(String),
+    Mirror(String, Mode),
     /// Get keys: none are in hand, or the write key has run out.
     Keys,
 }
@@ -160,13 +190,17 @@ pub fn session_key() -> Option<Arc<[u8]>> {
 /// Free when mirroring is off, and harmless for a path that turns out not to be
 /// mirrorable: the uploader asks the route and drops what it will not vouch for.
 pub fn enqueue(path: &str) {
+    queue(path, Mode::Trusted);
+}
+
+fn queue(path: &str, mode: Mode) {
     let Some(m) = MIRROR.get() else { return };
     if m.quiet() || !signable(path) {
         return;
     }
     let fresh = m.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_string());
     if fresh {
-        let _ = m.queue.send(Job::Mirror(path.to_string()));
+        let _ = m.queue.send(Job::Mirror(path.to_string(), mode));
     }
 }
 
@@ -174,28 +208,74 @@ pub fn enqueue(path: &str) {
 /// tunnel — nothing else passed an edge that could have answered it.
 ///
 /// A relayed request asks for keys when none are in hand, so a core that restarted
-/// signs again from about its first request. And a relayed `GET` whose session is
-/// signed under this core's current key, for a fronted path, is a **miss**: the
-/// edge would have answered it from the bucket had the object been there. If the
-/// route calls its answer immutable, the object goes up.
+/// signs again from about its first request. Then, for a `GET` or `HEAD` on a fronted
+/// path whose session is signed under this core's current key:
+///
+/// - **no `x-hi-cache`** — the edge trusts this path and looked in the bucket
+///   already, so reaching the core at all is a miss: an `immutable` answer goes up;
+/// - **`x-hi-cache: ask`** — the edge checks this path with the core. If what went up
+///   carries the `ETag` the route answered with now, the answer becomes a bodiless
+///   `304` with `x-hi-cache: bucket`, and the edge serves the bytes from the bucket.
+///   Otherwise the bytes go back as they are, and this version goes up behind them;
+/// - **`x-hi-cache: missing`** — the bucket did not hold what this core vouched for:
+///   forget the record, serve, and put it back.
+///
+/// The route runs first either way, so the gate, the route's own `404` and the
+/// browser's own `304` all reach the edge unchanged.
 pub async fn layer(req: Request, next: Next) -> Response {
     let Some(m) = MIRROR.get().filter(|_| req.extensions().get::<Relayed>().is_some()) else {
         return next.run(req).await;
     };
     m.want_keys();
     let path = req.uri().path().to_string();
-    let missed = req.method() == Method::GET
+    let signed = matches!(*req.method(), Method::GET | Method::HEAD)
         && m.grant().is_some_and(|g| g.fronts(&path) && surfaces::signed_session(req.headers(), &g.sign_key));
+    if !signed {
+        return next.run(req).await;
+    }
+    let asked = header(req.headers(), HeaderName::from_static(X_HI_CACHE));
     let resp = next.run(req).await;
-    if missed && matches!(resp.status(), StatusCode::OK | StatusCode::PARTIAL_CONTENT) && immutable(resp.headers()) {
-        enqueue(&path);
+    if !matches!(resp.status(), StatusCode::OK | StatusCode::PARTIAL_CONTENT) {
+        return resp;
+    }
+    match asked.as_str() {
+        "ask" | "missing" => {
+            let Some(etag) = resp.headers().get(ETAG).cloned() else { return resp };
+            if asked == "missing" {
+                m.records.forget(&path);
+            } else if m.vouches(&path, etag.to_str().unwrap_or("")) {
+                return in_bucket(etag);
+            }
+            if whole_len(&resp).is_some_and(|len| len >= CHECKED_FLOOR) {
+                queue(&path, Mode::Checked);
+            }
+        }
+        _ if immutable(resp.headers()) => enqueue(&path),
+        _ => {}
     }
     resp
+}
+
+/// The answer that sends the edge to the bucket: no body, the version the copy is.
+fn in_bucket(etag: HeaderValue) -> Response {
+    let mut r = StatusCode::NOT_MODIFIED.into_response();
+    r.headers_mut().insert(ETAG, etag);
+    r.headers_mut().insert(HeaderName::from_static(X_HI_CACHE), HeaderValue::from_static("bucket"));
+    r
 }
 
 impl Mirror {
     fn grant(&self) -> Option<Arc<Grant>> {
         self.grant.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Whether the bucket holds `path` at version `etag`, under the keys in hand.
+    fn vouches(&self, path: &str, etag: &str) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        !etag.is_empty()
+            && self.grant().is_some_and(|g| {
+                self.records.get(path).is_some_and(|row| row.etag == etag && fresh(&row, &g, now))
+            })
     }
 
     fn quiet(&self) -> bool {
@@ -262,17 +342,27 @@ impl Mirror {
     }
 
     /// Mirror one path, if it wants mirroring and the keys are to hand.
-    async fn mirror_one(&self, router: &Router, path: &str) -> anyhow::Result<()> {
+    async fn mirror_one(&self, router: &Router, path: &str, mode: Mode) -> anyhow::Result<()> {
         let Some(grant) = self.keys().await else { return Ok(()) };
         let now = chrono::Utc::now().timestamp();
-        if !grant.fronts(path) || self.records.get(path).is_some_and(|row| fresh(&row, &grant, now)) {
+        let row = self.records.get(path).filter(|row| fresh(row, &grant, now));
+        if !grant.fronts(path) || (mode == Mode::Trusted && row.is_some()) {
             return Ok(());
         }
 
         let mut req = Request::get(path).body(Body::empty())?;
         req.extensions_mut().insert(Acceptor::Loopback);
         let resp = router.clone().oneshot(req).await.unwrap_or_else(|e| match e {});
-        if resp.status() != StatusCode::OK || !immutable(resp.headers()) {
+        let etag = header(resp.headers(), ETAG);
+        let wanted = match mode {
+            Mode::Trusted => immutable(resp.headers()),
+            Mode::Checked => {
+                !etag.is_empty()
+                    && row.is_none_or(|row| row.etag != etag)
+                    && whole_len(&resp).is_some_and(|len| len >= CHECKED_FLOOR)
+            }
+        };
+        if resp.status() != StatusCode::OK || !wanted {
             return Ok(());
         }
         let content_type = header(resp.headers(), CONTENT_TYPE);
@@ -283,8 +373,8 @@ impl Mirror {
         let target = grant.target();
         let bucket = Renewing { mirror: self, current: tokio::sync::Mutex::new(None), grant };
         let total = upload(&bucket, &key, &meta, resp.into_body()).await?;
-        self.records.uploaded(path, &target, chrono::Utc::now().timestamp());
-        tracing::info!(path, bytes = total, "mirrored");
+        self.records.uploaded(path, &target, chrono::Utc::now().timestamp(), &etag);
+        tracing::info!(path, bytes = total, ?mode, "mirrored");
         Ok(())
     }
 }
@@ -419,8 +509,8 @@ async fn work(router: Router, mut rx: mpsc::UnboundedReceiver<Job>) {
                 m.keys().await;
                 m.asking.store(false, Ordering::Relaxed);
             }
-            Job::Mirror(path) => {
-                if let Err(e) = m.mirror_one(&router, &path).await {
+            Job::Mirror(path, mode) => {
+                if let Err(e) = m.mirror_one(&router, &path, mode).await {
                     tracing::warn!(path, error = %format!("{e:#}"), "mirroring failed; it is served from here until the next miss");
                 }
                 m.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&path);
@@ -458,6 +548,16 @@ fn fresh(row: &Row, grant: &Grant, now: i64) -> bool {
     row.target == grant.target() && row.uploaded_at + grant.lifetime.as_secs() as i64 - LIFECYCLE_SLACK > now
 }
 
+/// The whole object's length — the body's for a `200`, `Content-Range`'s total for a
+/// `206`. Unknown for a compressed body, which nothing worth copying gets.
+fn whole_len(resp: &Response) -> Option<u64> {
+    let h = resp.headers();
+    if resp.status() == StatusCode::PARTIAL_CONTENT {
+        return header(h, CONTENT_RANGE).rsplit('/').next().and_then(|t| t.trim().parse().ok());
+    }
+    header(h, CONTENT_LENGTH).parse().ok().or_else(|| resp.body().size_hint().exact())
+}
+
 fn immutable(h: &HeaderMap) -> bool {
     header(h, CACHE_CONTROL).to_ascii_lowercase().contains("immutable")
 }
@@ -490,7 +590,7 @@ mod tests {
             bucket: "cache-1".into(),
             region: "ap-beijing".into(),
             prefix: "cache/ana/".into(),
-            paths: vec!["/api/media/".into(), "/api/attachments/".into()],
+            paths: vec!["/api/media/".into(), "/api/attachments/".into(), "/views/".into()],
             write: cos::WriteKey {
                 secret_id: "id".into(),
                 secret_key: "k".into(),
@@ -511,11 +611,33 @@ mod tests {
     }
 
     #[test]
+    fn the_whole_length_is_read_off_a_range() {
+        let r = axum::http::Response::builder()
+            .status(206)
+            .header(CONTENT_RANGE, "bytes 0-1/481633429")
+            .body(Body::from("01"))
+            .unwrap();
+        assert_eq!(whole_len(&r), Some(481_633_429));
+        let r = axum::http::Response::builder().status(200).body(Body::from("0123")).unwrap();
+        assert_eq!(whole_len(&r), Some(4));
+    }
+
+    /// The bodiless answer the edge reads as "serve it from the bucket, under this tag".
+    #[test]
+    fn the_bucket_answer_carries_the_version_and_no_body() {
+        let r = in_bucket(HeaderValue::from_static("W/\"a-1\""));
+        assert_eq!(r.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(r.headers()[X_HI_CACHE], "bucket");
+        assert_eq!(r.headers()[ETAG], "W/\"a-1\"");
+        assert_eq!(r.body().size_hint().exact(), Some(0));
+    }
+
+    #[test]
     fn only_fronted_paths_are_mirrored() {
         let g = grant();
         assert!(g.fronts(P));
         assert!(g.fronts("/api/attachments/ab12/preview"));
-        assert!(!g.fronts("/views/_shots/0a1b.png"));
+        assert!(g.fronts("/views/badminton/clips/a.mp4"));
         assert!(!g.fronts("/assets/index.js"));
     }
 
@@ -524,11 +646,11 @@ mod tests {
     #[test]
     fn a_row_is_fresh_for_its_own_target_until_a_day_before_the_lifecycle() {
         let g = grant();
-        let row = |at| Row { target: "cache-1/cache/ana/".into(), uploaded_at: at };
+        let row = |at| Row { target: "cache-1/cache/ana/".into(), uploaded_at: at, etag: String::new() };
         assert!(fresh(&row(NOW), &g, NOW));
         assert!(fresh(&row(NOW - 29 * 86_400 + 60), &g, NOW));
         assert!(!fresh(&row(NOW - 29 * 86_400), &g, NOW));
-        let other = Row { target: "cache-1/cache/bob/".into(), uploaded_at: NOW };
+        let other = Row { target: "cache-1/cache/bob/".into(), uploaded_at: NOW, etag: String::new() };
         assert!(!fresh(&other, &g, NOW));
     }
 

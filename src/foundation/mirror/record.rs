@@ -14,21 +14,24 @@
 //!
 //! One row per request path. `target` is the bucket and prefix it was uploaded
 //! under, so a new bucket or a renamed handle reads as "not uploaded" without
-//! anything having to be cleared.
+//! anything having to be cleared. `etag` is the version that went up, which is
+//! what the core compares when the edge asks whether a changing file's copy is
+//! current (`docs/arch/cache.md` § *Two ways a copy is trusted*).
 
 use std::path::Path;
 use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-/// `mirrored` was the table of the redirect design, which also tracked lengths and
-/// changed objects; it is dropped rather than migrated, which this file allows.
+/// Earlier shapes' tables are dropped rather than migrated, which this file allows.
 const SCHEMA: &str = "
 DROP TABLE IF EXISTS mirrored;
-CREATE TABLE IF NOT EXISTS uploaded (
+DROP TABLE IF EXISTS uploaded;
+CREATE TABLE IF NOT EXISTS objects (
     path        TEXT PRIMARY KEY,
     target      TEXT NOT NULL,
-    uploaded_at INTEGER NOT NULL
+    uploaded_at INTEGER NOT NULL,
+    etag        TEXT NOT NULL
 );
 ";
 
@@ -39,6 +42,8 @@ pub struct Row {
     pub target: String,
     /// Unix seconds.
     pub uploaded_at: i64,
+    /// The `ETag` the uploaded response carried; empty when it carried none.
+    pub etag: String,
 }
 
 /// The open database. One connection behind a lock: every call is a single
@@ -76,9 +81,9 @@ impl Records {
     pub fn get(&self, path: &str) -> Option<Row> {
         self.with(|c| {
             c.query_row(
-                "SELECT target, uploaded_at FROM uploaded WHERE path = ?1",
+                "SELECT target, uploaded_at, etag FROM objects WHERE path = ?1",
                 params![path],
-                |r| Ok(Row { target: r.get(0)?, uploaded_at: r.get(1)? }),
+                |r| Ok(Row { target: r.get(0)?, uploaded_at: r.get(1)?, etag: r.get(2)? }),
             )
             .optional()
         })
@@ -86,18 +91,23 @@ impl Records {
     }
 
     /// Record an upload, replacing whatever was known about this path.
-    pub fn uploaded(&self, path: &str, target: &str, at: i64) {
+    pub fn uploaded(&self, path: &str, target: &str, at: i64, etag: &str) {
         self.with(|c| {
             c.execute(
-                "INSERT OR REPLACE INTO uploaded (path, target, uploaded_at) VALUES (?1, ?2, ?3)",
-                params![path, target, at],
+                "INSERT OR REPLACE INTO objects (path, target, uploaded_at, etag) VALUES (?1, ?2, ?3, ?4)",
+                params![path, target, at, etag],
             )
         });
     }
 
+    /// The bucket turned out not to hold `path`: stop vouching for it.
+    pub fn forget(&self, path: &str) {
+        self.with(|c| c.execute("DELETE FROM objects WHERE path = ?1", params![path]));
+    }
+
     /// Drop rows whose objects the bucket has expired by now.
     pub fn purge(&self, uploaded_before: i64) {
-        self.with(|c| c.execute("DELETE FROM uploaded WHERE uploaded_at < ?1", params![uploaded_before]));
+        self.with(|c| c.execute("DELETE FROM objects WHERE uploaded_at < ?1", params![uploaded_before]));
     }
 }
 
@@ -109,11 +119,17 @@ mod tests {
     fn a_row_round_trips_and_old_ones_are_purged() {
         let r = Records::in_memory();
         assert_eq!(r.get("/a"), None);
-        r.uploaded("/a", "b-1/cache/ana/", 100);
-        assert_eq!(r.get("/a"), Some(Row { target: "b-1/cache/ana/".into(), uploaded_at: 100 }));
-        r.uploaded("/b", "b-1/cache/ana/", 1000);
+        r.uploaded("/a", "b-1/cache/ana/", 100, "W/\"1\"");
+        assert_eq!(
+            r.get("/a"),
+            Some(Row { target: "b-1/cache/ana/".into(), uploaded_at: 100, etag: "W/\"1\"".into() })
+        );
+        r.uploaded("/b", "b-1/cache/ana/", 1000, "");
+        r.uploaded("/c", "b-1/cache/ana/", 1000, "");
         r.purge(500);
+        r.forget("/c");
         assert_eq!(r.get("/a"), None);
         assert!(r.get("/b").is_some());
+        assert_eq!(r.get("/c"), None);
     }
 }
