@@ -367,6 +367,16 @@ impl Floor {
         self.seen.store(self.heard.load(Ordering::Acquire), Ordering::Release);
     }
 
+    /// A line of theirs was steered into the running turn: the generation in flight has it
+    /// now, so it no longer makes that turn's words out of date. One line, one count —
+    /// `heard` may already be ahead with lines still in the queue, which it has not seen.
+    pub fn note_steered(&self) {
+        let seen = self.seen.load(Ordering::Acquire);
+        if seen < self.heard.load(Ordering::Acquire) {
+            self.seen.store(seen + 1, Ordering::Release);
+        }
+    }
+
     /// The running turn as the screen reads it, or `None` before any turn has started.
     pub fn show_from(&self) -> Option<crate::foundation::server::view_bus::ShowFrom> {
         self.latest_turn_started().map(|turn| crate::foundation::server::view_bus::ShowFrom {

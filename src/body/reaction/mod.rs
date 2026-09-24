@@ -2150,6 +2150,10 @@ async fn reaction_loop(
         // prepared branches — never beside it — so it knows what already ran.
         reaction.inner.prepared.settled().await;
 
+        // What reaches the loop while the turn runs: their lines, steered into it, and
+        // everything else, which is next-turn input as it always was.
+        let mut steered: Vec<LoopInput> = Vec::new();
+        let mut arrived: Vec<LoopInput> = Vec::new();
         let turn_result = run_reaction_turn(
             &reaction,
             &batch,
@@ -2158,6 +2162,9 @@ async fn reaction_loop(
             &mut window_memo,
             &reaction_id,
             &speaking,
+            &mut inbound,
+            &mut steered,
+            &mut arrived,
         )
         .await;
         // The same `Result` the disposition below classifies. The switchboard gets the
@@ -2175,6 +2182,7 @@ async fn reaction_loop(
             Ok(added) => {
                 // The turn delivered the mail; clear the backlog. (If this was a
                 // retry, the turn already flipped the vendor Up via note_success.)
+                // What was steered into it went with it.
                 batch.clear();
                 aside.clear();
                 failed_attempts = 0;
@@ -2212,6 +2220,10 @@ async fn reaction_loop(
                 // exactly this reason. This rung is the one somebody is waiting on,
                 // so it is the last one that should be losing what they said.
                 failed_attempts = failed_attempts.saturating_add(1);
+                // A line steered into a turn that then failed was never answered, so it
+                // is owed with the rest. Already journaled at the wire, so it goes
+                // straight into the batch rather than back through `enqueue`.
+                batch.append(&mut steered);
                 tracing::info!(
                     mail = batch.len(),
                     attempts = failed_attempts,
@@ -2240,6 +2252,9 @@ async fn reaction_loop(
         // mid-turn ("好了吗?" → "准备好了吗?") pops alone on re-entry and re-answers.
         // Up only: while down, mail is held deliberately and the backoff path owns
         // catch-up, so leave the queue for it.
+        for extra in arrived {
+            enqueue(&reaction, &mut workers, &mut batch, extra).await;
+        }
         if !reaction.inner.vendor.is_down() {
             while let Ok(extra) = inbound.try_recv() {
                 enqueue(&reaction, &mut workers, &mut batch, extra).await;
@@ -2377,6 +2392,9 @@ async fn run_reaction_turn(
     memo: &mut WindowMemo,
     reaction_id: &registry::SessionSlug,
     speaking: &Speaking,
+    inbound: &mut mpsc::Receiver<LoopInput>,
+    steered: &mut Vec<LoopInput>,
+    arrived: &mut Vec<LoopInput>,
 ) -> anyhow::Result<usize> {
     let turn_id = reaction.inner.turn_seq.fetch_add(1, Ordering::Relaxed);
     // Whether they started this turn, which is whether what it shows is the answer to them —
@@ -2468,7 +2486,32 @@ async fn run_reaction_turn(
         .await;
 
     let mut turn_error = None;
-    let completed = match drive_reaction(&session, reaction_id, context).await {
+    // **The turn listens while it thinks.** A line of theirs that lands mid-generation is
+    // steered into this turn ([`AgentSession::steer`]) rather than held for the next one, so
+    // what it prepares is written against what they have actually said
+    // (`docs/arch/host.md` § *Their lines reach the turn that is thinking*). Everything else
+    // that arrives — a report, something perceived — is next-turn input, as Cognition treats
+    // it: a report is news about work going fine, and letting it interrupt would turn every
+    // busy stretch into a stutter.
+    let drive = drive_reaction(&session, reaction_id, context);
+    tokio::pin!(drive);
+    let driven = loop {
+        tokio::select! {
+            done = &mut drive => break done,
+            next = inbound.recv() => match next {
+                // Closed: nothing more can arrive, and the turn still deserves to finish.
+                None => break (&mut drive).await,
+                Some(input) => {
+                    if steer_in(reaction, &session, &input).await {
+                        steered.push(input);
+                    } else {
+                        arrived.push(input);
+                    }
+                }
+            },
+        }
+    };
+    let completed = match driven {
         Ok(Drove { text, compacted }) => {
             // Speech arrives as `say` calls, which the MCP surface already put on the
             // sequencer while the turn was running. Anything the model *typed* is
@@ -2536,7 +2579,8 @@ async fn run_reaction_turn(
         // per conversation; Cognition is already standing, already has an inbox, and
         // already wakes on it, so the hand-down is one line into machinery that existed
         // anyway. Nothing to hand off on a turn nobody spoke into — a report, a check-in.
-        let task = render_human_from_batch(batch);
+        // Their lines steered into the turn are part of what it answered, so they go down too.
+        let task = format!("{}{}", render_human_from_batch(batch), render_human_from_batch(steered));
         if !task.trim().is_empty() {
             // A branch that ran for this message may have handed it on already, seconds ago;
             // saying so is what keeps one request from reading as two.
@@ -3450,6 +3494,47 @@ async fn open_reaction_session(
 }
 
 /// What one drive of Reaction produced.
+/// How long a `turn/steer` may go unanswered before the line it carried takes the next-turn
+/// path instead: the app-server answers nothing at all for a thread that has gone, and a live
+/// one answers in milliseconds. The same bound Cognition uses, for the same reason.
+const STEER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Steer one line of theirs into the running turn. `true` when the turn took it — then the
+/// floor counts it as seen, because the generation in flight now has it. `false` for anything
+/// that is not a line of theirs, and for a steer that did not land (the turn ended in the gap,
+/// or codex refused): that input is owed, and takes the next-turn path it always took.
+///
+/// The heading is a fact about delivery — this reached a turn already under way — and what
+/// it obliges is `reaction.md`'s to say.
+async fn steer_in(reaction: &Reaction, session: &AgentSession, input: &LoopInput) -> bool {
+    let LoopInput::Message(m) = input else { return false };
+    if m.from.is_agent() {
+        return false;
+    }
+    let rendered = render_batch(std::slice::from_ref(input));
+    let steered = tokio::time::timeout(
+        STEER_TIMEOUT,
+        session.steer(format!("{STEERED_HEADING}{rendered}")),
+    )
+    .await
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer in {STEER_TIMEOUT:?}")));
+    match steered {
+        Ok(true) => {
+            reaction.inner.floor.note_steered();
+            tracing::info!(chars = rendered.chars().count(), "reaction: steered their line into the running turn");
+            true
+        }
+        Ok(false) => false,
+        Err(err) => {
+            tracing::warn!(error = %format!("{err:#}"), "reaction: could not steer; the line waits for the next turn");
+            false
+        }
+    }
+}
+
+/// The heading a steered line rides under — one spelling, which `reaction.md` names.
+const STEERED_HEADING: &str = "## They said, while you were thinking\n";
+
 struct Drove {
     /// Everything it **typed** — working-out, not speech.
     text: String,
