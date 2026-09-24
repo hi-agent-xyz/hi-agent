@@ -217,6 +217,7 @@ async fn a_move_takes_every_window_with_it() {
     let client = reqwest::Client::new();
     let moved = client
         .post(format!("{base}/api/views/open"))
+        .header("X-HI-Face", "desk")
         .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
         .send()
         .await
@@ -232,6 +233,7 @@ async fn a_move_takes_every_window_with_it() {
     // And going live drops the cursor rather than clearing the screen.
     let live = client
         .post(format!("{base}/api/views/open"))
+        .header("X-HI-Face", "desk")
         .json(&serde_json::json!({ "live": true }))
         .send()
         .await
@@ -251,6 +253,7 @@ async fn a_show_catches_up_with_a_parked_screen() {
 
     reqwest::Client::new()
         .post(format!("{base}/api/views/open"))
+        .header("X-HI-Face", "desk")
         .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
         .send()
         .await
@@ -271,9 +274,35 @@ async fn a_move_with_no_destination_is_refused() {
 
     let empty = reqwest::Client::new()
         .post(format!("{base}/api/views/open"))
+        .header("X-HI-Face", "desk")
         .json(&serde_json::json!({}))
         .send()
         .await
         .expect("send");
     assert_eq!(empty.status(), 400);
+}
+
+/// A move is made from a face. Loopback presents no credential, so without the header
+/// this route cannot tell a window from any process on the box — and every move it
+/// takes is journalled as the person going there. Watched on 2026-09-24: a reviewer's
+/// scripts posting here for a module URL pulled every window off what was being read.
+#[tokio::test]
+async fn a_move_no_face_made_is_refused_and_moves_nothing() {
+    let dir = tempdir().expect("tempdir");
+    let (base, seams) = spawn_server_at(dir.path()).await;
+    emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
+    let before = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
+
+    let faceless = reqwest::Client::new()
+        .post(format!("{base}/api/views/open"))
+        .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(faceless.status(), 400);
+    let said = faceless.text().await.expect("body");
+    assert!(said.contains("/api/views/module"), "the refusal names the call that moves nothing: {said}");
+
+    let after = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
+    assert_eq!(after, before, "nothing moved");
 }

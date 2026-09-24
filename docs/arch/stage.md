@@ -1445,6 +1445,20 @@ drew — `POST /api/views/open` is *"deliberately not a third writer of the appe
 is gone. There are two writers of the screen, the agent and the person, which is what a
 screen they share was always going to mean.
 
+**The person's write is made from a face, and nothing else may make it.** *Added
+September 24, 2026.* "Two writers" was stated as a fact about hands and never enforced as
+one: loopback presents no credential, so `POST /api/views/open` answered any process on
+the box, and journalled every move it took as the owner going there. What reached it was
+the agent's own workers — a view-reviewer, measuring a trip plan in its own headless
+browser, posted here to get the module URL, and its scripts pulled every window off the
+paper the person was reading six times in twenty-three minutes. Each one also landed in
+the log as the person going to the trip plan, which is the input the agent reads to decide
+what someone is looking at. So a move carries `X-HI-Face` — the id the window already
+files its frame under — and one without it is refused with a pointer to
+`GET /api/views/module`, which compiles a view and moves nothing. The header is not a
+credential and does not need to be: what it keeps out is not an adversary but a process
+that wanted a module and took the nearest call that returns one.
+
 **One list, and an entry says whose hand.** A person's open appends to the same history a
 show does, marked as a move rather than a show, and the cursor is a pointer into that
 list. That mark is what lets the desktop follow the phone without being told the agent

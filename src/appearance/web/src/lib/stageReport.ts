@@ -43,9 +43,10 @@ const SURFACE_KEY = "hi.surface";
 /** This face's id: what a frame report is filed under, so a resize replaces this
  *  window's entry instead of minting a second one beside it.
  *
- *  It used to ride on the views calls as `X-HI-Face` too, because a thumbnail was
- *  rendered at the asking face's frame. Thumbnails are rendered at the tile's own
- *  fixed frame now (`server/view_shots.rs`), so nothing downstream asks who wants one. */
+ *  It also rides on `POST /api/views/open` as `X-HI-Face`, which is what makes a move
+ *  of the screen a window's: the server refuses one without it (`server/view.rs`). It
+ *  no longer picks a thumbnail's frame — those are rendered at the tile's own fixed
+ *  frame (`server/view_shots.rs`). */
 export function surfaceId(): string {
   try {
     const kept = sessionStorage.getItem(SURFACE_KEY);

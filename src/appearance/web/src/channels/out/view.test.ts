@@ -4,7 +4,11 @@ import { goToView } from "./view";
 /** The one request `goToView` fires, decoded. */
 function sent(mock: ReturnType<typeof vi.fn>) {
   const [target, init] = mock.mock.calls[0]!;
-  return { target: String(target), body: JSON.parse(String(init.body)) };
+  return {
+    target: String(target),
+    headers: init.headers as Record<string, string>,
+    body: JSON.parse(String(init.body)),
+  };
 }
 
 function accepted() {
@@ -28,6 +32,17 @@ describe("taking the screen somewhere", () => {
     expect(target).toContain("/api/views/open");
     expect(body.ref).toBe("factory/drive");
     expect(body.live).toBe(false);
+  });
+
+  // The server refuses a move no window made: on loopback this header is the only thing
+  // that tells a person's move from a script that wanted a module.
+  it("says which face made the move", async () => {
+    const fetchMock = accepted();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await goToView({ viewRef: "factory/drive" });
+
+    expect(sent(fetchMock).headers["X-HI-Face"]).toMatch(/\S/);
   });
 
   it("falls back to the module for an inline view, and still carries a name", async () => {

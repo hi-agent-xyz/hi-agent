@@ -16,7 +16,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::foundation::server::AppState;
-use crate::foundation::server::headers::AuthBearer;
+use crate::foundation::server::headers::{AuthBearer, FaceHeader};
 use crate::foundation::server::held;
 use crate::foundation::server::view_bus;
 use crate::mind::views::factory::PREFIX as SYSTEM_PREFIX;
@@ -454,12 +454,32 @@ pub struct OpenedView {
 /// five turns; the move wakes the windows and goes to the journal, and the next turn
 /// reads it as context — which is the moment it matters. That is why there is no
 /// `state.inbound.send` here, unlike every other write the person makes.
+///
+/// **A move is made from a face, and one without `X-HI-Face` is refused.** Loopback
+/// carries no credential, so without it this route could not tell a window from any
+/// other process on the box — and it journals every move as the person's. On
+/// 2026-09-24 a view-reviewer's measuring scripts posted here to get a module URL:
+/// each run moved every window off the paper the person was reading, and each was
+/// recorded as them going to the trip plan. The header is not a secret; it is the
+/// line between *someone looked* and *something needed a module*, and the refusal
+/// names the call that serves the second — `docs/arch/stage.md#one-screen-and-the-cursor-is-on-it`.
 pub async fn open_view(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
+    FaceHeader(face): FaceHeader,
     surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
     axum::Json(body): axum::Json<OpenViewRequest>,
 ) -> impl IntoResponse {
+    if face.is_none() {
+        tracing::warn!(auth = ?auth, view_ref = ?body.view_ref, "POST /api/views/open without a face: refused");
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "POST /api/views/open moves the screen every window shares, and is made from a \
+             face (X-HI-Face). To get a view's compiled module without moving anyone's \
+             screen: GET /api/views/module?ref=<ref>\n",
+        )
+            .into_response();
+    }
     // Addressed, like typing: the person went somewhere on the agent's own surface,
     // through a control nobody else can reach. Which device they did it on answers
     // who, when that device is registered to somebody.
@@ -469,7 +489,7 @@ pub async fn open_view(
     );
     let view_ref = body.view_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let module = body.module.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    tracing::info!(auth = ?auth, view_ref = ?view_ref, module = ?module, live = body.live, "POST /api/views/open");
+    tracing::info!(auth = ?auth, face = ?face, view_ref = ?view_ref, module = ?module, live = body.live, "POST /api/views/open");
 
     // Back to live: nothing to resolve, and the content slot is always mountable.
     if body.live {

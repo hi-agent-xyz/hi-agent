@@ -432,3 +432,25 @@ a picture"。
 - ⚠️ **旧图的自愈仍然只有单测见过**,跟 9-08 那条缺口一模一样:复测用的 `--data-dir` 是新的,
   真库里那 602 张 480×270 在 band 读到时一张张重拍(每次读最多三张)这条路,没在有历史数据的
   实例上跑过。
+
+## 实测 2026-09-24 · 屏被一个不是任何窗口的东西挪走了
+
+他在读 `transformer-paper-reading/attention-is-all-you-need-sections-1-6`,屏反复跳到
+`xian-trip-20260925/xian-4day-lindan-cup-plan`。`raw/view/2026-09-24/view.jsonl` 里 04:34–04:56Z
+六条 `went to "xian-trip…"`,全是 `observation`、`sender` 是他本人 —— **没有一条是 `hi_show`**。
+
+**来源是 view-reviewer 自己的量尺脚本。** `view-reviewer-xian-trip-20260925` 在 `/tmp/rv/` 下写了
+一套 headless Chrome 脚本,每个开头都 `POST /api/views/open` 拿 module URL。脚本 mtime 和屏移动
+逐秒对上:`sect.mjs` 12:53:55 · `sect2.mjs` 12:54:45 · `after.mjs` 12:56:04 · `zoom.mjs` 12:56:55
+(本地时间),04:44:22Z 那一条是它的一次 `curl`,frame log 里同一秒。
+
+**两个伤害,第二个更深**:屏被拉走;而且每一次都记成"他去看了西安",正是 agent 判断"他在看
+哪一页"读的那条输入 —— agent 自己沉淀的技能(`data/skills/find-the-breakpoint-before-redispatching.md`)
+写的正是"每一条 `went to` 都来自他的点击"。
+
+**改法**:`POST /api/views/open` 必须带 `X-HI-Face`(窗口本来就有的 face id),没带的 400,并指向
+`GET /api/views/module`(编译、不挪屏)。`stage.md` § *One screen, and the cursor is on it* 补了这条。
+
+- ✅ `make test`:无 face 的 move 被拒、屏不动;`goToView` 带上 face。
+- ⚠️ **没在活实例上看过**:部署后要看的是 —— 窗口里点 band 仍能挪屏;reviewer 下一次跑脚本
+  拿到 400 后是否改走 `/api/views/module`,而不是照抄前端的 header 绕过去。

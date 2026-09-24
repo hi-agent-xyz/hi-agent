@@ -7,6 +7,8 @@
 // a server restart all converge on the same screen — the server retains and
 // persists the state; the client just mirrors the latest snapshot.
 
+import { surfaceId } from "../../lib/stageReport";
+
 /** One active layer in the conversation's appearance, in z-order (first = bottom).
  *
  * At most two arrive: the agent's content view, and the host's condition layer
@@ -131,10 +133,13 @@ export interface Destination {
 export async function goToView(dest: Destination): Promise<void> {
   const res = await fetch("/api/views/open", {
     method: "POST",
-    // `X-HI-Surface: 1` is the CSRF marker and always that constant.
+    // `X-HI-Surface: 1` is the CSRF marker and always that constant. `X-HI-Face` says
+    // a window made this move: the server refuses one without it, because on loopback
+    // nothing else tells a person's move from a script that wanted a module.
     headers: {
       "Content-Type": "application/json",
       "X-HI-Surface": "1",
+      "X-HI-Face": surfaceId(),
     },
     body: JSON.stringify({
       ref: dest.viewRef,
