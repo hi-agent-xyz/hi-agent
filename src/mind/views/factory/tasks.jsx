@@ -1729,7 +1729,7 @@ function linked(text, keyBase) {
 // `link` is the other half of that: optional, and it resolves a code span to a file the task
 // actually has, so a name the record wrote becomes the file it names. It is given the token
 // verbatim and answers `null` for everything else, which is nearly everything — these bodies
-// spell `hi_say`, `status_since` and a SHA-256 the same way they spell a filename.
+// spell `hi_prepare`, `status_since` and a SHA-256 the same way they spell a filename.
 function inline(text, keyBase) {
   const out = [];
   let i = 0;

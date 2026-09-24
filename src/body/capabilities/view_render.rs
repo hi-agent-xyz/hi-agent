@@ -79,7 +79,7 @@ const MAX_STAGE: u32 = 16_384;
 /// the latest.
 ///
 /// **A list, not a slot**, because there is more than one face: the desktop window,
-/// a browser tab, and the iPhone client's `WKWebView`, and one `hi_show` lands on all
+/// a browser tab, and the iPhone client's `WKWebView`, and one `show` lands on all
 /// of them at once. The head is the **primary** — the surface that reported most
 /// recently, which is a resize, a skin flip or a load, and all three are someone
 /// looking. A review renders the primary and nothing else; the rest are what the

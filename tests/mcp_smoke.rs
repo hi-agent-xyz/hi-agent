@@ -95,22 +95,14 @@ async fn tools_list_is_role_gated() {
     .await
     .expect("json");
     let names = tool_names(&reaction);
-    // The reaction is the fast conversational rung: its two expression channels, both
-    // calls, what they will do if the next message goes where it expects, plus the one
-    // verb that reaches another agent. Nothing that reads or fetches.
-    // This asserted one tool while `hi_say` sat in the unreachable fallback arm and
-    // Reaction fell back to plain message text — the test agreed with the code and both
-    // were wrong about the design.
+    // The reaction is the fast conversational rung: its one way out — everything it says or
+    // shows is prepared, and the floor releases it — plus the one verb that reaches another
+    // agent. Nothing that reads or fetches.
     let mut names = names;
     names.sort();
     assert_eq!(
         names,
-        vec![
-            "hi_prepare".to_string(),
-            "hi_say".to_string(),
-            "hi_send_message".to_string(),
-            "hi_show".to_string()
-        ],
+        vec!["hi_prepare".to_string(), "hi_send_message".to_string()],
         "got {names:?}"
     );
 
@@ -127,7 +119,7 @@ async fn tools_list_is_role_gated() {
     let names = tool_names(&worker);
     // One verb reaches another agent, and it is the only one.
     assert!(names.contains(&"hi_send_message".to_string()), "got {names:?}");
-    assert!(!names.contains(&"hi_say".to_string()), "worker must not see say");
+    assert!(!names.contains(&"hi_prepare".to_string()), "worker must not see prepare");
     // The screen pair is withdrawn. `do_look`/`do_act` still exist and still dispatch by
     // name, so the only thing standing between a worker and the user's live cursor is
     // this surface — which makes it a thing to assert, not a thing to leave untested.

@@ -14,7 +14,7 @@
 //! Reaction doesn't, and who can dispatch work.
 //!
 //! Names and descriptions only. The input schemas are most of the bytes and none of the
-//! answer — `hi_say`'s schema is one string field, `hi_create_worker`'s is five, each
+//! answer — `hi_send_message`'s schema is two string fields, `hi_create_worker`'s is five, each
 //! carrying a paragraph — so a review view that
 //! carried them would bury the surface it is meant to show. Read the schema in
 //! `foundation/mcp` when it matters.
@@ -145,8 +145,8 @@ mod tests {
         let names = |role: &'static str| -> Vec<String> {
             surface(role).tools.into_iter().map(|t| t.name).collect()
         };
-        assert!(names("reaction").contains(&"hi_say".to_string()));
-        assert!(!names("cognition").contains(&"hi_say".to_string()), "only Reaction speaks");
+        assert!(names("reaction").contains(&"hi_prepare".to_string()));
+        assert!(!names("cognition").contains(&"hi_prepare".to_string()), "only Reaction speaks");
         for role in ["worker", "reaction"] {
             assert!(
                 !names(role).contains(&"hi_create_worker".to_string()),

@@ -221,6 +221,21 @@ pub enum EventKind {
     /// A matter's set went without a message taking it up — cleared by Reaction, pushed out
     /// to make room, or switched off — and why.
     BranchesVoided { matter: Option<String>, reason: String },
+    /// A stop was read for the floor (`docs/arch/host.md` § *The floor*): how many of their
+    /// lines the stop carried, whether the one wait ran out (`forced`, which asks no
+    /// `finished`), System One's `finished`, what became of it — `finished`, `has more`,
+    /// `still going`, `timeout`, `unavailable`, `error` — each `finished` set's verdict, and
+    /// what went. `timeout` is the number to watch: every reply now rides this call.
+    FloorRead {
+        lines: usize,
+        forced: bool,
+        finished: Option<f64>,
+        outcome: String,
+        verdicts: Vec<String>,
+        released: Vec<String>,
+        model: Option<String>,
+        decided_ms: u64,
+    },
 }
 
 /// One prepared direction as the event log shows it: the condition as Reaction wrote it,
@@ -402,7 +417,8 @@ impl Observatory {
             // set lives for one message, so there is no standing state to mirror.
             EventKind::BranchesPrepared { .. }
             | EventKind::BranchesResolved { .. }
-            | EventKind::BranchesVoided { .. } => {}
+            | EventKind::BranchesVoided { .. }
+            | EventKind::FloorRead { .. } => {}
         }
     }
 

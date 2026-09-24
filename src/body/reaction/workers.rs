@@ -4,7 +4,7 @@
 //! work, so heavy or long-running tasks are delegated here. A worker is a
 //! *voiceless capability within the conversation*: it has the full substrate — the
 //! conversation's memory, tools, code execution, and its own sub-agents — but holds no
-//! `hi_say`. Those sub-agents live *inside* its session and are invisible here:
+//! `hi_prepare`. Those sub-agents live *inside* its session and are invisible here:
 //! they get no session slug, no address, and no registry entry, which is
 //! why `create_worker` stays Cognition's and Reflection's (`docs/arch/agents.md`). It never speaks and never draws on the screen: it
 //! cannot emit on the reaction's expression channels (thought, audio, view). Holding
@@ -203,7 +203,7 @@ impl WorkerRegistry {
         }
     }
 
-    /// Start a working session for `task` — one that holds no `hi_say` — under an id the
+    /// Start a working session for `task` — one that holds no `hi_prepare` — under an id the
     /// **caller already holds**.
     ///
     /// `create_worker` answers with the id before the session is open, because a caller

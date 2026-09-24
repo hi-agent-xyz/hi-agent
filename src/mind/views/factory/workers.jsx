@@ -211,14 +211,16 @@ const T = {
     //
     // `agent` keeps the wire's own flat word, because every verb tried here was read as
     // a claim about delivery. An `agentMessage` is the model's own working-out and
-    // reaches nobody; the only thing a person ever heard is a `hi_say` call, which is the
-    // row below. "said" claimed the person had been answered when they got nothing;
+    // reaches nobody; the only thing a person ever hears is a `say` the floor let out of a
+    // `hi_prepare` — which is not in this log at all, so a prepare is `prepared` and never
+    // `said` — or, in a log from before it, a `hi_say` call, which is the row below. "said" claimed the person had been answered when they got nothing;
     // "typed" answered that but made the reader stop and work out what it meant. `agent`
     // says whose line it is and promises nothing about where it went.
     kind: {
       user: "prompt",
       agent: "agent",
       say: "said",
+      prepare: "prepared",
       thinking: "thought",
       command: "ran",
       edit: "edited",
@@ -290,6 +292,7 @@ const T = {
       user: "收到",
       agent: "agent",
       say: "说",
+      prepare: "备好",
       thinking: "想",
       command: "跑",
       edit: "改文件",
@@ -1675,21 +1678,38 @@ function Msg({ m, open, onToggle }) {
  *  its head carries the utterance, and its body only adds what the call answered. */
 const SAYS_ITSELF = new Set(["user", "agent", "say", "thinking", "warning", "stderr"]);
 
+/** The reply a `hi_prepare` call set for when they finish — its first `finished` line. */
+function preparedLine(args) {
+  const branches = (args && args.branches) || [];
+  const finished = branches.find((b) => b && b.when === "finished");
+  const say = finished && (finished.actions || []).find((a) => a && a.do === "say");
+  return say ? say.text || "" : "";
+}
+
 /** The row's own word for itself.
  *
- * `hi_say` is the one call in this panel that **is** speech: it is the whole way out to a
- * person, so its row says `said` and carries the words on its head line. Every other row,
- * the typed `agent` message included, is how the turn got there. Keeping the two apart is
+ * A `hi_say` call, in a log from before `hi_prepare`, is the one row here that **is** speech:
+ * it was the whole way out to a person, so its row says `said` and carries the words on its
+ * head line. A `hi_prepare` is not speech — what it set goes out only when the floor lets it,
+ * which this log does not record — so its row says `prepared` and carries the reply it set.
+ * Every other row, the typed `agent` message included, is how the turn got there. Keeping the two apart is
  * the difference between a record and a claim — a log that labels typed prose `said` will
  * tell you the agent answered on a night the person heard nothing.
  */
 function kindOf(m) {
-  return m.kind === "tool" && m.tool === "hi_say" ? "say" : m.kind;
+  if (m.kind === "tool" && m.tool === "hi_say") return "say";
+  if (m.kind === "tool" && m.tool === "hi_prepare") return "prepare";
+  return m.kind;
 }
 
 /** The one line that says what this message was. */
 function head(m) {
   if (kindOf(m) === "say") return oneLine((m.arguments && m.arguments.text) || "");
+  if (kindOf(m) === "prepare") {
+    const matter = (m.arguments && m.arguments.matter) || "";
+    const line = preparedLine(m.arguments);
+    return oneLine(line ? `${matter} — ${line}` : matter);
+  }
   switch (m.kind) {
     case "command":
       return m.command || "";

@@ -10,7 +10,7 @@
 //
 // **Every face that can show a view reports, under its own id.** The same page runs
 // in the desktop window, in a plain browser tab, and in the iPhone client's web view
-// (`CoreWebView.swift`), and one `hi_show` lands on all of them — so any of them can
+// (`CoreWebView.swift`), and one `show` lands on all of them — so any of them can
 // be the frame a person is actually reading a view in, and the builder that composes
 // for one of them has to be told which. The store keeps an entry per surface and a
 // review renders the one that reported most recently.

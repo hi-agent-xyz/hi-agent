@@ -53,10 +53,14 @@ def text_messages(root):
 def turns(root, role):
     """One dict per turn of `role`, in order.
 
-    `start` is when the host sent `turn/start`; `says` are the `hi_say` calls that
-    completed inside it; `end` is `turn/completed`. `requests` counts the
-    `tokenUsage` updates seen before the first `hi_say`, which is how a turn that
-    took one upstream request is told from one that took several.
+    `start` is when the host sent `turn/start`; `says` are the lines it *wrote* —
+    the `finished` says of each `hi_prepare` the host took, or, in a log from before
+    `hi_prepare` was the way out, the `hi_say` calls; `end` is `turn/completed`.
+    `requests` counts the `tokenUsage` updates seen before the first line, which is how
+    a turn that took one upstream request is told from one that took several.
+
+    A line written is not a line said: the floor lets it out when the room reaches its
+    moment, and what reached the conversation, and when, is `text_messages`'.
     """
     out = []
     for path in sorted(glob.glob(f"{root}/sessions/*/{role}.jsonl")):
@@ -80,10 +84,16 @@ def turns(root, role):
                     item = json.loads(o["raw"])["params"].get("item", {})
                 except (ValueError, KeyError):
                     continue
+                args = item.get("arguments") or {}
                 if item.get("tool") == "hi_say":
-                    cur["says"].append(
-                        {"at": at, "text": (item.get("arguments") or {}).get("text") or ""}
-                    )
+                    cur["says"].append({"at": at, "text": args.get("text") or ""})
+                elif item.get("tool") == "hi_prepare" and prepared(item):
+                    for b in args.get("branches") or []:
+                        if b.get("when") != "finished":
+                            continue
+                        for a in b.get("actions") or []:
+                            if a.get("do") == "say":
+                                cur["says"].append({"at": at, "text": a.get("text") or ""})
             elif method == "thread/tokenUsage/updated":
                 if not cur["says"]:
                     cur["requests"] += 1
@@ -96,6 +106,21 @@ def turns(root, role):
                 cur["end"] = at
     out.sort(key=lambda t: t["start"])
     return out
+
+
+def prepared(item):
+    """Whether the host took a `hi_prepare` call — its answer starts `prepared`."""
+    result = item.get("result") or {}
+    text = "".join(c.get("text") or "" for c in result.get("content") or [])
+    return text.startswith("prepared")
+
+
+def first_reply(msgs, at):
+    """When the agent's first message after `at` reached the conversation."""
+    for t, who, _ in msgs:
+        if t > at and who == "agent":
+            return t
+    return None
 
 
 def signals(prompt):
@@ -151,7 +176,7 @@ def branch_events(root):
                 e = json.loads(line)
             except ValueError:
                 continue
-            if str(e.get("event", "")).startswith("branches_"):
+            if str(e.get("event", "")).startswith(("branches_", "floor_")):
                 out.append(e)
     return out
 
@@ -194,10 +219,14 @@ def main(root):
     # -- Felt latency, split at the turn boundary --------------------------
     print("延迟 · 说完 → 第一句")
     row("A  说完 → turn/start", [p["turn"]["start"] - p["said"] for p in paired])
-    row("B  turn/start → 第一个 hi_say",
+    row("B  turn/start → 第一句写好",
         [p["turn"]["says"][0]["at"] - p["turn"]["start"] for p in paired if p["turn"]["says"]])
-    row("A+B 说完 → 第一句",
+    row("A+B 说完 → 第一句写好",
         [p["turn"]["says"][0]["at"] - p["said"] for p in paired if p["turn"]["says"]])
+    # What they felt: the first message of ours in the conversation after theirs — the floor
+    # may let a line out after it was written, or a line written before this one of theirs.
+    felt = [r - p["said"] for p in paired if (r := first_reply(msgs, p["said"])) is not None]
+    row("说完 → 第一句出现在对话里", felt)
 
     # A is two populations: the settle window, and waiting out a running turn.
     live = sorted((t["start"], t["end"], t) for t in done)
@@ -246,11 +275,22 @@ def main(root):
         for name, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
             pct(f"  作废: {name}", n, len(sets))
 
-    # -- The floor: what one turn costs ------------------------------------
+    floor = [e for e in events if e["event"] == "floor_read"]
+    if floor:
+        print("\n地板 · 每次停下的判定")
+        outcomes = {}
+        for e in floor:
+            outcomes[e.get("outcome", "?")] = outcomes.get(e.get("outcome", "?"), 0) + 1
+        for name, n in sorted(outcomes.items(), key=lambda kv: -kv[1]):
+            pct(f"  {name}", n, len(floor))
+        row("停下 → 判定", [e["decided_ms"] / 1000 for e in floor if "decided_ms" in e])
+        pct("  放出了东西", sum(1 for e in floor if e.get("released")), len(floor))
+
+    # -- The generation: what one turn costs --------------------------------
     print("\n地板 · 一轮的成本")
     row("turn 全长", [t["end"] - t["start"] for t in done])
     first = [t["says"][0]["at"] - t["start"] for t in spoke]
-    row("turn/start → 第一个 hi_say", first)
+    row("turn/start → 第一句写好", first)
     row("最后一句之后还在跑", [t["end"] - t["says"][-1]["at"] for t in spoke if t["end"]])
     pct("第一句之前 0 次 tokenUsage（= 一次上游请求）",
         sum(1 for t in spoke if t["requests"] == 0), len(spoke))

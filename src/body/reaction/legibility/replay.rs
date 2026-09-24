@@ -3,7 +3,8 @@
 //! live turns.
 //!
 //! **Every turn's input is already on disk.** The frame log keeps the `turn/start` Reaction
-//! was sent and every `hi_say` it made, so a turn can be put back in front of a model with
+//! was sent and every call it made — `hi_prepare` now, and the `hi_say` of turns written
+//! before it was the one way out — so a turn can be put back in front of a model with
 //! its thread's opening window and the turns just before it as history. That is not the
 //! live thread — codex's compactions and its own instructions are not reproduced — and it
 //! does not need to be: the question replay answers is whether a *change* reads better, and
@@ -74,22 +75,57 @@ struct Turn {
 }
 
 impl Turn {
-    /// What reached the person: the `hi_say` calls that came back sent.
+    /// What reached the person. For a turn from before `hi_prepare` was the one way out, the
+    /// `hi_say` calls that came back sent. For one since, the `finished` lines of every set it
+    /// prepared — **what it meant to say as its reply, not what the floor let out**: a line
+    /// held or dropped at a stop is on the host's event log, not in the turn, and replay
+    /// compares what two prompts *write*.
     fn said(&self) -> Vec<String> {
-        self.calls
-            .iter()
-            .filter(|c| c.tool == "hi_say" && c.result.starts_with("sent"))
-            .filter_map(|c| c.arguments.get("text").and_then(Value::as_str).map(str::to_string))
-            .collect()
+        let mut said = Vec::new();
+        for c in &self.calls {
+            match c.tool.as_str() {
+                "hi_say" if c.result.starts_with("sent") => {
+                    said.extend(c.arguments.get("text").and_then(Value::as_str).map(str::to_string));
+                }
+                "hi_prepare" if c.result.starts_with("prepared") => said.extend(finished(&c.arguments).0),
+                _ => {}
+            }
+        }
+        said
     }
 
-    /// What it put on screen, as the judges read it.
+    /// What it put on screen, as the judges read it — the same reading.
     fn shown(&self) -> Vec<String> {
-        self.calls.iter().filter(|c| c.tool == "hi_show").map(|c| shown_line(&c.arguments)).collect()
+        let mut shown = Vec::new();
+        for c in &self.calls {
+            match c.tool.as_str() {
+                "hi_show" => shown.push(shown_line(&c.arguments)),
+                "hi_prepare" if c.result.starts_with("prepared") => shown.extend(finished(&c.arguments).1),
+                _ => {}
+            }
+        }
+        shown
     }
 }
 
-/// One `hi_show` call as a line: the op, then the ref or id it named.
+/// A `hi_prepare` call's `finished` branch: its lines, and its shows as lines.
+fn finished(arguments: &Value) -> (Vec<String>, Vec<String>) {
+    let (mut said, mut shown) = (Vec::new(), Vec::new());
+    let branches = arguments.get("branches").and_then(Value::as_array).cloned().unwrap_or_default();
+    for b in branches.iter().filter(|b| b.get("when").and_then(Value::as_str) == Some("finished")) {
+        for a in b.get("actions").and_then(Value::as_array).into_iter().flatten() {
+            match a.get("do").and_then(Value::as_str) {
+                Some("say") => said.extend(a.get("text").and_then(Value::as_str).map(str::to_string)),
+                Some("show") => shown.push(shown_line(a)),
+                _ => {}
+            }
+        }
+    }
+    (said, shown)
+}
+
+/// One show — a `show` action, or a `hi_show` call on the log — as a line: the op, then the
+/// ref or id it named.
 fn shown_line(arguments: &Value) -> String {
     let op = arguments.get("op").and_then(Value::as_str).unwrap_or("show");
     let what = ["ref", "id"]
@@ -298,23 +334,32 @@ fn history_items(turn: &Turn, n: usize, out: &mut Vec<Value>) {
     }
 }
 
-/// What the host would have answered a replayed call, floor aside. `run` is the messages
-/// sent since the person's last one, as the turn found it and as this replay adds to it.
+/// What the host would have answered a replayed call, floor aside: a set it would take is
+/// "prepared", as the host says it, and its `finished` lines count toward the run as though the
+/// floor let them out. `run` is the messages sent since the person's last one, as the turn found
+/// it and as this replay adds to it. A call to a verb that no longer exists — a history turn's
+/// `hi_say` is in front of the model — is answered as no tool.
 fn stub(name: &str, arguments: &Value, run: &mut u64) -> String {
     match name.trim_start_matches("mcp__hi_agent__") {
-        "hi_say" => {
-            let text = arguments.get("text").and_then(Value::as_str).unwrap_or("");
-            if text.chars().count() > super::super::tools::SAY_MAX_CHARS {
-                super::super::Spoken::TooLong.ack()
-            } else if *run >= super::super::unanswered::MAX_UNANSWERED {
-                super::super::Spoken::Unanswered.ack()
-            } else {
-                *run += 1;
-                super::super::Spoken::Sent.ack()
+        "hi_prepare" => {
+            let (said, _) = finished(arguments);
+            if let Some(long) = said.iter().find(|t| t.chars().count() > super::super::tools::SAY_MAX_CHARS) {
+                return format!(
+                    "branch (\"finished\"), action: too long for one message ({} characters; the most is {}). Nothing was prepared.",
+                    long.chars().count(),
+                    super::super::tools::SAY_MAX_CHARS
+                );
             }
+            if *run + said.len() as u64 > super::super::unanswered::MAX_UNANSWERED && !said.is_empty() {
+                return format!(
+                    "prepared — but {} messages go out at most since their last one, so the floor will stop what passes it",
+                    super::super::unanswered::MAX_UNANSWERED
+                );
+            }
+            *run += said.len() as u64;
+            "prepared — nothing has been said yet: it goes when the room reaches that moment and it still fits".to_string()
         }
-        "hi_show" => "shown".to_string(),
-        "hi_send_message" => "sent".to_string(),
+        "hi_send_message" => "delivered".to_string(),
         other => format!("no tool named {other}"),
     }
 }
@@ -377,14 +422,10 @@ async fn replay_turn(
                 .unwrap_or(Value::Null);
             let id = call["call_id"].as_str().map(str::to_string).unwrap_or(format!("r{round}_{i}"));
             let answer = stub(&name, &arguments, &mut run);
-            if name.ends_with("hi_say")
-                && answer.starts_with("sent")
-                && let Some(text) = arguments.get("text").and_then(Value::as_str)
-            {
-                said.push(text.to_string());
-            }
-            if name.ends_with("hi_show") {
-                shown.push(shown_line(&arguments));
+            if name.ends_with("hi_prepare") && answer.starts_with("prepared") {
+                let (lines, shows) = finished(&arguments);
+                said.extend(lines);
+                shown.extend(shows);
             }
             // Rebuilt without the item's id: with nothing stored upstream, an id is a
             // reference to something that does not exist.
@@ -766,6 +807,22 @@ mod tests {
         let turns = read_file(&file);
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].said(), vec!["好".to_string()], "only what came back sent was said");
+
+        // A turn since `hi_prepare`: its reply is its `finished` lines.
+        let prepared = Turn {
+            calls: vec![Call {
+                tool: "hi_prepare".into(),
+                arguments: json!({ "matter": "m", "branches": [
+                    { "when": "finished", "actions": [{ "do": "say", "text": "答" }, { "do": "show", "ref": "p/v" }] },
+                    { "when": "paused", "actions": [{ "do": "say", "text": "收到" }] }
+                ] }),
+                result: "prepared \"m\" — finished; paused".into(),
+                reasoning: String::new(),
+            }],
+            ..turns[0].clone()
+        };
+        assert_eq!(prepared.said(), vec!["答".to_string()]);
+        assert_eq!(prepared.shown(), vec!["show p/v".to_string()]);
         assert_eq!(section(&turns[0].input, "New signals"), Some("## New signals\n> 部署一下"));
 
         let members: Vec<&Turn> = turns.iter().collect();
@@ -775,16 +832,17 @@ mod tests {
     }
 
     #[test]
-    fn a_replayed_say_is_answered_the_way_the_host_would() {
+    fn a_replayed_prepare_is_answered_the_way_the_host_would() {
+        let set = |text: &str| json!({ "matter": "m", "branches": [{ "when": "finished", "actions": [{ "do": "say", "text": text }] }] });
         let mut run = 0;
-        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": "好" }), &mut run).starts_with("sent"));
+        assert!(stub("mcp__hi_agent__hi_prepare", &set("好"), &mut run).starts_with("prepared"));
         let long = "字".repeat(super::super::super::tools::SAY_MAX_CHARS + 1);
-        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": long }), &mut run).starts_with("too long"));
-        assert_eq!(stub("mcp__hi_agent__hi_show", &json!({}), &mut run), "shown");
-        assert_eq!(run, 1, "only the message that went out counts");
+        assert!(stub("mcp__hi_agent__hi_prepare", &set(&long), &mut run).contains("too long"));
+        assert_eq!(run, 1, "only the line that would go out counts");
+        assert_eq!(stub("mcp__hi_agent__hi_say", &json!({ "text": "好" }), &mut run), "no tool named hi_say");
 
         let mut full = super::super::super::unanswered::MAX_UNANSWERED;
-        assert!(stub("mcp__hi_agent__hi_say", &json!({ "text": "好" }), &mut full).starts_with("not sent"));
+        assert!(stub("mcp__hi_agent__hi_prepare", &set("好"), &mut full).contains("will stop what passes it"));
     }
 
     #[test]

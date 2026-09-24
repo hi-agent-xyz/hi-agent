@@ -774,10 +774,10 @@ pub async fn reflection_prompt(data_dir: &Path) -> String {
 /// named for the rung that reads it (`docs/arch/arch.md#character`: a file per role)
 /// rather than for the activity, which is what `speaking.md` was.
 ///
-/// Its surface is `hi_say` · `hi_show` · `hi_prepare` · `hi_send_message`
-/// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name all
-/// four: the file once said "you have exactly two", then told Reaction to "hand it
-/// onward" without naming the verb that does it.
+/// Its surface is `hi_prepare` · `hi_send_message`
+/// (`docs/arch/foundation.md#default-tool-surfaces`), and `reaction.md` must name both:
+/// the file once said "you have exactly two", then told Reaction to "hand it onward"
+/// without naming the verb that does it.
 ///
 /// Read from `<data_dir>/prompts/reaction.md`, falling back to the embedded
 /// [`REACTION_BASE`], and closed by the reading standard ([`READING`]) — **the one craft
@@ -833,8 +833,8 @@ pub fn language_block(data_dir: &Path) -> String {
 const FIRST_MEETING_CUE: &str = "## First meeting\nTrue only right now: this is a \
 brand-new install — you and this person haven't met yet. So when they first reach out, \
 treat it as a first meeting: open with a real first hello (the shape of it is above), \
-put the built-in welcome on screen while you speak it (`hi_show` with ref \
-`factory/welcome`), then hand over the floor. One warm beat that lands who you are — \
+put the built-in welcome on screen while you speak it (a `show` of the ref \
+`factory/welcome` in the same branch as your hello), then hand over the floor. One warm beat that lands who you are — \
 not a tour, not a walkthrough, and nothing to teach them; you'll show them by doing, \
 from here on.";
 
@@ -1112,8 +1112,8 @@ mod soul_tests {
     /// named-but-absent mechanism reads to the rung holding it exactly like a real one —
     /// it will reach for it, get nothing, and conclude the capability is missing. So every
     /// `hi_`-prefixed name written in any prompt or craft page has to be a tool some role
-    /// actually declares. The runtime spelling is stripped first: `mcp__hi_agent__hi_say`
-    /// is the same claim as `hi_say`, not a claim about a tool called `hi_agent`.
+    /// actually declares. The runtime spelling is stripped first: `mcp__hi_agent__hi_prepare`
+    /// is the same claim as `hi_prepare`, not a claim about a tool called `hi_agent`.
     #[test]
     fn no_prompt_names_a_tool_that_does_not_exist() {
         let declared: std::collections::HashSet<String> =
@@ -1237,8 +1237,8 @@ mod soul_tests {
         // Matched on a fragment that does not straddle the file's line wrap.
         assert!(REACTION_BASE.contains("they are talking to you, and only you"));
         assert!(REACTION_BASE.contains("no other \"someone\" who does the work"));
-        assert!(REACTION_BASE.contains("`hi_say` is your voice"));
-        assert!(REACTION_BASE.contains("`hi_show`"));
+        assert!(REACTION_BASE.contains("`hi_prepare` is how anything reaches them"));
+        assert!(REACTION_BASE.contains("`hi_send_message` hands the work onward"));
 
         // And nothing is prepended: the installed file *is* the prompt, so the only
         // additions are the two pieces of state that follow it.
@@ -1666,7 +1666,7 @@ mod soul_tests {
         );
     }
 
-    /// **A preparation is offered by the voice or not at all.** Cognition holds no `hi_say`
+    /// **A preparation is offered by the voice or not at all.** Cognition holds no `hi_prepare`
     /// and never picks the words, so "the picture is ready" reaches the person only if
     /// Reaction is told to carry it — and it must arrive as a clause on something already
     /// being said, never as its own utterance. Both failures are silent: a brain told to
@@ -2135,7 +2135,7 @@ mod soul_tests {
     fn cognition_is_not_told_to_speak() {
         assert!(COGNITION_BASE.contains("You do not speak"));
         assert!(
-            !COGNITION_BASE.contains("`hi_say`") && !COGNITION_BASE.contains("`hi_show`"),
+            !COGNITION_BASE.contains("`hi_prepare`"),
             "no expression tools in a prompt for a rung that holds none"
         );
     }

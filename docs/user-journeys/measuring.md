@@ -10,13 +10,14 @@
     make measure                      # 默认 ./data
     make measure DATA=~/some/data     # 别的实例
 
-## 三个时刻，其余都是从它们算出来的
+## 四个时刻，其余都是从它们算出来的
 
 | | 取哪一刻 | 从哪读 |
 |---|---|---|
 | **t0** | 你这条消息落到服务器 | `raw/text/<日>/text.jsonl`,`kind=message` 且 `from≠agent`,取 `message.ts` |
 | **t1** | host 把你这条话作为 `## New signals` 发给 codex 的那次请求**发出** | `raw/sessions/<run>/reaction.jsonl`,`dir=send` `method=turn/start`,取帧 `ts` |
-| **t2** | 这一轮里**第一个** `hi_say` 调用完成 | 同文件,`dir=recv` `method=item/completed` 且 `item.tool=="hi_say"` |
+| **t2** | 这一轮里**第一句写好**:host 收下的第一个 `hi_prepare` 里 `finished` 分支的第一个 `say`(2026-09-24 之前的日志里是第一个 `hi_say`) | 同文件,`dir=recv` `method=item/completed` 且 `item.tool=="hi_prepare"`、回执以 `prepared` 开头 |
+| **t3** | 你这条之后,**我们的第一条消息进了对话** | `raw/text/<日>/text.jsonl`,`from=agent` 的第一条 `message.ts` |
 
 **A = t1 − t0，B = t2 − t1。** t0 是 `POST /api/in/text` 进 handler 那一行的 `Utc::now()`
 ([`text.rs`](../../src/foundation/server/text.rs))，和线帧同一个进程时钟,所以三个点之间没有跨机偏差。
@@ -29,12 +30,14 @@
 
 - **A** = settle 窗口 + **等上一轮 `turn/completed`**(loop 是串行的) + loop 开销。
   它是两个分布混在一起,所以中位数会骗人——脚本把它拆成"撞上了"和"没撞上"两行。
-- **B** = codex 收到 prompt 到吐出第一个 `hi_say`。TTFT + 推理 + 决定说话。
+- **B** = codex 收到 prompt 到写好第一句。TTFT + 推理 + 决定说话。
+- **t3 − t0** 才是你等到的:写好的一句由 floor 在你停下、且它还对得上时才放出
+  ([host.md § The floor](../arch/host.md#the-floor)),所以 t2 是"写好",t3 是"说出"。
 
-两段都**不含** t0 之前(打字、到达服务器)和 t2 之后(sequencer/出声)。
+A、B 都**不含** t0 之前(打字、到达服务器)和 t2 之后(floor 放行、sequencer、出声)。
 
 一个边界上的坑：B 结束在**第一句**，而**你下一句排的队是排到 `turn/completed`**，不是排到
-最后一句 `hi_say`。这两个差着中位 10.7 秒。
+最后一句。这两个差着中位 10.7 秒。
 
 ## 一轮走完长这样
 
@@ -72,6 +75,19 @@
 - 第一句里 **17.7% 开头先复述**、5.7% 报时间估计;"完成后给你一份报告"和"有不清楚的我再问你"
   在 1948 句里 **0 次**。
 - **账本被截断 25.9%**——`PROJECTED_TASKS` 当时是 12,超出的变成一句计数。
+
+## 基线 · 2026-09-24 · floor 改成"拿着再放"之前
+
+31 天,687 条人说的话,4210 个 reaction turn,旧的门(说不出就丢、连拦三次硬放一句)还在。
+
+| | 中位 | p75 | p90 |
+|---|---|---|---|
+| A+B 说完 → 第一句写好 | 29.4s | 48.4s | 82.2s |
+| **说完 → 第一句出现在对话里** | **47.5s** | **96.1s** | **158.8s** |
+
+两行差的那 18 秒,是写好了却被门拦下、下一轮重写的那些句子——一个月 1838 句里拦了 370 句,
+275 句是"这一轮开始后你又说了话"。新 floor 要打败的是第二行。复测再看 `地板 · 每次停下的判定`
+那一段:**`timeout` 的占比**是新机制的命门(每句回复都要过这次判定,超时就退回旧行为)。
 
 ## 复测时看什么
 

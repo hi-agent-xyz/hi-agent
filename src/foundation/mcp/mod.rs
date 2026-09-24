@@ -54,56 +54,6 @@ pub enum McpReply {
     Accepted,
 }
 
-/// The tool surfaces, selected by the `X-HI-Role` header. The reaction gets only
-/// `hi_show` (it speaks via plain message text, not a tool); a worker gets the
-/// work tools but no voice; reflection reads/writes derived memory. The `_` fallback
-/// is the legacy agentic reaction's full toolset, kept for untagged sessions.
-/// The `hi_say` tool — Reaction's voice.
-///
-/// Speech is a **call, not message text**, and that is the whole point: a call returns.
-/// The host can hold an utterance until the room is right, queue it behind another, or
-/// refuse it — and Reaction finds out which. Text streamed into the transcript is
-/// fire-and-forget and leaves nowhere for that decision to live.
-///
-/// **It carries no timer, and nothing else here does either.** It used to take `back_in`:
-/// the size Reaction put on a silence, armed as a wake. That went on its own numbers —
-/// across the frame log it fired 53 times and the work it was waiting on reported within a
-/// further 1.2 minutes at the median. What it produced was a line saying "still going, give
-/// me another five minutes" a minute before the real answer, each one arming the next. A
-/// promise is kept by the work coming back, which drives a turn regardless.
-fn say_tool() -> Value {
-    tool(
-        "hi_say",
-        "Speak to the person. Everything you want said aloud goes through this tool — \
-         plain text you write is NOT spoken. One call is one message carrying one matter \
-         whole: a sentence, a paragraph, or a few short paragraphs separated by line \
-         breaks with the conclusion first. Keep it under about 400 characters; an \
-         overlong call returns too_long and is not sent, and a line a second reading sends \
-         back returns not sent with a note on where it fails. At most three messages go \
-         out after their last message; past that a call returns not sent until they send \
-         another. Several accepted calls in a turn are spoken in order. To stay \
-         silent, don't call it at all. An accepted call is delivered and final — the \
-         message is appended to the conversation and keeps, whether or not anyone is at \
-         the window right now, so a call that came back sent is never worth making \
-         again in the same turn. To hand them a picture or a clip the work already has, \
-         pass its `att:` id in `attach`: it lands in the conversation right after the \
-         words, where they keep it, and each one counts as a message toward the three.",
-        json!({
-            "type": "object",
-            "properties": {
-                "text": { "type": "string", "description": "What to say, as natural spoken language — plain text, no markdown; line breaks between paragraphs are kept." },
-                "attach": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "maxItems": 4,
-                    "description": "Attachments to hand over with these words, by `att:` id — from a task line (your Active tasks block) or a report."
-                },
-            },
-            "required": ["text"],
-        }),
-    )
-}
-
 /// `SendMessage` — the one verb between agents.
 ///
 /// One direction, no reply. A reply is this same call going the other way, which is why
@@ -987,9 +937,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         // exactly this surface minus the dispatch verbs; folding it in added nothing to
         // declare.
         //
-        // No `hi_say`, no `hi_show`: it proposes, Reaction speaks. Enforced three ways
-        // that agree — absent here, refused at dispatch above, and its sink carries no
-        // sequencer to express through.
+        // No `hi_prepare`: it proposes, Reaction speaks. Enforced three ways that agree —
+        // absent here, refused at dispatch above, and its sink carries no mouth.
         Some("cognition") => vec![
             send_message_tool(),
             task_open_tool(),
@@ -1005,23 +954,16 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             // to anyone, so it crosses neither rail this surface holds.
             system_one_tool(),
         ],
-        // **Reaction** — the mouth. Its two expression channels plus the one verb that
-        // reaches another agent, and nothing else: no reads, no fetches, no built-ins
-        // (`docs/arch/agents.md#reaction`). A stale comment stood above the arm before
-        // this one saying Reaction "speaks via plain message text (not a `hi_say` tool)
-        // and gets exactly one expression tool — `hi_show`", which had not been true since
-        // `hi_say` was added here; it also sat directly above the *cognition* arm, so it
-        // described the wrong rung in the wrong place.
-        //
-        // `hi_prepare` is not a third expression channel. It says and shows nothing itself: it
-        // sets what the other two will do when the person takes a matter where Reaction
-        // expects (`docs/arch/agents.md#prepared-branches`), which is why it is Reaction's —
-        // the words and the screen are.
-        Some("reaction") => vec![say_tool(), show_tool(), prepare_tool(), send_message_tool()],
+        // **Reaction** — the mouth. Its one way out, and the one verb that reaches another
+        // agent, and nothing else: no reads, no fetches, no built-ins
+        // (`docs/arch/agents.md#reaction`). Everything that reaches the person is an action in
+        // a `hi_prepare` set, released by the floor (`docs/arch/agents.md#prepared-actions`);
+        // `hi_say` and `hi_show` are deleted.
+        Some("reaction") => vec![prepare_tool(), send_message_tool()],
         // **Nothing.** Every role hi-agent opens is named above, so reaching here means
         // an unheadered or unknown session, and handing one an arbitrary toolset is how
         // the previous occupant of this arm survived: it held the legacy agentic
-        // reaction's kit — `hi_say`, `hi_show`, `hi_record_reflex`, and the two understanding tools —
+        // reaction's kit — its speech and screen tools, `hi_record_reflex`, and the two understanding tools —
         // long after no live role mapped to it, and read as a live surface in every
         // review.
         //
@@ -1385,116 +1327,75 @@ fn system_one_tool() -> Value {
     )
 }
 
-/// `hi_prepare` — where a matter may go next, and what Reaction would do there.
+/// `hi_prepare` — Reaction's one way out.
 ///
-/// **Not a message, so not `hi_say`.** A message is an act — now, final. A prepared set is a
-/// state: one matter's choice about a moment that may come, replaced whole by preparing that
-/// matter again, run only if a message of the person's meets one of its branches, and used up
-/// once one takes the matter anywhere. The two meet only when a branch runs, and then its
-/// lines are ordinary messages. See `docs/arch/agents.md#prepared-branches`.
+/// **Speech is a call, not message text**, and that is still the whole point: a call returns,
+/// so an overlong line or one the check sends back is answerable in the turn that wrote it.
+/// What changed is that a call no longer says anything. It sets what Reaction would say or
+/// show for one matter, each branch naming its moment — `finished`, `paused`, or a condition
+/// on their next message — and the floor releases a branch when the room reaches that moment
+/// and it still fits. `hi_say` and `hi_show` were deleted for it: a gate that could only let a
+/// line out at once or lose it threw away every reply written while the person was still going.
+/// See `docs/arch/agents.md#prepared-actions` and `docs/arch/host.md#the-floor`.
 fn prepare_tool() -> Value {
     tool(
         "hi_prepare",
-        "Prepare for where a matter may go next, so that when they take it there you act at \
-         once instead of a whole turn later. Call it after hi_say, when what you just said leaves \
-         a narrow next move — you proposed something, asked a question with a small answer \
-         space, handed over something whose follow-up is obvious. One call is one `matter` (a \
-         few words naming what it is about) and its whole set: a few mutually exclusive \
-         branches, each a `condition` (where they take it, in plain words — 'agrees to A and \
-         attaches nothing', 'asks to see the numbers') and the `actions` you would take there, \
-         in order, written exactly as you would call them: {tool: 'hi_say', text}, {tool: \
-         'hi_show', ref, op, id}, {tool: 'hi_send_message', to, message}. Every branch has \
-         actions; a direction you would only think about is no branch — leave it out. A set \
-         waits for its matter, across other subjects, turns and restarts: when a message of \
-         theirs plainly goes one of its ways without attaching a condition, that branch runs; \
-         when one takes the matter anywhere else, the set is used up and your turn is as \
-         always; a message about something else leaves it. Preparing the same matter again \
-         replaces its set; an empty list clears it; your window lists what is ready — clear \
-         or replace what would no longer be right. A line may claim only what is true the \
-         instant it runs: after a hi_send_message, 'I'm on it' is true and 'done' is not. \
-         When a branch runs, your next turn is told what ran — carry on from there, don't \
-         repeat it. Every action is checked now; one that could not run refuses the whole call.",
+        "Everything you want said or shown goes through this tool — plain text you write is NOT \
+         spoken, and nothing you prepare goes out the instant you call it. One call is one \
+         `matter` (a few words naming what it is about) and its whole set of branches, each a \
+         `when` and the `actions` to take then. `when` is `finished` — they have stopped and are \
+         done; an ordinary reply is one `finished` branch with one say — or `paused` — they \
+         stopped with more to come; a short acknowledgment for this conversation — or, in plain \
+         words, where their next message would take the matter ('agrees to A and attaches \
+         nothing'). Actions, in order: {do: 'say', text, attach?}, {do: 'show', ref, op?, id?}, \
+         {do: 'send_message', to, message}. The host releases a branch when the room reaches its \
+         moment and it still fits what they have said since you wrote it; a line that no longer \
+         fits is held for a later stop or dropped. One say is one message carrying one matter \
+         whole, under about 400 characters; at most three go out after their last message. \
+         Preparing the same matter again replaces its whole set — that is how you revise a line \
+         still waiting — and an empty list clears it; your window lists what is ready. What \
+         happened to what you prepared is told to you with your next wake. A line may claim only \
+         what is true when it goes out: after a send_message, 'I'm on it' is true and 'done' is \
+         not. Every action is checked now; one that could not run refuses the whole call.",
         json!({
             "type": "object",
             "properties": {
                 "matter": {
                     "type": "string",
-                    "description": "What these branches are about, in a few words. The same words replace its set."
+                    "description": "What this is about, in a few words. The same words replace its set."
                 },
                 "branches": {
                     "type": "array",
-                    "description": "The matter's whole set, mutually exclusive. Empty clears it.",
+                    "description": "The matter's whole set. At most one `finished` and one `paused`; condition branches are mutually exclusive. Empty clears it.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "condition": { "type": "string", "description": "Where they take the matter, in plain words, specific enough that agreement with a condition attached does not fit it." },
+                            "when": { "type": "string", "description": "`finished`, `paused`, or where their next message takes the matter, in plain words, specific enough that agreement with a condition attached does not fit it." },
                             "actions": {
                                 "type": "array",
                                 "description": "In order, at least one; the first that does not happen stops the rest.",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "tool": { "type": "string", "enum": ["hi_say", "hi_show", "hi_send_message"] },
-                                        "text": { "type": "string", "description": "hi_say: what to say." },
-                                        "ref": { "type": "string", "description": "hi_show: the view ref." },
-                                        "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "hi_show: defaults to show." },
-                                        "id": { "type": "string", "description": "hi_show: the on-screen slot." },
-                                        "source": { "type": "string", "description": "hi_show: raw JSX for a trivial inline view, instead of a ref." },
-                                        "to": { "type": "string", "description": "hi_send_message: a session slug." },
-                                        "message": { "type": "string", "description": "hi_send_message: everything it needs to start." }
+                                        "do": { "type": "string", "enum": ["say", "show", "send_message"] },
+                                        "text": { "type": "string", "description": "say: what to say, as natural spoken language — plain text, no markdown; line breaks between paragraphs are kept." },
+                                        "attach": { "type": "array", "items": { "type": "string" }, "maxItems": 4, "description": "say: attachments to hand over with these words, by `att:` id — each lands in the conversation right after the words and counts as a message toward the three." },
+                                        "ref": { "type": "string", "description": "show: a view ref a builder reported (e.g. `project/view`), or an attachment's `att:` id to put a picture or a clip up as itself." },
+                                        "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show: defaults to show. The screen holds one view; show replaces it, replace swaps the same id in place, dismiss clears it." },
+                                        "id": { "type": "string", "description": "show: the on-screen slot, so replace/dismiss can target it." },
+                                        "source": { "type": "string", "description": "show: raw JSX for a trivial inline view, instead of a ref." },
+                                        "to": { "type": "string", "description": "send_message: a session slug." },
+                                        "message": { "type": "string", "description": "send_message: everything it needs to start." }
                                     },
-                                    "required": ["tool"]
+                                    "required": ["do"]
                                 }
                             }
                         },
-                        "required": ["condition", "actions"]
+                        "required": ["when", "actions"]
                     }
                 }
             },
             "required": ["matter", "branches"],
-        }),
-    )
-}
-
-/// The `hi_show` tool — put a view on the screen. The reaction's one expression
-/// tool beyond speech: it shows a view a worker already built (by `ref`), or a
-/// trivial inline one. Shared by the reaction surface and the legacy fallback.
-fn show_tool() -> Value {
-    tool(
-        "hi_show",
-        "Put a view on the screen. Normally you show a view a builder made for you: \
-         delegate the build, then pass the `ref` it reported back (like `project/view`) here. \
-         Interleave show and say calls in the order you want them experienced (say, \
-         then show) so each view lands as you speak to it. \
-         The screen holds ONE view at a time, filling it edge to edge. Showing is \
-         therefore how you *change* the screen, not how you add to it: a show under a \
-         new id replaces whatever was up, so walking someone through a sequence is just \
-         show, say, show, say — you never need to dismiss between beats, and there is no \
-         way to end up with two things piled on screen. Reuse an `id` with op=replace to \
-         evolve one view in place (the slot is kept, so a motion-tagged element animates \
-         rather than blinking); op=dismiss clears the screen back to the empty room, which \
-         is what you want when the topic is over and nothing replaces it. \
-         The screen is persistent state: what you've shown stays up across page refreshes, \
-         other devices in the conversation, even restarts, until something replaces it or you \
-         dismiss it. When a turn they did not start shows something while they are still \
-         on a page that only just went up, it goes into their list with a mark instead of \
-         over that page — the answer to the call says which happened. \
-         What is up right now is listed under `## On screen now` in your \
-         context — trust that list, don't guess. If it says the room is clear, there is \
-         nothing to dismiss; don't fire dismisses at remembered ids. \
-         **A picture or a clip needs no view:** pass its `att:` id as the `ref` — from the \
-         task line that carries it (your `Active tasks` block lists the newest ones) or from a \
-         report — and it goes up as itself, whole, playable, with nothing built. \
-         For a trivial one-off you may pass raw `source` JSX instead of a ref.",
-        json!({
-            "type": "object",
-            "properties": {
-                "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show puts this view up, replacing whatever was on screen; replace swaps the same id in place, keeping the slot so motion animates; dismiss clears the screen." },
-                "id": { "type": "string", "description": "A stable name for this on-screen slot, so replace/dismiss can target it. Omit to auto-generate." },
-                "ref": { "type": "string", "description": "A view ref a builder reported (e.g. `project/view`) — the usual way to show a built view — or an attachment's `att:` id, to put a picture or a clip up as itself. Omit for dismiss." },
-                "source": { "type": "string", "description": "Raw JSX (default-exported component) for a trivial inline view, when not using a ref. Omit for dismiss." },
-            },
-            "required": ["op"],
         }),
     )
 }
@@ -1652,7 +1553,7 @@ async fn dispatch_tool(
     // its `reaction.md` generation. A worker or reflection session must never speak
     // or take the screen even if its model emits the call (these aren't in its
     // advertised surface); enforce that structurally here, not just via the tool list.
-    if matches!(name, "hi_say" | "hi_show" | "hi_prepare") && role != Some("reaction") {
+    if name == "hi_prepare" && role != Some("reaction") {
         return tool_error(&format!(
             "`{name}` is reaction-only; role `{}` may not speak or show",
             role.unwrap_or("<none>")
@@ -1794,7 +1695,6 @@ async fn dispatch_tool(
 
     let arg_str =
         |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
-    let arg_opt = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
 
     // The switchboard calls, handled **before** any conversation is looked up.
     //
@@ -2059,7 +1959,7 @@ async fn dispatch_tool(
             // (`docs/arch/agents.md`: "one dispatcher is the point").
             //
             // Structural, not just absent from the advertised surface — the same reason
-            // `hi_say`/`hi_show` are checked above. Until now this was enforced only by
+            // `hi_prepare` is checked above. Until now this was enforced only by
             // accident: Reaction had no `X-HI-Session-Slug`, so the identity check below
             // rejected it. That fence is gone as of this commit, so the real one goes in.
             if !matches!(role, Some("reflection") | Some("cognition")) {
@@ -2308,61 +2208,9 @@ async fn dispatch_tool(
     };
 
     let outcome = match name {
-        "hi_say" => {
-            let text = arg_str("text");
-            if text.trim().is_empty() {
-                return tool_error("say requires non-empty `text`");
-            }
-            // The ack is what actually happened on each channel, not a constant: the
-            // tool's whole justification is that speech is answerable, and an answer
-            // that always reads "spoken" answers nothing. It also confirms the check-in
-            // this call armed, so a promise the host is now holding is never something
-            // Reaction has to assume it made.
-            let hands = match handed_over(data_dir, args).await {
-                Ok(hands) => hands,
-                Err(refused) => return tool_error(&format!("not sent — {refused}")),
-            };
-            sink.say(text, hands)
-                .await
-                .map(|said| said.ack())
-        }
         // Read, checked and set by the mouth, which owns both halves of it — see
         // [`crate::body::reaction::ToolSink::prepare`].
         "hi_prepare" => sink.prepare(args, data_dir).await,
-        "hi_show" => {
-            let op = args.get("op").and_then(Value::as_str).unwrap_or("show").to_string();
-            // A view is normally shown by ref (one a worker built); resolve it to
-            // source HERE, server-side, so the JSX never enters the mind's context.
-            // Inline `source` stays as a trivial-one-off escape hatch. A view declares
-            // nothing about itself: it is full-bleed, one at a time, and the host owns
-            // the conversation over it, so the mind decides *what* is on screen and
-            // never where, nor what surrounds it.
-            // The ref travels on with the view: it is the view's durable name, and
-            // the compiled module URL it resolves to is a disposable content hash
-            // that goes stale the moment the source is edited or the binary reseeds
-            // `factory/`. Restoring the screen after a restart needs the name.
-            let (view_ref, source) = match arg_opt("ref") {
-                // An attachment goes up as itself: no source, no compile — the stage mounts
-                // the host's own viewer for it (`docs/arch/showing.md` § *On the stage*).
-                Some(r) if crate::foundation::attachments::ref_id(&r).is_some() => {
-                    let id = crate::foundation::attachments::ref_id(&r).unwrap_or_default();
-                    if crate::foundation::attachments::probe(data_dir, id).await.is_none() {
-                        return tool_error(&crate::foundation::attachments::Refusal::UnknownId(id.to_owned()).to_string());
-                    }
-                    (Some(format!("{}{id}", crate::foundation::attachments::PREFIX)), String::new())
-                }
-                Some(r) if !r.trim().is_empty() => {
-                    match crate::mind::views::resolve_ref(data_dir, &r).await {
-                        Ok(source) => (Some(r.trim().to_string()), source),
-                        Err(err) => return tool_error(&format!("show ref `{r}`: {err}")),
-                    }
-                }
-                _ => (None, arg_str("source")),
-            };
-            // The answer says where it landed — in front of them, or into their list while
-            // they finish the page they are on — because the turn is about to speak.
-            sink.show(arg_opt("id"), op, source, view_ref).await
-        }
         other => return tool_error(&format!("unknown tool: {other}")),
     };
 
@@ -2385,7 +2233,7 @@ async fn dispatch_tool(
 /// recorded on that task as a view it made.
 ///
 /// **The review frame IS the stage frame** — full-bleed, the only frame there is — so
-/// a review renders the thing exactly the way `hi_show` will put it up. This used to be a
+/// a review renders the thing exactly the way a released `show` puts it up. This used to be a
 /// negotiation between the caller's override and a region declared in a sidecar, and
 /// getting it wrong failed a view for a defect the review itself introduced.
 async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args: &Value) -> Value {
@@ -3074,11 +2922,11 @@ async fn place_all(
     Ok(out)
 }
 
-/// What a `hi_say` hands over: attachments already placed, named by their `att:` ids — the
+/// What a `say` hands over: attachments already placed, named by their `att:` ids — the
 /// newest one each task line carries is in Reaction's Active tasks block, and a report names
 /// the rest. Reaction reads no files, so it passes ids and never paths
 /// (`docs/arch/showing.md` § *In the conversation*).
-async fn handed_over(data_dir: &Path, args: &Value) -> Result<Vec<crate::types::FileRef>, String> {
+pub(crate) async fn handed_over(data_dir: &Path, args: &Value) -> Result<Vec<crate::types::FileRef>, String> {
     use crate::foundation::attachments::{self, Refusal};
     const MOST: usize = 4;
     let Some(list) = args.get("attach").filter(|v| !v.is_null()) else {
@@ -3477,7 +3325,7 @@ fn parse_last_secs(span: &str) -> Option<f64> {
 // same way: file the artifact in `drive/` — the tree that does not fade — and hand
 // back the `⟨ref: …⟩` that addresses it. The ref is the whole point of persisting
 // rather than returning base64: it is what `hi_image_to_image`, `hi_image_to_video`,
-// `hi_image_text_to_text` and `hi_show` all take, so one generation composes with
+// `hi_image_text_to_text` and a `show` all take, so one generation composes with
 // everything already built.
 
 /// Read the semantic knobs off the tool arguments. Absent stays absent — an omitted
@@ -4001,25 +3849,14 @@ mod surface_tests {
         }
     }
 
-    /// Reaction's whole surface, pinned. `hi_say` lived in the unreachable fallback arm
-    /// for the entire life of the reaction/cognition split — defined, dispatchable, and
-    /// advertised to nobody — so Reaction fell back to plain message text. Nothing
-    /// failed; it just quietly stopped being a call that returns.
+    /// Reaction's whole surface, pinned: its one way out, and the one verb that reaches another
+    /// agent. `hi_say` and `hi_show` are gone — a turn that could still say a line at once would
+    /// be a second way out beside the floor.
     #[test]
-    fn reaction_holds_say_and_show_and_nothing_else() {
+    fn reaction_holds_prepare_and_send_and_nothing_else() {
         let mut got = names(Some("reaction"));
         got.sort();
-        assert_eq!(
-            got,
-            vec![
-                "hi_prepare".to_string(),
-                "hi_say".to_string(),
-                "hi_send_message".to_string(),
-                "hi_show".to_string()
-            ],
-            "its two expression channels, what they will do next, and the one verb that \
-             reaches another agent"
-        );
+        assert_eq!(got, vec!["hi_prepare".to_string(), "hi_send_message".to_string()]);
     }
 
     /// The other half of "and nothing else": a worker must not be able to speak.
@@ -4471,7 +4308,7 @@ mod surface_tests {
     /// One dispatcher. A Reaction that could create workers would be a second one,
     /// spawning against Cognition unseen.
     /// Cognition's whole surface, pinned. Before it had an arm it fell into the `_`
-    /// legacy fallback, which handed it `hi_say` and `hi_show` — refused at dispatch — and
+    /// legacy fallback, which handed it the speech and screen tools — refused at dispatch — and
     /// **not** `hi_create_worker`, the one tool it exists to use. A rung with no arm is not
     /// a rung with defaults; it is a rung with someone else's.
     ///
@@ -4689,7 +4526,7 @@ mod surface_tests {
     #[test]
     fn no_other_role_can_speak() {
         for role in [Some("worker"), Some("reflection")] {
-            assert!(!names(role).contains(&"hi_say".to_string()), "{role:?} must not hold say");
+            assert!(!names(role).contains(&"hi_prepare".to_string()), "{role:?} must not hold prepare");
         }
     }
 

@@ -952,8 +952,8 @@ nothing that can go out of date.
 
 The view's *ref* is that path without the `.jsx` —
 `badminton-top10/mens-singles-top10`. Report every ref you saved back to the agent in
-your summary — that's the only way the agent can put your view on screen (it calls
-`hi_show` with the ref). If you built several views for one presentation, save each as
+your summary — that's the only way the agent can put your view on screen (it shows the
+ref). If you built several views for one presentation, save each as
 its own file under the project folder and list all the refs in order, so the agent can
 walk them as a sequence.
 

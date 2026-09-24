@@ -434,7 +434,7 @@ pub struct OpenedView {
 /// `POST /api/views/open` — put the screen on a view.
 ///
 /// **This is the person's write of the appearance, and the second of two.** The agent's
-/// is `hi_show`, which owns the content slot; this one moves the cursor over the same
+/// is a `show` the floor released, which owns the content slot; this one moves the cursor over the same
 /// history, so every attached window converges on it exactly the way they converge on a
 /// show. There is one screen and both hands reach it — `docs/arch/stage.md#one-screen-and-the-cursor-is-on-it`.
 /// It used to be deliberately *not* a writer of the appearance, which is what left a

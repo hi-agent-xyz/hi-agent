@@ -1,70 +1,22 @@
-//! The floor: who is holding it, and therefore whether Reaction may take it.
+//! The floor: whether they are holding it, and what the running turn has seen of them.
 //!
-//! Two questions live here, and they are the same question from opposite ends.
+//! # 1. Are they still going?
 //!
-//! # 1. May I speak right now?
+//! **Nothing is refused here any more.** This module used to gate every `say` at the instant its
+//! words were ready — refused while their voice sounded, while they typed, or when a line had
+//! landed that the turn had not seen — and a refused line was simply lost. What decides when a
+//! line goes is now the floor reading in [`super::prepared`], which holds what Reaction prepared
+//! and releases it at a stop it still fits (`docs/arch/host.md` § *The floor*). What stays here
+//! are the facts that reading and the batching window stand on, none of them a judgment:
 //!
-//! **The mouth is where turn-taking is decided, not the input queue.** The loop's
-//! [settle](super::RESPONSE_SETTLE) batches arrivals so a turn is not spent per
-//! word; it never knew whether the person was *done*, and it was never able to —
-//! it counts finalized utterances, and a person mid-thought produces those
-//! constantly. Measured on one live conversation: every gap between that
-//! speaker's bursts was longer than the settle, so it coalesced nothing, and the
-//! voice answered a half-finished sentence four times in twenty-five seconds.
-//!
-//! So `say` is gated here instead, against the room as it stands at the instant
-//! the words are ready — up to nine seconds after the turn that composed them
-//! began. Three conditions refuse, and they catch different failures:
-//!
-//! - [`Busy::Speaking`] — their voice is sounding right now. One mouth, one
-//!   floor: it is theirs. Cheap, acoustic, and the only guard against starting
-//!   on top of a sentence that has not finalized yet.
-//! - [`Busy::Unheard`] — they said something after this turn's batch was frozen
-//!   and the model never saw it. Exact: a counter against its value at turn
-//!   start, no threshold and no guessing. This is the one that catches a reply
-//!   released into a genuine two-second gap that was nonetheless written without
-//!   the sentence carrying the person's actual point.
-//! - [`Busy::Typing`] — they are composing a line that has not been sent. The
-//!   typed half of the same failure `Speaking` catches: a thought that is not
-//!   finished yet and that no counter can see, because an unsent draft has
-//!   crossed no boundary. See *Typing is not speaking* below for the two places
-//!   it deliberately behaves differently.
-//!
-//! **A refusal is not a queue.** Nothing is held, released later, or superseded:
-//! the words are simply not said, and `say` answers with which of the three it was
-//! ([`Spoken::NotSaid`](super::Spoken)). The retry is the next turn, which costs
-//! nothing because it was already coming — whatever they said is in the queue and
-//! drives one by itself. That is also why no "they stopped" signal is needed: to
-//! stop talking they must have said a last thing, and that utterance is the wake.
-//!
-//! # Typing is not speaking
-//!
-//! Typing joins this gate because the question it answers — *have they finished
-//! the thought?* — is the same one in both modalities, and neither a settle nor a
-//! counter can answer it. Two things about it are **not** copied from speech, and
-//! both were failures waiting to happen:
-//!
-//! **A draft is not a barge-in.** [`note_speech`](Floor::note_speech) does double
-//! duty: it stamps the floor *and* infers, from our own TTS clock, that the reply
-//! was probably still sounding when they cut in. Keystrokes must not do the second
-//! half. Typing while the agent talks collides with nothing — no sound is
-//! trampled, no words go unheard — so routing keystrokes through `note_speech`
-//! would manufacture an "## Interrupted, your voice cut out there" note for
-//! someone who quietly started writing while listening, and mark the turn for
-//! flush. [`note_typing`](Floor::note_typing) therefore stamps and stops.
-//!
-//! **An abandoned draft is not a wake.** The refusal-is-not-a-queue argument above
-//! rests on every refusal implying an arriving signal: to stop talking they must
-//! utter a last thing, and to be `Unheard` they must already have sent one. Typing
-//! breaks that — someone can type three characters, delete them, and walk away,
-//! having sent nothing at all. A plain refusal would drop the reply with no turn
-//! left to carry it. So `say` first waits for the draft to settle
-//! ([`settle_typing`](Floor::settle_typing)) — long enough that a draft which has
-//! *stopped* is always waited out, never merely trimmed — and refuses only on
-//! typing still going after that, which is the case where a send really is coming.
-//!
-//! The starvation backstop is [`MAX_CONSECUTIVE_REFUSALS`]: a person who talks
-//! through every generation must not be able to mute the agent for good.
+//! - **their voice is sounding** ([`Floor::voice_active`]) — a recognized partial within
+//!   [`VOICE_ACTIVE_FOR`]. The one guard against starting on top of a sentence that has not
+//!   finalized, and the reason the batching window stays open;
+//! - **they are typing** ([`Floor::typing_active`]) — the typed half of the same fact. A draft is
+//!   not a barge-in, see [`Floor::note_typing`];
+//! - **how many of their lines exist, and how many the running turn has seen**
+//!   ([`Floor::heard`], [`Floor::seen`]) — a prepared set records what it was written against, so
+//!   the reading can show it exactly what they said after.
 //!
 //! # 2. Did they talk over me?
 //!
@@ -84,12 +36,11 @@
 //! for flush ([`Floor::should_skip`]) so the output sequencer stops speaking and
 //! typing its unheard tail rather than draining it over the human.
 //!
-//! **The gate above is what makes this half rare, and that is the point.** It
-//! used to fire on people who had never interrupted anything: we started speaking
-//! over someone who simply had not stopped, and then told Reaction its words had
-//! gone unheard — which invited it to say them again. Three consecutive turns in
-//! the measured conversation carried that note, and none of them had been
-//! interrupted.
+//! **The floor holding lines until they stop is what makes this half rare, and that is
+//! the point.** It used to fire on people who had never interrupted anything: we started
+//! speaking over someone who simply had not stopped, and then told Reaction its words had
+//! gone unheard — which invited it to say them again. Three consecutive turns in the
+//! measured conversation carried that note, and none of them had been interrupted.
 //!
 //! Everything here is estimate-grade on purpose: playback truth lives only in
 //! the client, and we deliberately don't ask for it. The note says "about Ns
@@ -125,17 +76,16 @@ const PLAYBACK_START_LATENCY: Duration = Duration::from_millis(400);
 const STILL_SOUNDING_SLACK: Duration = Duration::from_secs(2);
 
 /// How long after the last recognized partial their voice still counts as
-/// sounding — the width of [`Busy::Speaking`].
+/// sounding.
 ///
 /// Deliberately short, and it is **not** the "are they finished thinking" number
-/// that the settle kept trying to be. That question is answered exactly by
-/// [`Busy::Unheard`], so this one only has to cover the beat between two partials
+/// that the settle kept trying to be. That question is the floor reading's
+/// ([`super::prepared`]), so this one only has to cover the beat between two partials
 /// of the same breath. A long value here would buy nothing and would delay every
 /// reply into a real silence.
 const VOICE_ACTIVE_FOR: Duration = Duration::from_millis(900);
 
-/// How long after the last keystroke they still count as composing — the width
-/// of [`Busy::Typing`].
+/// How long after the last keystroke they still count as composing.
 ///
 /// Deliberately much wider than [`VOICE_ACTIVE_FOR`], because the two bridge
 /// different rhythms. Speech partials arrive every few hundred milliseconds for
@@ -146,56 +96,6 @@ const VOICE_ACTIVE_FOR: Duration = Duration::from_millis(900);
 /// affordable here and was not there, because typing costs nothing to wait out:
 /// nobody is mid-sound, so the reply is late rather than trampled.
 const TYPING_ACTIVE_FOR: Duration = Duration::from_secs(3);
-
-/// The longest [`Floor::settle_typing`] will wait for a draft to stop moving
-/// before letting `say` ask the gate.
-///
-/// **It must exceed [`TYPING_ACTIVE_FOR`], and that is the whole reason for its
-/// value.** This is the "an abandoned draft is not a wake" answer, and it only
-/// works if a draft that *stops* is always waited out: someone who types two words
-/// and closes the laptop stops producing keystrokes but leaves the stamp standing
-/// for its full width, so a cap inside that width would refuse the reply on a draft
-/// nobody is writing any more — the exact silent drop this exists to prevent. Above
-/// it, a refusal can only mean a keystroke landed *during* the wait, which is
-/// someone genuinely mid-sentence, which is a turn on its way.
-///
-/// It is not a stall in the ordinary case: the wait ends as soon as the stamp
-/// lapses, so it costs the remainder of [`TYPING_ACTIVE_FOR`] and nothing more,
-/// and it is skipped outright when nobody is typing.
-const TYPING_SETTLE_WAIT: Duration = Duration::from_secs(4);
-
-/// How often [`Floor::settle_typing`] re-asks while waiting. A poll rather than a
-/// notify: the stamp is written by an HTTP handler that has no idea a turn is
-/// waiting on it, and at this cadence the cost is a handful of uncontended lock
-/// acquisitions per reply.
-const TYPING_SETTLE_POLL: Duration = Duration::from_millis(250);
-
-/// How many `say` calls may be refused in a row before one is let through.
-///
-/// The floor gate has no upper bound of its own: someone who says something
-/// during every generation refuses every reply, and a person who talks steadily
-/// for a minute would otherwise be met with total silence — which is a worse
-/// failure than a slightly late line. So the backstop is the mechanical form of
-/// what a person does when the wait grows: stop holding out for a clean opening
-/// and take a small one. Reset by any utterance that lands.
-const MAX_CONSECUTIVE_REFUSALS: u64 = 3;
-
-/// Why Reaction may not speak the words it just produced.
-///
-/// Both mean *not said*, and neither is an error. What separates them is what the
-/// voice should make of it, which is why they are two arms and not a bool: one is
-/// about the room being occupied, the other about the reply being out of date.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Busy {
-    /// Their voice is sounding right now. The room is theirs.
-    Speaking,
-    /// They said something this turn never saw, so this reply was composed
-    /// without it.
-    Unheard,
-    /// They are still writing a line that has not been sent. Nothing is audible
-    /// and no counter has moved; the thought is simply not finished.
-    Typing,
-}
 
 /// One inferred barge-in, held until the next turn folds it into its prompt.
 #[derive(Debug)]
@@ -257,12 +157,13 @@ pub struct Floor {
     /// generation nothing dequeues, and "did they say something while I was
     /// thinking" is exactly the question.
     heard: Arc<AtomicU64>,
+    /// Whether a model turn is running: set as one starts, cleared as it ends. What is prepared
+    /// outside one — the warm-up and the seed, which prime a session and answer nobody — must
+    /// not reach the person, and the floor would release it.
+    in_turn: Arc<AtomicBool>,
     /// [`heard`](Self::heard) as it stood when the running turn's batch was
     /// frozen. Everything above it is a line the model in flight has never seen.
     seen: Arc<AtomicU64>,
-    /// Consecutive refusals, for [`MAX_CONSECUTIVE_REFUSALS`]. Reset by any
-    /// utterance that lands.
-    refused: Arc<AtomicU64>,
 }
 
 impl Default for Floor {
@@ -273,7 +174,7 @@ impl Default for Floor {
             answering: Arc::new(AtomicBool::new(false)),
             heard: Arc::new(AtomicU64::new(0)),
             seen: Arc::new(AtomicU64::new(0)),
-            refused: Arc::new(AtomicU64::new(0)),
+            in_turn: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -290,22 +191,28 @@ impl Floor {
         self.heard.fetch_add(1, Ordering::Release);
     }
 
-    /// Has a line from them landed that the running turn has not seen? The same exact
-    /// counter [`may_speak`](Self::may_speak) refuses on, read without the refusal — for
-    /// `hi_prepare`, whose branches are for their *next* message and are out of date the
-    /// moment it has already come.
-    pub fn unheard(&self) -> bool {
-        self.heard.load(Ordering::Acquire) > self.seen.load(Ordering::Acquire)
+    /// How many of their lines have been accepted, ever.
+    pub fn heard(&self) -> u64 {
+        self.heard.load(Ordering::Acquire)
+    }
+
+    /// How many of them the running turn has: its batch, and what was steered into it. A set it
+    /// prepares is read against the lines after this.
+    pub fn seen(&self) -> u64 {
+        self.seen.load(Ordering::Acquire)
+    }
+
+    /// Whether the running turn was started by something they said.
+    pub fn answering(&self) -> bool {
+        self.answering.load(Ordering::Acquire)
     }
 
     /// Are they mid-breath right now?
     ///
-    /// Read by two callers with different stakes. The mouth
-    /// ([`may_speak`](Self::may_speak)) asks so it does not start on top of them.
-    /// The loop's batching window asks so it does not spend a generation — and
-    /// dispatch an errand — on a third of a sentence: a turn's `say` can be
-    /// refused after the fact, but the thinking and the hand-down it already did
-    /// cannot be taken back. Measured, that cost was two overlapping errands from
+    /// Read by two callers with different stakes. The floor reading asks so nothing
+    /// goes out on top of them. The loop's batching window asks so it does not spend a
+    /// generation — and dispatch an errand — on a third of a sentence: a `say` can be
+    /// held, but the thinking and the hand-down a turn already did cannot be taken back. Measured, that cost was two overlapping errands from
     /// one question whose batch closed 0.8s early.
     pub async fn voice_active(&self, now: Instant) -> bool {
         self.inner
@@ -315,53 +222,19 @@ impl Floor {
             .is_some_and(|at| now.saturating_duration_since(at) < VOICE_ACTIVE_FOR)
     }
 
-    /// May Reaction say what it just produced? `Ok(())`, or which of the two
-    /// refusals applies.
-    ///
-    /// **Order matters and is not arbitrary.** `Speaking` is checked first
-    /// because it is the rudest of the three to get wrong: talking over a live voice
-    /// is audible, where speaking a slightly stale line is only unhelpful. `Unheard`
-    /// comes next because it is exact — a counter, already true or already false.
-    /// `Typing` is asked last, being the only one whose answer a caller can have
-    /// changed by waiting ([`settle_typing`](Self::settle_typing)) and therefore the
-    /// only one that should still be true by the time it is asked. A caller
-    /// that is refused should say nothing and let the next turn carry it.
-    pub async fn may_speak(&self, now: Instant) -> Result<(), Busy> {
-        let speaking = self.voice_active(now).await;
-        let unheard = self.heard.load(Ordering::Acquire) > self.seen.load(Ordering::Acquire);
-        let typing = self.typing_active(now).await;
-        let busy = match (speaking, unheard, typing) {
-            (true, _, _) => Busy::Speaking,
-            (false, true, _) => Busy::Unheard,
-            (false, false, true) => Busy::Typing,
-            (false, false, false) => {
-                self.refused.store(0, Ordering::Relaxed);
-                return Ok(());
-            }
-        };
-        // The backstop, counted here rather than by the caller so that "how many
-        // in a row" cannot disagree between the two conditions.
-        if self.refused.fetch_add(1, Ordering::Relaxed) >= MAX_CONSECUTIVE_REFUSALS {
-            self.refused.store(0, Ordering::Relaxed);
-            tracing::info!(?busy, "floor still busy after {MAX_CONSECUTIVE_REFUSALS} refusals; speaking anyway");
-            return Ok(());
-        }
-        tracing::info!(?busy, "not said — the floor is theirs");
-        Err(busy)
-    }
-
     /// Record a reaction turn at the point it starts, before its prompt can
     /// produce output. This is internal ordering only; it never reaches a wire.
     ///
-    /// It also freezes what this turn is allowed to have seen: everything heard
-    /// from here on is a line the generation about to run cannot account for, and
-    /// [`may_speak`](Self::may_speak) refuses on it. Called once the batch is
-    /// assembled — after the settle has drained — so the count matches exactly
-    /// what went into the prompt.
+    /// It also records what this turn has seen: its batch. A line heard after it
+    /// reaches the turn only if it is steered in ([`note_steered`](Self::note_steered)),
+    /// and a set the turn prepares is read against whatever it has not seen. Called
+    /// once the batch is assembled — after the settle has drained — so the count
+    /// matches exactly what went into the prompt.
     ///
     /// `answering` is whether the batch carried something they said, as opposed to a
     /// worker's report, mail or the boot wake — see [`show_from`](Self::show_from).
     pub fn note_turn_started(&self, turn: u64, answering: bool) {
+        self.in_turn.store(true, Ordering::Release);
         self.answering.store(answering, Ordering::Release);
         self.latest_turn.store(turn, Ordering::Release);
         self.seen.store(self.heard.load(Ordering::Acquire), Ordering::Release);
@@ -375,6 +248,17 @@ impl Floor {
         if seen < self.heard.load(Ordering::Acquire) {
             self.seen.store(seen + 1, Ordering::Release);
         }
+    }
+
+    /// The model turn is over; anything prepared from here until the next one starts answers
+    /// nobody.
+    pub fn note_turn_ended(&self) {
+        self.in_turn.store(false, Ordering::Release);
+    }
+
+    /// Whether a model turn is running — the only place a prepared set is for someone.
+    pub fn in_turn(&self) -> bool {
+        self.in_turn.load(Ordering::Acquire)
     }
 
     /// The running turn as the screen reads it, or `None` before any turn has started.
@@ -478,9 +362,8 @@ impl Floor {
     ///
     /// Called when a typed line is accepted, and needed because the stamp outlives
     /// the send by design — [`TYPING_ACTIVE_FOR`] is three seconds, so without this
-    /// the reply *to the line they just sent* would be refused as `Typing` for the
-    /// rest of that window. The state after a send is `Unheard`, which is exact and
-    /// which the next turn clears by starting.
+    /// the reply *to the line they just sent* would be held as though they were still
+    /// writing for the rest of that window.
     pub async fn note_sent(&self) {
         self.inner.lock().await.last_typing = None;
     }
@@ -496,29 +379,6 @@ impl Floor {
             .await
             .last_typing
             .is_some_and(|at| now.saturating_duration_since(at) < TYPING_ACTIVE_FOR)
-    }
-
-    /// Wait, up to [`TYPING_SETTLE_WAIT`], for a draft to stop moving. Returns as
-    /// soon as they pause, immediately if they were never typing.
-    ///
-    /// Called by `say` before [`may_speak`](Self::may_speak), and existing only
-    /// because typing is the one floor condition whose end is not itself a signal.
-    /// A speaker who stops has uttered a last thing; a sender who stops has sent.
-    /// Someone who types two words and closes the laptop has produced nothing, so a
-    /// straight refusal would drop the reply into a silence with no turn coming to
-    /// carry it. Waiting converts the ordinary case — a pause mid-sentence, a draft
-    /// abandoned after a beat — into speech, and leaves the refusal for sustained
-    /// typing, where a send genuinely is on its way.
-    pub async fn settle_typing(&self) {
-        let until = Instant::now() + TYPING_SETTLE_WAIT;
-        while self.typing_active(Instant::now()).await {
-            let now = Instant::now();
-            if now >= until {
-                tracing::info!("waited out {TYPING_SETTLE_WAIT:?} and they are still typing");
-                return;
-            }
-            tokio::time::sleep(TYPING_SETTLE_POLL.min(until - now)).await;
-        }
     }
 
     /// Mark `turn` for flush directly, without an audio span. Used when the mind
@@ -576,28 +436,8 @@ mod floor_tests {
         Duration::from_millis(n)
     }
 
-    /// Nobody is speaking and nothing has arrived unseen: the ordinary case, and
-    /// the one that must stay cheap and quiet.
-    #[tokio::test]
-    async fn a_free_floor_is_the_voice_s_to_take() {
-        let floor = Floor::new();
-        assert_eq!(floor.may_speak(Instant::now()).await, Ok(()));
-    }
-
-    /// The 11:10 failure: the reply was ready while their voice was still going.
-    /// Nothing had finalized, so no counter had moved — only the partials say so.
-    #[tokio::test]
-    async fn their_voice_still_sounding_refuses() {
-        let floor = Floor::new();
-        let t0 = Instant::now();
-        floor.note_speech(t0).await;
-        assert_eq!(floor.may_speak(t0 + ms(300)).await, Err(Busy::Speaking));
-        // And it lapses on its own once they actually stop.
-        assert_eq!(floor.may_speak(t0 + VOICE_ACTIVE_FOR + ms(1)).await, Ok(()));
-    }
-
-    /// The same predicate the loop's batching window asks, and it has to answer
-    /// *no* on a silent start — otherwise a first utterance would hold the window
+    /// The same predicate the floor reading and the batching window ask, and it has to
+    /// answer *no* on a silent start — otherwise a first utterance would hold the window
     /// open against nothing.
     #[tokio::test]
     async fn a_silent_room_is_never_audibly_talking() {
@@ -609,40 +449,26 @@ mod floor_tests {
         assert!(!floor.voice_active(t0 + VOICE_ACTIVE_FOR + ms(1)).await, "they stopped");
     }
 
-    /// The typed half of the same failure: nothing is audible, nothing has been
-    /// sent, and they are three words into a sentence.
+    /// The typed half: a draft moving is them still going, and it lapses on its own,
+    /// since an abandoned draft sends no signal.
     #[tokio::test]
-    async fn a_draft_still_being_written_refuses() {
+    async fn a_draft_still_being_written_is_them_still_going() {
         let floor = Floor::new();
         let t0 = Instant::now();
         floor.note_typing(t0).await;
-        assert_eq!(floor.may_speak(t0 + ms(300)).await, Err(Busy::Typing));
-        // ...and lapses on its own, since an abandoned draft sends no signal.
-        assert_eq!(floor.may_speak(t0 + TYPING_ACTIVE_FOR + ms(1)).await, Ok(()));
+        assert!(floor.typing_active(t0 + ms(300)).await);
+        assert!(!floor.typing_active(t0 + TYPING_ACTIVE_FOR + ms(1)).await);
     }
 
     /// The stamp outlives the send by three seconds, so without [`Floor::note_sent`]
-    /// the reply *to the line they just sent* would be refused as `Typing`.
+    /// the line they just sent would read as a draft still being written.
     #[tokio::test]
     async fn sending_the_line_ends_the_draft_it_came_from() {
         let floor = Floor::new();
         let t0 = Instant::now();
         floor.note_typing(t0).await;
         floor.note_sent().await;
-        floor.note_heard();
-        floor.note_turn_started(1, true);
-        assert_eq!(floor.may_speak(t0 + ms(50)).await, Ok(()));
-    }
-
-    /// A voice sounding and a draft moving at once answers `Speaking`: it is the
-    /// one that is rude rather than merely early.
-    #[tokio::test]
-    async fn a_live_voice_outranks_a_moving_draft() {
-        let floor = Floor::new();
-        let t0 = Instant::now();
-        floor.note_speech(t0).await;
-        floor.note_typing(t0).await;
-        assert_eq!(floor.may_speak(t0 + ms(100)).await, Err(Busy::Speaking));
+        assert!(!floor.typing_active(t0 + ms(50)).await);
     }
 
     /// Keystrokes must not manufacture a barge-in. Someone typing while the agent
@@ -659,111 +485,23 @@ mod floor_tests {
         assert!(!floor.should_skip(7).await, "and the turn is not flushed");
     }
 
-    /// The wait exists so an abandoned draft cannot swallow a reply outright: they
-    /// stop, it returns, and the gate is open.
-    #[tokio::test(start_paused = true)]
-    async fn a_draft_that_stops_moving_lets_the_reply_through() {
-        let floor = Floor::new();
-        floor.note_typing(Instant::now()).await;
-        floor.settle_typing().await;
-        assert_eq!(floor.may_speak(Instant::now()).await, Ok(()));
-    }
-
-    /// Sustained typing still refuses — and there the refusal is safe, because a
-    /// line that is actively being written is a turn on its way.
-    #[tokio::test(start_paused = true)]
-    async fn typing_that_never_stops_still_refuses() {
-        let floor = Floor::new();
-        // Stamped here rather than only inside the task: a spawned future has not
-        // run by the time `settle_typing` takes its first look, so leaving the first
-        // keystroke to the typist would have it wait for a draft that does not exist
-        // yet and return at once.
-        floor.note_typing(Instant::now()).await;
-        let typist = {
-            let floor = floor.clone();
-            tokio::spawn(async move {
-                for _ in 0..40 {
-                    tokio::time::sleep(ms(150)).await;
-                    floor.note_typing(Instant::now()).await;
-                }
-            })
-        };
-        floor.settle_typing().await;
-        assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Typing));
-        typist.abort();
-    }
-
-    /// The 11:18 failure, which the acoustic half cannot see: the room had been
-    /// quiet for over a second, but two sentences had landed since this turn's
-    /// batch was frozen and the reply was written without them.
+    /// What a turn has seen is its batch, plus each line steered into it — and never a
+    /// line still in the queue.
     #[tokio::test]
-    async fn a_line_the_turn_never_saw_refuses_even_in_a_quiet_room() {
-        let floor = Floor::new();
-        floor.note_heard(); // their first sentence
-        floor.note_turn_started(1, true); // ...which this turn was built from
-        floor.note_heard(); // and then they kept going, mid-generation
-        assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
-    }
-
-    /// The turn driven by what they said last is allowed to answer it. Without
-    /// this the gate would refuse every reply forever, since every turn is caused
-    /// by a line that was heard before it started.
-    #[tokio::test]
-    async fn the_next_turn_is_built_from_what_it_refused_over() {
+    async fn a_turn_sees_its_batch_and_what_was_steered_in() {
         let floor = Floor::new();
         floor.note_heard();
         floor.note_turn_started(1, true);
+        assert_eq!((floor.heard(), floor.seen()), (1, 1));
         floor.note_heard();
-        assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
-        floor.note_turn_started(2, true); // the next turn's batch carries that line
-        assert_eq!(floor.may_speak(Instant::now()).await, Ok(()));
-    }
-
-    /// Someone who talks through every generation must not be able to mute the
-    /// agent for good — the backstop takes a small opening rather than holding
-    /// out for a clean one.
-    #[tokio::test]
-    async fn the_backstop_takes_a_small_opening() {
-        let floor = Floor::new();
-        floor.note_turn_started(1, true);
         floor.note_heard();
-        for _ in 0..MAX_CONSECUTIVE_REFUSALS {
-            assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
-        }
-        assert_eq!(floor.may_speak(Instant::now()).await, Ok(()), "backstop");
-        // ...and having spent it, the gate is strict again.
-        assert_eq!(floor.may_speak(Instant::now()).await, Err(Busy::Unheard));
-    }
-
-    /// An utterance that lands resets the count, so the backstop measures a run of
-    /// refusals rather than a lifetime total.
-    #[tokio::test]
-    async fn a_landed_utterance_resets_the_run() {
-        let floor = Floor::new();
-        let t0 = Instant::now();
-        floor.note_speech(t0).await;
-        assert_eq!(floor.may_speak(t0 + ms(100)).await, Err(Busy::Speaking));
-        assert_eq!(floor.may_speak(t0 + VOICE_ACTIVE_FOR + ms(1)).await, Ok(()));
-        // Two more refusals is a fresh run, not one short of the backstop.
-        floor.note_speech(t0 + VOICE_ACTIVE_FOR + ms(2)).await;
-        for _ in 0..MAX_CONSECUTIVE_REFUSALS {
-            assert_eq!(
-                floor.may_speak(t0 + VOICE_ACTIVE_FOR + ms(3)).await,
-                Err(Busy::Speaking)
-            );
-        }
-    }
-
-    /// Both conditions at once reports the ruder one: talking over a live voice is
-    /// audible, where a stale line is only unhelpful.
-    #[tokio::test]
-    async fn a_live_voice_outranks_a_stale_reply() {
-        let floor = Floor::new();
-        let t0 = Instant::now();
-        floor.note_turn_started(1, true);
-        floor.note_heard();
-        floor.note_speech(t0).await;
-        assert_eq!(floor.may_speak(t0 + ms(100)).await, Err(Busy::Speaking));
+        assert_eq!(floor.seen(), 1, "two lines it has not been handed");
+        floor.note_steered();
+        assert_eq!(floor.seen(), 2);
+        floor.note_steered();
+        floor.note_steered();
+        assert_eq!(floor.seen(), 3, "never past what was heard");
+        assert!(floor.answering());
     }
 }
 

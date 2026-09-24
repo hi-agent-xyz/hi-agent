@@ -71,7 +71,7 @@ pub enum Hand {
 /// One place the screen has been, and who put it there. See [`ViewBus::shown`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shown {
-    /// The durable ref, which is what `hi_show` takes. An entry without one is not in
+    /// The durable ref, which is what a `show` takes. An entry without one is not in
     /// this list at all, so this is never `None` here.
     pub view_ref: String,
     /// The name the person meets this view under, on its card in the band and in the
@@ -884,13 +884,13 @@ impl ViewBus {
     /// same list with pictures and labels ([`ui/Views.tsx`]), Cognition is told what
     /// went up in the last 90 minutes
     /// ([`crate::mind::memory::snapshot::shown_recently`]) — and Reaction, the one rung
-    /// that actually calls `hi_show`, had [`on_screen`](Self::on_screen) and nothing else:
+    /// that actually shows anything, had [`on_screen`](Self::on_screen) and nothing else:
     /// one bare id, for the view that is up right now. Its own instruction to put a view
     /// back ("if you still have the ref for what they're asking about") therefore rested
     /// on a ref sitting somewhere back in its session, from the turn a builder happened to
     /// return it. That is the half of a conversation the screen was not following.
     ///
-    /// **Named views only.** `hi_show` takes a ref; an inline view is the content-addressed
+    /// **Named views only.** A `show` takes a ref; an inline view is the content-addressed
     /// artifact it compiled to and the agent has no call that puts one back. Listing an
     /// entry it cannot act on would only invite it to try — the same reason
     /// [`on_screen`](Self::on_screen) reports the content slot and not the condition
@@ -2137,7 +2137,7 @@ mod tests {
         assert_eq!(
             trail.iter().map(|s| s.view_ref.as_str()).collect::<Vec<_>>(),
             vec!["trip/itinerary", "spend/august"],
-            "newest first, and the inline show is not offered — `hi_show` cannot put it back"
+            "newest first, and the inline show is not offered — a `show` cannot put it back"
         );
         assert_eq!(trail[0].label, "Itinerary", "the name the person's card carries");
         assert!(trail[0].live, "the newest show is what is up");

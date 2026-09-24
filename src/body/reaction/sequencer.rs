@@ -1,18 +1,17 @@
-//! Output sequencer — turns the mind's `say`/`show` tool calls into paced
+//! Output sequencer — turns each released branch's `say`/`show` actions into paced
 //! speech and views.
 //!
-//! With output expressed as tool calls (not parsed from the reply stream), the
-//! calls arrive on the `/mcp` HTTP handler — a different task than the reaction
-//! loop, which is busy awaiting the prompt. So there is one sequencer
-//! task that owns the turn's TTS span and view pacing. It receives an ordered run
-//! of [`Beat`]s — a `TurnStart`, then the turn's `Say`/`Show` calls in arrival
-//! order, then a `TurnEnd` — and renders them onto the reaction's outbound seam.
+//! What Reaction prepares is released by the floor ([`super::prepared`]) on its own
+//! task, never by the turn that wrote it, so there is one sequencer task that owns the
+//! TTS span and view pacing. It receives an ordered run of [`Beat`]s per release — a
+//! `TurnStart`, then the branch's `Say`/`Show` actions in order, then a `TurnEnd` — and
+//! renders them onto the reaction's outbound seam. Releases go out one at a time, so
+//! two brackets never interleave.
 //!
-//! The buffer is the whole point: a tool call is accepted into this queue and
-//! acked immediately, so the mind never waits on synthesis or client playback. A
-//! `Show` flushes the pending spoken sentence first (so a view lands right as its
-//! sentence begins, not racing ahead), exactly as the old inline pacing did —
-//! only now driven by tool-call order rather than document order.
+//! The buffer is the whole point: a release hands its beats over and moves on, so the
+//! floor never waits on synthesis or client playback. A `Show` flushes the pending
+//! spoken sentence first (so a view lands right as its sentence begins, not racing
+//! ahead), driven by action order.
 
 use std::time::{Duration, Instant};
 
@@ -32,9 +31,8 @@ use super::{OutboundSignal, Reaction, interleave};
 /// the polling client.
 const UTTERANCE_QUIET_CLOSE: Duration = Duration::from_secs(3);
 
-/// One ordered unit the sequencer renders. `Say`/`Show` come from the mind's
-/// tool calls (via [`super::ToolSink`]); `TurnStart`/`TurnEnd` bracket a turn and
-/// are sent by [`super::run_turn`]. `TurnEnd` carries a one-shot the sequencer
+/// One ordered unit the sequencer renders. `Say`/`Show` come from a released branch's
+/// actions, and `TurnStart`/`TurnEnd` bracket that release ([`super::prepared`]). `TurnEnd` carries a one-shot the sequencer
 /// fills with the turn's spoken reply, so the loop can size the context budget and
 /// log the turn.
 pub(super) enum Beat {
@@ -50,7 +48,7 @@ pub(super) enum Beat {
         op: String,
         source: String,
         view_ref: Option<String>,
-        /// Decided when the show was asked for ([`crate::foundation::server::ViewBus::claim`]):
+        /// Decided when the show was released ([`crate::foundation::server::ViewBus::claim`]):
         /// it goes into their list and the screen stays on the page they are reading.
         keep: bool,
     },

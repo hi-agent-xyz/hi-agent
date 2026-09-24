@@ -51,12 +51,6 @@ impl Unanswered {
         self.run.store(0, Ordering::Release);
     }
 
-    /// Whether the next message would go past the cap. Asked by the mouth under its serial
-    /// lock, so two messages in one turn cannot both read the same count.
-    pub(super) fn is_full(&self) -> bool {
-        self.run.load(Ordering::Acquire) >= MAX_UNANSWERED
-    }
-
     /// Whether `n` more messages fit under the cap. A message and each thing it hands over are
     /// one each — a picture in the conversation is read like a message
     /// (`docs/arch/showing.md` § *In the conversation*) — so the words and their files go
@@ -122,12 +116,12 @@ mod tests {
     fn the_run_fills_at_the_cap_and_a_person_empties_it() {
         let run = Unanswered::default();
         for _ in 0..MAX_UNANSWERED {
-            assert!(!run.is_full());
+            assert!(run.fits(1));
             run.note_sent();
         }
-        assert!(run.is_full());
+        assert!(!run.fits(1));
         run.note_person();
-        assert!(!run.is_full());
+        assert!(run.fits(MAX_UNANSWERED));
     }
 
     #[test]

@@ -541,7 +541,7 @@ async fn a_row_carries_no_record_and_a_record_names_no_files() {
         hi_agent::mind::memory::tasks::TimelineKind::Delivered,
         chrono::Utc::now(),
         "The completed report is `inspection-report.md` in this task directory. \
-         `hi_say` carried the headline.",
+         The headline went out as a `say`.",
     ));
     hi_agent::mind::memory::tasks::write_task(dir.path(), &task)
         .await

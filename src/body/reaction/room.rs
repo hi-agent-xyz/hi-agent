@@ -93,7 +93,7 @@ pub(super) fn is_room(input: &LoopInput) -> bool {
     match input {
         LoopInput::Message(m) => matches!(m.content, Content::Speech { .. }),
         LoopInput::Observed(signal) => matches!(signal.channel, Channel::Audio | Channel::Vision),
-        LoopInput::Worker(_) | LoopInput::Mail { .. } => false,
+        LoopInput::Worker(_) | LoopInput::Mail { .. } | LoopInput::PreparedWaiting => false,
     }
 }
 
@@ -274,7 +274,7 @@ fn new_line(input: &LoopInput) -> Option<String> {
             Some(format!("{} {}", tag(Channel::Audio), clip(&said)))
         }
         LoopInput::Observed(signal) => Some(format!("{} {}", tag(signal.channel), clip(&signal.body))),
-        LoopInput::Worker(_) | LoopInput::Mail { .. } => None,
+        LoopInput::Worker(_) | LoopInput::Mail { .. } | LoopInput::PreparedWaiting => None,
     }
 }
 
@@ -282,7 +282,7 @@ fn arrived_at(input: &LoopInput) -> Option<DateTime<Utc>> {
     match input {
         LoopInput::Message(m) => Some(m.ts),
         LoopInput::Observed(signal) => Some(signal.ts),
-        LoopInput::Worker(_) | LoopInput::Mail { .. } => None,
+        LoopInput::Worker(_) | LoopInput::Mail { .. } | LoopInput::PreparedWaiting => None,
     }
 }
 

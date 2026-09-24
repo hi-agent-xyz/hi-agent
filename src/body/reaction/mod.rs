@@ -21,13 +21,11 @@
 //!    produces constantly. Measured live, every gap between one speaker's bursts
 //!    was longer than the settle, so it coalesced nothing and Reaction answered
 //!    a half-finished sentence four times in twenty-five seconds.
-//! 2. **The floor decides, and it decides at the mouth.** Whether the room is
-//!    Reaction's to speak into is asked when the words are ready, not when the turn
-//!    that wrote them began — seconds earlier, which is long enough for the person
-//!    to have started a new sentence or said the thing that mattered. `say` is
-//!    refused if their voice is sounding, or if a line landed that this turn never
-//!    saw; a refusal is a refusal, not a queue, and the reply is written afresh by
-//!    the next turn. See [`floor`].
+//! 2. **The floor decides, and it decides at release.** Nothing a turn writes goes out
+//!    when it is written: every line and view is prepared for a moment, and the floor
+//!    lets it out at a stop the room has reached — after reading it once more against
+//!    what they said since, because a turn takes seconds and they may have said the
+//!    thing that mattered inside them. See [`prepared`] and [`floor`].
 //! 3. **Fix-forward, no reflexive cancel.** A new signal never cancels the
 //!    in-flight prompt. The per-reaction loop is serial — it runs one turn to
 //!    completion before draining the next batch — so a signal that lands during
@@ -91,13 +89,13 @@ mod upkeep;
 mod workers;
 
 pub use duties::DutyDelivery;
-pub use floor::{Busy, Floor};
+pub use floor::Floor;
 pub use outbound::OutboundSignal;
 pub use workers::reopen_interrupted;
-pub use tools::{LoopControl, Said, Spoken, ToolOwner, ToolRegistry, ToolSink};
+pub use tools::{LoopControl, ToolOwner, ToolRegistry, ToolSink};
 
 use chrono::Utc;
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::{Instant, sleep_until, timeout};
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate};
@@ -134,14 +132,14 @@ const RESPONSE_SETTLE: Duration = Duration::from_millis(700);
 /// How far past the first close the batching window is held open while they are
 /// still audibly talking, or still writing a line they have not sent.
 ///
-/// **Why the window needs this when the mouth already gates speech.** A `say` can
-/// be refused after the fact ([`floor`]) — but by then the turn has thought, and
+/// **Why the window needs this when the floor already holds speech.** A `say` can
+/// be held after the fact ([`prepared`]) — but by then the turn has thought, and
 /// has handed work down, and neither can be taken back. Measured: one question
 /// arrived as three utterances, the batch closed **0.8s** before the second landed,
 /// and it cost two 30-second generations, two spoken replies, a promise armed off a
 /// third of the request, and **two overlapping errands** into Cognition, which then
-/// needed a correction of its own. The gate would have silenced the second reply
-/// and none of the rest of that.
+/// needed a correction of its own. Holding the second reply would have
+/// fixed none of the rest of that.
 ///
 /// The typed case is the same waste through a different door: someone who sends a
 /// short line and keeps writing the rest of the thought would otherwise spend a
@@ -1045,6 +1043,11 @@ enum LoopInput {
     /// spending a boolean and three call sites to do it. The standing rule moved into
     /// `reaction.md`, where guidance about how to read something belongs.
     Mail { mail: Vec<crate::foundation::registry::Message> },
+    /// A minute of quiet has passed with a prepared set held, or an action of one that did not
+    /// happen as written — the one thing nothing else is coming to carry
+    /// ([`prepared`], `docs/arch/host.md` § *What Reaction learns, and when*). It carries
+    /// nothing: what happened rides the turn's window, under its own heading.
+    PreparedWaiting,
 }
 
 /// Parse a duration token: a bare integer is seconds, or an integer with an
@@ -1094,8 +1097,8 @@ struct ReactionInner {
     tools: ToolRegistry,
     /// Process-wide floor state. The STT relay reports recognized speech here; the
     /// sequencer stamps each turn's voice span; `run_turn` drains the inferred
-    /// "what went unheard" note into the next prompt, and gates `say` on whether the
-    /// floor is theirs at all. See [`floor`].
+    /// "what went unheard" note into the next prompt, and the floor reading asks it
+    /// whether they are still going. See [`floor`].
     floor: Floor,
     /// The second reading of what Reaction writes: the pre-send check the mouth asks, and
     /// the turn it belongs to, opened and closed by [`run_reaction_turn`]. See
@@ -1700,9 +1703,9 @@ impl Reaction {
         // loop's session opens so a tool call can never arrive with no route.
         let (control_tx, control_rx) = mpsc::channel::<LoopControl>(LOOP_QUEUE_CAPACITY);
 
-        // The output beats: say/show tool calls (and the loop's turn
-        // brackets) flow to a dedicated sequencer task that paces speech and views.
-        // Output bypasses the turn loop so it streams while the prompt still runs.
+        // The output beats: every released branch, bracketed as a turn of its own, flows to
+        // a dedicated sequencer task that paces speech and views. Nothing a model turn
+        // writes reaches it directly — the floor releases what was prepared.
         let (beats_tx, beats_rx) = mpsc::channel::<sequencer::Beat>(LOOP_QUEUE_CAPACITY);
         {
             let seq_reaction = self.clone();
@@ -1711,9 +1714,6 @@ impl Reaction {
             });
         }
 
-        // How many utterances the mouth has accepted. The mouth's own; the loop used to
-        // hold the other end to pace the check-in floor, and there is no floor now.
-        let said = Arc::new(AtomicU64::new(0));
         // The run the conversation already ends in, before the mouth can add to it. Read
         // from the journal, which every message reaches before it is published, over the
         // window the conversation list is seeded from — so a restart inherits the run the
@@ -1741,21 +1741,20 @@ impl Reaction {
                 ToolSink {
                     control: control_tx.clone(),
                     mouth: Some(tools::Mouth {
-                        beats: beats_tx.clone(),
-                        said: said.clone(),
                         floor: self.inner.floor.clone(),
                         speech: self.inner.speech.clone(),
-                        unanswered: self.inner.unanswered.clone(),
                         prepared: self.inner.prepared.clone(),
-                        views: self.inner.views.clone(),
-                        attachments: self.inner.attachments.clone(),
                     }),
                 },
             )
             .await;
         // A met branch runs through this same mouth: its sequencer, its count, and this
         // conversation's address for anything it hands on.
-        self.inner.prepared.attach(beats_tx.clone(), said.clone(), reaction_id.clone());
+        // What is prepared is released through this sequencer, as this conversation, and the
+        // floor's own task reads the stops no message of theirs starts.
+        let (kick_tx, kick_rx) = mpsc::unbounded_channel();
+        self.inner.prepared.attach(beats_tx.clone(), reaction_id.clone(), tx.clone(), kick_tx);
+        tokio::spawn(prepared::serve(self.clone(), kick_rx));
 
         let task_reaction = self.clone();
         // The worker registry posts its reports back into this same queue, so
@@ -1768,7 +1767,6 @@ impl Reaction {
                 task_worker_inbound,
                 control_rx,
                 control_tx,
-                Speaking { beats: beats_tx },
                 registration,
             )
             .await;
@@ -1776,18 +1774,6 @@ impl Reaction {
 
         (reaction_id, tx)
     }
-}
-
-/// The loop's end of the mouth, whose other end is [`tools::Mouth`] on the `/mcp`
-/// side. The loop sends each turn's `TurnStart`/`TurnEnd` brackets down `beats`; the
-/// tool handler sends the `Say`/`Show` beats between them, so the two halves are the
-/// same mouth seen from either side of a turn.
-///
-/// They travel together because a turn asks one question of both — *what did this
-/// actually put in front of the person* — and the count is the only half that can
-/// answer it while the bracket is still open.
-struct Speaking {
-    beats: mpsc::Sender<sequencer::Beat>,
 }
 
 /// Why the reaction loop's wait resolved. Keeps the `select!` arms tiny so the
@@ -1869,8 +1855,6 @@ async fn reaction_loop(
     // sender, but keeping a clone here means `control.recv()` never resolves to
     // `None` while this loop runs, so a quiet tool channel can't end the loop.
     _control_keepalive: mpsc::Sender<LoopControl>,
-    // The loop's end of the mouth: the sequencer inlet and the utterance count.
-    speaking: Speaking,
     // Registered synchronously by `ensure_up`, before this task is spawned,
     // so recovery can already address the conversation while its warm-up runs. Held here so
     // every loop exit unregisters it by scope.
@@ -2161,7 +2145,6 @@ async fn reaction_loop(
             &mut reaction_session,
             &mut window_memo,
             &reaction_id,
-            &speaking,
             &mut inbound,
             &mut steered,
             &mut arrived,
@@ -2371,10 +2354,9 @@ fn render_human_from_batch(batch: &[LoopInput]) -> String {
 
 /// A reaction turn: the single fast conversational rung. An agent session
 /// ([`Role::Reaction`]) on the small model, carrying `reaction.md` as its system
-/// prompt and a `say` + `show` `/mcp` surface, with the agent's own built-in tools
-/// switched off at session open. A turn is a single quick generation: it speaks by
-/// calling `say`, and may call `show` to put a view a worker already built on
-/// screen; both feed the sequencer. Text it merely types is working-out and is never
+/// prompt and a `hi_prepare` + `hi_send_message` `/mcp` surface, with the agent's own
+/// built-in tools switched off at session open. A turn is a single quick generation: it
+/// prepares what it would say and show, and the floor releases it to the sequencer. Text it merely types is working-out and is never
 /// voiced. The speed comes from the small model + a single generation, not from
 /// bypassing the adapter.
 ///
@@ -2391,7 +2373,6 @@ async fn run_reaction_turn(
     reaction_session: &mut Option<Arc<AgentSession>>,
     memo: &mut WindowMemo,
     reaction_id: &registry::SessionSlug,
-    speaking: &Speaking,
     inbound: &mut mpsc::Receiver<LoopInput>,
     steered: &mut Vec<LoopInput>,
     arrived: &mut Vec<LoopInput>,
@@ -2401,8 +2382,8 @@ async fn run_reaction_turn(
     // the one thing the screen needs to know about a turn (`ViewBus::claim`).
     let answering = batch.iter().any(|input| matches!(input, LoopInput::Message(_)));
     reaction.inner.floor.note_turn_started(turn_id, answering);
-    // What a reading of their message ran is this turn's to be told. What is still prepared
-    // stays: a set waits for its matter, not for the next turn.
+    // A condition branch that ran on their message is Cognition's to be told beside the
+    // hand-down of it. What this turn is told about its sets rides `## New signals`.
     let branch_ran = reaction.inner.prepared.take_ran();
 
     // This turn's delta: whether the conversation's own thinking is still running (so
@@ -2425,7 +2406,7 @@ async fn run_reaction_turn(
     let new_signals = format!(
         "{NEW_SIGNALS}{}{}",
         render_batch(batch),
-        branch_ran.as_ref().map(prepared::Ran::for_reaction).unwrap_or_default()
+        reaction.inner.prepared.take_told().map(|t| format!("\n{t}")).unwrap_or_default()
     );
     // What the agent has on screen right now — its own presentation surface. Read
     // fresh every turn (it's a current fact, not durable memory), so a view dismissed
@@ -2453,7 +2434,13 @@ async fn run_reaction_turn(
     let session = match reaction_session {
         Some(s) => s.clone(),
         None => {
-            let opened = open_reaction_session(reaction, reaction_id).await?;
+            let opened = match open_reaction_session(reaction, reaction_id).await {
+                Ok(opened) => opened,
+                Err(err) => {
+                    reaction.inner.floor.note_turn_ended();
+                    return Err(err);
+                }
+            };
             *reaction_session = Some(opened.clone());
             memo.forget();
             opened
@@ -2480,10 +2467,6 @@ async fn run_reaction_turn(
     // Captured before the prompt is handed over — it is moved into `drive_reaction`.
     let context_chars = context.chars().count();
     tracing::info!(ctx_chars = context_chars, "reaction: prompting session");
-    let _ = speaking
-        .beats
-        .send(sequencer::Beat::TurnStart { turn: turn_id })
-        .await;
 
     let mut turn_error = None;
     // **The turn listens while it thinks.** A line of theirs that lands mid-generation is
@@ -2498,6 +2481,18 @@ async fn run_reaction_turn(
     let driven = loop {
         tokio::select! {
             done = &mut drive => break done,
+            // What happened to what it prepared, while it is still thinking — so a turn that
+            // is still going knows a line has gone out and does not write it again.
+            _ = reaction.inner.prepared.told_ready.notified() => {
+                if let Some(told) = reaction.inner.prepared.take_told() {
+                    let steered = tokio::time::timeout(STEER_TIMEOUT, session.steer(told.clone()))
+                        .await
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer in {STEER_TIMEOUT:?}")));
+                    if !matches!(steered, Ok(true)) {
+                        reaction.inner.prepared.untake(told);
+                    }
+                }
+            }
             next = inbound.recv() => match next {
                 // Closed: nothing more can arrive, and the turn still deserves to finish.
                 None => break (&mut drive).await,
@@ -2513,12 +2508,12 @@ async fn run_reaction_turn(
     };
     let completed = match driven {
         Ok(Drove { text, compacted }) => {
-            // Speech arrives as `say` calls, which the MCP surface already put on the
-            // sequencer while the turn was running. Anything the model *typed* is
-            // working-out, not utterance — voicing it too would say every reply twice,
-            // and the tool's own description promises plain text is not spoken. So this
-            // count is a size, not a shortfall: a turn that typed and called no `say`
-            // chose silence, which is an ordinary move and not the host's to correct.
+            // Speech is prepared through `hi_prepare`, which the floor releases. Anything the
+            // model *typed* is working-out, not utterance — voicing it too would say every
+            // reply twice, and the tool's own description promises plain text is not
+            // spoken. So this count is a size, not a shortfall: a turn that typed and
+            // prepared nothing chose silence, which is an ordinary move and not the host's
+            // to correct.
             tracing::info!(typed_chars = text.chars().count(), "reaction: turn done");
             if compacted {
                 // Codex replaced this thread's history with a summary of it. Whatever
@@ -2545,22 +2540,18 @@ async fn run_reaction_turn(
         }
     };
 
-    // Close the bracket and record what was spoken (for barge-in resolution).
-    let (done_tx, done_rx) = oneshot::channel();
-    let _ = speaking
-        .beats
-        .send(sequencer::Beat::TurnEnd { done: done_tx })
-        .await;
-    let reply = done_rx.await.unwrap_or_default();
-    reaction.inner.floor.end_turn(turn_id, &reply).await;
-    // Every word of this turn has met its fate, so what it said can be read.
+    reaction.inner.floor.note_turn_ended();
+    // The turn is over. What it prepared may still be waiting for its moment; what went out
+    // while it ran is what the audit reads. A line released after this point reaches the
+    // reading of their next reply ([`legibility::Speech::note_sent`]) but not this turn's
+    // audit — a gap, named, and closed only by auditing per release.
     if let Some(ended) = reaction.inner.speech.end() {
         reaction.inner.speech.hold_for_reply(&ended);
         legibility::audit::after_turn(reaction.inner.memory.data_dir().to_path_buf(), ended);
     }
 
     // `completed` is about the generation, not about speech: a turn that finished
-    // without erroring counts, whether or not it chose to call `hi_say`.
+    // without erroring counts, whether or not it prepared anything to say.
     if completed {
         // Success clears only transient generic backoff. Managed energy and its
         // retained view are owned by the broker-backed vendor gate.
@@ -2598,7 +2589,7 @@ async fn run_reaction_turn(
     // it said back. Nothing thresholds on it any more — the underlying agent bounds its
     // own context — but the turn still reports it, because it is the one honest measure
     // of what a turn costs and the observatory renders it.
-    Ok(context_chars + reply.chars().count())
+    Ok(context_chars)
 }
 
 /// How much of the recent conversation the judges read before a turn.
@@ -3246,9 +3237,8 @@ async fn warm_sessions(
 
 /// Open and prime the conversation's Reaction session before its first real turn.
 ///
-/// The prompt contains only the system layer. The sequencer is deliberately unarmed
-/// until `TurnStart`, so any accidental `say`/`show` output from this prompt is
-/// dropped. The first real turn still receives the fresh every-turn window and signals.
+/// The prompt contains only the system layer. It runs outside a turn, so anything it
+/// prepares is refused ([`Floor::in_turn`]) and nothing reaches anyone. The first real turn still receives the fresh every-turn window and signals.
 ///
 /// Best-effort: a failed warm closes this session and leaves the slot empty, so the
 /// first real turn cold-opens normally.
@@ -3309,9 +3299,8 @@ async fn warm_reaction_session(
 /// definition of "the window" rather than two that drift. The memo comes back warm, which
 /// is what stops the first real turn from saying all of it again.
 ///
-/// The sequencer is unarmed until `TurnStart`, so a `say` from this prompt would be
-/// dropped without a trace — which is why the text says not to speak rather than relying on
-/// it. Best-effort throughout: a seed that fails to send leaves the memo cold, and the
+/// It runs outside a turn, so a `hi_prepare` from this prompt is refused ([`Floor::in_turn`])
+/// — which is why the text says not to speak rather than relying on it. Best-effort throughout: a seed that fails to send leaves the memo cold, and the
 /// first turn carries the window itself, exactly as it did before this existed.
 async fn seed_session(
     reaction: &Reaction,
@@ -3433,9 +3422,9 @@ const CUT_OFF_STOPPED: &str = "(restart) The host process stopped in the middle 
 const CUT_OFF_VANISHED: &str = "(restart) The host process vanished in the middle of your turn";
 
 /// Open a fresh **reaction** session for `conversation`, carrying `reaction.md` as its system
-/// prompt (prepended to the first prompt). It speaks via plain message text and gets a
-/// minimal `show`-only `/mcp` surface, so a turn is a single quick generation that
-/// may also put one already-built view on screen.
+/// prompt (prepended to the first prompt). Its `/mcp` surface is `hi_prepare` and
+/// `hi_send_message`, so a turn is a single quick generation that prepares what it would
+/// say and show.
 ///
 /// `reaction_id` is the loop's own switchboard registration — the *same* id across every
 /// reopen, because the conversation has one Reaction however many subprocesses
@@ -3461,7 +3450,7 @@ async fn open_reaction_session(
                         .await,
                     ),
                     cwd: None,
-                    // `say` and `show`, and nothing else — enforced, not requested.
+                    // `hi_prepare` and `hi_send_message`, and nothing else — enforced, not requested.
                     // The rung is fast because it *cannot* wait on anything, and that
                     // argument is worth nothing if it can quietly open a file.
                     ..Default::default()
@@ -3544,9 +3533,9 @@ struct Drove {
 
 /// Prompt the reaction session and return the text it **typed** (every
 /// `agent_message_chunk` concatenated) — which is its working-out, not its speech.
-/// Speech is only ever what went through the `say` tool. Tool calls — `say`, `show`,
-/// `send_message` — are dispatched server-side through hi-agent's `/mcp` (which emits
-/// the beats), so the drive loop just keeps streaming text past them, exactly like a
+/// Speech is only ever a `say` the floor released. Tool calls — `hi_prepare`,
+/// `hi_send_message` — are dispatched server-side through hi-agent's `/mcp`, so the drive
+/// loop just keeps streaming text past them, exactly like a
 /// worker's loop; `wait()` then parks the session and surfaces any real prompt error
 /// (a gateway 402/429, a transport reset) to the caller's classifier.
 async fn drive_reaction(
@@ -3570,9 +3559,8 @@ async fn drive_reaction(
             SessionUpdate::Thought(t) => {
                 tracing::debug!(chars = t.chars().count(), "reaction: model is thinking");
             }
-            // `show` dispatches server-side via `/mcp`; the reaction keeps speaking.
-            // Its surface is `show`-only and the dispatch guard blocks any other
-            // expression tool, so there is nothing to intercept here.
+            // `hi_prepare` dispatches server-side via `/mcp`, and the floor releases what it
+            // sets; there is nothing to intercept here.
             //
             // **One frame is read, and only for what it invalidates.** A compaction is
             // not the agent doing something; it is codex rewriting the thread's history
@@ -3866,6 +3854,8 @@ fn render_batch(batch: &[LoopInput]) -> String {
             LoopInput::Mail { mail } => {
                 let _ = writeln!(s, "{}", registry::render(mail));
             }
+            // What it woke for is under `## What happened to what you prepared`.
+            LoopInput::PreparedWaiting => {}
         }
     }
     s
@@ -3895,7 +3885,7 @@ fn render_batch(batch: &[LoopInput]) -> String {
 /// of the signal.
 fn journal_form(input: &LoopInput) -> Option<(Channel, Origin, String)> {
     match input {
-        LoopInput::Message(_) | LoopInput::Observed(_) => None,
+        LoopInput::Message(_) | LoopInput::Observed(_) | LoopInput::PreparedWaiting => None,
         LoopInput::Worker(report) => Some((
             Channel::Worker,
             Origin::Worker,

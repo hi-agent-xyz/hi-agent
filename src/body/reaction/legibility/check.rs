@@ -1,6 +1,6 @@
 //! The pre-send check: host-code triage (§ D), then one System One call (§ E).
 //!
-//! **It reads a message between `hi_say` accepting it and the floor**, and it can do one of
+//! **It reads a message when `hi_prepare` sets it, before the floor holds it**, and it can do one of
 //! two things: let it through, or answer `not sent — <note>` so Reaction rewrites or drops
 //! it inside the same turn. It never writes words — a checker that edits is a second mouth
 //! (`docs/arch/arch.md` invariant 1) — and its judge cannot: System One answers typed
@@ -240,9 +240,6 @@ pub struct Speech {
     /// The spoken turns since the person last wrote, waiting to be read against their next
     /// message ([`super::audit::on_reply`]).
     awaiting: std::sync::Mutex<Vec<(String, Vec<String>)>>,
-    /// Held from a message's arrival at the mouth to its fate, so messages are read and
-    /// sent in the order they were written.
-    pub(crate) serial: tokio::sync::Mutex<()>,
 }
 
 impl Speech {
@@ -252,7 +249,6 @@ impl Speech {
             enabled,
             draft: std::sync::Mutex::new(None),
             awaiting: std::sync::Mutex::new(Vec::new()),
-            serial: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -316,11 +312,20 @@ impl Speech {
         }
     }
 
-    /// A message went out.
+    /// A message went out. The floor releases lines when the room reaches their moment, which
+    /// may be after the turn that wrote them has closed: then it is kept with the spoken turns
+    /// their next message answers, so what a reply is read against — and where a prepared
+    /// matter was left — still has it. The per-turn audit of that closed turn does not.
     pub fn note_sent(&self, text: &str) {
         if let Some(d) = self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
             d.sent.push(text.to_string());
+            return;
         }
+        const HELD: usize = 4;
+        let mut held = self.awaiting.lock().unwrap_or_else(|p| p.into_inner());
+        held.push((uuid::Uuid::now_v7().to_string(), vec![text.to_string()]));
+        let over = held.len().saturating_sub(HELD);
+        held.drain(..over);
     }
 
     /// Everything the agent has said since the person last wrote, oldest first: the spoken
