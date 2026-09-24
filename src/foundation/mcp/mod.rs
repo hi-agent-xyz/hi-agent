@@ -2429,7 +2429,7 @@ async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args:
     // Size is the half of that equivalence placement never covered. `RenderRequest::new`
     // takes the frame the window last reported, so "exactly the frame" now means the
     // person's actual window rather than a constant that matched none of them.
-    let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url);
+    let mut req = view_render::RenderRequest::new(&ctx.base_url, module_url.clone());
 
     // An explicit size is a deliberate second look at another frame, so it overrides one
     // axis at a time: asking for a narrower width alone should not also snap the height
@@ -2514,6 +2514,14 @@ async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args:
         )
     };
 
+    // The module rendered, handed back because a reviewer that wants to measure more than a
+    // screenshot shows loads it in a browser of its own — and with no address in hand, the
+    // nearest call that answered one was `POST /api/views/open`, which moves the screen
+    // every window shares. Reached for independently in 60-odd sessions before 2026-09-24.
+    let summary = format!(
+        "{summary}\n\nCompiled to `{module_url}` on this core — the module to load if you \
+         measure it in a browser of your own. Nothing here moved anyone's screen."
+    );
     let mut content = vec![json!({ "type": "text", "text": summary })];
     for (theme, png) in &shots {
         if shots.len() > 1 {
