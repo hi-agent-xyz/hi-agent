@@ -3488,8 +3488,11 @@ async fn open_reaction_session(
 /// one answers in milliseconds. The same bound Cognition uses, for the same reason.
 const STEER_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Steer one line of theirs into the running turn. `true` when the turn took it — then the
-/// floor counts it as seen, because the generation in flight now has it. `false` for anything
+/// Steer one line of theirs into the running turn. `true` when the turn took it. It is **not**
+/// counted as seen: the model reaches a steered line only at its next step, and a long
+/// generation already under way writes on without it — measured on the first live run, a reply
+/// to their opening line prepared 88 s into a turn that had four of their later lines steered
+/// in. So what the turn prepares is read against the steered line at the stop. `false` for anything
 /// that is not a line of theirs, and for a steer that did not land (the turn ended in the gap,
 /// or codex refused): that input is owed, and takes the next-turn path it always took.
 ///
@@ -3509,7 +3512,6 @@ async fn steer_in(reaction: &Reaction, session: &AgentSession, input: &LoopInput
     .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer in {STEER_TIMEOUT:?}")));
     match steered {
         Ok(true) => {
-            reaction.inner.floor.note_steered();
             tracing::info!(chars = rendered.chars().count(), "reaction: steered their line into the running turn");
             true
         }

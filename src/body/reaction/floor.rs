@@ -225,9 +225,9 @@ impl Floor {
     /// Record a reaction turn at the point it starts, before its prompt can
     /// produce output. This is internal ordering only; it never reaches a wire.
     ///
-    /// It also records what this turn has seen: its batch. A line heard after it
-    /// reaches the turn only if it is steered in ([`note_steered`](Self::note_steered)),
-    /// and a set the turn prepares is read against whatever it has not seen. Called
+    /// It also records what this turn has seen: its batch, and nothing after. A line steered
+    /// in reaches the model only at its next step, which the host cannot see — so it is never
+    /// counted as seen, and a set the turn prepares is read against it at the stop. Called
     /// once the batch is assembled — after the settle has drained — so the count
     /// matches exactly what went into the prompt.
     ///
@@ -238,16 +238,6 @@ impl Floor {
         self.answering.store(answering, Ordering::Release);
         self.latest_turn.store(turn, Ordering::Release);
         self.seen.store(self.heard.load(Ordering::Acquire), Ordering::Release);
-    }
-
-    /// A line of theirs was steered into the running turn: the generation in flight has it
-    /// now, so it no longer makes that turn's words out of date. One line, one count —
-    /// `heard` may already be ahead with lines still in the queue, which it has not seen.
-    pub fn note_steered(&self) {
-        let seen = self.seen.load(Ordering::Acquire);
-        if seen < self.heard.load(Ordering::Acquire) {
-            self.seen.store(seen + 1, Ordering::Release);
-        }
     }
 
     /// The model turn is over; anything prepared from here until the next one starts answers
@@ -485,22 +475,17 @@ mod floor_tests {
         assert!(!floor.should_skip(7).await, "and the turn is not flushed");
     }
 
-    /// What a turn has seen is its batch, plus each line steered into it — and never a
-    /// line still in the queue.
+    /// What a turn has seen is its batch — never a line still in the queue, and never one
+    /// steered in, which the model reaches only at its next step.
     #[tokio::test]
-    async fn a_turn_sees_its_batch_and_what_was_steered_in() {
+    async fn a_turn_sees_its_batch_and_nothing_after() {
         let floor = Floor::new();
         floor.note_heard();
         floor.note_turn_started(1, true);
         assert_eq!((floor.heard(), floor.seen()), (1, 1));
         floor.note_heard();
         floor.note_heard();
-        assert_eq!(floor.seen(), 1, "two lines it has not been handed");
-        floor.note_steered();
-        assert_eq!(floor.seen(), 2);
-        floor.note_steered();
-        floor.note_steered();
-        assert_eq!(floor.seen(), 3, "never past what was heard");
+        assert_eq!(floor.seen(), 1, "two lines it has not been handed at a step it can see");
         assert!(floor.answering());
     }
 }

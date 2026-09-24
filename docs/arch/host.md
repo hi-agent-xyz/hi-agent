@@ -218,8 +218,12 @@ back to Reaction **without a turn of its own**:
 
 A line of theirs that lands while Reaction is mid-turn is **steered into that turn**, not held for
 the next one. The turn writes against what they have actually said, and what it prepares
-replaces, matter by matter, what it prepared before. The counter that used to refuse a stale
-line is still kept — it is what `fits` is asked against — but it no longer refuses anything.
+replaces, matter by matter, what it prepared before. **A steered line is not counted as seen**:
+the model reaches it only at its next step, and a generation already under way writes on
+without it — on the first live run, a reply to their opening line was prepared 88 s into a turn
+that had four of their later lines steered in. So a set prepared in a turn that had lines
+steered in is read by `fits` against them at the stop, like any set that lines landed after.
+The counter that used to refuse a stale line is kept for exactly that, and refuses nothing.
 
 **The same "are they talking" fact has a second reader, upstream.** The batching window is
 held open while a voice is going, capped — see [surfaces.md](surfaces.md#batching). Holding a

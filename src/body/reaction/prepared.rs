@@ -86,15 +86,24 @@ const THRESHOLD: f64 = 0.9;
 /// again, and one kept wrongly is a stale set waiting for a message to mistake.
 const TAKEN_UP: f64 = 0.5;
 
-/// How sure the reading must be that they have finished for `finished` sets to go. Half: the two
-/// errors are close to even — a line released on a pause is talking over a thought, a line held
-/// on a finish costs the wait — and the wait is the backstop for the second. A starting value.
-const FINISHED_AT: f64 = 0.5;
+/// How sure the reading must be that they have finished for `finished` sets to go. The two errors
+/// are not even: a line released on a pause talks over a thought, which cannot be taken back,
+/// and a line held on a finish costs the wait, which is the backstop for it. On the first live
+/// run (2026-09-24, a scratch instance, five typed lines) the lines that plainly had more read
+/// 0.59 and 0.61 and the ones that were done 0.86–0.89, so a cut at half let both openers
+/// through as finished. A starting value, to be read off the `floor_read` events.
+const FINISHED_AT: f64 = 0.7;
 
-/// How long the reading may take. System One answered the speech check's questions in p50
-/// 0.53 s, p99 2.2 s on this install; of the first sixty live readings of condition branches, 15
-/// ran out of this. Past it, the floor does what it did before it asked.
-const BUDGET: Duration = Duration::from_secs(2);
+/// How long the reading may take. **Long, because every reply now waits on it and there is
+/// nothing better to do instead.** It was 2 s when a reading only decided whether a condition
+/// branch ran and a miss took the ordinary path; now it decides when every line goes, and its
+/// fallback is a guess — release what was written with everything, hold the rest — that can
+/// talk over a thought or keep an answer waiting. On the second live run (2026-09-24) three
+/// stops in a row ran out of 2 s. Waiting costs nothing in the common case, since the stop is
+/// read while Reaction is still generating (18 s to a first line), and in the rest a slow
+/// answer beats a guessed one. System One answered the speech check's questions in p50 0.53 s,
+/// p99 2.2 s on this install; this is a ceiling for an outage, not a latency.
+const BUDGET: Duration = Duration::from_secs(10);
 
 /// More condition directions than this, across every matter, is a fan, not a guess — and System
 /// One loses accuracy on a padded question as it does on a padded state.
@@ -105,8 +114,10 @@ const MAX_BRANCHES: usize = 8;
 /// they go at the next stop.
 const MAX_MATTERS: usize = 4;
 
-/// How long [`Prepared::settled`] waits for a reading before letting the turn run anyway.
-const SETTLED_WITHIN: Duration = Duration::from_secs(8);
+/// How long [`Prepared::settled`] waits for a reading before letting the turn run anyway: the
+/// longest a batch is held open, the reading's budget, and a second of slack. Only a stop that
+/// could run a condition branch holds a turn up at all.
+const SETTLED_WITHIN: Duration = Duration::from_secs(16);
 
 /// After a `paused` release: they have been asked whether there is more, and a short silence
 /// answers no. `docs/arch/host.md` § *The one wait*. A starting value.
@@ -361,8 +372,9 @@ async fn parse_action(a: &Value, data_dir: &Path, say_max: usize) -> Result<Acti
                     Some(r.clone())
                 }
                 (None, Some(_)) => None,
-                (None, None) if op == "dismiss" && id.is_some() => None,
-                (None, None) => return Err("show needs a `ref` (or an `id` to dismiss)".into()),
+                // A dismiss clears the screen; with no id it clears whatever is up.
+                (None, None) if op == "dismiss" => None,
+                (None, None) => return Err("show needs a `ref`".into()),
             };
             Ok(Action::Show { id, op, view_ref, source: source.unwrap_or_default() })
         }
@@ -1599,6 +1611,22 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                     Ok("sent".to_string())
                 }
             }
+            // **A dismiss names the slot, not the view.** The screen's slot is keyed by the id the
+            // show went up under, which is not its ref, so a dismiss that named only a ref —
+            // or nothing — clears what is up now, the one thing it can mean. Seen on the first
+            // live run: `dismiss factory/welcome` answered "shown" and left the page up.
+            Action::Show { id: None, op, .. } if op == "dismiss" => match reaction.inner.views.on_screen().await.into_iter().next() {
+                None => Ok("nothing was on screen".to_string()),
+                Some(up) => {
+                    let beat = Beat::Show { id: Some(up), op: op.clone(), source: String::new(), view_ref: None, keep: false };
+                    if runner.beats.send(beat).await.is_err() {
+                        Err(Failed::judged("not dismissed — the sequencer is gone".into()))
+                    } else {
+                        reaction.inner.speech.note_shown("dismiss — the screen is clear");
+                        Ok("dismissed — the screen is clear".to_string())
+                    }
+                }
+            },
             Action::Show { id, op, view_ref, source } => {
                 // Resolved again now rather than trusted from when it was prepared: a view is
                 // live, and what it was is not what it is. An attachment has no source.
@@ -1882,6 +1910,8 @@ mod tests {
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "shell"}]}]})).await.contains("not an action"));
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"tool": "hi_say"}]}]})).await.contains("`do`"));
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "show"}]}]})).await.contains("needs a `ref`"));
+        let (_, clear) = parse(&json!({"matter": "x", "branches": [{"when": "finished", "actions": [{"do": "show", "op": "dismiss"}]}]}), &dir, 400).await.unwrap();
+        assert!(matches!(&clear[0].actions[0], Action::Show { id: None, view_ref: None, op, .. } if op == "dismiss"), "a dismiss needs nothing named");
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "send_message", "to": "nobody-here", "message": "go"}]}]})).await.contains("nothing live"));
         let fan: Vec<Value> = (0..=MAX_BRANCHES).map(|i| json!({"when": format!("d{i}"), "actions": [{"do": "say", "text": "好"}]})).collect();
         assert!(refused(json!({"matter": "x", "branches": fan})).await.contains("a fan"));

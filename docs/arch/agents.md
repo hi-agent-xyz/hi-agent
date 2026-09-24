@@ -345,9 +345,11 @@ That is the whole latency whenever the line was ready before they stopped — th
 answer written while they were still going, which is the case the old gate refused. A line not
 yet written when they stop goes when its turn prepares it, if they are still stopped: today's
 speed. A timeout or an error on the reading is the floor's fallback, so **the worst case is
-today's speed**. The call has a hard budget of two seconds; on the first sixty live readings of
-condition branches, 15 ran out of it, and that is the number to watch now that every reply rides
-the same call.
+today's speed**. The call's budget is ten seconds, and it is long on purpose: it was two when a
+reading only decided whether a condition branch ran, and 15 of the first sixty ran out of it; now
+every reply rides the same call, the fallback is a guess that can talk over a thought or keep an
+answer waiting, and the stop is usually read while Reaction is still generating anyway. So when
+System One is slow, the floor waits. Ten seconds is a ceiling for an outage, not a latency.
 
 ##### How long a set lives
 
