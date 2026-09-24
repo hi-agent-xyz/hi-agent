@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use futures::stream::{self, Stream, StreamExt};
 use tokio::time::interval;
 
@@ -70,7 +70,7 @@ pub async fn get_sessions_events(
     });
 
     let merged = stream::select(events, snapshots).map(Ok::<Event, Infallible>);
-    Sse::new(merged).keep_alive(KeepAlive::default())
+    Sse::new(merged).keep_alive(super::held::sse_keep_alive())
 }
 
 fn session_event(ev: &SessionEvent) -> Event {

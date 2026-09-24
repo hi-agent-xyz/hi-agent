@@ -491,10 +491,22 @@ is asleep, not lost. There is no heartbeat and nothing to renew.
 That leaves one failure each end has to notice for itself: a connection that dies *without
 closing*. A redeploy behind the CDN, or a local proxy holding its own half of the socket open,
 leaves the core reading a socket nobody is on while the community answers "asleep". The
-community's yamux keepalive pings every 30 s, and a ping is a binary frame that crosses every
-hop, so the core treats **90 s of total silence as a closed tunnel** and redials. That is the
+community's yamux keepalive pings every 10 s, and a ping is a binary frame that crosses every
+hop, so the core treats **45 s of total silence as a closed tunnel** and redials. That is the
 transport noticing its own death, not a liveness report: nothing is sent to say the core is
-alive, and nothing is renewed.
+alive, and nothing is renewed. Both numbers are short because a request routed into a dead
+tunnel hangs until one end notices; the community's own ping failing is what closes its end.
+
+**Redialing backs off only for a community that cannot be reached.** A tunnel that opened
+and later died — cleanly or silently — redials at the minimum, because it was working.
+
+**Every hop holds a response open only so long.** The community's edge answers `524` to a
+request with no response head within 30 s, and cuts a body that sends nothing for about 15 s
+(measured 2026-09-24). So every response this core holds open speaks every 5 s — an SSE
+comment, or an empty NDJSON line, which every reader already skips — and a long-poll answers
+`204` after 20 s and is asked again (`src/foundation/server/held.rs`). The alternative, raising
+the edge's limits, is configuration that lives in someone's console and has to be remembered
+for every edge a core is ever put behind.
 
 Dialing out is what makes this work behind NAT with no configuration: anywhere the core can
 already reach the community, it can be reached back.

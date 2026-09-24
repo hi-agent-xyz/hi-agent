@@ -25,7 +25,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use futures::stream::{self, Stream, StreamExt};
 use serde::Serialize;
 use tokio::sync::watch;
@@ -106,7 +106,7 @@ pub async fn get_listening(
             .json_data(Frame { listening })
             .unwrap_or_else(|_| Event::default().comment("serialize error")))
     });
-    Sse::new(frames).keep_alive(KeepAlive::default())
+    Sse::new(frames).keep_alive(super::held::sse_keep_alive())
 }
 
 #[cfg(test)]

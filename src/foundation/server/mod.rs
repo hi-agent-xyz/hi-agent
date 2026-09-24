@@ -37,6 +37,7 @@ pub mod files;
 pub mod generated;
 pub mod handle;
 pub mod headers;
+pub mod held;
 pub mod home;
 pub mod listening;
 pub mod mcp;
@@ -647,7 +648,15 @@ pub fn build(
         // Not an input channel: a contentless liveness ping from whatever holds an
         // unsent draft. It reaches the floor and stops there.
         .route("/api/in/text/typing", post(text::post_text_typing))
-        .route("/api/out/text", get(text::get_out_text))
+        // Compressed: the opening window is the whole live conversation (~70 kB of
+        // JSON, ~27 kB gzipped) and is sent again on every reconnect. The compressor
+        // flushes each time the stream goes quiet, so a line is not held back
+        // (`held::tests::a_compressed_held_body_still_arrives_line_by_line`).
+        .route(
+            "/api/out/text",
+            get(text::get_out_text)
+                .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6))),
+        )
         // Not `/api/out/*`: those are the agent's articulation on a channel, and this
         // is a fact about the person's hand on a key. A shell subscribes to it for its
         // tray; nothing warms the reaction by asking.
@@ -662,7 +671,12 @@ pub fn build(
         .route("/api/out/audio", get(audio::get_out_audio))
         // The view channel — the retained appearance, served as versioned
         // whole-state snapshots (long-poll on `?since=`).
-        .route("/api/out/view", get(view::get_out_view).delete(view::clear_out_view))
+        .route(
+            "/api/out/view",
+            get(view::get_out_view)
+                .layer(CompressionLayer::new().quality(CompressionLevel::Precise(6)))
+                .delete(view::clear_out_view),
+        )
         // The views a person can go to by name, and the person's own write of the
         // appearance: `open` moves the screen's cursor, so every attached window follows
         // it the way they follow a show. Read into the next turn rather than driving one
@@ -751,9 +765,9 @@ pub fn build(
         .route("/api/drive/file/{*path}", get(drive::get_drive_file))
         // The review *reads*, on their own `Router` so the compressor below can be scoped to
         // them. Every one of these answers with a `Json(..)` — one buffered body, complete
-        // before it is handed back — which is the whole rule for what may be wrapped here:
-        // the `/api/*` neighbours outside are long-polls and SSE, and a compressor would sit
-        // on those waiting for an end that is the point of the endpoint not to have.
+        // before it is handed back. The held neighbours outside are not wrapped wholesale:
+        // an SSE body gains nothing from it, and the two held bodies worth compressing
+        // (`/api/out/text`, `/api/out/view`) carry their own layer where they are routed.
         //
         // These are also the ones a surface polls, which is why it is worth doing at all: a
         // review view re-reads on a clock for as long as it is open, and off-box that is the
@@ -826,9 +840,8 @@ pub fn build(
         // images, and build-agent artifacts. Served here, not in the appearance
         // router, because that router is embed-only and stateless.
         //
-        // Its own `Router` purely so the compressor can be scoped to it: every
-        // `/api/*` neighbour above is a long-poll or SSE body that a compressor would
-        // buffer. The compressor leaves alone what it would break or not help — a
+        // Its own `Router` purely so the compressor can be scoped to it, with its own
+        // predicate. The compressor leaves alone what it would break or not help — a
         // `206`, whose `Content-Range` describes the uncompressed bytes, and video and
         // audio, which are compressed already. A view's text still compresses.
         .merge(

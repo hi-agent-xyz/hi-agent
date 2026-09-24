@@ -25,12 +25,17 @@ use tokio_tungstenite::tungstenite::Message;
 /// a close — the community redeployed behind its CDN, a local proxy holding its
 /// own half of the socket open — leaves this side reading forever from a
 /// connection nobody is on, while the community answers "asleep" for a core that
-/// is running. The community's yamux pings every 30 s (hashicorp/yamux
-/// `DefaultConfig`, `backend/internal/server/relay.go`), and those pings are
-/// binary frames that cross every hop, so a live tunnel is never quiet for this
-/// long: three missed pings is a gone connection, and ending the read is what
-/// sends [`super::spawn`] back to redialing.
-pub const IDLE: Duration = Duration::from_secs(90);
+/// is running. The community's yamux pings every 10 s (`tunnelKeepAlive`,
+/// `backend/internal/server/relay.go`), and those pings are binary frames that
+/// cross every hop, so a live tunnel is never quiet for this long: four missed
+/// pings is a gone connection, and ending the read is what sends
+/// [`super::spawn`] back to redialing.
+///
+/// It was 90 s against pings every 30 s, and every second of it is a second a
+/// request routed into the dead tunnel hangs before anything answers — measured
+/// as repeated 5 s+ hangs on a flaky path. 45 s still clears the old 30 s pings,
+/// so a core that updates before its community does not redial a healthy tunnel.
+pub const IDLE: Duration = Duration::from_secs(45);
 
 /// Byte-stream view of a WebSocket.
 ///

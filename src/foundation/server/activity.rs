@@ -6,9 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::time::Duration;
 
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use futures::stream::{self, Stream};
 use serde::Serialize;
 
@@ -45,11 +44,7 @@ pub async fn get_activity() -> Sse<impl Stream<Item = Result<Event, Infallible>>
         Some((Ok(event), (rx, false)))
     });
 
-    Sse::new(events).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("activity"),
-    )
+    Sse::new(events).keep_alive(super::held::sse_keep_alive().text("activity"))
 }
 
 fn project(statuses: &[Status]) -> AgentActivity {

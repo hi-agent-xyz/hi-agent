@@ -35,7 +35,7 @@ async fn spawn() -> (String, tempfile::TempDir, server::ServerSeams) {
     tokio::spawn(async move {
         let _ = axum::serve(
             listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            router.into_make_service(),
         )
         .await;
     });

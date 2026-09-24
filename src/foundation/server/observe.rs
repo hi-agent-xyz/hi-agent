@@ -59,6 +59,6 @@ pub fn stream_input(state: Arc<AppState>, channel: Channel) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8")
-        .body(Body::from_stream(stream))
+        .body(Body::from_stream(super::held::ndjson_keep_alive(stream)))
         .unwrap()
 }

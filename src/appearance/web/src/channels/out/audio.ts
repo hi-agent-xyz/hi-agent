@@ -35,7 +35,8 @@ export async function* subscribeAudioTurns(
     if (!res.ok) {
       throw new Error(`/api/out/audio subscribe failed: ${res.status} ${res.statusText}`);
     }
-    if (!res.body) continue;
+    // No turn started within the server's hold: ask again.
+    if (res.status === 204 || !res.body) continue;
     const mime = res.headers.get("content-type") ?? "audio/mpeg";
     yield { mime, body: res.body };
   }

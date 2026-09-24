@@ -61,7 +61,9 @@ if (!window.location.pathname.startsWith("/inspect")) {
 // `<html lang>` for the bundled views' copy. The server already stamps this when it
 // serves the page in prod; this only covers the dev seam, where Vite serves index.html
 // and the Rust injection never runs. Fire-and-forget — nothing below waits on it.
-void applyLanguage();
+// Dev only, because `/api/settings` answers this machine alone: a built page opened
+// from another device would ask for it, be refused, and have learned nothing.
+if (import.meta.env.DEV) void applyLanguage();
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {

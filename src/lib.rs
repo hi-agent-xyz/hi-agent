@@ -534,9 +534,6 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     // it in a task so we can also watch the same trigger ourselves and *bound* the
     // drain: the SSE and long-poll endpoints hold a connection open indefinitely,
     // so an unbounded graceful wait would never return.
-    // `into_make_service_with_connect_info` exposes the peer address so the
-    // account-link callback can enforce loopback-only (see server::account).
-    //
     // Each listener serves the *same* router with one extra layer naming the
     // acceptor. That layer is added outermost, so it is in place before the gate
     // reads it, and it is the only thing that distinguishes the two — one router,
@@ -548,7 +545,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
     let mut server = tokio::spawn(async move {
         axum::serve(
             listener,
-            loopback_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            loopback_router.into_make_service(),
         )
         .with_graceful_shutdown(shutdown_requested(server_shutdown))
         .await
@@ -563,7 +560,7 @@ async fn run_with_shutdown(config: Config, shutdown: Arc<Notify>) -> anyhow::Res
         tokio::spawn(async move {
             let r = axum::serve(
                 l,
-                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                router.into_make_service(),
             )
             .with_graceful_shutdown(shutdown_requested(shutdown))
             .await;

@@ -666,9 +666,15 @@ pub fn registered_to(data_dir: &std::path::Path, surface: Option<&SurfaceId>) ->
 /// secret it was handed, which is what keeps one asker from reading another's
 /// answer. Note the singular: `/api/access/request**s**` is the approver's side
 /// and is gated like everything else.
+///
+/// The brand files ([`crate::appearance::BRAND_FILES`]) are open to `GET` because a
+/// browser asks for the manifest without its cookie, whoever is holding it.
 fn open_path(path: &str, method: &axum::http::Method) -> bool {
     use axum::http::Method;
     if path == "/healthz" {
+        return true;
+    }
+    if *method == Method::GET && crate::appearance::BRAND_FILES.contains(&path) {
         return true;
     }
     if path == "/api/session" && *method == Method::POST {
@@ -1261,6 +1267,13 @@ mod tests {
         assert!(!open_path("/api/access/requests", &Method::GET));
         assert!(!open_path("/api/access/requests/abc/approve", &Method::POST));
         assert!(!open_path("/api/access/requests/abc", &Method::DELETE));
+
+        // The manifest is fetched without the session cookie by spec, so it and the
+        // icons it names are open — to reading, and only by their exact names.
+        assert!(open_path("/site.webmanifest", &Method::GET));
+        assert!(open_path("/android-chrome-192x192.png", &Method::GET));
+        assert!(!open_path("/site.webmanifest", &Method::POST));
+        assert!(!open_path("/assets/index.js", &Method::GET));
     }
 
     #[test]

@@ -3,9 +3,10 @@
 //! over `config.db`. This reintroduces the HTTP config surface the tray refactor
 //! removed (see [`super::AppState::auth`]), but **loopback-gated** and **secret-safe**:
 //!
-//! - Every handler rejects non-loopback peers ([`loopback_guard`]) — the server binds
-//!   `0.0.0.0` and has no global auth, and these routes read/write credentials, so a
-//!   LAN peer must never reach them (same stance as [`super::account::get_link_callback`]).
+//! - Every handler answers only a request the loopback listener accepted
+//!   ([`loopback_guard`]). These routes read/write credentials and whether this core is
+//!   reachable at all, so a paired device off the box — which the gate does let in —
+//!   still may not reach them (same stance as [`super::account::get_link_callback`]).
 //! - The read surface returns `configured: bool` (+ non-secret `base_url`/`model`) per
 //!   feature and **never the `api_key`** — the projected DTOs below are distinct types,
 //!   not `Serialize` on [`Credentials`] (which holds keys inline).
@@ -13,12 +14,11 @@
 //! Design note: [docs/core-shell-config-api.md]. Scope is request/response config only;
 //! the streaming perceive/act protocol is a separate (Phase 2) object.
 
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{ConnectInfo, Path as UrlPath, State};
+use axum::extract::{Extension, Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,7 @@ use crate::foundation::credentials::{self, Credentials, Energy, Mode};
 use crate::foundation::energy_state;
 use crate::foundation::{community, tunnel};
 use crate::foundation::server::AppState;
+use crate::foundation::surfaces::Acceptor;
 
 /// The BYOK features, keyed by the stored credential-field name. Cross-platform (the
 /// macOS `Feature` enum lives in a `vendors/macos_*` file we deliberately don't depend
@@ -172,9 +173,9 @@ pub(crate) struct FeaturePatch {
 /// `GET /api/settings` — the whole snapshot the Settings window needs in one read.
 pub async fn get_settings(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
 ) -> Response {
-    if let Some(rejected) = loopback_guard(&peer) {
+    if let Some(rejected) = loopback_guard(acceptor) {
         return rejected;
     }
     // The names come from the community, so they are fetched rather than read.
@@ -190,10 +191,10 @@ pub async fn get_settings(
 /// at the next start.
 pub(crate) async fn put_relay(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
     Json(patch): Json<RelayPatch>,
 ) -> Response {
-    if let Some(rejected) = loopback_guard(&peer) {
+    if let Some(rejected) = loopback_guard(acceptor) {
         return rejected;
     }
     match tunnel::set_on(&state.data_dir, patch.relay).await {
@@ -205,10 +206,10 @@ pub(crate) async fn put_relay(
 /// `PUT /api/settings/appearance` — theme / language / gestures (partial).
 pub(crate) async fn put_appearance(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
     Json(patch): Json<AppearancePatch>,
 ) -> Response {
-    if let Some(rejected) = loopback_guard(&peer) {
+    if let Some(rejected) = loopback_guard(acceptor) {
         return rejected;
     }
     match set_appearance(&state.data_dir, &patch) {
@@ -220,10 +221,10 @@ pub(crate) async fn put_appearance(
 /// `PUT /api/settings/mode` — select the active credential mode.
 pub(crate) async fn put_mode(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
     Json(patch): Json<ModePatch>,
 ) -> Response {
-    if let Some(rejected) = loopback_guard(&peer) {
+    if let Some(rejected) = loopback_guard(acceptor) {
         return rejected;
     }
     match set_mode(&state.data_dir, patch.mode) {
@@ -235,11 +236,11 @@ pub(crate) async fn put_mode(
 /// `PUT /api/settings/credentials/{feature}` — set a BYOK key/base_url/model.
 pub(crate) async fn put_feature(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
     UrlPath(feature): UrlPath<String>,
     Json(patch): Json<FeaturePatch>,
 ) -> Response {
-    if let Some(rejected) = loopback_guard(&peer) {
+    if let Some(rejected) = loopback_guard(acceptor) {
         return rejected;
     }
     if !FEATURES.contains(&feature.as_str()) {
@@ -259,9 +260,9 @@ pub(crate) async fn put_feature(
 /// fresh snapshot (`null` in BYOK / when the poll can't run).
 pub async fn post_energy_refresh(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
 ) -> Response {
-    if let Some(rejected) = loopback_guard(&peer) {
+    if let Some(rejected) = loopback_guard(acceptor) {
         return rejected;
     }
     let fresh = crate::foundation::broker::poll_energy_now(&state.data_dir).await;
@@ -271,11 +272,16 @@ pub async fn post_energy_refresh(
 
 // --- core logic (pure, unit-tested without a live server) -------------------
 
-/// Reject a non-loopback peer with `403`; `None` if the peer is loopback. The server
-/// binds `0.0.0.0`, so this per-handler check is the only thing keeping a LAN client
-/// off the credential surface.
-fn loopback_guard(peer: &SocketAddr) -> Option<Response> {
-    if peer.ip().is_loopback() {
+/// Reject with `403` anything the loopback listener did not accept; `None` if it did.
+///
+/// **Which listener took the request, never the peer's address** (`docs/arch/topology.md`
+/// § *Trust is structural*). A request routed in over the tunnel has no socket peer at
+/// all — the stream is a yamux channel — so asking for one failed the extractor and
+/// answered every remote page load with a 500 for `/api/settings`. And the address was
+/// the wrong question anyway: a proxy on this machine is a loopback peer on the public
+/// bind. No marker fails closed, the same reading the gate gives it.
+fn loopback_guard(acceptor: Option<Extension<Acceptor>>) -> Option<Response> {
+    if matches!(acceptor, Some(Extension(Acceptor::Loopback))) {
         None
     } else {
         Some(

@@ -72,14 +72,23 @@ pub fn spawn(
         let router = accepted_on(router, Acceptor::OffBox).layer(axum::Extension(Relayed));
         let mut backoff = REDIAL_MIN;
         loop {
-            match hold(&data_dir, &router, &handle).await {
-                Ok(()) => {
-                    tracing::info!(handle = %handle, "the community closed the tunnel; redialing");
-                    backoff = REDIAL_MIN;
-                }
+            // Backoff is for a community that cannot be reached, so only a failed dial
+            // lengthens it. A tunnel that opened and later died resets it, however it
+            // died: when every silent death doubled it, a flaky path stacked 2, 4, 8,
+            // 16, 32 s of "asleep" onto successive drops of a tunnel that had been
+            // working each time, until a core that was running was a minute from
+            // answering its own name.
+            match dial(&data_dir, &handle).await {
                 Err(e) => {
-                    tracing::warn!(handle = %handle, error = %format!("{e:#}"), backoff = ?backoff, "tunnel down");
+                    tracing::warn!(handle = %handle, error = %format!("{e:#}"), backoff = ?backoff, "tunnel could not be opened");
                     backoff = (backoff * 2).min(REDIAL_MAX);
+                }
+                Ok(mux) => {
+                    backoff = REDIAL_MIN;
+                    match hold(mux, &router).await {
+                        Ok(()) => tracing::info!(handle = %handle, "the community closed the tunnel; redialing"),
+                        Err(e) => tracing::warn!(handle = %handle, error = %format!("{e:#}"), "tunnel dropped; redialing"),
+                    }
                 }
             }
             tokio::time::sleep(backoff).await;
@@ -88,8 +97,13 @@ pub fn spawn(
     task.abort_handle()
 }
 
-/// Dial once and serve until the connection ends.
-async fn hold(data_dir: &std::path::Path, router: &Router, handle: &str) -> anyhow::Result<()> {
+/// The multiplexed session over one open tunnel.
+type Mux = yamux::Connection<ws::WsByteStream<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+>>;
+
+/// Dial the community once: an open tunnel, or why there is none.
+async fn dial(data_dir: &std::path::Path, handle: &str) -> anyhow::Result<Mux> {
     let token = community::account_token(data_dir).await?;
     let url = tunnel_url(&community::base_url(), handle);
 
@@ -105,12 +119,15 @@ async fn hold(data_dir: &std::path::Path, router: &Router, handle: &str) -> anyh
 
     // The community opens streams; we accept them. That parity is why this side
     // is the yamux server even though it dialed.
-    let mut mux = yamux::Connection::new(
+    Ok(yamux::Connection::new(
         ws::WsByteStream::new(socket),
         yamux::Config::default(),
         yamux::Mode::Server,
-    );
+    ))
+}
 
+/// Serve an open tunnel until it ends.
+async fn hold(mut mux: Mux, router: &Router) -> anyhow::Result<()> {
     while let Some(stream) = std::future::poll_fn(|cx| mux.poll_next_inbound(cx)).await {
         let stream = stream?;
         let router = router.clone();

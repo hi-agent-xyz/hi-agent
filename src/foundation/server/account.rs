@@ -3,16 +3,16 @@
 //! diagnostics, and the out-of-energy view opens the account page already signed
 //! in as this account.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{ConnectInfo, Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect};
 
 use crate::foundation::broker;
 use crate::foundation::credentials::{get_setting, set_setting, Credentials, KEY_SERVER_PORT};
 use crate::foundation::server::AppState;
+use crate::foundation::surfaces::Acceptor;
 
 /// `app_settings` key for the one-shot CSRF nonce guarding the account-link
 /// callback. Minted at `/account/link/start`, checked (and cleared) at the callback.
@@ -123,7 +123,7 @@ pub async fn get_link_start(State(state): State<Arc<AppState>>) -> impl IntoResp
         return Redirect::to(&account);
     };
     // The callback is loopback (127.0.0.1) so the browser connects over the loop and
-    // the callback's peer check passes; the site validates it's a loopback target
+    // the loopback listener takes it; the site validates it's a loopback target
     // before handing back a ticket. No query-delimiter chars, so it needs no encoding.
     let callback = format!("http://127.0.0.1:{port}/account/link/callback");
     let url = format!("{}/account?link_device={}&state={}", broker::public_base_url(), callback, nonce);
@@ -135,12 +135,13 @@ pub async fn get_link_start(State(state): State<Arc<AppState>>) -> impl IntoResp
 /// the signed-in account, and show a small result page.
 pub async fn get_link_callback(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    acceptor: Option<Extension<Acceptor>>,
     Query(q): Query<LinkCallbackQuery>,
 ) -> impl IntoResponse {
-    // Loopback only: this endpoint can switch the device's account, so a LAN peer
-    // must never reach it even though the server binds 0.0.0.0 for the app's web UI.
-    if !peer.ip().is_loopback() {
+    // Loopback only: this endpoint can switch the device's account, so nothing off
+    // the box may reach it — decided by which listener accepted the request, as the
+    // settings routes decide it.
+    if !matches!(acceptor, Some(Extension(Acceptor::Loopback))) {
         return (
             StatusCode::FORBIDDEN,
             Html(link_page("Blocked", "This link can only be opened on this computer.")),

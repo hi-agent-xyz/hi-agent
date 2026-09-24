@@ -16,7 +16,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use chrono::{DateTime, Utc};
 use futures::stream::Stream;
 use serde::Serialize;
@@ -46,7 +46,7 @@ pub async fn get_channels(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let stream = merge_channels(state);
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(stream).keep_alive(super::held::sse_keep_alive())
 }
 
 /// Subscribe to all per-channel broadcasts and merge them into a single

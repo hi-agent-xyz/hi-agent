@@ -539,7 +539,10 @@ pub async fn get_out_text(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/x-ndjson; charset=utf-8")
         .header(header::CACHE_CONTROL, "no-store")
-        .body(Body::from_stream(stream))
+        // Blank lines through the quiet: past the window, nothing is sent until
+        // somebody speaks, and the edge in front of a named core cuts a body that
+        // silent — which cost a reconnect and the whole window again, every 16 s.
+        .body(Body::from_stream(super::held::ndjson_keep_alive(stream)))
         .unwrap()
 }
 

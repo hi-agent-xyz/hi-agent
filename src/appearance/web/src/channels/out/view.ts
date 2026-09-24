@@ -182,6 +182,8 @@ export async function* subscribeViewState(
     if (!res.ok) {
       throw new Error(`/api/out/view subscribe failed: ${res.status} ${res.statusText}`);
     }
+    // Nothing changed within the server's hold: ask again from the same version.
+    if (res.status === 204) continue;
     const state = (await res.json()) as ViewState;
     if (!state || !Array.isArray(state.views)) continue;
     since = state.version;

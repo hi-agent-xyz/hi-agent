@@ -1306,21 +1306,38 @@ pub async fn get_out_audio(
     // which must be set before any body byte; Frame/End seen before a Start
     // (we subscribed mid-turn) are skipped — the client re-polls and catches
     // the next turn cleanly.
-    let (turn, mime) = loop {
-        match rx.recv().await {
-            Ok(event) => {
-                if let AudioEvent::Start { turn, mime, .. } = event {
-                    break (turn, mime);
+    //
+    // For at most [`super::held::LONG_POLL`]: a turn that has not started by then is
+    // a `204`, and the page asks again. Unbounded, a quiet agent held this past the
+    // 30 s the edge in front of a named core waits for a head — a `524` per silence.
+    //
+    // Not free: a turn whose `Start` lands in the round trip between this `204` and
+    // the page's next ask is skipped whole on that device, because a late subscriber
+    // cannot join a turn mid-way (above). Before, that gap came after every turn
+    // only; it now also comes every twenty seconds of silence. Off-box it replaces a
+    // `524` plus the page's 1.5 s error backoff every 30 s, which was a wider gap.
+    let first_turn = async {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if let AudioEvent::Start { turn, mime, .. } = event {
+                        return Some((turn, mime));
+                    }
                 }
-            }
-            Err(RecvError::Lagged(n)) => {
-                tracing::warn!(missed = n, "audio subscriber lagged");
-                continue;
-            }
-            Err(RecvError::Closed) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, "broadcast closed\n").into_response();
+                Err(RecvError::Lagged(n)) => {
+                    tracing::warn!(missed = n, "audio subscriber lagged");
+                    continue;
+                }
+                Err(RecvError::Closed) => return None,
             }
         }
+    };
+    let (turn, mime) = match tokio::time::timeout(super::held::LONG_POLL, first_turn).await {
+        Ok(Some(start)) => start,
+        Ok(None) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "broadcast closed\n").into_response();
+        }
+        Err(_) => return StatusCode::NO_CONTENT.into_response(),
     };
 
     // Stream this turn's frames as a chunked body until its `End`. Frames from

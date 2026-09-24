@@ -4,7 +4,7 @@
 //! active views (z-ordered) plus a version, served by the [`ViewBus`]. A call
 //! without `?since=` returns the current state immediately — even when empty —
 //! so a fresh page syncs on open; passing the last seen version parks until
-//! the state changes. The reaction mutates the state when the agent calls
+//! the state changes, or answers `204` after [`held::LONG_POLL`] if it has not. The reaction mutates the state when the agent calls
 //! `show` and the view compiler has turned its source into a module.
 
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::foundation::server::AppState;
 use crate::foundation::server::headers::AuthBearer;
+use crate::foundation::server::held;
 use crate::foundation::server::view_bus;
 use crate::mind::views::factory::PREFIX as SYSTEM_PREFIX;
 use crate::types::{Channel, JournalEntry, Sender};
@@ -42,7 +43,14 @@ pub async fn get_out_view(
     // process + session + upstream cache are hot before the first utterance.
     state.warm();
 
-    axum::Json(state.views.wait_state(query.since).await)
+    // Parked for at most [`held::LONG_POLL`], then "nothing yet" as a `204` the page
+    // answers by asking again with the same `since`. Unbounded, a quiet screen held
+    // this past the 30 s the edge in front of a named core waits for a head, and every
+    // remote page load saw a `524` for it.
+    match tokio::time::timeout(held::LONG_POLL, state.views.wait_state(query.since)).await {
+        Ok(snapshot) => axum::Json(snapshot).into_response(),
+        Err(_) => axum::http::StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 /// DELETE /api/out/view — clear the appearance (close all views, back

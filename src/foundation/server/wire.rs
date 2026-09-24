@@ -14,7 +14,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use futures::stream::{self, Stream, StreamExt};
 use tokio::sync::broadcast;
 
@@ -32,7 +32,7 @@ pub async fn get_wire_frames_events(
     let replay = stream::iter(replay);
     let live = frame_stream(rx);
     let frames = replay.chain(live).map(|f| Ok::<Event, Infallible>(frame_event(&f)));
-    Sse::new(frames).keep_alive(KeepAlive::default())
+    Sse::new(frames).keep_alive(super::held::sse_keep_alive())
 }
 
 fn frame_event(frame: &RawFrame) -> Event {

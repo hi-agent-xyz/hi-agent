@@ -37,7 +37,7 @@ async fn spawn() -> (String, String, tempfile::TempDir, ServerSeams) {
         tokio::spawn(async move {
             let _ = axum::serve(
                 listener,
-                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                router.into_make_service(),
             )
             .await;
         });
@@ -335,4 +335,30 @@ async fn nothing_behind_the_gate_is_cacheable_by_a_shared_cache() {
             res.status(),
         );
     }
+}
+
+/// The settings routes are this machine's alone — a paired device is let through the
+/// gate and still refused here, by the listener that took it and not by its address.
+///
+/// Both servers bind `127.0.0.1`, which is what makes this the test: a check on the
+/// peer's address would pass the off-box one. The tunnel had no peer address to read
+/// at all, so that check answered a remote page load with a 500 instead of this 403.
+#[tokio::test]
+async fn settings_answer_this_machine_and_refuse_a_paired_device() {
+    let (loopback, off_box, _dir, seams) = spawn().await;
+    let client = reqwest::Client::new();
+    let (_id, token) = seams.state.surfaces.mint("the test").expect("mint");
+
+    let res = client.get(format!("{loopback}/api/settings")).send().await.expect("send");
+    assert_eq!(res.status(), 200, "the Settings window, on this machine");
+
+    let res = client
+        .get(format!("{off_box}/api/settings"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(res.status(), 403, "a paired device, through the gate and no further");
+    let body: serde_json::Value = res.json().await.expect("json");
+    assert_eq!(body["error"], "loopback_only");
 }

@@ -11,7 +11,7 @@ The engine already is the authority; today the *native window mutates the store 
 ## Decisions
 
 1. **Transport: plain JSON/REST over the existing local server** (`server/mod.rs build()`), handler style `async fn(State<Arc<AppState>>, …) -> impl IntoResponse` returning `Json`. No new channel, no streaming — config is request/response. The streaming protocol is a separate Phase-2 object.
-2. **Loopback-gated, per-handler.** The server binds `0.0.0.0` (LAN-reachable) and has **no global auth gate** — every route is public today. These endpoints read/write **credentials and account state**, so each one must reject non-loopback peers, exactly like `account::get_link_callback` does (`ConnectInfo<SocketAddr>` + `peer.ip().is_loopback()`, `account.rs:98,103`). Factor that check into one extractor/helper and apply it to the whole config group. (Open Q below: whether to also require a shell-held token.)
+2. **Loopback-gated, per-handler.** These endpoints read/write **credentials and account state**, so each one answers only a request the loopback listener accepted — the same [`Acceptor`](../src/foundation/surfaces/mod.rs) marker the off-box gate reads, never the peer's address (a request routed in over the tunnel has none, and a proxy on the box is a loopback peer on the public bind). A paired device passes the gate and is still refused here. One helper, `settings::loopback_guard`, applied to the whole config group and to `account::get_link_callback`. (Open Q below: whether to also require a shell-held token.)
 3. **Secrets never leave the engine.** The read surface returns `configured: bool` (+ non-secret `base_url`, `model`) for each feature — **never the `api_key`**. This matches what the current UI shows ("configured / not set") and holds even over loopback. Writes accept a key; a blank/omitted key **keeps the existing** one (`settings::put_feature`).
 4. **One snapshot GET + granular writes.** `GET /api/settings` returns everything the window needs in one call (mirrors the window's `present()` re-sync). Writes are small, targeted PUTs so a single control change is one request.
 5. **Explicit apply semantics in the contract.** Every setting declares whether it applies `live` or on `restart`, so the UI can render "takes effect on restart" truthfully instead of guessing. (Theme = live; language, gestures = restart.)
@@ -63,7 +63,7 @@ Loopback-gated unless noted. `⟳reuse` = already exists, keep as-is.
 
 ## Security
 
-- **Loopback gate is mandatory**, not optional polish: without it any device on the LAN could read `configured` flags, flip the account mode, or write BYOK keys. Mirror the existing `is_loopback()` check; put it in one place.
+- **Loopback gate is mandatory**, not optional polish: without it any paired device could read `configured` flags, flip the account mode, or write BYOK keys. Decided by the acceptor; put it in one place.
 - **No secret egress:** the `api_key` is write-only. Confirm the snapshot serializer can't accidentally include it (the engine's `Credentials` struct holds the key inline — the DTO must be a distinct, projected type, not `#[derive(Serialize)]` on `Credentials`).
 - **Shell-held token (open):** loopback also admits other local apps/users on a shared machine. If that matters, add a random per-launch token the shell learns at spawn (env/arg) and sends as a header. Decide in the open-questions pass; loopback-only is the floor.
 

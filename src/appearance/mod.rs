@@ -82,10 +82,6 @@ where
         // e.g. `/inspect/sessions` boots the app, which then renders the right view.
         .route("/inspect", get(index))
         .route("/inspect/{*path}", get(index))
-        // The Settings page is a client-routed SPA section too — same shell so a
-        // direct load or refresh of `/settings` boots the app rather than 404ing.
-        .route("/settings", get(index))
-        .route("/settings/{*path}", get(index))
         // The headless render page — one agent view, mounted standalone, for the
         // renderer to screenshot. It lives here rather than in the server router
         // because everything it needs is embedded (the built page + the build's
@@ -95,7 +91,8 @@ where
         .route("/favicon.ico", get(favicon))
         // Brand icon set + PWA manifest. The router only serves paths it names,
         // so each root-level asset Vite copies from `public/` needs an explicit
-        // route or it 404s. All are embedded from dist/ and served verbatim.
+        // route or it 404s. All are embedded from dist/ and served verbatim, and
+        // every one is in [`BRAND_FILES`], which is what lets the gate pass them.
         .route("/icon.svg", get(|| async { serve_embedded("icon.svg") }))
         .route("/favicon-16x16.png", get(|| async { serve_embedded("favicon-16x16.png") }))
         .route("/favicon-32x32.png", get(|| async { serve_embedded("favicon-32x32.png") }))
@@ -116,11 +113,10 @@ where
         .route("/vite.svg", get(vite_svg))
         .route("/assets/{*path}", get(asset))
         // Compress the SPA on the way out. Everything above is a whole buffered
-        // body — HTML, JS, CSS, icons — so there is nothing here to stall, which
-        // is exactly why the layer lives on *this* router and not on the server's:
-        // `/api/out/text` and the observe streams next door are long-poll bodies
-        // that end an utterance by closing, and a compressor between them and the
-        // socket would hold those bytes back.
+        // body — HTML, JS, CSS, icons. The layer lives on *this* router rather than
+        // the server's because the server's routes choose one by one: an SSE body
+        // gains nothing, a `206` must not be touched, and the held streams that do
+        // compress say so where they are routed.
         //
         // The bytes are already built and content-hashed, so this is the whole
         // saving available: the SPA's first load is ~420 kB raw against ~125 kB
@@ -345,6 +341,25 @@ fn view_preload_links(map_json: &str) -> String {
     }
     out
 }
+
+/// The brand files: the favicon set and the PWA manifest, identical in every build.
+///
+/// **Served off-box without a session**, because a browser fetches some of them
+/// without one: a `<link rel="manifest">` is requested with credentials omitted by
+/// spec, and so are the icons the manifest names, so gating them answered every
+/// remote page load with a 401 for its own manifest. They name nothing about the
+/// person or the agent, so there is nothing to protect by asking.
+pub const BRAND_FILES: &[&str] = &[
+    "/favicon.ico",
+    "/icon.svg",
+    "/favicon-16x16.png",
+    "/favicon-32x32.png",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/android-chrome-192x192.png",
+    "/android-chrome-512x512.png",
+    "/site.webmanifest",
+];
 
 async fn favicon() -> Response {
     // Some Vite setups inline a data: URI for favicon and skip the file.
