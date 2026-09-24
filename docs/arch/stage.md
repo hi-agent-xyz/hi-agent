@@ -129,7 +129,7 @@ compiler, the module cache, or the ref resolver.
 | Role | Owner | How it is written | Placement |
 |---|---|---|---|
 | `conversation` | the host — always present | nothing writes it | one popover panel, in the corner the controls hold · the pill when put away |
-| `content` | the agent | `hi_show` / `replace` / `dismiss` → `ViewBus::apply` | the stage, whole |
+| `content` | the agent | a prepared `show` action (`show` / `replace` / `dismiss`), released by the floor → `ViewBus::apply` | the stage, whole |
 | `condition` | the process | level-driven `ViewBus::reconcile` | over everything, full-bleed |
 | `self` | the person's camera channel | the channel being on | the backdrop alone · a pip otherwise |
 
@@ -1246,7 +1246,7 @@ the view* still drops the cursor along with the slot.
 *The word was **raise**, everywhere in this document and in the code under it, until
 August 21, 2026.* It named a z-ordered stack that a `show` pushed onto — the screen the
 first design had — and that stack was replaced by two fixed slots long before this. What
-was left was a private synonym: the agent's tool is `hi_show`, the wire op is `show`, the
+was left was a private synonym: the agent's action is `show`, the wire op is `show`, the
 transcript line reads `showed "…"`, and only the layer in between called the same act a
 raise, so every reader translated on the way through. It is *show* now on both sides of
 that seam. `dismiss` is still not one — nothing goes up, so no window is taken anywhere.
@@ -1290,9 +1290,12 @@ nothing else, and a rule written for particular screens is exactly what the reti
 sentence above was. The agent is mid-sentence with the person; it can read which case it is
 in far better than a paragraph written months earlier can enumerate.
 
-**No host gate, no queue, no importance field.** *Amended September 22, 2026: still no queue
-and no importance field. There is now a host rule about where a show lands, and it holds
-nothing back — [below](#a-show-leaves-a-page-being-read-alone).* The only thing in this system that knows
+**No host gate, no queue, no importance field.** *Amended September 22, 2026: still no
+importance field. There is now a host rule about where a show lands —
+[below](#a-show-leaves-a-page-being-read-alone) — and a show waits for the floor like a line
+([host.md § The floor](host.md#the-floor)): it is released when they stop, and held while
+`fits` reads it as an aside to what they are in the middle of. That hold is a read of the
+room at the moment, not a number standing in for one.* The only thing in this system that knows
 whether a view is a fun aside or the thing they have been waiting on is the rung holding
 the conversation; a threshold in the bus would be a number standing in for a read of the
 room, and a hold-and-release queue would be machinery for a delay the agent can simply
@@ -1309,7 +1312,7 @@ the screen catching up with the subject rather than changing it.
 What stopped it was that **the agent could not see its own trail.** The person always
 could: the band draws it as a row of labelled pictures, `history` is in every
 `GET /api/out/view`, and Cognition is told what went up in the last ninety minutes
-(`snapshot::shown_recently`). Reaction — the only rung that calls `hi_show` — had
+(`snapshot::shown_recently`). Reaction — the only rung that puts a view up — had
 `on_screen()`, which is one bare id for the slot that is filled right now. Its own
 instruction to put a view back read *"if you still have the ref"*, and the only place that
 ref lived was its session, from the turn a builder happened to return it.
@@ -1323,8 +1326,8 @@ deliberately is not:
   reach when the conversation goes quiet, and puts more on the screen rather than the right
   thing. Whether a view belongs up is answered once, in `reaction.md`; the block is recall.
 
-- **Not a history.** It carries only entries with a `view_ref`, because `hi_show` takes a
-  ref and there is no call that puts an inline artifact back. Listing something the agent
+- **Not a history.** It carries only entries with a `view_ref`, because a `show` takes a
+  ref and there is no action that puts an inline artifact back. Listing something the agent
   cannot act on only invites it to try — the same rule that keeps the condition layer out
   of `on_screen`. What has been *shown* is the journal's record, and Cognition reads it
   there.
@@ -1357,15 +1360,17 @@ therefore meant "never", and the agent built itself a queue so that "never" woul
 "later".
 
 **So showing is not a judgment any more, and where a show lands is the host's.** Reaction
-puts up every view that comes back finished, the moment it comes back. What that costs is a
-finished view arriving over a page someone is halfway down. `ViewBus::claim` decides that when
-`hi_show` is *called*, not when the view lands, so the answer can go back to the turn. It reads
-facts, and none of them is about importance:
+prepares a `show` for every view that comes back finished, the moment it comes back, and the
+floor releases it at the next stop. What that costs is a finished view arriving over a page
+someone is halfway down. `ViewBus::claim` decides that when the floor releases the `show`, and
+the answer goes back to Reaction with what it learns of its sets
+([host.md](host.md#what-reaction-learns-and-when)). It reads facts, and none of them is about
+importance:
 
 | The show takes the screen when… | because |
 |---|---|
-| the turn was started by something they said | what it shows is the answer, and "给我看看" must never go into a list |
-| this turn has already taken the screen | a walk-through is a run of shows in one turn |
+| the set was prepared by a turn something they said started | what it shows is the answer, and "给我看看" must never go into a list |
+| the same turn's sets have already taken the screen | a walk-through is a run of shows in one turn |
 | it is the same ref, or the same id refined in place | that is the page they are reading, getting better |
 | nothing is in front of them, or only the resting board (`factory/home`) | nobody is reading |
 | what is in front of them went up `READING_FOR` (5 min) ago or more | they are done with it |
@@ -1389,8 +1394,8 @@ and the screen did not change. There are two differences now:
 
 - A turn they started always takes the screen, so the agent pointing at the screen while
   talking to them always lands.
-- A kept show is told as kept. The call answers "shown into their list, not in front of them
-  … do not say it is on the screen". The next turn's `## On screen now` reads "the screen is
+- A kept show is told as kept. What Reaction learns of the release reads "shown into their
+  list, not in front of them … do not say it is on the screen". The next turn's `## On screen now` reads "the screen is
   still on X … it is not on the screen until they open it".
 
 The dot deleted then signalled *something happened somewhere else* to someone who had just
@@ -1817,7 +1822,7 @@ that way. Sweep the skin; pick the frame.
 
 **A view goes up on its first clean render.** The chain is serial today — builder finishes,
 reviewer session runs, agent shows — and the reviewer is 6 minutes of it. Nothing requires
-that order: `hi_show` puts up a compiled module and needs no render at all, and `op=replace`
+that order: a `show` puts up a compiled module and needs no render at all, and `op=replace`
 already swaps a view in its own slot, keeping the slot so a motion-tagged element animates
 rather than blinks. So the bar splits in two:
 
@@ -2388,6 +2393,6 @@ is one sentence to teach and has no silently-wrong shape in it.
 
 [`text-transcript.md`](text-transcript.md) for what the conversation *is* ·
 [`sharing.md`](sharing.md) for what happens when a view is handed to somebody else ·
-[`surfaces.md`](surfaces.md#carriers) for `hi_show` and why it is a call ·
+[`surfaces.md`](surfaces.md#carriers) for `show` and why it is a call ·
 [`view_bus.rs`](../../src/foundation/server/view_bus.rs) for the two slots and why the
 write path decides which.

@@ -122,7 +122,7 @@ Each is a statement we can test, and each has a real failure behind it.
 5. **A wake produces a turn, never an utterance.** Whatever a woken rung wants said goes
    through Reaction, which decides whether it is worth saying and says it as a message.
    The one thing that can happen ahead of the turn is a branch Reaction prepared for
-   exactly this message ([Prepared branches](agents.md#prepared-branches)): Reaction
+   exactly this message ([Prepared actions](agents.md#prepared-actions)): Reaction
    decided it, and the message only chose it. The turn still runs, and is told what ran.
 6. **The host opens the agent's eyes; the agent owns its own timers.** Two loops pace
    glancing up — Cognition's glance-up and the reflection backoff. Reaction has no

@@ -13,7 +13,7 @@ hand — without any of that reaching the thinking layers as protocol.
 | A device is both a surface and an effector | Same hardware, two roles, told apart by who moved first |
 | File is a signal, but carries a **ref** — never content | A handed-over object, not something perceived |
 | Vision emits a ref; the agent decides whether to look | Perception is *pulled*, not pushed |
-| Everything outbound is a tool call, speech included | The arbiter needs somewhere to stand: a call can be held, queued or refused, and the caller finds out. The words stay natural language |
+| Everything outbound is a tool call, speech included | The floor needs somewhere to stand: a call can be refused, and what it prepares can be held, released or dropped, and the caller finds out. The words stay natural language |
 
 ## Surfaces
 
@@ -48,13 +48,13 @@ zero knowledge of the wire.
 
 | Channel | Direction | Carried as |
 |---|---|---|
-| text | in / out | content block · the `hi_say` call |
+| text | in / out | content block · a `say` action |
 | audio | in | text after STT, plus what the sound itself was like; an audio block once we model paralinguistics properly |
-| audio | out | the same `hi_say` call, rendered by TTS host-side |
+| audio | out | the same `say`, rendered by TTS host-side |
 | vision | in | a **ref**; the agent calls a tool to actually look |
 | file | in | a **ref** to a handed object |
-| file | out | an **attachment**, carried by the `hi_say` that hands it over or the task line it is evidence for ([showing.md](showing.md)) |
-| surface (rich content) | out | the `hi_show` call, by **ref** — a view, or an attachment |
+| file | out | an **attachment**, carried by the `say` that hands it over or the task line it is evidence for ([showing.md](showing.md)) |
+| surface (rich content) | out | a `show` action, by **ref** — a view, or an attachment |
 | view | in | the person went to one of the agent's surfaces — a ref, never a window |
 | action | out | tool call — request/response |
 
@@ -126,31 +126,32 @@ One rule covers every direction:
 
 **Speech was the last emission to become a call, and it stays one** — for the same
 reason as the rest: an emission that cannot be rejected cannot be length-checked, and
-`hi_say` rejects a paragraph so Reaction splits it into messages.
+`hi_prepare` refuses a paragraph so Reaction splits it into messages. Speaking and showing
+are one call: each is an action in a prepared set, released by the floor
+([agents.md § Prepared actions](agents.md#prepared-actions)).
 
-What `hi_say` no longer answers is *where the words landed*. It used to report aloud, on
+What speech no longer answers is *where the words landed*. It used to report aloud, on
 screen only, or waiting-for-their-return, and Reaction was expected to read that answer
 and go quiet on an empty room. That is gone with the presence gate — a message is
 appended to the [transcript](text-transcript.md), which keeps, so there is no such thing
 as an utterance spent on nobody. Speech that no speaker is attached for simply is not
 synthesized, which is a fact about the wire and needs no answer.
 
-Note what this does *not* mean: the host holds no queue of things to say later. Messages
-append the moment they are said and are there whenever anyone looks. What waits for a
-better moment waits in Reaction's judgment, which is where the decision lives.
+Note what this does *not* mean: the host holds nothing for someone's return. Messages
+append the moment they are said and are there whenever anyone looks. What the floor holds
+is held for a moment in the conversation — their stopping, or a stop the line fits — never
+for whether anybody is watching ([host.md § The floor](host.md#the-floor)).
 
-The call carries nothing but the words. It used to take `back_in`, the size Reaction had
+A `say` carries the words and what it hands over, nothing more. The speech call used to take `back_in`, the size Reaction had
 just put on a silence, and that timer is gone
 ([`host.md`](host.md#there-is-no-timer-and-the-last-one-to-go-was-the-agents-own)): it fired
 just before the work landed and said so, which is the one thing a check-in must not be.
-Still one queue-free surface —
-what is held is a deadline, not an utterance.
 
 ### Text transcript
 
 The conversation is one backend-owned, append-only message list, rendered by any number
 of windows. Three things are messages: what the person typed or said, a file they handed
-over, and one `hi_say` call. Nothing else — a view, a worker's report, a clock wake — is
+over, and one `say` the floor released. Nothing else — a view, a worker's report, a clock wake — is
 conversation, and none of it appears here.
 
 `GET /api/out/text` returns one long-lived NDJSON response. The first object is the
@@ -172,7 +173,7 @@ and how the four roles are arranged, is [`stage.md`](stage.md).
 is an act, not a gesture: it can fail, it has an id, and it can be taken down again.
 
 **A worker hands a view over as a path ref.** The worker builds the view and passes its
-**ref**; Reaction calls `hi_show` with the ref, and the **host resolves it server-side**. A
+**ref**; Reaction prepares a `show` with the ref, and the **host resolves it server-side**. A
 picture or a clip needs no view at all: it is an attachment, placed by path and shown by its
 `att:` id, drawn by a viewer the host bundles ([showing.md](showing.md)). So
 view source never enters a thinking layer's context — which is the point. A view is a build
@@ -238,8 +239,8 @@ is the one rule that should: did they finish?**
 
 **What changed is not the recognizer but what being early is worth.** The cut used to be
 made as early as it could be, because early was a faster reply. It is not any more: a reply
-composed off half a thought is refused at the mouth ([host.md](host.md#the-floor)) and
-re-composed by the turn the rest of the sentence drives. Measured the same day, **7 of 23
+composed off half a thought is held by the floor ([host.md](host.md#the-floor)) and
+replaced by what the turn prepares once the rest of the sentence reaches it. Measured the same day, **7 of 23
 replies were generated and then discarded**, 5 of them inside that one briefing. Early
 bought no speech at all — it bought wasted generations, and errands dispatched off half a
 request that Cognition then had to cancel. A cut that is late and whole costs strictly less
@@ -273,15 +274,15 @@ only by provider granularity, and removable in principle.
 **That timer is batching and nothing more.** It decides how many utterances one generation
 is spent on; it does *not* decide whether the person has finished talking, and it never
 could — its only input is finalized utterances, which someone mid-thought produces
-constantly. That question is answered at the mouth, where the answer is still current:
+constantly. That question is answered at the floor, where the answer is still current:
 [host.md#the-floor](host.md#the-floor). Read as batching, the window wants to be *small* —
 every millisecond in it is latency on a reply into a silence that is already real.
 
 **With one extension, and it is not a patience dial either: the window is held open while
 they are still audibly talking**, capped. A finalized utterance lands *after* the words are
 over, so quiet on this seam is not quiet in the room; if a voice is still going, the rest of
-the sentence is on its way and belongs in the same batch. This exists because the mouth's
-gate structurally cannot cover it — a `say` can be refused after the fact, but by then the
+the sentence is on its way and belongs in the same batch. This exists because the floor
+structurally cannot cover it — a `say` can be held until they finish, but by then the
 turn has thought and has handed work down, and neither can be taken back. Measured: a batch
 that closed 0.8s early turned one question into two generations and **two overlapping
 errands**. In a quiet room the extension never runs and the window is the plain settle.

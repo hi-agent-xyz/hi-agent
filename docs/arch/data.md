@@ -414,7 +414,7 @@ contract, so it is fixed in three places at once or nowhere: the heading it is p
 under, the line telling Reflection when to regenerate it, and the `hi_update_proactivity`
 description telling it what to weigh.
 
-**Who writes a seed — and nobody writes their own.** Reaction holds `hi_say` and `hi_show` and
+**Who writes a seed — and nobody writes their own.** Reaction holds `hi_prepare` and `SendMessage` and
 nothing else, so it has no file access and cannot write its own: Reaction's seed is *consumed*
 by Reaction and *written by* [Cognition](agents.md#cognition--minutes-and-beyond) — the rung
 that already reads around and works out what was asked. That falls out of the tool surfaces

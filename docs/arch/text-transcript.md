@@ -25,18 +25,19 @@ Exactly three things become messages, and nothing else does:
 |---|---|
 | Something the person typed or said | `POST /api/in/text` (typed, or settled recognition) — a task's own reply box included, with `?task=<subject>` |
 | A file the person handed over | `POST /api/in/file`, `POST /api/up/{token}` |
-| One thing the agent said | one `hi_say` call |
+| One thing the agent said | one `say` action the floor released ([host.md](host.md#the-floor)) |
 
-**One `hi_say` call is one message, whole.** `hi_say` already receives its complete text, so a
-message is appended when the call is accepted — not assembled from chunks as a
-generation streams. Sentence splitting still happens downstream, but only to pace TTS;
+**One `say` that goes out is one message, whole.** A `say` action already carries its complete
+text, so a message is appended when the floor releases it — not when `hi_prepare` is called,
+and not assembled from chunks as a generation streams. A line held and then dropped was never
+said, and is not in the list. Sentence splitting still happens downstream, but only to pace TTS;
 it never reaches the list.
 
 Everything else that moves through the system is not conversation and stays out: views
 (they have the view slot), worker reports, mail between rungs, glance-up and check-in wakes,
 face and voice recognition, tool calls, the activity meter, wire frames. Each already
-has a home in the journal or the inspector. A check-in appears here only if it produced
-a `hi_say` — which is correct, because then it is a thing that was said.
+has a home in the journal or the inspector. A wake appears here only if a `say` it prepared
+went out — which is correct, because then it is a thing that was said.
 
 ## Who sent it
 
@@ -78,7 +79,7 @@ The list is a chat between two people, not a transcript of an agent's working. P
 send a message when they have finished writing it, and a message says one matter whole: a
 sentence, a paragraph, or a conclusion with a few short paragraphs under it. That is the
 shape the agent writes in: `SAY_MAX_CHARS` is not a guard against an accidental dump, it
-is the size of one matter, and a rejected `hi_say` means *say less* — never *send it in
+is the size of one matter, and a `say` refused for length means *say less* — never *send it in
 pieces*. Line breaks between paragraphs are part of the text, kept by the face and cut on
 by the speech splitter.
 
@@ -232,7 +233,7 @@ conversation you have to read the logs to follow is not a conversation.
   scrollback request.
 - Ordering is arrival order. A reply that crossed with a new human line appears after it.
 - Nothing tells the agent whether a message was read, and nothing ever will.
-- A very long `hi_say` is rejected rather than truncated; the agent splits it.
+- A very long `say` is refused when it is prepared rather than truncated; the agent splits it.
 - **Most spoken lines have no sender**, because most voices are not placed. They draw a
   silhouette, and consecutive ones group together even though they may not be one person —
   the record cannot tell, and the drawing claims no more than the record does.

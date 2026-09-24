@@ -230,8 +230,8 @@ clustering, every model call. Camera and mic bytes may still arrive
 from the web face rather than a native shell, which is exactly why that layer is
 cross-platform and stays put.
 
-`hi_say` and `hi_show` are unaffected. Speech and showing are outbound tool calls the core
-resolves; nothing about them needs the app's hands.
+`hi_prepare` is unaffected. Its `say` and `show` actions are outbound calls the core resolves
+and its floor releases; nothing about them needs the app's hands.
 
 ## Open
 

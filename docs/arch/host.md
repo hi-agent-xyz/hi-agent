@@ -95,7 +95,7 @@ it.
 
 - **Mouth singleton** — now structural rather than enforced: there is one Reaction, taking
   one turn at a time.
-- **Turn-taking** — still host-side, and it happens at the **mouth**, not before Reaction is
+- **Turn-taking** — still host-side, and it happens at **release**, not before Reaction is
   woken. See [The floor](#the-floor); the quiet-settle timer that used to be named here is
   [batching](surfaces.md#batching) and nothing else.
 - **Social timing** — when to say a worker's answer, when to let it wait.
@@ -103,59 +103,128 @@ it.
 *The fourth duty, a **presence gate**, has been retired outright rather than moved — see
 [Attachment](#attachment).*
 
-What the host keeps is what has no model in it: the queue behind `hi_say`; the fact that
-`hi_say` **returns**, so an over-long utterance — or one the floor refused — is answerable;
+What the host keeps is what has no model in it: the prepared sets and the floor that releases
+them; the fact that `hi_prepare` **returns**, so an over-long line or one the check sent back is
+answerable in the turn that wrote it;
 and the calls that are not judgments at all — **not synthesizing speech for a speaker that
 isn't attached**, and **not speaking into a room the person is still using** — because both
 are facts about the wire, not reads of the room.
 
 ### The floor
 
-**Whether Reaction may speak is decided when the words are ready, not when the turn that
-wrote them began.** A generation takes seconds and the room moves inside them. So `hi_say`
-is gated at the mouth, on two facts the host can check and the model cannot:
+**Reaction writes; the floor decides when, and whether, it is said or shown.** Nothing that
+reaches the person — a line or a view — goes out at the instant Reaction writes it. Each is an
+action inside a [prepared set](agents.md#prepared-actions), with the moment it is for, and the
+host releases it when the room reaches that moment and it still fits. A view put up while they
+are reading something else is the same interruption as a line said over them, and is held the
+same way. (`send_message` to another agent is not on this floor: it reaches no person, and is
+called directly.)
+Thinking never waits on the floor, and the floor never waits on thinking.
 
-| Refusal | The fact | What it catches |
+This replaced a gate that could only say *now* or *never*. A line was checked against the room
+when it was ready, and refused if they were talking, typing, or had said something the turn had
+not seen; a refused line was simply not said and the next turn wrote it again. Measured over a
+month (08-24 → 09-24), that gate refused 370 of 1838 lines, 275 of them because a line had
+landed mid-turn — and the pauses of someone in the middle of a thought (median 15.5 s between
+two of their lines, p75 29 s) are shorter than a generation (18 s to a first line), so a turn
+written during a run of questions was refused almost by construction. A backstop let one line
+through after three refusals in a row; 39 times it did, and what it let through was whichever
+line came fourth. On 09-24 that was an aside about a deploy, sent into the middle of a run of
+questions about a paper as the only thing said in reply to them, while the answer that turn
+had led with stayed refused. **The backstop is deleted with the gate, not re-tuned**: a line
+that is held instead of dropped has no loop to break out of.
+
+#### The three states of the room
+
+| The room | Told by | What the floor does |
 |---|---|---|
-| **their voice is sounding** | a recognized partial within the last ~1s | starting on top of a sentence that has not finalized yet |
-| **a line went unheard** | lines accepted since this turn's batch was frozen | a reply released into a real two-second gap, but written without the sentence carrying their actual point |
+| **They are talking or typing** — a recognized partial within the last ~1 s, or a keystroke in an unsent draft | the wire; no model is asked | nothing goes out |
+| **They stopped, and are done** | the reading below | what is ready for `finished` goes, in the order it was prepared, each set only if it still fits |
+| **They stopped, and have more** — a pause for breath, 然后另外…, the middle of a list | the reading below | what is ready for `paused` goes if it fits *this* stop — a short acknowledgment Reaction wrote for this conversation — and the `finished` sets wait |
 
-Both mean *not said*, and `say` answers with which. **A refusal is not a hold.** Nothing is
-queued, released later or superseded: the words are simply not said, and the reply is written
-afresh by the next turn — which costs nothing, because whatever they said is already in the
-queue and drives a turn by itself. That is also why the host needs no "they have stopped"
-signal and the client is never asked for one: **to stop talking they must have said a last
-thing, and that utterance is the wake.**
+Only the first split is mechanical. *Stopped* is a fact — the batch settled — but *done* is not:
+someone mid-thought and someone finished produce the same silence, so the difference is read
+from what they said. It is one question with one cut, not two: whether a pause earns an
+acknowledgment or plain listening is not a second band on `finished` but `fits` asked of the
+`paused` set itself — 收到，还有要补的吗 fits a stop after a finished question in a run of them,
+and not a stop after 然后另外.
 
-What to do about a refusal is `reaction.md`'s. The host says which of the two it was and
-stops there.
+**A stop is a state, not only an event.** A set prepared while the room is already stopped — a
+turn woken by a worker's report while they sit quietly, or one still thinking after they
+finished — is read at once against the latest reading, not held for a stop that will not come.
+
+#### One reading, at every stop
+
+When a batch settles ([surfaces.md § Batching](surfaces.md#batching)) — they have stopped, for
+now — the host asks System One once, over the recent lines with their ages and what the agent
+said last, every question the moment raises:
+
+- **`finished`** (`noul`) — have they finished what they were saying, or stopped with more to
+  come?
+- for each prepared `finished` or `paused` action set, **`fits`** (`choice`: `say` · `hold` ·
+  `drop`) — against what they have said *since it was written*: still right and wanted now;
+  right but not for this moment (an aside while they are in the middle of something else); or
+  made wrong by what they said since;
+- the [content branches' own questions](agents.md#a-message-picks-at-most-one) — `which`,
+  `qualified`, `on` — when the batch carries a message of theirs.
+
+`finished` at or above its cut releases `finished` sets; below it, the stop releases a `paused`
+set if one is ready and `fits` says `say`, and otherwise the floor keeps listening. A set judged
+`hold` stays where it is for a later stop; `drop` ends it, with the reason. A timeout or an
+error is what the floor did before it could ask: a set written after everything they have said
+goes out if they are not talking; one written before a line of theirs stays held.
+
+The same reading is what makes holding safe. The argument against held drafts was that what
+releases one — their falling silent, having just said something — is exactly what makes it
+stale. That was true of a draft released blind. A held set is released only after `fits` has
+read it against what they said since, so staleness is judged per set, not assumed of all of
+them.
+
+#### The one wait
+
+A stop read as *has more* releases no `finished` set. If they then say nothing, what is ready must
+still go — someone who trails off has said a last thing and will say no other. So **one wait is
+armed by a stop that did not release `finished`, and cancelled by anything they say or type.**
+When it runs out, the `finished` sets go through the `fits` reading as if they had finished.
+
+Its length depends on one fact the floor has: whether an acknowledgment went out. If it did, they
+have been asked whether there is more, and a short silence answers no — `pause_release`, 8 s. If
+not, they are left to finish their thought — `thought_release`, 50 s, about the p90 of the pauses
+above.
+
+This is a timer, and it passes [the test](#the-upkeep-sweep) for one: the wait costs no turn.
+It runs only after a stop, only while something is ready, and what it does when it runs out is
+release a line already written. Both numbers are starting values to be read off the pauses
+that follow, not settled ones.
+
+#### What Reaction learns, and when
+
+What happened to its sets — said, held and why, dropped and why, an action that failed — goes
+back to Reaction **without a turn of its own**:
+
+- **into the running turn**, when one is running, by the same `turn/steer` that carries their
+  new lines into it — so a turn that is still thinking knows a line has gone out and does not
+  write it again;
+- **with the next wake**, whatever wakes it — their message, a worker's report, mail — as a
+  section of that turn's window;
+- **after a minute of quiet, only if something is waiting on its judgment** — a set held
+  `hold`, or an action that did not happen as written. That is the one case with nothing else
+  coming to carry it, and a minute of quiet after they finished is the moment an aside was
+  waiting for. A set that simply went out is carried by the next wake and never costs a turn,
+  and so is a line stopped by the [cap on messages since their last](legibility.md): nothing
+  Reaction decides can send it until they write, and their message is the wake that carries it.
+
+#### Their lines reach the turn that is thinking
+
+A line of theirs that lands while Reaction is mid-turn is **steered into that turn**, not held for
+the next one. The turn writes against what they have actually said, and what it prepares
+replaces, matter by matter, what it prepared before. The counter that used to refuse a stale
+line is still kept — it is what `fits` is asked against — but it no longer refuses anything.
 
 **The same "are they talking" fact has a second reader, upstream.** The batching window is
-held open while a voice is going, capped — see [surfaces.md](surfaces.md#batching). The gate
-here cannot stand in for it: refusing a `say` unsays nothing the turn already *did*, and a
-turn spent on a third of a question still thinks for thirty seconds and still hands an errand
-down. One fact, two stakes: upstream it saves a generation and a dispatch, at the mouth it
-saves the person from being talked over.
-
-**Why the words are refused rather than held.** A held draft would go out about a second
-after the room clears instead of a generation later, which sounds like the better trade until
-you ask what releases it: they fall silent *having just said something*, and that something
-is what makes the draft stale. The payoff case needs them to stop without having spoken since
-the draft was written — the rare one. So holding buys latency in the case that barely happens
-and costs a supersede rule, an expiry rule and a release timer in every case that does.
-
-**The one thing that waits for them is not a draft waiting for silence** — it is a
-[prepared branch](agents.md#prepared-branches), and it waits on *what* they say. The argument
-above is why that is the only kind. A branch prepared for the message that selects it is not
-made stale by that message; the message chooses it. And it needs none of the three: a message
-taking its matter up resolves the set either way, Reaction clears what it can see has gone
-stale, and nothing runs a branch but the message.
-
-**One bound, because a refusal has no ceiling of its own.** Someone who speaks during every
-generation refuses every reply, and total silence is a worse failure than a slightly late
-line — so after a few refusals in a row, one goes through. That is the mechanical form of
-what a person does as the wait grows: stop holding out for a clean opening and take a small
-one.
+held open while a voice is going, capped — see [surfaces.md](surfaces.md#batching). Holding a
+set does not stand in for it: a turn started on a third of a question still thinks for
+thirty seconds and still hands an errand down, and neither can be held.
 
 ### The room screen
 
@@ -188,12 +257,14 @@ one call at a time from a dev machine through the managed gateway: p50 580 ms, p
 Asked during a 700 ms settle, the median call adds nothing a person would hear; the slow tail
 adds up to the budget.
 
-**What it does not do: un-count a line at the mouth.** A room line that lands while a turn is
-generating still makes that turn's words [out of date](#the-floor), because it is screened only
-when it becomes the next batch — after the refusal it caused. That was the larger half of the
-harm measured in the one crowded scene looked at closely (on 08-30, five of eight replies were
-refused because of side talk). Fixing it means asking about each arrival on its own, which is a
-different question from the one measured here. See [Open](#open).
+**What it does not do: decide whether a room line makes a prepared set stale.** A room line that
+lands while a turn is generating is steered into it like any other, and at the next stop the
+[`fits` reading](#one-reading-at-every-stop) reads the set against it. That used to be the larger
+half of the harm measured in the one crowded scene looked at closely — on 08-30, five of eight
+replies were refused because of side talk — when any line at all refused a reply. Now side talk
+costs a reply only if `fits` reads it as changing what the reply should be, and the screen's own
+answer for the batch rides in the same reading. Whether that is enough is for the next crowded
+scene to show. See [Open](#open).
 
 ### Attachment
 
@@ -242,7 +313,7 @@ appended. It never consumes a message, never tells the host what it has read, an
 no queue, cursor or bookmark of its own.
 
 Three things are messages: what the person typed or said, a file they handed over, and
-one `hi_say` call. **One `hi_say` is one message, whole** — the call already carries its
+one `say` that went out. **One `say` is one message, whole** — the action already carries its
 complete text, so nothing is assembled from streamed chunks. Sentence splitting still
 happens, but only to pace TTS, and it never reaches the list. Views, worker reports,
 mail between rungs, clock wakes, recognition signals and tool calls are not conversation
@@ -573,6 +644,15 @@ silence is the work coming back, which drives a turn regardless, and if that nev
 the person asks. `reaction.md` states that consequence rather than the host absorbing it,
 which is where a judgment belongs.
 
+**One wake is armed by something other than an arrival, and it is not this one again.** When a
+prepared set is left `hold` at a stop, or one of its actions failed, and a minute passes with
+nothing said and nothing arriving, Reaction is woken with that set ([What Reaction learns](#what-reaction-learns-and-when)).
+It differs from `back_in` in what it waits for: not work that will report on its own, but a quiet
+room — the moment a held aside was being held for — and nothing else is coming to carry it. It
+is armed only while such a set exists and fires at most once for it. Whether it earns its turns
+is the same count `back_in` was judged on: how often it fires, and how often what it produces is
+the held line said rather than nothing.
+
 Everything else an agent needs from time, **the agent arranges itself.** It has a
 shell, so it starts the process it needs, parks a worker that sleeps and messages
 home, or writes its own loop — and what it starts is a **child of this process
@@ -793,14 +873,15 @@ where fix-forward genuinely does not apply.
   the backend hook is dead: `Floor::mark_flush` ([`floor.rs`](../../src/body/reaction/floor.rs))
   has no caller outside its own tests. Wire it or delete it; leaving it is the third option that
   keeps being taken.
-- **Side talk still refuses a reply at the mouth.** The [room screen](#the-room-screen) decides
-  whether room wakes Reaction; it does not decide whether a room line that lands *during* a
-  generation makes that generation's words out of date. `Floor::note_heard` counts every accepted
-  line, so a remark at the next table refuses a reply to the person as surely as their own next
-  sentence does — on 08-30, five of eight replies in the photo scene. The exchange-only count
-  needs an answer per arrival before the mouth asks, which is a smaller unit than the batch the
-  screen was measured on and has not been measured. `Speaking` is a different matter and stays
-  as it is: talking over anyone is rude, whoever they are talking to.
+- **Whether side talk makes a prepared set stale is left to `fits`.** A room line that lands
+  during a generation no longer refuses anything; it is read with the rest at the next stop
+  ([One reading](#one-reading-at-every-stop)). Whether `fits` tells a remark at the next table
+  from a change of mind has not been measured — on 08-30 five of eight replies in the photo scene
+  were refused by side talk, and that scene is the one to replay. `Talking or typing` is a
+  different matter and stays as it is: talking over anyone is rude, whoever they are talking to.
+- **The wait's two lengths.** `pause_release` 8 s and `thought_release` 50 s are starting values
+  from the pause distribution on 09-24 ([The one wait](#the-one-wait)); the pauses that follow a
+  `paused` release are what set them.
 - **The host knowing what it consumes, and pacing itself on it.** Two kinds of consumption: the
   machine — memory, disk, processor, everything the sessions' commands start — and tokens. The
   intent is that hi-agent watches both and adjusts its own pace to the situation, the way a person

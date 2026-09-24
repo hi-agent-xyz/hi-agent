@@ -45,7 +45,8 @@ Three things bind, and they are the same three on every surface:
    Reaction-shaped is the triage (§ D), which reads a *turn* — each other surface brings its
    own facts to triage on.
 3. **Judged at the seam, gated at some of them.** Every seam records a judgment. A seam also
-   *gates* — answers `not sent`, `not recorded`, and lets the writer try once more — only
+   *gates* — sends the text back (`not recorded`, a branch left out of a prepared set), and lets
+   the writer try once more — only
    where the writer can still act on the answer and something is waiting on the text. Short
    and frequent gates. Long and rare is judged after it lands, where a gate would buy a wait
    and nothing else.
@@ -57,18 +58,18 @@ A new human-facing surface ships with its seam or it does not ship
 
 | What the person reads | Who writes it | Seam | Judged |
 |---|---|---|---|
-| A spoken message | Reaction | `hi_say`, and a line prepared for where a matter goes next through `hi_prepare` | at the seam, gated — § A–K; a prepared line when it is prepared, not when it runs ([agents.md § *Prepared branches*](agents.md#prepared-branches)) |
+| A spoken message | Reaction | a `say` action in `hi_prepare` — the reply, an acknowledgment, or a line for where a matter goes next | at the seam, gated — § A–K; when the set is prepared, not when the floor releases it ([agents.md § *Prepared actions*](agents.md#prepared-actions)) |
 | A task's title and its `created` line | Cognition | `hi_task_open` | at the seam, gated — § L–M |
 | A task's timeline line | any worker | `hi_task_note` | at the seam, gated — § L–M |
 | A view on screen | a view builder | `hi_view_verdict` — the view reviewer's | by the view reviewer, its verdict kept — § *Views* |
 | Home's group labels and notes | a task manager | `hi_set_home_groups` | at the seam, gated — § *Home* |
-| A report's wording, where it reaches the person | Cognition, workers | `hi_say` — the speech it becomes | where it becomes speech — § B, § E, § G |
+| A report's wording, where it reaches the person | Cognition, workers | `hi_prepare` — the `say` it becomes | where it becomes speech — § B, § E, § G |
 | A picture, a clip, a recording or a document on a task's line | any worker | `hi_task_note`, carrying it as an attachment ([showing.md](showing.md)) | the line it rides, at the seam — § L–M; the attachment itself is not read — § Open |
-| A file handed over in the conversation | Reaction | `hi_say`, carrying an attachment | the words it goes with, as speech — § A–K; the attachment itself is not read — § Open |
-| An attachment put on the screen | Reaction | `hi_show` | the spoken line that goes with it — § *Views* |
+| A file handed over in the conversation | Reaction | `hi_prepare` — a `say` carrying an attachment | the words it goes with, as speech — § A–K; the attachment itself is not read — § Open |
+| An attachment put on the screen | Reaction | `hi_prepare` — a `show` | the spoken line that goes with it — § *Views* |
 
 **A report to Reaction is not a surface of its own.** A model reads it, so it may be complete
-(§ B); what the person reads is the speech made from it, and that passes through `hi_say` like
+(§ B); what the person reads is the speech made from it, and that passes through a `say` like
 any other. The row is here because a report's wording is the most common way machinery
 reaches a message, and it is held where it reaches them rather than where it was written.
 
@@ -89,7 +90,7 @@ machinery, and the rewrite is to carry it.
                     └───────────────────────────────┬─────────────────────────────────┘
                                                     │
   Cognition/worker ── B. material, not a script ──► C. Reaction writes the turn
-  (view built here when                                        │ hi_say
+  (view built here when                                        │ hi_prepare
    the result will cross the line)                             ▼
                                              D. triage (host code, facts only)
                                                  │ in scope          │ out of scope
@@ -97,8 +98,8 @@ machinery, and the rewrite is to carry it.
                                              E. pre-send check ──────┤
                                                  │ revise            │ pass / timeout / error
                                                  ▼                   ▼
-                                     "not sent — <note>"       F. delivered
-                                     rewrite or drop,               │
+                                     "left out — <note>"       F. set; the floor releases it
+                                     prepare again or drop,         │
                                      same turn                      │ turn ends
                                                                     ▼
                                              G. audit (independent, per turn)
@@ -176,17 +177,17 @@ a view goes up with it.
 
 ### D. Triage — host code, facts only
 
-Inside `ToolSink::say` ([`tools.rs`](../../src/body/reaction/tools.rs)), after the length and
-the run count (§ F) and before the floor — a read that can take seconds must not hold a floor
-decision made about the moment the words are ready. It judges nothing; it decides whether the
-check runs. A message is in scope when **the turn carries a report**, or **the message is
-longer than a short reply** (starting line: 120 characters), or **it is not the first message
-of the turn**.
+Inside `hi_prepare` ([`tools.rs`](../../src/body/reaction/tools.rs)), for each `say` action,
+after the length — when the set is prepared, not when the floor releases it, so a read that
+can take seconds costs the turn's tail and never a moment somebody is waiting in. It judges
+nothing; it decides whether the check runs. A line is in scope when **the turn carries a
+report**, or **the line is longer than a short reply** (starting line: 120 characters), or
+**it is not the first line the turn prepares**.
 
 The scope is set by where the failures concentrate, not by how well code can find them: code
 cannot tell a paraphrased repetition from new content (measured: routing 24% of messages to a
 check caught half of the problem messages, 89% caught 95%). Short first replies to the person
-go out untouched and immediately.
+are set untouched.
 
 **What it passes is recorded, as a `skipped`** — because "not read" is a verdict. Triage judges
 no wording, but a message it does not route goes out exactly as if a judge had passed it, and
@@ -201,8 +202,8 @@ on records, where the audit reads only the close, a skip is final.
 [decision capability](../../src/body/capabilities/decision.rs) `hi_system_one` also uses
 ([`check.rs`](../../src/body/reaction/legibility/check.rs)). The state is the case: who is
 reading (the conduct and words-earned blocks Reaction's window carries), the recent
-conversation, what was on their screen, this turn's incoming signals, the messages already sent
-this turn and what it put on screen, then the candidate. The questions are one `noul` per axis
+conversation, what was on their screen, this turn's incoming signals, the lines this turn has
+already prepared and what it prepared to show, then the candidate. The questions are one `noul` per axis
 of the standard's table — `unsaid` excepted, since one message cannot show what the turn will
 still say — and one `choice` over `pass` and those axes. Their wording is
 [`judges/check.md`](../../src/identity/judges/check.md) around each axis's line from the table
@@ -217,17 +218,17 @@ tokens behind 900–1,500 of thinking. Asked the same axes as typed questions, S
 answered all 167 audited messages on this install at p50 0.53 s, p99 2.2 s. What that costs is
 the note: System One writes no words, so it cannot quote the ones that fail.
 
-**What it does with a revise.** `hi_say` answers `not sent — <note>`, the same kind of answer
-as *too long* or *they were still talking*. Reaction reads it inside the same turn and
-rewrites or drops the message; no new turn is woken. The note is the failing axis's own line
+**What it does with a revise.** The branch carrying the line is left out of the set, whole, and
+`hi_prepare` answers which and why — the same kind of answer as *too long*. Reaction reads it
+inside the same turn and prepares the matter again, rewritten, or drops it; no new turn is
+woken. The note is the failing axis's own line
 from the table — the standard the writer already holds, not a sentence for it to repeat.
 
 **Limits that keep it from doing harm:**
-- **one send-back per turn** — whatever Reaction sends after reading one goes out as written,
-  as the floor lets a reply through after repeated refusals. Per turn rather than per message
-  because the host cannot tell a rewrite from a new message, and a turn is what bounds the
-  latency;
-- **a timeout, and any error, sends the message** — silence is the worst failure, and a
+- **one send-back per turn, on `finished` lines** — the ones a person is waiting on; whatever
+  Reaction prepares after reading one is set as written. Per turn rather than per line because
+  the host cannot tell a rewrite from a new line, and a turn is what bounds the latency;
+- **a timeout, and any error, sets the line** — silence is the worst failure, and a
   checker must not be able to produce it. Time spent queued behind an earlier message counts.
   The budget is `speech_check_budget_ms`, **2.5 s**, and the record gate's is 20 s (§ M): nobody
   waits on a line. Both were 2.5 s until 2026-09-20, when five days of recorded checks held
@@ -237,10 +238,10 @@ from the table — the standard the writer already holds, not a sentence for it 
   teaches nothing**, which is what it did; the speech check's went to 10 s for that judge and
   came back to 2.5 s with System One, which went past it on 1 of 167. Its upstream was seen
   unavailable for about a minute and a half on 2026-09-21 (503 and 529): what an outage costs
-  is messages that went out unread, never messages held;
-- **serial within a turn**, so order holds; a message that had already reached the mouth when
-  an earlier one was sent back goes back with it, since it may depend on it — and one that
-  arrives after the answer is the rewrite;
+  is lines set unread, never lines left out;
+- **a whole call at once** — every `say` in the set is read together before `hi_prepare`
+  answers, and a branch whose line is sent back is left out whole, so no action is set leaning
+  on a line that was not;
 - **one switch** — `speech_check` set to `off` reads nothing; otherwise every in-scope message
   is read, and one that fails is sent back. Every check is recorded with what it cost and what
   it answered (§ I), so what a different cut would have done is read off the checks that ran.
@@ -269,9 +270,11 @@ One message is one matter. Paragraph breaks are part of the text: the face keeps
 **Three messages go out between one of the person's and the next.** Everything sent since
 their last message is read at once by someone coming back to it, with every subject that
 moved in the meantime interleaved, so the run is what the standard's bar applies to
-([`reading.md`](../../src/identity/craft/reading.md)) — and the host holds its length. In
-`ToolSink::say`, after the length and before D, a fourth message is refused with `not sent`
-([`unanswered.rs`](../../src/body/reaction/unanswered.rs)). A message from the person — typed,
+([`reading.md`](../../src/identity/craft/reading.md)) — and the host holds its length. It is
+counted **when the floor releases a set**, not when it is prepared: a fourth message is not
+said — the `say` fails, which stops the rest of its branch, and Reaction is told with its next
+wake ([`unanswered.rs`](../../src/body/reaction/unanswered.rs),
+[host.md](host.md#what-reaction-learns-and-when)). A message from the person — typed,
 spoken, or a handed file, the inputs that become messages — starts the run over; nothing
 else does. The count is taken under the mouth's serial lock, and a loop standing up seeds it
 from the run the journal already ends in, so a restart hands out no fresh allowance.
@@ -366,7 +369,7 @@ records yet, the most recent turns that spoke.
 
 Each turn is replayed with its thread's opening turn (which carries the whole window) and the
 six turns before it as history, under this build's prompt — or `PROMPT=`, on the agent's model
-or `MODEL=` — and `hi_say` answers the way the host would, floor aside, including the run
+or `MODEL=` — and `hi_prepare` answers the way the host would, floor aside, including the run
 since the person's last message as the journal had it when the turn started. That is not the live
 thread; codex's compactions are not reproduced. Both sides of the comparison are scored by the
 same audit, which is what the question needs. The set is private conversation, and the report
@@ -569,18 +572,18 @@ because an arrangement the person asked for is not held back over its wording.
 | **A pre-send check, scoped to report turns and long or later messages** | Code triage cannot find paraphrase, so scope follows where failures concentrate. A small-model checker found ≤11% of problems and is not used; mid-size reached 57% / 44%. On report turns a few seconds are affordable, and those turns carried the worst messages on 09-15 |
 | **One send-back per turn, not per message** | The host cannot tell a rewrite from a new message; a turn bounds the latency, and what follows a send-back was written with its note in hand |
 | **The judges' rubrics are prose in `src/identity/judges/`** | What counts as a failing line is judgment, and judgment lives where it can be read whole; the code only sends it |
-| **The check can send back, never rewrite** | A checker that edits words is a second mouth ([invariant 1](arch.md#invariants)); `hi_say` already answers calls with refusals Reaction acts on |
+| **The check can send back, never rewrite** | A checker that edits words is a second mouth ([invariant 1](arch.md#invariants)); `hi_prepare` already answers calls with refusals Reaction acts on |
 | **Fail open** | A timeout or error sends the message. The one failure nobody reports is silence |
 | **A gate is on or off; there is no recording-only stage** | Every gate was built to record what it would have done and send nothing back until its numbers were known. Five days of that on speech kept 187 checks, 162 of them timeouts, and no verdict ever reached anyone. The checks that run are recorded anyway, so a stage that only records is the same numbers plus a second path (2026-09-21) |
 | **Conduct: people present first, never cut** | Name order plus a shared 3,000-character cap delivered 3,023 of 16,425 characters and cut the owner's own section |
 | **Grain lives in the existing per-subject read** | Reflection already learns what the agent's words earn per subject; a second store would be structure with the same job |
 | **No derived load score** | The bar's float is judged from facts in the window; the host's presence estimate was deleted because nothing real could produce it ([`host.md`](host.md)) |
 | **One matter per message; structure is paragraphs** | Supersedes "three short messages" in [`text-transcript.md`](text-transcript.md) |
-| **Three messages between one of theirs and the next, refused in host code** | The person asked for a low cap (2026-09-17). The rule was already in `reaction.md` — "one quiet word beats a string of pings" — and 71% of messages still sat in runs of four or more, so the prompt alone has been measured. The count is a fact about the conversation, the same kind as length, and the refusal names it without judging the words |
-| **No exemption for urgent, and no backstop** | A flag the writer sets for itself would be set on everything. What needs the person is a `waiting` line on its row, drawn as *Needs you* where they come back to, and first when they next write. The floor lets a reply through after repeated refusals because silence is its failure; three messages already standing are not silence |
+| **Three messages between one of theirs and the next, held in host code at release** | The person asked for a low cap (2026-09-17). The rule was already in `reaction.md` — "one quiet word beats a string of pings" — and 71% of messages still sat in runs of four or more, so the prompt alone has been measured. The count is a fact about the conversation, the same kind as length, and the refusal names it without judging the words |
+| **No exemption for urgent, and no backstop** | A flag the writer sets for itself would be set on everything. What needs the person is a `waiting` line on its row, drawn as *Needs you* where they come back to, and first when they next write. The floor has no backstop either — a line it holds is held, not thrown away, so there is no run of refusals to break out of — and three messages already standing are not silence |
 | **The primary number is the person's corrections** | The rehearsal's blind judge marked as *dropped* an item the person said was right to leave out; labels drift toward completeness |
 | **Changes are replayed before they land** | Two prompt changes without a measurement between them cannot be told apart |
-| **Bound to the artifact class, not to `hi_say`** | A mechanism wired to one verb covers what that verb carries. Beside a speech path with triage, a check, an audit, a number and a replay set, 41 of 41 task records opened in four days carried jargon and machine timestamps, against rules written in three prompts |
+| **Bound to the artifact class, not to the speech verb** | A mechanism wired to one verb covers what that verb carries. Beside a speech path with triage, a check, an audit, a number and a replay set, 41 of 41 task records opened in four days carried jargon and machine timestamps, against rules written in three prompts |
 | **One record for every surface, carrying which surface it was** | A correction about how the person is told things is a fact about the person. Kept per surface, "以后简要汇报" teaches speech and leaves their task lines alone |
 | **The standard is carried whole, never linked** | Four rungs were handed the page's path and asked to open it — a rule held on the condition that a model remembers to go and read a file. The records written under that arrangement broke it 41 times out of 41 |
 | **The host writes a record's instant and kind; a caller passes prose** | 2,959 machine timestamps across 144 records were written into prose because hand-writing the whole line is what the format asked for. Removing the ask removes the class |

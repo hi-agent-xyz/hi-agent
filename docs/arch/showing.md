@@ -110,8 +110,8 @@ by the place it was put, in the record that place already keeps:
 |---|---|---|---|---|---|
 | on a task's line | the task's panel · its tiles on Home | the task's timeline | `hi_task_note(…, attach)` | worker | pull |
 | made for a task | the same | the task's timeline (`made`) | host, witnessing `hi_review_view` | host | pull |
-| on the screen | the stage · the trail | the appearance history | `hi_show` | Reaction | push |
-| handed over in the conversation | a message | the journal | `hi_say(…, attach)` | Reaction | push |
+| on the screen | the stage · the trail | the appearance history | a `show` action in `hi_prepare` | Reaction | push |
+| handed over in the conversation | a message | the journal | a `say` action carrying `attach`, in `hi_prepare` | Reaction | push |
 | on a share | a page somebody else opens | `views/_shares` | `hi_share` | worker | outward |
 | sent through an app | Feishu, WeChat, mail | the task's `delivered` line | the app's own tool, then `hi_task_note(delivered, attach)` | worker | outward |
 | inside a view | wherever the view is drawn | the view's source | `hi_add_attachment`, then `<Attachment>` | view builder | — |
@@ -153,10 +153,12 @@ bubble and on a shared page, and improving the video player improves it everywhe
    screen is pushed: 425 moves by the person in September against 73 shows. Taking the
    screen or a message is Reaction's, by [invariant 1](arch.md#invariants) and by
    [*the screen answers to the conversation*](stage.md#the-screen-answers-to-the-conversation-in-both-directions),
-   and the one thing the host decides about a push is where it lands: a show onto a page
-   they only just got goes into their list with a dot instead
+   and what the host decides about a push is when and where it lands. When is the floor's: a
+   `show` or a `say` is released when they stop, and held like a line while they are in the
+   middle of something else ([host.md § The floor](host.md#the-floor)). Where is the
+   screen's: a show onto a page they only just got goes into their list with a dot instead
    ([*a show leaves a page being read alone*](stage.md#a-show-leaves-a-page-being-read-alone)).
-   No queue, no importance field.
+   No importance field.
 7. **The read path does no work per picture.** A surface that polls reads records it already
    reads; a picture on it costs one immutable fetch the browser caches forever.
 
@@ -308,7 +310,8 @@ the line that placed each, still six at most on Home.
 
 ### On the stage
 
-    hi_show(op, id, ref: view:<ref> | att:<id>)                  Reaction
+    hi_prepare(matter, [{ when, actions: [                        Reaction
+      show { op, id, ref: view:<ref> | att:<id> }, … ] }])
 
 An attachment on the stage is drawn by the face's **own viewer** — the component in `@hi/core`
 that the panel and the conversation draw it with — for the reason the conversation is bundled
@@ -319,18 +322,21 @@ it through a module the host writes rather than compiles, `/api/attachments/<id>
 map resolves — so an attachment is a destination like any view's: in the trail, under the
 cursor, restored after a restart, its card's picture its preview and its label what it is.
 Everything else about the stage — one screen, one cursor, *a show takes the window with it* and
-the one case it does not — is unchanged.
+the one case it does not — is unchanged, and applies when the floor releases the `show`, not
+when it is prepared.
 
 This is what turns *拿出来我看看* into seconds. Reaction already holds the id from the
 projection; putting it up needs no worker, no view and no review.
 
 ### In the conversation
 
-    hi_say(text, attach?: [att:id, …])                            Reaction
+    hi_prepare(matter, [{ when, actions: [                        Reaction
+      say { text, attach?: [att:id, …] }, … ] }])
 
 [message.md](message.md#both-ends-can-hand-over-a-file) has said since it was written that
 `From::Agent` with `Content::File` is a message like any other, and nothing has ever minted
-one. This mints it. One content per message still holds: the words are one message and each
+one. A `say` carrying `attach` mints it, when the floor releases it. One content per message
+still holds: the words are one message and each
 thing handed over is one more, enqueued together as one arrival, and **each counts toward the
 three messages between one of theirs and the next** ([legibility.md § F](legibility.md#f-delivery)) —
 a picture in the conversation is read like one. A show points at something and takes it back;
@@ -507,8 +513,8 @@ Each phase compiles, ships, and is worth having without the next.
    the legibility table's rows. *This is the phase that would have drawn `pose_899` at 13:28.*
    A clip in a codec no browser plays is refused with the command that makes one it can, until
    `proxy.v1` makes that copy itself.
-2. **The stage and the conversation.** `hi_show(att:)` and the bundled viewer; the agent's
-   `Content::File` minted by `hi_say(attach)` and drawn by the chat; `proxy.v1`; `reaction.md`;
+2. **The stage and the conversation.** A `show` of an `att:` id and the bundled viewer; the
+   agent's `Content::File` minted by a `say` carrying `attach` and drawn by the chat; `proxy.v1`; `reaction.md`;
    the preview and viewer moved from the board's view into `@hi/core`, which is the loan phase 1
    takes and names; the measurements, with show-me messages counted by the reception read and
    the rest computed from the records.
