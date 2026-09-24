@@ -26,7 +26,7 @@ it asked.
 | A grooved action is a script the agent wrote, not a rung in the core | Recognizing a field and replaying a click is one implementation per windowing system and zero per idea; the idea is the same everywhere, so it belongs in a note and a tool. See [`mechanisms.md`](mechanisms.md#computer-use-does-not-cross-this-seam) |
 | The log is written *before* anything reacts | Durability must not depend on a session surviving |
 | The host opens the agent's eyes; the agent owns its own timers — inside this process tree | A duty that outlives the engine is a duty nobody supervises. When hi-agent is down its machinery is down, and that is the intended behaviour, not a gap |
-| Sessions are host-owned and **replaceable** | No session is a source of truth — continuity lives in `data/`. Replaceable is not the same as short-lived: every thinking rung keeps **one long-lived session**, so it can remember what it was doing — while nothing downstream depends on it surviving. It is replaced when it breaks, not when it grows; growth is the underlying agent's to compact |
+| Sessions are host-owned and **replaceable** | No session is a source of truth — continuity lives in `data/`. Replaceable is not the same as short-lived: every thinking rung keeps **one long-lived session**, so it can remember what it was doing — while nothing downstream depends on it surviving. It is replaced when it breaks or when it has been compacted past a few generations — never when it grows; growth is the underlying agent's to compact. See [Cutting a rung's thread](#cutting-a-rungs-thread) |
 
 ## Components
 
@@ -437,11 +437,51 @@ image items that already cross it, reset when a compaction takes them out — an
 ends over an **8 MB budget**, the host asks for the same in-place compaction the sweep does.
 The window rule above is untouched: context size is still only ever the agent's own number.
 
-What still replaces a session from out here is **failure, not size**: a turn that errors discards
-the possibly-wedged session and the next one cold-opens. That is always survivable, because
+What still replaces a session from out here is **failure or age, never size**: a turn that errors
+discards the possibly-wedged session and the next one cold-opens, and a rung's thread that has
+been compacted too many times is [cut](#cutting-a-rungs-thread) the same way. That is always survivable, because
 **the state a rung needs is re-projected into every turn** — what is owed, what it carries
 forward, who it can reach — and the [log](#the-log) is the durable backstop. A cold open loses
 the thread, never the truth. The session carries the thread; `data/` carries the truth.
+
+#### Cutting a rung's thread
+
+**Compaction bounds a thread's size; nothing bounded its age, and age is its own problem.**
+Each compaction rewrites the history into a summary, and the next one summarizes that summary.
+On 2026-09-24 Cognition's thread was two days old and had been compacted 79 times; Reaction's was
+seven days old, carried across 33 restarts, and compacted 39 times. What either held of its own
+beginning was the 39th or 79th retelling of it — while the seeds that are written precisely to
+carry a rung into a fresh thread had each been rewritten within the hour.
+
+So a rung's thread is **cut** — let go, and a fresh one opened — once it has been compacted
+**more than three times**, at a wake that finds it **quiet for at least five minutes** with
+**nothing it dispatched still mid-turn**. That is [`upkeep::cut_due`](../../src/body/reaction/upkeep.rs),
+asked by each rung at the top of a wake.
+
+- **It is not the retired hot-swap.** That one thresholded on a size the host counted and
+  had a session brief its own replacement. This counts **codex's own compactions** — the
+  `contextCompaction` items it reports, seeded on resume from the replay `thread/resume`
+  returns, so a restart does not reset the count — and writes no summary at all. What carries
+  the rung across is what already carries it across a failure: layer 2
+  ([`data.md`](data.md#what-a-session-is-given-in-four-layers)), projected into the fresh
+  thread's first turn off a cold memo.
+- **It costs no model call and runs on no clock.** Dropping a handle is free, so there is
+  nothing to do ahead of time; the next open is the same cold `thread/start` a failed turn
+  takes, because `take_resumable` is spent once per run. The person may wait the extra open
+  on the turn that cuts — a codex child and a `thread/start`, about a second.
+- **Size is still codex's.** Compaction is unchanged — codex's own, the sweep's, the image
+  budget's. A cut only decides when a thread has had enough generations.
+- **Rungs only.** A worker is one errand; cutting it would be the cold open an errand is
+  forbidden from mistaking for a resume.
+
+**Open.** The recent tail a cold window carries is the last 30 minutes of the log
+([`snapshot::RECENT_WINDOW_MIN`](../../src/mind/memory/snapshot.rs)), so a cut after a pause
+longer than that hands Reaction the seed and the ledger but no line of the conversation it was
+in. Before the cut the thread still held it. Whether the seed Cognition writes covers that
+enough is the first thing a live run has to show; if it does not, the tail becomes the last *N*
+messages rather than the last *N* minutes. Also unwatched: a worker's report reaching a thread
+that does not remember sending it — the cut waits for dispatched work to finish for this
+reason, but a report can also follow a finished turn.
 
 ### § Decisions
 

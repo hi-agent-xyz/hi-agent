@@ -463,6 +463,25 @@ fn interrupted_turn_of(result: &Value) -> Option<InterruptedTurn> {
     (!input.is_empty()).then_some(InterruptedTurn { started, input })
 }
 
+/// How many times the thread in a `thread/resume` response has been compacted.
+///
+/// The response replays the whole rollout, and every compaction codex ever ran on the
+/// thread comes back as a `contextCompaction` item in the turn it ran in — measured on
+/// 2026-09-24 against the 0.147 pin: Reaction's thread came back with 33 across 740 turns,
+/// Cognition's with 38. So the count a session starts from is the thread's, not the
+/// process's, and a restart does not reset it.
+pub(crate) fn compactions_of(result: &Value) -> u32 {
+    let Some(turns) = result.pointer("/thread/turns").and_then(Value::as_array) else {
+        return 0;
+    };
+    turns
+        .iter()
+        .filter_map(|turn| turn.get("items").and_then(Value::as_array))
+        .flatten()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("contextCompaction"))
+        .count() as u32
+}
+
 impl CodexProcess {
     /// Spawn `codex app-server --stdio` and complete the `initialize` handshake.
     ///
@@ -731,13 +750,14 @@ impl CodexProcess {
     /// took a turn has no rollout, and codex answers `no rollout found for thread id`. That
     /// is a boot where nothing had happened yet, not a fault.
     ///
-    /// Answers the thread id and, when the stop cut the thread's last turn off, that turn
-    /// ([`interrupted_turn_of`]).
+    /// Answers the thread id; when the stop cut the thread's last turn off, that turn
+    /// ([`interrupted_turn_of`]); and how many times the thread has been compacted
+    /// ([`compactions_of`]).
     pub async fn resume_thread(
         &self,
         thread_id: &str,
         opts: SessionOpts,
-    ) -> anyhow::Result<(String, Option<InterruptedTurn>)> {
+    ) -> anyhow::Result<(String, Option<InterruptedTurn>, u32)> {
         let mut params = json!({
             "threadId": thread_id,
             "approvalPolicy": "never",
@@ -762,8 +782,9 @@ impl CodexProcess {
         // argument, so the session records what codex says it is on.
         let id = thread_id_of(&result, "thread/resume")?;
         let interrupted = interrupted_turn_of(&result);
-        tracing::info!(thread_id = %id, interrupted = interrupted.is_some(), "codex thread resumed");
-        Ok((id, interrupted))
+        let compactions = compactions_of(&result);
+        tracing::info!(thread_id = %id, interrupted = interrupted.is_some(), compactions, "codex thread resumed");
+        Ok((id, interrupted, compactions))
     }
 
     /// Issue a JSON-RPC request and await its response.
@@ -1038,6 +1059,20 @@ mod tests {
         assert_eq!(interrupted_turn_of(&resume_response("completed")), None);
         assert_eq!(interrupted_turn_of(&json!({ "thread": { "id": "t1", "turns": [] } })), None);
         assert_eq!(interrupted_turn_of(&json!({ "thread": { "id": "t1" } })), None);
+    }
+
+    /// Every compaction in the replay counts, in whichever turn it ran; a thread that never
+    /// compacted, or a response with no turns, starts from zero.
+    #[test]
+    fn a_resumed_thread_brings_its_compactions_with_it() {
+        let compacted = json!({ "thread": { "id": "t1", "turns": [
+            { "id": "a", "items": [ { "type": "userMessage" }, { "type": "contextCompaction", "id": "c1" } ] },
+            { "id": "b", "items": [ { "type": "agentMessage" } ] },
+            { "id": "c", "items": [ { "type": "contextCompaction", "id": "c2" }, { "type": "contextCompaction", "id": "c3" } ] }
+        ] } });
+        assert_eq!(compactions_of(&compacted), 3);
+        assert_eq!(compactions_of(&resume_response("completed")), 0);
+        assert_eq!(compactions_of(&json!({ "thread": { "id": "t1" } })), 0);
     }
 
     /// The record that produced this test, verbatim off the wire on 2026-08-10.

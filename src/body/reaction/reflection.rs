@@ -439,7 +439,17 @@ async fn ensure_session(
     held: &mut Option<Arc<AgentSession>>,
 ) -> anyhow::Result<Arc<AgentSession>> {
     if let Some(existing) = held.as_ref() {
-        return Ok(existing.clone());
+        if !super::upkeep::cut_due(&id, existing) {
+            return Ok(existing.clone());
+        }
+        // A cut, not a failure: the thread is fine and simply old. See [`super::upkeep::cut_due`].
+        tracing::info!(
+            reflection = %id,
+            thread_id = %existing.id(),
+            compactions = existing.compactions(),
+            "reflection: cutting the thread; opening a fresh one"
+        );
+        *held = None;
     }
     let opened = open_session(reaction, id).await?;
     *held = Some(opened.clone());

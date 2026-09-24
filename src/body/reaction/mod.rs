@@ -2431,6 +2431,21 @@ async fn run_reaction_turn(
     // never ran or its session died, so there is already a batch waiting: spending a whole
     // generation on a seed first would make someone wait twice. Forgetting instead puts the
     // same window on the turn they are waiting for.
+    // A thread old enough to cut is let go here, at the top of a turn, and the match below
+    // opens its replacement down the same cold path a failed turn takes — see
+    // [`upkeep::cut_due`].
+    if let Some(old) = reaction_session.as_ref()
+        && upkeep::cut_due(reaction_id, old)
+    {
+        tracing::info!(
+            thread_id = %old.id(),
+            compactions = old.compactions(),
+            "reaction: cutting the thread; opening a fresh one"
+        );
+        if let Some(old) = reaction_session.take() {
+            record_reaction_session_closed(reaction, &old).await;
+        }
+    }
     let session = match reaction_session {
         Some(s) => s.clone(),
         None => {

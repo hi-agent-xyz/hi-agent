@@ -810,15 +810,18 @@ was built to reopen per wake. Both were defensible readings. This is the decisio
 
 | Rung | Session | Replaced when |
 |---|---|---|
-| **Reaction** | one, process-wide, long-lived | a turn fails |
-| **Cognition** | one, process-wide, long-lived | a turn fails |
-| **Reflection** | one, process-wide, long-lived | a turn or a pass fails |
+| **Reaction** | one, process-wide, long-lived | a turn fails, or the thread is cut |
+| **Cognition** | one, process-wide, long-lived | a turn fails, or the thread is cut |
+| **Reflection** | one, process-wide, long-lived | a turn or a pass fails, or the thread is cut |
 | Workers | one per errand | **its owner closes it** |
 
 **Nothing in this column is about size.** Context growth is bounded by the underlying agent,
 which compacts in place — the host asks for that same in-place compaction at a chosen moment
 rather than duplicating it, and never replaces a session over size; see
-[`host.md`](host.md#session-layer). A session is replaced here only because it **broke**.
+[`host.md`](host.md#session-layer). A session is replaced here because it **broke**, or because
+it has been compacted more than three times and is [cut](host.md#cutting-a-rungs-thread) at the
+next pause — a thread that has been summarized that often is a retelling of itself, and the
+rung's seed carries it across better than a fifth summary would.
 
 **A worker's lifetime belongs to the rung that created it, and nothing reclaims one on a
 clock.** This row used to read "the errand ends, or an idle TTL", and the TTL is now gone

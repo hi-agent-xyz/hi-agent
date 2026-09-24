@@ -297,16 +297,17 @@ impl AgentLayer {
         //
         // An errand's own cut-off turn is not carried: the host reopens an errand with a note of
         // its own (`reopen_interrupted`), and that path already knows it was caught mid-turn.
-        let (id, resumed, interrupted) = match resume {
+        let (id, resumed, interrupted, compactions) = match resume {
             Some(thread) => {
-                let (id, _) = process.resume_thread(&thread, opts).await.with_context(|| {
-                    format!("the errand's thread ({thread}) would not reopen")
-                })?;
-                (id, true, None)
+                let (id, _, compactions) =
+                    process.resume_thread(&thread, opts).await.with_context(|| {
+                        format!("the errand's thread ({thread}) would not reopen")
+                    })?;
+                (id, true, None, compactions)
             }
             None => match crate::foundation::registry::global().take_resumable(role) {
                 Some(thread) => self.resume_or_open(&process, &thread, role, opts).await?,
-                None => (process.open_thread(opts).await?, false, None),
+                None => (process.open_thread(opts).await?, false, None, 0),
             },
         };
         if let Some(slug) = slug.as_ref() {
@@ -321,6 +322,7 @@ impl AgentLayer {
             self.inner.privacy.store().clone(),
             resumed,
             interrupted,
+            compactions,
         ))
     }
 
@@ -344,11 +346,11 @@ impl AgentLayer {
         thread: &str,
         role: Role,
         opts: SessionOpts,
-    ) -> anyhow::Result<(String, bool, Option<crate::foundation::codex::process::InterruptedTurn>)> {
+    ) -> anyhow::Result<(String, bool, Option<crate::foundation::codex::process::InterruptedTurn>, u32)> {
         match process.resume_thread(thread, opts.clone()).await {
-            Ok((id, interrupted)) => {
+            Ok((id, interrupted, compactions)) => {
                 tracing::info!(role = role.as_str(), thread_id = %id, "resumed the previous run's thread");
-                Ok((id, true, interrupted))
+                Ok((id, true, interrupted, compactions))
             }
             Err(err) => {
                 tracing::info!(
@@ -363,7 +365,7 @@ impl AgentLayer {
                 // is forbidden from telling.
                 //
                 // A turn the stop cut off is lost with the thread here: nothing else records it.
-                process.open_thread(opts).await.map(|id| (id, false, None))
+                process.open_thread(opts).await.map(|id| (id, false, None, 0))
             }
         }
     }

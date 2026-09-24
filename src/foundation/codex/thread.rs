@@ -3,7 +3,8 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use serde_json::{Value, json};
@@ -68,6 +69,28 @@ pub struct AgentSession {
     /// Roughly how many bytes of image this thread carries — see [`image_bytes_in_item`].
     /// On the session for the same reason as `window`.
     images: Arc<AtomicU64>,
+    /// How many times this thread's history has been compacted, over its whole life —
+    /// see [`compactions`](Self::compactions).
+    compactions: Arc<AtomicU32>,
+    /// When the last turn on this session ended, or when the session was opened if none
+    /// has — see [`quiet_for`](Self::quiet_for).
+    quiet_since: Arc<std::sync::Mutex<Instant>>,
+}
+
+/// The session's one turn slot while a turn holds it, stamping the session's quiet clock
+/// when it is let go.
+///
+/// On the permit rather than at [`SessionRun::wait`] because a run can be dropped without
+/// being waited on — a cancelled or abandoned turn is over all the same.
+struct TurnSlot {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    quiet_since: Arc<std::sync::Mutex<Instant>>,
+}
+
+impl Drop for TurnSlot {
+    fn drop(&mut self) {
+        *self.quiet_since.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+    }
 }
 
 /// Why a turn stopped.
@@ -330,10 +353,12 @@ fn image_bytes_in_item(item: &Value) -> u64 {
 }
 
 /// Fold one `item/completed` into the thread's image count: add what the item carries, and
-/// clear it on a compaction, which rebuilds the history without tool-output images.
-fn absorb_image_item(images: &AtomicU64, item: &Value) {
+/// clear it on a compaction, which rebuilds the history without tool-output images — and
+/// is one more generation on the thread's compaction count.
+fn absorb_image_item(images: &AtomicU64, compactions: &AtomicU32, item: &Value) {
     if item.get("type").and_then(Value::as_str) == Some("contextCompaction") {
         images.store(0, Ordering::Relaxed);
+        compactions.fetch_add(1, Ordering::Relaxed);
         return;
     }
     let bytes = image_bytes_in_item(item);
@@ -373,10 +398,12 @@ pub struct SessionRun {
     window: Arc<std::sync::Mutex<Option<WindowFill>>>,
     /// Shared with the session, like `window`.
     images: Arc<AtomicU64>,
+    /// Shared with the session, like `window`.
+    compactions: Arc<AtomicU32>,
     /// Held for the life of the run, so the session's single turn slot is released when the
     /// turn is actually over rather than when `prompt` returns — which is immediately, since
     /// `turn/start` only means *accepted*. See [`AgentSession::turn`].
-    _permit: tokio::sync::OwnedSemaphorePermit,
+    _slot: TurnSlot,
 }
 
 #[cfg(test)]
@@ -576,7 +603,7 @@ impl SessionRun {
         if method == "item/completed"
             && let Some(item) = params.and_then(|p| p.get("item"))
         {
-            absorb_image_item(&self.images, item);
+            absorb_image_item(&self.images, &self.compactions, item);
         }
 
         self.queue.extend(SessionUpdate::from_notification(note));
@@ -659,6 +686,7 @@ impl AgentSession {
         secrets: crate::foundation::privacy::SecretStore,
         resumed: bool,
         interrupted: Option<InterruptedTurn>,
+        compactions: u32,
     ) -> Self {
         Self {
             id,
@@ -672,7 +700,27 @@ impl AgentSession {
             turn: Arc::new(tokio::sync::Semaphore::new(1)),
             window: Arc::new(std::sync::Mutex::new(None)),
             images: Arc::new(AtomicU64::new(0)),
+            compactions: Arc::new(AtomicU32::new(compactions)),
+            quiet_since: Arc::new(std::sync::Mutex::new(Instant::now())),
         }
+    }
+
+    /// How many times this thread's history has been compacted — each one a summary of
+    /// what the previous summary kept.
+    ///
+    /// **Over the thread's life, not this process's**: a resumed thread starts from the
+    /// compactions its resume replayed ([`crate::foundation::codex::process::compactions_of`]),
+    /// then counts each one after, whoever asked for it. This is codex's own record of
+    /// what it did to the thread, never a size the host estimated.
+    pub fn compactions(&self) -> u32 {
+        self.compactions.load(Ordering::Relaxed)
+    }
+
+    /// How long since a turn last ended on this session — or since it was opened, if none
+    /// has. A compaction the sweep ran counts as a turn ending; it is the session's slot
+    /// either way.
+    pub fn quiet_for(&self) -> Duration {
+        self.quiet_since.lock().unwrap_or_else(std::sync::PoisonError::into_inner).elapsed()
     }
 
     /// How full the context window was on this session's most recent request, or `None`
@@ -780,7 +828,8 @@ impl AgentSession {
             text_buf: String::new(),
             window: self.window.clone(),
             images: self.images.clone(),
-            _permit: permit,
+            compactions: self.compactions.clone(),
+            _slot: TurnSlot { _permit: permit, quiet_since: self.quiet_since.clone() },
         })
     }
 
@@ -819,10 +868,11 @@ impl AgentSession {
     /// both "a turn had the session" and "the compaction ran and failed", because the only
     /// thing a caller does with either is try again later.
     pub async fn compact(&self) -> anyhow::Result<bool> {
-        let Ok(_permit) = self.turn.clone().try_acquire_owned() else {
+        let Ok(permit) = self.turn.clone().try_acquire_owned() else {
             tracing::debug!(thread_id = %self.id, "not compacting; a turn holds the session");
             return Ok(false);
         };
+        let _slot = TurnSlot { _permit: permit, quiet_since: self.quiet_since.clone() };
         let mut rx = {
             let mut slot = self.rx.lock().await;
             slot.take().ok_or_else(|| anyhow!("session already has an in-flight turn"))?
@@ -855,6 +905,7 @@ impl AgentSession {
         // the count must stay.
         if completed {
             self.images.store(0, Ordering::Relaxed);
+            self.compactions.fetch_add(1, Ordering::Relaxed);
         }
 
         *self.rx.lock().await = Some(rx);
@@ -1009,9 +1060,13 @@ mod tests {
             text_buf: String::new(),
             window: Arc::new(std::sync::Mutex::new(None)),
             images: Arc::new(AtomicU64::new(0)),
-            _permit: Arc::new(tokio::sync::Semaphore::new(1))
-                .try_acquire_owned()
-                .expect("a fresh semaphore has its permit"),
+            compactions: Arc::new(AtomicU32::new(0)),
+            _slot: TurnSlot {
+                _permit: Arc::new(tokio::sync::Semaphore::new(1))
+                    .try_acquire_owned()
+                    .expect("a fresh semaphore has its permit"),
+                quiet_since: Arc::new(std::sync::Mutex::new(Instant::now())),
+            },
         }
     }
 
@@ -1052,6 +1107,19 @@ mod tests {
 
         r.absorb(&completed(json!({"type": "contextCompaction", "id": "c1"})));
         assert_eq!(r.images.load(Ordering::Relaxed), 0, "a compaction rebuilds history without them");
+    }
+
+    /// A compaction codex runs on its own mid-turn is a generation like any other, and
+    /// nothing else in a turn is one.
+    #[test]
+    fn a_compaction_mid_turn_is_counted_on_the_thread() {
+        let mut r = run("t1");
+        r.absorb(&completed(json!({"type": "agentMessage", "id": "m", "text": "working"})));
+        r.absorb(&json!({"method": "item/started", "params": {"item": {"type": "contextCompaction", "id": "c1"}}}));
+        assert_eq!(r.compactions.load(Ordering::Relaxed), 0, "counted once, on completion");
+        r.absorb(&completed(json!({"type": "contextCompaction", "id": "c1"})));
+        r.absorb(&completed(json!({"type": "contextCompaction", "id": "c2"})));
+        assert_eq!(r.compactions.load(Ordering::Relaxed), 2);
     }
 
     #[test]

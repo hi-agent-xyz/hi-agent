@@ -19,6 +19,10 @@
 //! With both, this is an ordinary call: [`AgentSession::compact`] steps aside if a turn
 //! holds the session, and a turn arriving mid-compaction waits for it instead of failing.
 //! Maintenance is never urgent, so it is never the one that waits.
+//!
+//! Beside it sits the other piece of thread maintenance, which runs on no clock at all:
+//! [`cut_due`], asked by each rung at the top of a wake, decides when a thread has been
+//! compacted often enough to be let go for a fresh one.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -178,6 +182,46 @@ pub(super) async fn shed_images(reaction: &super::Reaction, id: &SessionSlug, se
 /// what makes this a scan: no locks on live sessions, no await, just the numbers every turn
 /// boundary already writes there ([`super::note_window`]) — and, since a compaction reaches
 /// no such boundary, the one [`sweep_forever`] writes there itself.
+/// How many compactions a rung's thread may go through before it is cut — see [`cut_due`].
+///
+/// **Not a size.** Size stays codex's to bound by compacting (`docs/arch/host.md` § Session
+/// layer). This counts *generations*: after the fourth compaction, what the thread holds of
+/// its own start is a summary of a summary of a summary. On 2026-09-24 Cognition's thread
+/// was two days old with 79 of them and Reaction's seven days old across 33 restarts, while
+/// the seeds that carry a rung across a fresh open were each rewritten within the hour.
+const CUT_AFTER_COMPACTIONS: u32 = 3;
+
+/// How long a rung must have been quiet before its thread may be cut — see [`cut_due`].
+///
+/// Only "not mid-burst": a cut drops what the last few turns were holding, so it waits for a
+/// pause. Over 2026-09-17..24 Cognition, the busiest rung, paused this long 46 times in two
+/// days, so a thread that is due is cut within hours.
+const CUT_WHEN_QUIET_FOR: Duration = Duration::from_secs(5 * 60);
+
+/// Whether a rung's held session should be let go at this wake and a fresh thread opened in
+/// its place.
+///
+/// **Asked by the rung itself, at the top of a wake, and never on a clock.** A cut costs no
+/// model call — it drops a handle — so there is no idle-time work to schedule; the next
+/// open goes down the same cold path a failed turn takes, and `take_resumable` has already
+/// been spent for the run, so that open is a fresh `thread/start`. What carries the rung
+/// across is layer 2 (`docs/arch/data.md`): its seed, the ledger and the roster, projected
+/// into the fresh thread's first turn off a memo that is cold because the session is new.
+///
+/// **Not while anything it dispatched is mid-turn.** A report arriving on a thread that
+/// does not remember sending the work is the case a cut is most likely to get wrong, so
+/// the cut waits for it rather than guessing.
+pub(super) fn cut_due(id: &SessionSlug, session: &AgentSession) -> bool {
+    let registry = registry::global();
+    let working_child =
+        registry.children(id).iter().any(|child| registry.status(child).is_some_and(|st| st.busy));
+    cut_due_on(session.compactions(), session.quiet_for(), working_child)
+}
+
+fn cut_due_on(compactions: u32, quiet_for: Duration, working_child: bool) -> bool {
+    compactions > CUT_AFTER_COMPACTIONS && quiet_for >= CUT_WHEN_QUIET_FOR && !working_child
+}
+
 fn due() -> Vec<SessionSlug> {
     due_among(registry::global().statuses(), chrono::Utc::now())
 }
@@ -231,6 +275,17 @@ mod tests {
     }
 
     /// A quiet worker with a full window, as the switchboard held it at 05:35 on 2026-09-06.
+    /// All three conditions, each on its own: generations, a pause, and no dispatched work
+    /// still running.
+    #[test]
+    fn a_thread_is_cut_after_its_fourth_compaction_in_a_pause_with_nothing_running() {
+        let quiet = CUT_WHEN_QUIET_FOR;
+        assert!(cut_due_on(4, quiet, false));
+        assert!(!cut_due_on(3, quiet, false), "three compactions is not yet a cut");
+        assert!(!cut_due_on(4, quiet - Duration::from_secs(1), false), "mid-burst");
+        assert!(!cut_due_on(40, Duration::from_secs(24 * 3600), true), "a worker it sent is still going");
+    }
+
     fn quiet_and_full(window_percent: Option<u8>) -> registry::Status {
         let now = chrono::Utc::now();
         registry::Status {
