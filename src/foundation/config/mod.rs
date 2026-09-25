@@ -57,6 +57,14 @@ pub const KEY_VENDOR_DOWN_AFTER: &str = "vendor_down_after";
 /// `off`/`0`/unset/unparseable → the 30s default.
 pub const KEY_VENDOR_PROBE: &str = "vendor_probe";
 
+/// Open working sessions, across every rung, at which Reflection is handed the list to tidy.
+/// Not a ceiling: creating goes on past it. A positive integer; `0`/`off` for none;
+/// unset/unparseable → default (32).
+pub const KEY_MAX_WORKERS: &str = "max_workers";
+/// Most working sessions mid-turn at once. Past it, a worker with work waits in one
+/// first-come line, reading `waiting`, with its mail kept. Same grammar; default 8.
+pub const KEY_MAX_RUNNING_WORKERS: &str = "max_running_workers";
+
 /// Master switch for the right-⌘ attention gestures (the global key event tap).
 /// Off unless explicitly enabled, because arming the tap forces the macOS
 /// "Input Monitoring" grant at boot — we don't want that prompt out of the box.

@@ -104,7 +104,9 @@ fn create_worker_tool() -> Value {
          a session that has reported is not finished, it is waiting, and it keeps its whole \
          context for the next thing you send it however long that takes. Nothing reclaims it \
          on a timer, so when its errand is genuinely done, `hi_close_worker` it — every session \
-         you leave open holds a subprocess.",
+         you leave open holds a subprocess. Only so many workers run a turn at once; one past \
+         that waits in line with its mail kept, reading `waiting`, and starts when a slot \
+         frees.",
         json!({
             "type": "object",
             "properties": {
@@ -1839,7 +1841,10 @@ async fn dispatch_tool(
                      still holding its context."
                 ));
             };
-            if st.owner != Some(caller) {
+            // Reflection may close anyone's: past the open-session limit the host hands it the
+            // whole list to tidy (`workers::past_the_limit`). The owner is told, below.
+            let for_another = st.owner.as_ref() != Some(&caller);
+            if for_another && role != Some("reflection") {
                 return tool_error(
                     "a working session can only be closed by the session that asked for the work",
                 );
@@ -1857,11 +1862,27 @@ async fn dispatch_tool(
                 return tool_error(&err.to_string());
             }
             return match tokio::time::timeout(CONTROL_REPLY_TIMEOUT, answer).await {
-                Ok(Ok(true)) => tool_ok(&format!(
-                    "session {id} is closed. If it was mid-turn it will finish and report \
-                     once more, then end. Its context is gone — a further errand needs a \
-                     new session."
-                )),
+                Ok(Ok(true)) => {
+                    // An owner whose session was closed for it has to hear so, or it goes on
+                    // briefing an address that answers "gone".
+                    if let (true, Some(owner)) = (for_another, st.owner.as_ref()) {
+                        let _ = registry::global().send(
+                            &caller,
+                            owner,
+                            format!(
+                                "I closed your session {id} (\"{}\") while tidying open \
+                                 sessions — its errand looked over. A further errand needs a \
+                                 new session.",
+                                st.title
+                            ),
+                        );
+                    }
+                    tool_ok(&format!(
+                        "session {id} is closed. If it was mid-turn it will finish and report \
+                         once more, then end. Its context is gone — a further errand needs a \
+                         new session."
+                    ))
+                }
                 Ok(Ok(false)) => tool_ok(&format!(
                     "session {id} was already gone — nothing to close."
                 )),

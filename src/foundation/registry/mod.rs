@@ -688,7 +688,9 @@ impl Entry {
             title: self.title.clone(),
             subject: self.subject.clone(),
             busy: self.busy,
-            queued: !self.inbox.pending.is_empty(),
+            // A held task is work in hand that has not started — parked behind the vendor gate
+            // or behind the running cap — so it reads as waiting, not as an idle session.
+            queued: !self.inbox.pending.is_empty() || self.held.is_some(),
             turns: self.turns,
             started: self.started,
             state_since: self.state_since,
@@ -1516,6 +1518,13 @@ impl Registry {
         }
     }
 
+    /// Whether anything is queued for `id`, without taking it. A worker waiting on a turn
+    /// slot asks this and leaves the mail where it is, so what arrives during the wait joins
+    /// the same turn instead of queueing up a second one.
+    pub fn has_pending(&self, id: &SessionSlug) -> bool {
+        self.sessions.lock().unwrap().get(id).is_some_and(|e| !e.inbox.pending.is_empty())
+    }
+
     /// Take everything queued for `id`, if anything is. Marks the session busy — it is
     /// about to take a turn, and an agent with a turn in flight is not idle.
     pub fn take_pending(&self, id: &SessionSlug) -> Option<Vec<Message>> {
@@ -1864,6 +1873,34 @@ mod tests {
         assert!(r.take_pending(&target).is_none(), "the target mailbox stayed empty");
         let (_, total) = r.traffic_between(&forged, &target, 10);
         assert_eq!(total, 0, "a refused sender leaves no traffic record");
+    }
+
+    #[test]
+    fn pending_mail_is_seen_without_being_taken() {
+        let r = reg();
+        let owner = mint();
+        let id = mint();
+        r.register(owner.clone(), Role::Cognition, None, "the brain".into(), None);
+        r.register(id.clone(), Role::Worker(WorkerType::General), Some(owner.clone()), "e".into(), None);
+        assert!(!r.has_pending(&id));
+        r.send(&owner, &id, "one".into());
+        r.send(&owner, &id, "two".into());
+        assert!(r.has_pending(&id));
+        assert!(r.has_pending(&id), "looking takes nothing");
+        assert_eq!(r.take_pending(&id).map(|b| b.len()), Some(2), "both leave as one turn");
+        assert!(!r.has_pending(&id));
+    }
+
+    #[test]
+    fn a_held_task_reads_as_waiting() {
+        let r = reg();
+        let id = mint();
+        r.register(id.clone(), Role::Worker(WorkerType::General), None, "e".into(), None);
+        assert!(!r.status(&id).unwrap().queued);
+        r.hold(&id, Some("the task".into()));
+        assert!(r.status(&id).unwrap().queued, "work in hand that has not started is waiting");
+        r.hold(&id, None);
+        assert!(!r.status(&id).unwrap().queued);
     }
 
     #[test]

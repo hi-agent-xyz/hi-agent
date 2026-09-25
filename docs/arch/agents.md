@@ -846,6 +846,25 @@ session and lets the context go.
 does. That is a real leak and the honest place for it — an owner that loses track of its
 errands has a problem no timer was fixing, only concealing.
 
+**Two limits keep it in view, and neither refuses anything.** Both are `app_settings`
+tunables across every rung, `0` or `off` for none.
+
+- **`max_workers` (default 32) is a threshold for tidying, not a ceiling.** When a create
+  finds that many open, the host posts Reflection — the rung that tends the house — the whole
+  list: owner, state, how long quiet, last turn, task. Reflection closes the ones whose errand
+  is over, **whoever opened them**; it is the one rung allowed to close another's session, and
+  the owner is told each time. Creating goes on past the threshold regardless. Reflection is
+  told once per stretch over it; the next create back under re-arms it.
+- **`max_running_workers` (default 8) is a line.** A worker with work and no free slot waits,
+  first come first served, with no turn open and its mail left in its inbox — so a message
+  that arrives during the wait joins the turn it is waiting for instead of queueing a second
+  one. The row reads `waiting` and its `doing` line says why; a brief that is not mail is held
+  on the switchboard, so a restart re-hands it. The rungs never wait in this line — they are
+  not workers — and a worker never waits on another worker's turn, so the line cannot jam.
+
+Neither ever closes a session to make room: that would be the 2026-08-13 reclaim with a count
+in place of a clock, and the judgment of which errand is over stays with a rung.
+
 **What the host owes in return: an id it hands out must already answer.** Putting the
 lifetime in the owner's hands only works if every verb the owner has about a session tells it
 the truth, and the three dispatch verbs are all *about a session* — so all three wait for the

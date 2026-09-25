@@ -33,12 +33,13 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::foundation::config;
 use crate::mind::memory::snapshot;
 
-use tokio::sync::{Mutex, Notify, mpsc};
+use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::foundation::codex::{AgentSession, SessionOpts, SessionUpdate, StopReason};
@@ -67,6 +68,121 @@ use crate::foundation::registry::{SessionSlug, TurnOutcome};
 // It lives until the session that created it calls `close_worker`, or the process ends. A
 // worker left open is a worker the owner still intends to use — that judgment sits with the
 // rung holding the errand, which is the only party that knows.
+//
+// **Two limits, and neither refuses anything or picks a victim.** Past [`max_workers`]
+// open sessions the host tells Reflection, which tends the house, and it closes what is
+// plainly finished; creating goes on regardless. Past [`max_running_workers`] turns in
+// flight, a worker with mail waits in one process-wide line for a free slot — its mail
+// left in its inbox meanwhile, so whatever else arrives joins the same turn. Closing
+// something to make room would be the 2026-08-13 reclaim with a count in place of a clock.
+
+const DEFAULT_MAX_WORKERS: usize = 32;
+const DEFAULT_MAX_RUNNING_WORKERS: usize = 8;
+
+/// A limit tunable: a positive integer; `0`/`off` means none; unset or unparseable → default.
+fn cap_tunable(raw: Option<String>, default: usize) -> Option<usize> {
+    match raw.as_deref().map(str::trim) {
+        None => Some(default),
+        Some(v) if v == "0" || v.eq_ignore_ascii_case("off") => None,
+        Some(v) => Some(v.parse::<usize>().ok().filter(|n| *n > 0).unwrap_or(default)),
+    }
+}
+
+/// How many working sessions open at once before Reflection is asked to tidy, or `None`
+/// ([`config::KEY_MAX_WORKERS`]). A threshold for a nudge, not a ceiling.
+pub(crate) fn max_workers() -> Option<usize> {
+    cap_tunable(config::tunables::get(config::KEY_MAX_WORKERS), DEFAULT_MAX_WORKERS)
+}
+
+/// Most working sessions mid-turn at once, or `None` ([`config::KEY_MAX_RUNNING_WORKERS`]).
+pub(crate) fn max_running_workers() -> Option<usize> {
+    cap_tunable(config::tunables::get(config::KEY_MAX_RUNNING_WORKERS), DEFAULT_MAX_RUNNING_WORKERS)
+}
+
+/// One permit per worker turn in flight, process-wide — every rung's workers draw from it.
+/// **This is the line**: tokio's semaphore hands permits out first come, first served, so the
+/// worker that has waited longest runs next. Sized on first use, after the tunables load.
+static TURN_SLOTS: LazyLock<Option<Arc<Semaphore>>> =
+    LazyLock::new(|| max_running_workers().map(|n| Arc::new(Semaphore::new(n))));
+
+/// Wait for a turn slot under [`max_running_workers`]; `None` when there is no limit.
+///
+/// A wait is made visible, not just endured: the `doing` line says what it is waiting for,
+/// since a turn queued in silence reads exactly like a hung one. Mail stays in the inbox, so
+/// the row already reads `waiting`; a task that is *not* mail — the opening brief, a rerun
+/// after an outage — is held on the switchboard for the same reading, and so a restart
+/// re-hands it.
+async fn turn_slot(id: &SessionSlug, in_hand: Option<&str>) -> Option<OwnedSemaphorePermit> {
+    let slots = TURN_SLOTS.as_ref()?;
+    if let Ok(permit) = Arc::clone(slots).try_acquire_owned() {
+        return Some(permit);
+    }
+    if let Some(task) = in_hand {
+        registry::global().hold(id, Some(task.to_string()));
+    }
+    let limit = max_running_workers().unwrap_or_default();
+    registry::global().record_activity(
+        id,
+        &format!("queued for a turn: {limit} workers are mid-turn, the most that run at once"),
+    );
+    tracing::info!(worker = %id, limit, "working session queued for a turn slot");
+    Arc::clone(slots).acquire_owned().await.ok()
+}
+
+/// Whether Reflection has been told about the current stretch over [`max_workers`]. Once per
+/// stretch: re-armed the next time a create finds the count back under the limit.
+static TOLD_REFLECTION: AtomicBool = AtomicBool::new(false);
+
+/// After a session opens: past [`max_workers`], hand Reflection the list to tidy.
+///
+/// Said to Reflection because keeping the house is its job and it is off the person's
+/// critical path; the message carries every open session because nothing else would show
+/// it sessions it did not open. Nothing here closes anything.
+fn past_the_limit() {
+    let Some(limit) = max_workers() else { return };
+    let mut open: Vec<_> =
+        registry::global().statuses().into_iter().filter(|s| s.role.is_worker()).collect();
+    if open.len() < limit {
+        TOLD_REFLECTION.store(false, Ordering::Relaxed);
+        return;
+    }
+    if TOLD_REFLECTION.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some(reflection) = registry::global().session_of_role(Role::Reflection) else {
+        // Nobody to tell; try again on the next create rather than stay silent for good.
+        TOLD_REFLECTION.store(false, Ordering::Relaxed);
+        tracing::warn!(open = open.len(), limit, "past the working-session limit; reflection is not up");
+        return;
+    };
+    let now = chrono::Utc::now();
+    open.sort_by_key(|s| (s.busy || s.queued, s.state_since));
+    let mut text = format!(
+        "{} working sessions are open, past the {limit} this host keeps open comfortably — \
+         each holds a subprocess. Close the ones whose errand is over, whoever opened them. \
+         Quiet ones first, longest quiet first:",
+        open.len()
+    );
+    for s in &open {
+        let state = if s.busy { "running" } else if s.queued { "waiting" } else { "idle" };
+        let mins = (now - s.state_since).num_minutes().max(0);
+        let since = match mins {
+            m if m < 60 => format!("{m}m"),
+            m if m < 60 * 48 => format!("{}h", m / 60),
+            m => format!("{}d", m / (60 * 24)),
+        };
+        let owner = s.owner.as_ref().map(|o| o.to_string()).unwrap_or_else(|| "-".into());
+        let last = s.last_turn.as_ref().map(|t| t.outcome.as_str()).unwrap_or("none yet");
+        let subject = s.subject.as_deref().map(|t| format!(", task {t}")).unwrap_or_default();
+        let _ = write!(
+            text,
+            "\n- {} — {} ({state} {since}; owner {owner}; last turn {last}{subject})",
+            s.id, s.title
+        );
+    }
+    registry::global().post(&reflection.id, text);
+    tracing::info!(open = open.len(), limit, "past the working-session limit; told reflection");
+}
 
 // A worker used to keep a private follow-up mailbox here, beside the switchboard's.
 // Two mailboxes for one session is one mailbox too many: whichever the sender picked
@@ -343,11 +459,8 @@ impl WorkerRegistry {
             owner.clone(),
         ));
 
-
-        self.workers.insert(
-            id.clone(),
-            Worker { session: handle, drive },
-        );
+        self.workers.insert(id.clone(), Worker { session: handle, drive });
+        past_the_limit();
         tracing::info!(
             session = %id,
             owner = owner.as_ref().map(|o| o.to_string()).unwrap_or_else(|| "conversation-loop".into()),
@@ -712,16 +825,12 @@ async fn drive(
     // [`crate::body::reaction::heartbeat`]).
     let session = session;
     loop {
-        let task = match next_task.take() {
-            Some(task) => task,
-            None => match wait_for_mail(id, &mail).await {
-                Some(task) => task,
-                None => {
-                    tracing::info!(worker = %id, "working session closed by its owner");
-                    return;
-                }
-            },
-        };
+        // Know there is work before lining up for a slot, and take the mail only once one is
+        // free: whatever arrives during the wait joins this turn rather than queueing behind it.
+        if next_task.is_none() && !until_mail(id, &mail).await {
+            tracing::info!(worker = %id, "working session closed by its owner");
+            return;
+        }
 
         // **Ask the gate every other rung asks.** A worker used to know one reason a turn
         // could not run — a managed 402, from its own subscription — and nothing of the rest,
@@ -735,6 +844,16 @@ async fn drive(
         if !reaction.wait_for_vendor().await {
             return;
         }
+        // Held until the end of this pass, so the slot is taken exactly as long as the turn
+        // runs — a vendor hold's `continue` below lets it go too.
+        let _slot = turn_slot(id, next_task.as_deref()).await;
+        let task = match next_task.take() {
+            Some(task) => task,
+            None => match registry::global().take_pending(id) {
+                Some(batch) => registry::render(&batch),
+                None => continue,
+            },
+        };
         busy.store(true, Ordering::Relaxed);
         // Running it is what ends the hold: from here the task is the turn, and a `held` left
         // behind would be re-handed to a session that is already doing it.
@@ -838,26 +957,26 @@ async fn drive(
     }
 }
 
-/// Block until this session has mail to act on, returning it as one prompt — or `None`
-/// once its owner has closed the inbox, which is the **only** way this returns empty.
+/// Block until this session has mail to act on — `true` — or its owner has closed the
+/// inbox — `false`, which is the **only** way this ends without work.
 ///
 /// There is no clock here. Waiting is not a symptom: a worker between instructions looks
 /// exactly like a worker whose owner has forgotten it, and the difference is knowable only
 /// to the owner. So the wait is unbounded and ending the session is an act, not an expiry.
 ///
-/// Everything waiting is taken together and rendered with its sender, because a
-/// worker may only answer *whoever asked*, and it cannot answer an address it was
-/// never given.
-async fn wait_for_mail(id: &SessionSlug, mail: &Notify) -> Option<String> {
+/// **It leaves the mail where it is.** The caller takes it — all of it together, rendered
+/// with its senders, because a worker may only answer *whoever asked* — only once it holds
+/// a turn slot, so mail that lands while it waits in line rides the same turn.
+async fn until_mail(id: &SessionSlug, mail: &Notify) -> bool {
     loop {
-        if let Some(batch) = registry::global().take_pending(id) {
-            return Some(registry::render(&batch));
+        if registry::global().has_pending(id) {
+            return true;
         }
-        // Checked after draining and before sleeping, so a close that lands mid-pass is
+        // Checked after looking and before sleeping, so a close that lands mid-pass is
         // seen rather than slept through — and `Notify` holds a permit if the wake raced
         // ahead of the wait, so the close that happens *during* the await wins too.
         if registry::global().inbox_closed(id) {
-            return None;
+            return false;
         }
         mail.notified().await;
     }
@@ -928,6 +1047,15 @@ mod ownership_tests {
     fn registry() -> WorkerRegistry {
         let (tx, _rx) = mpsc::channel(8);
         WorkerRegistry::new(tx)
+    }
+
+    #[test]
+    fn a_cap_tunable_reads_a_count_off_or_the_default() {
+        assert_eq!(cap_tunable(None, 8), Some(8));
+        assert_eq!(cap_tunable(Some("3".into()), 8), Some(3));
+        assert_eq!(cap_tunable(Some("0".into()), 8), None);
+        assert_eq!(cap_tunable(Some("Off".into()), 8), None);
+        assert_eq!(cap_tunable(Some("lots".into()), 8), Some(8));
     }
 
     /// The fallback that keeps finished work from vanishing. An owner can shut down
@@ -1069,6 +1197,14 @@ mod lifetime_tests {
     fn done(owner: SessionSlug, id: SessionSlug) {
         registry::global().unregister(&id);
         registry::global().unregister(&owner);
+    }
+
+    /// What `drive` does between turns, less the slot: wait for mail, then take all of it.
+    async fn wait_for_mail(id: &SessionSlug, mail: &Notify) -> Option<String> {
+        if !until_mail(id, mail).await {
+            return None;
+        }
+        registry::global().take_pending(id).map(|batch| registry::render(&batch))
     }
 
     /// The regression this whole change exists for. A worker that has reported and is
