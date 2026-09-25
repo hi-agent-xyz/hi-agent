@@ -551,7 +551,40 @@ more stop away when they would rather have the panel whole — but it is a cost,
 the fix if it bites is composing views for a narrower frame, never a host that refuses to
 push.
 
-### The room keeps no controls at all
+### The room keeps one button
+
+*September 25, 2026.* **The room's way in is a round button in its bottom-right corner, and
+the panel's way out is a close button in its head.** A phone has no edge strip at all any
+more; a wide screen keeps the strip only as the seam at `panel` and the left edge at `full`.
+
+The zero-button room below lost on three counts, each a platform fact rather than a taste:
+
+- **On Android both side edges are the system's Back gesture.** A strip on the right-hand
+  edge fought the platform for every touch, and a second one on the left — which a
+  views-on-the-left, chat-on-the-right split would have needed — would have fought it twice.
+  Android's own apps moved their drawers behind a button for this reason.
+- **A first-time person had nothing on screen saying there was anything to open.** The
+  entrances were all gestures and keys, and a gesture nobody has been shown is not an
+  entrance.
+- **With the panel away, nothing said whether the mic was open.** The button carries it: a
+  ring while the mic is on, the same ring the mic's own disc wears.
+
+It costs one 52px disc in a corner, standing inside the strip the bottom chrome already
+held (`--hi-chrome-bottom`) — so a view that keeps its content clear of that token is
+unaffected — and the corner being the one place a view cannot use, which is the cost the
+paragraphs below refused. Worth paying: a press opens the panel with nothing in between (no
+menu of smaller buttons), so what the room gains in being findable it loses nothing in
+reach. A dot on it says something was said while the panel was away, which the caption
+alone forgets once it fades.
+
+Android's Back now closes the panel on a phone as it already did on a television: the face
+reports its depth on every shape (`lib/tvBack.ts`), and the mobile shell's `BackHandler`
+consumes the press only while the depth is above zero.
+
+**Not on a television.** Its remote has `→` and Back, and a corner button is somewhere a
+D-pad would have to travel to.
+
+*What follows is the zero-button decision as it was made, kept for its reasoning.*
 
 The corner cluster is deleted. A room with something in it is that thing, edge to edge, with
 the caption pill and the camera pip over it and nothing else.
@@ -588,17 +621,19 @@ A head and a body.
 
 ### The ways in, and the one that is thin
 
-Zero buttons means the entrances carry the whole load, so they are named:
+*Since September 25 the button is the first row of this table; the rest are still ways along
+the axis.*
 
 | | |
 |---|---|
-| a thumb | drag the panel's own left edge — the window's right-hand side while the panel is away, the seam once it is beside the view. The panel tracks the finger and settles on distance or a flick, the existing rule |
+| any pointer | **the button in the room's bottom-right corner** opens the panel; the **close button** in the panel's head puts it away. On Android, **Back** puts it away as well |
+| a thumb | on a wide screen, drag the seam once the panel is beside the view, or its left edge at `full`. The panel tracks the finger and settles on distance or a flick, the existing rule. **A phone has no strip** — both of its side edges are the system's |
 | a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `Escape` retreats a stop. **Not the arrows** — see *The arrows are the view's* |
 | a D-pad | `→` opens. [`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) calls `preventDefault()` only when it actually moved the focus, so with nothing focusable in the room a right-press finds nothing, falls through, and the shell takes it. Back closes — the depth ladder already exists |
 | a trackpad | two fingers sideways, **anywhere on the screen**. The panel follows them the way it follows a thumb, and one run reaches the neighbouring stop and no further. See *The trackpad's swipe* |
-| a mouse | that same strip takes a **click** as well as a drag, and shows a hairline on hover within it. A click steps toward the room; from the room it steps in |
+| a mouse | the button; and the seam takes a **click** as well as a drag, and shows a hairline on hover within it. A click steps toward the room |
 
-**A plain mouse is the thin one and it is an accepted cost.** A hover-revealed hairline is
+*Superseded by the button:* **A plain mouse is the thin one and it is an accepted cost.** A hover-revealed hairline is
 discoverable by a person who happens to travel to the right edge and by nobody else. It is
 paid because the alternative is one permanent disc in a corner, which is the thing being
 removed, and because the desktop has two entrances the phone does not: typing, and — on
@@ -737,13 +772,16 @@ idiom, so it still boots to the room.
 
 ### Accepted, as costs
 
-- **A plain mouse's entrance is a hover-revealed strip.** Above. A trackpad has the
-  swipe; a mouse has the strip, the keyboard, and a window that boots showing the panel.
+- ~~**A plain mouse's entrance is a hover-revealed strip.**~~ Paid off by the button
+  (*The room keeps one button*).
+- **The room's bottom-right corner is the button's.** A view that holds content clear of
+  `--hi-chrome-bottom` loses nothing; one that paints to the edge has a disc over its corner.
 - **A view reflows when the person pulls the panel to the middle stop.** Above.
 - **Turning the mic on is two acts, not one.** The tax [The phone stacks pages](#the-phone-stacks-pages)
-  refused to pay, paid.
+  refused to pay, paid. Whether it is *on* is no longer hidden: the button wears the ring.
 - **A tap in twenty points either side of the panel's left edge may do nothing but move the
-  panel** — the strip claims its touches up front, the same trade iOS makes for its own
+  panel** — on a wide screen, at `panel` and `full`; a phone has no strip and the room has
+  none since *The room keeps one button*. The strip claims its touches up front, the same trade iOS makes for its own
   edge. It is charged once rather than twice now that there is one strip: at `room` those
   points are a board's right-hand edge, at `full` the panel's left-hand edge, and at `panel`
   they straddle the seam, ten points of each. **A mouse's press there is claimed the same

@@ -22,6 +22,7 @@ import { Composer } from "./Composer";
 import { CameraPreview } from "./CameraPreview";
 import { Panel, type Tab } from "./Panel";
 import { PanelGesture } from "./PanelGesture";
+import { PanelButton } from "./PanelButton";
 
 /**
  * The host chrome — a calm, breathing room — reading the session through
@@ -51,11 +52,13 @@ import { PanelGesture } from "./PanelGesture";
  * *The panel, and the axis it runs on*). This component owns that number and
  * nothing else does.
  *
- * **The room keeps no controls.** With the panel away, what is on screen is what
- * the agent put there, edge to edge, with the caption and the camera pip over it
- * and nothing else. Every way back in is listed in `<PanelGesture>` and in the two
- * key ladders below; there is deliberately no button, which is why those ladders
- * are the load-bearing part of this file rather than a convenience.
+ * **The room keeps one button.** With the panel away, what is on screen is what
+ * the agent put there, edge to edge, with the caption, the camera pip and
+ * `<PanelButton>` over it. The button is the way in on every shape but the
+ * television, whose remote has `→`; typing, `Escape` and a trackpad's swipe are
+ * still ways along the axis, and are listed in `<PanelGesture>` and the key
+ * ladders below. The panel's way out is drawn too — a close button in its head, and
+ * on Android the system's Back, which the ladder below is reported to.
  *
  * Placement is one job, and `composeStage` is the whole of it: it decides
  * *geometry* — the conversation as itself or as a caption; the camera filling or
@@ -210,19 +213,43 @@ export function Shell() {
     };
   }, [shape]);
 
+  // Reported on every shape, not only the television's: an Android phone's Back is
+  // the same button delivered the same way, and with the panel's way in moved off
+  // the screen's edges it is the panel's natural way out. Where no shell listens
+  // — a browser tab, iOS, the desktops — both ends are inert.
   const backDepth = (focusInView ? 1 : 0) + depth(shape, stop);
   useEffect(() => {
-    if (shape !== "tv") return;
     reportBackDepth(backDepth);
-  }, [shape, backDepth]);
+  }, [backDepth]);
 
   useEffect(() => {
-    if (shape !== "tv") return;
     return onShellBack(() => {
-      if (leaveViewPlane()) return;
+      if (shape === "tv" && leaveViewPlane()) return;
       setStop((at) => retreat(shape, at));
     });
   }, [shape]);
+
+  // Something said while the panel was away. The caption shows it for a moment and
+  // then fades; this is what is left once it has, on the one thing the room keeps.
+  // Cleared by opening the panel, which is where it can be read.
+  //
+  // Keyed on the newest message's id rather than on a count, so a page of older
+  // scrollback arriving at the top is not news. The first history to arrive is the
+  // seed and is not news either — it was all said before this page existed.
+  const [unread, setUnread] = useState(false);
+  const latest = messages[messages.length - 1];
+  const newestId = latest?.id;
+  const newestFromAgent = latest?.role !== "user";
+  const seenRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const seen = seenRef.current;
+    seenRef.current = newestId;
+    if (stop !== "room") {
+      setUnread(false);
+      return;
+    }
+    if (seen !== undefined && newestId !== seen && newestFromAgent) setUnread(true);
+  }, [newestId, newestFromAgent, stop]);
 
   // The pill shows the newest thing said, or the line currently being recognized
   // if one is in flight — the same tail the chat ends on. It is a caption, so it
@@ -303,6 +330,7 @@ export function Shell() {
           // step it back so the person can see what they picked; if it is sitting
           // beside it, they already can.
           onChose={() => setStop((at) => (at === "full" ? retreat(shape, at) : at))}
+          onClose={shape === "tv" ? undefined : () => setStop("room")}
           {...channels}
         >
           <Chat
@@ -322,6 +350,15 @@ export function Shell() {
             />
           </Chat>
         </Panel>
+
+        {/* The way in. Not on the television: its remote has `→`, and a round button
+            in a corner is not something a D-pad should have to travel to. */}
+        <PanelButton
+          shown={stop === "room" && shape !== "tv"}
+          unread={unread}
+          listening={ch.audioInput}
+          onOpen={openConversation}
+        />
 
         {/* Last, so the strip is over everything it may have to claim a touch from
             — including the panel it moves. */}

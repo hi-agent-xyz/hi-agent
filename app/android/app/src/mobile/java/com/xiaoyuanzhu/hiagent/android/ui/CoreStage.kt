@@ -1,5 +1,6 @@
 package com.xiaoyuanzhu.hiagent.android.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -93,6 +94,18 @@ fun CoreStage(
     var chromeCallToken by remember { mutableIntStateOf(0) }
     var openToken by remember { mutableIntStateOf(0) }
 
+    /** How much the face says it has open, and the press that hands Back to it. */
+    var faceBackDepth by remember { mutableIntStateOf(0) }
+    var backToken by remember { mutableIntStateOf(0) }
+
+    // Back closes what the face has open — the panel — before it is the system's.
+    // The face's way in is a button now rather than an edge, so both of the system's
+    // edges are Back and nothing else, and Back is the panel's way out. With nothing
+    // open the press is not consumed and the system does what it always does.
+    BackHandler(enabled = faceBackDepth > 0) {
+        backToken += 1
+    }
+
     /**
      * The chrome is on screen when it has something to say, or when it was just
      * asked for. A ready face nobody has reached for keeps the whole screen.
@@ -148,6 +161,8 @@ fun CoreStage(
             CoreWebView(
                 session = open,
                 reloadToken = reloadToken,
+                backToken = backToken,
+                onBackDepth = { faceBackDepth = it },
                 modifier = Modifier
                     .fillMaxSize()
                     .alpha(if (webViewState == WebViewState.READY) 1f else 0f),

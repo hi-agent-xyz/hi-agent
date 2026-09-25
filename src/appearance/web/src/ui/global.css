@@ -2142,6 +2142,123 @@ button,
   }
 }
 
+/* --- The way in: one button in the room's corner -------------------------
+   The room kept no controls at all, and its way in was the strip above standing on
+   the window's right-hand edge. That edge is Android's Back gesture, a hairline a
+   mouse only found by already being there, and nothing at all to a first-time
+   person (`docs/arch/stage.md` § *The room keeps one button*).
+
+   Bottom-right, inside the strip the bottom chrome has always held
+   (`--hi-chrome-bottom`, 76px): 52px standing 20px off the floor tops out at 72px,
+   under the caption dock's 74px, and it sits on the same row as the camera pip in
+   the opposite corner. Dressed as a channel disc, larger — it is the same kind of
+   object, the person's, floating on paper it cannot know the value of. */
+.hi-panel-button {
+  position: absolute;
+  right: max(20px, var(--hi-safe-right) + 20px);
+  bottom: calc(var(--hi-safe-bottom) + 20px);
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--host-scrim-edge);
+  background: var(--host-scrim-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--host-scrim-ink);
+  box-shadow: 0 1px 3px var(--host-shadow-strong), 0 8px 24px var(--host-shadow);
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 1;
+  transform: none;
+  transition: opacity 200ms var(--host-ease), transform 200ms var(--host-ease),
+    visibility 0s linear 0s, border-color 200ms var(--host-ease), color 200ms var(--host-ease);
+}
+
+/* Out of the way while the panel is out. `visibility` waits for the fade, so the
+   button is unreachable at the end of it rather than at the start. */
+.hi-panel-button[data-shown="false"] {
+  opacity: 0;
+  transform: scale(0.9);
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 160ms var(--host-ease), transform 160ms var(--host-ease),
+    visibility 0s linear 160ms;
+}
+
+.hi-panel-button:hover {
+  box-shadow: 0 0 0 1px var(--host-scrim-edge), 0 1px 3px var(--host-shadow-strong),
+    0 8px 24px var(--host-shadow);
+}
+
+.hi-panel-button:focus-visible {
+  outline: 2px solid var(--host-scrim-accent);
+  outline-offset: 3px;
+}
+
+/* The mic is open: the ring the mic's own disc wears when it is on, so the two read
+   as one fact in two places. Still, not pulsing — a steady ring is enough to answer
+   "am I being listened to", and motion in a corner is noise for as long as it lasts. */
+.hi-panel-button[data-listening="true"] {
+  color: var(--host-scrim-accent);
+  border-color: var(--host-scrim-accent);
+  box-shadow: 0 0 0 1px var(--host-accent-soft), 0 1px 3px var(--host-shadow-strong),
+    0 8px 24px var(--host-shadow);
+}
+
+/* Something was said while the panel was away. */
+.hi-panel-button-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--host-scrim-accent);
+  box-shadow: 0 0 0 2px var(--host-scrim-bg);
+}
+
+/* The panel's way out, at the end of its head. The channel row gives up the free
+   space rather than the tabs, so the discs and the close button stand together on
+   the right. */
+.hi-panel-head .hi-channels {
+  margin-left: auto;
+}
+
+.hi-panel-close {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-right: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--host-fg-mute);
+  cursor: pointer;
+  transition: color 160ms var(--host-ease), background 160ms var(--host-ease);
+}
+
+.hi-panel-close:hover {
+  color: var(--host-fg);
+  background: var(--host-line);
+}
+
+.hi-panel-close:focus-visible {
+  outline: 2px solid var(--host-accent);
+  outline-offset: 2px;
+}
+
+:root[data-shape="phone"] .hi-panel-close {
+  width: 44px;
+  height: 44px;
+  margin-right: -10px;
+}
+
 /* --- The views tab, with the panel across the whole window --------------
    The grid is the tab's layout at both measures now, so what is left here is what
    a whole window changes about it and nothing else: how big a track is allowed to

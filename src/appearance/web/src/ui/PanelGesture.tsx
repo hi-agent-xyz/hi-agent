@@ -29,11 +29,15 @@ import type { Shape } from "../lib/shape";
  *
  * ## The strip
  *
- * It stands on **the panel's own left edge, wherever it is.** At `room` that edge
- * is the window's right-hand side, so the strip is the way in; at `panel` it is the
- * seam between the view and the panel; at `full` it is the window's left-hand side,
- * so the strip is the way back. **One handle, and it is always the place the two
- * halves of the screen meet.**
+ * It stands on **the panel's own left edge, wherever it is.** At `panel` that is
+ * the seam between the view and the panel; at `full` it is the window's left-hand
+ * side, so the strip is the way back. **One handle, and it is always the place the
+ * two halves of the screen meet.**
+ *
+ * *It used to be the way in as well, standing on the window's right-hand side at
+ * `room`. That job is `<PanelButton>`'s now, and a phone has no strip at all — both
+ * of its side edges are Android's Back, and its way out is drawn (`docs/arch/
+ * stage.md` § *The room keeps one button*).*
  *
  * *This replaced a pair of strips nailed to the window's own two edges — the right
  * one advancing a stop, the left one retreating. The pair was the whole mental
@@ -164,8 +168,8 @@ export const PANEL_MS = 260;
  * starts too far inboard fails the same way here as it does anywhere else. */
 const EDGE_PX = 20;
 
-/** Under this much travel the gesture was a click, which is the mouse's way in —
- * there being no button to press (`docs/arch/stage.md` § *The ways in*). */
+/** Under this much travel the gesture was a click, which steps the panel back
+ * toward the room (`docs/arch/stage.md` § *The ways in*). */
 const CLICK_PX = 4;
 
 /** How much sideways travel a wheel run banks before it takes hold of the edge.
@@ -364,17 +368,12 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     const { shape: s } = live.current;
     const from = state.from;
     const left = state.startLeft + (event.clientX - state.startX);
-    // A press that went nowhere is the mouse's entrance: this strip is the only
-    // thing standing where a button used to be, so it answers a click with a step
-    // toward the room — and from the room, where there is nothing to step back to,
-    // with the step that brings the panel in.
-    const back = retreat(s, from);
+    // A press that went nowhere steps toward the room. The strip is never drawn
+    // at the room, so there is always somewhere to step back to.
     land(
       box,
       state.travelled < CLICK_PX
-        ? back === from
-          ? advance(s, from)
-          : back
+        ? retreat(s, from)
         : settle(left, state.vx, from, s, state.width, state.panelW),
     );
   };
@@ -500,6 +499,15 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
       if (resting) clearTimeout(resting);
     };
   }, [root]);
+
+  // **No strip on a phone, and none at the room.** The room's way in is
+  // `<PanelButton>` now, and a phone's way out is the panel's close button and the
+  // system's Back. A strip on either of a phone's side edges was a touch the
+  // platform had already promised to Android's Back gesture; at the room on a wider
+  // screen it was a hairline standing in for the button that now stands there. What
+  // is left is the seam at `panel` and the left edge at `full` on a wide screen —
+  // a handle between two things a person can see.
+  if (shape === "phone" || stop === "room") return null;
 
   return (
     <span

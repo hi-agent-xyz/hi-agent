@@ -27,6 +27,9 @@ interface PanelProps {
   voiceOn: boolean;
   onToggleVoice: () => void;
   onCloseViews: () => void;
+  /** Put the panel away. Absent on the television, whose remote has a Back button
+   * for exactly this and no pointer to press one on screen with. */
+  onClose?: () => void;
 }
 
 /**
@@ -58,7 +61,7 @@ interface PanelProps {
  * invisible except under a finger.
  *
  * **A head that does not change and a body that does.** The head is the channel
- * row and the tabs, and it is the same at every stop and on every tab — that is
+ * row, the tabs and the close button, and it is the same at every stop and on every tab — that is
  * the rule left standing where *every channel is one press away wherever you are*
  * used to be: **no channel is behind a mode**. The body is one tab at a time.
  *
@@ -69,7 +72,7 @@ interface PanelProps {
  * up, so leaving the tab should genuinely stop it — mounting it with the tab is
  * the honest way to say that.
  */
-export function Panel({ stop, tab, onTab, children, onChose, ...channels }: PanelProps) {
+export function Panel({ stop, tab, onTab, children, onChose, onClose, ...channels }: PanelProps) {
   return (
     <aside
       className="hi-panel"
@@ -107,6 +110,22 @@ export function Panel({ stop, tab, onTab, children, onChose, ...channels }: Pane
             </button>
           </div>
           <ChannelControls {...channels} />
+          {onClose && (
+            // The way out, drawn. The panel's way in is a button, so the way back is
+            // one too: an edge was the only exit on a phone, and on Android both of
+            // the screen's edges are the system's Back.
+            <button
+              type="button"
+              className="hi-panel-close"
+              onClick={onClose}
+              title="close — back to the room"
+              aria-label="close the panel"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
         </div>
 
         <div className="hi-panel-body">

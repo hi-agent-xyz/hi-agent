@@ -18,6 +18,10 @@
 // knows whether the face has anything to close. Nothing is awaited and nothing can
 // be out of date by more than one render.
 //
+// Android's phone shell listens too (*September 25, 2026*): the panel's way in is a
+// button rather than an edge now, so a phone's Back — both of its side edges — is
+// the panel's way out, settled by the same two messages.
+//
 // Inert everywhere else: no bridge object in a browser tab, and nobody dispatching
 // the event.
 
