@@ -364,13 +364,22 @@ B for an hour and come back to A, and A's branches are waiting. Nothing else tou
 - **not a restart** — the sets are kept in `memory/prepared.json` and read back when the host
   stands up.
 
-Two things end one without a stop or a message. **Reaction clears or replaces it**: every turn's
+Three things end one without a stop or a message. **Reaction clears or replaces it**: every turn's
 window carries the sets under *What you have ready* — matter, each branch's `when` and actions,
-when prepared, and for a held one why — so a set whose actions would no longer be right is
-Reaction's to clear. And **the oldest condition set goes to make room**: at most four matters and
-eight condition branches, because every one is an option in one question and System One loses
-accuracy on a padded one. Floor sets are not counted against that — each is one `fits` question,
-and they go at the next stop.
+when prepared, and for a held one why — and every `hi_prepare` answer names the other matters
+ready at that moment, so a set whose actions would no longer be right is Reaction's to clear, and
+a new thought on a matter already ready is a revision of it, under the same name. **The host's
+[tidying](host.md#tidying-what-is-ready) clears an older set a newer one has overtaken**, for when
+the same matter went in under a second name. And **the oldest condition set goes to make room**:
+at most four matters and eight condition branches, because every one is an option in one
+question and System One loses accuracy on a padded one. Floor sets are not counted against that
+— each is one `fits` question, and they go at the next stop.
+
+**Open: which set makes room.** The oldest goes, whatever it is. On 09-24 a run of 换回…那页
+conditions — each still right, since "put that page back" means the same thing two days later —
+filled the four places, and a set waiting for the person to log in to 小红书 was the one pushed
+out. Tidying is not the fix: it clears what has gone wrong, and those had not. What should make
+room is undecided — the least likely to be taken up is a judgment, and the oldest is a count.
 
 **A barge-in does not void it.** The floor infers a barge-in from an estimate, so a quick spoken
 answer to a line that has just finished reads as one. A message that cuts in is read like any

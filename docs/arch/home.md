@@ -407,8 +407,8 @@ many, and that one of them has stalled while another runs are things no word on 
 The test is the board's: the task is open and the newest line a mind wrote on it is a
 `waiting` one, read from the same `latest` field, so the two cannot disagree. Its time is that
 line's. It is the one status that asks the reader to act, and Home is where somebody comes
-back to once the conversation has stopped saying where each thing got to — three messages go
-out between one of theirs and the next ([legibility.md](legibility.md) § *F*). *In progress*
+back to once the conversation has stopped saying where each thing got to — each message after
+the first since their last one has to earn its place ([legibility.md](legibility.md) § *F*). *In progress*
 on a row that is waiting on them says the opposite of what is true, and so does *Working*: a
 hand may be in a turn on some other part of the row, but the step the record is stopped on is
 theirs.

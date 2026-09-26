@@ -21,7 +21,8 @@
 //!
 //! **One reading per stop, three things that start one:** a message of theirs landing
 //! ([`on_message`]), a floor set prepared while the room is already stopped ([`Kick::Prepared`]),
-//! and the one wait running out ([`Kick::WaitRanOut`]). A reading that cannot be read — no
+//! and the one wait running out ([`Kick::WaitRanOut`]). A set is always read when it is ready,
+//! never released on a reading taken before it existed. A reading that cannot be read — no
 //! System One, a timeout, an error — is what the floor did before it asked: a set written after
 //! everything they have said goes out if they are not talking, and one written before a line of
 //! theirs stays held.
@@ -58,6 +59,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::body::capabilities::decision;
+use crate::body::legibility::judge::{self, Judge};
 use crate::foundation::config::tunables;
 use crate::foundation::observatory::{BranchDirection, EventKind, Observatory};
 use crate::foundation::registry::{self, Delivery, SessionSlug};
@@ -94,16 +96,28 @@ const TAKEN_UP: f64 = 0.5;
 /// through as finished. A starting value, to be read off the `floor_read` events.
 const FINISHED_AT: f64 = 0.7;
 
-/// How long the reading may take. **Long, because every reply now waits on it and there is
-/// nothing better to do instead.** It was 2 s when a reading only decided whether a condition
-/// branch ran and a miss took the ordinary path; now it decides when every line goes, and its
-/// fallback is a guess — release what was written with everything, hold the rest — that can
-/// talk over a thought or keep an answer waiting. On the second live run (2026-09-24) three
-/// stops in a row ran out of 2 s. Waiting costs nothing in the common case, since the stop is
-/// read while Reaction is still generating (18 s to a first line), and in the rest a slow
-/// answer beats a guessed one. System One answered the speech check's questions in p50 0.53 s,
-/// p99 2.2 s on this install; this is a ceiling for an outage, not a latency.
-const BUDGET: Duration = Duration::from_secs(10);
+/// How long System One may take before the reading asks the agent's own model instead. System
+/// One answered the speech check's questions in p50 0.53 s, p99 2.2 s on this install, so three
+/// seconds is an outage, not a slow answer — and on 09-24 an outage ran 22 minutes, every
+/// reading in it timing out at the then 10 s budget and every answer waiting on the one wait.
+const SYSTEM_ONE_BUDGET: Duration = Duration::from_secs(3);
+
+/// How long the agent's own model may take on the same questions. With reasoning off it answered
+/// a reading's questions in 0.8–3.9 s (five tries, 09-25); with reasoning on, 7–20 s, nearly all
+/// of it thinking. So a stop is read in at most nine seconds, the old budget's order, and only
+/// a reading neither could answer falls to the guess ([`release_floor`]).
+const FALLBACK_BUDGET: Duration = Duration::from_secs(6);
+
+/// The `app_settings` key naming the model that reads a stop when System One does not answer.
+/// Unset, it is the model Reaction runs on — the one credential already paid for.
+pub(crate) const FALLBACK_MODEL_KEY: &str = "floor_fallback_model";
+
+/// How long tidying may hold up a release nobody is waiting on. With reasoning at `low` it took
+/// p50 2.1 s and p90 9.5 s on 09-26, and never used more than 6,904 reasoning tokens.
+const TIDY_BUDGET: Duration = Duration::from_secs(20);
+
+/// The `app_settings` key naming the model that tidies. Unset, it is the model Reaction runs on.
+pub(crate) const TIDY_MODEL_KEY: &str = "prepared_tidy_model";
 
 /// More condition directions than this, across every matter, is a fan, not a guess — and System
 /// One loses accuracy on a padded question as it does on a padded state.
@@ -406,6 +420,13 @@ struct Set {
     /// they said after is what `fits` reads it against.
     #[serde(default)]
     heard: u64,
+    /// How many of our own messages had gone out when the turn that wrote it started — the same
+    /// line [`heard`](Self::heard) draws for theirs. A release after that reaches the turn only as
+    /// a steered note it reads at its next step, so a set written past one may be the same
+    /// answer again: on 09-24 an answer went out and the same matter, reworded, went out 17 s
+    /// later. Such a set is read with what went out before it goes, never waved through.
+    #[serde(default)]
+    ours_seen: u64,
     /// Whether the turn that wrote it was started by something they said — what it shows is the
     /// answer to them, and an answer takes the screen ([`crate::foundation::server::ViewBus::claim`]).
     #[serde(default)]
@@ -428,6 +449,13 @@ impl Set {
         self.branches.iter().filter(|b| !b.when.is_floor())
     }
 
+    /// Whether the turn that wrote it had seen everything said on both sides: their lines up to
+    /// `heard`, and our messages up to `said`. Only such a set can go on a reading taken before
+    /// it was written; any other is read with what it missed.
+    fn written_with_everything(&self, heard: u64, said: u64) -> bool {
+        self.heard >= heard && self.ours_seen >= said
+    }
+
     /// Its condition branches are for the message after its answer, so they are read only once
     /// the answer is not waiting any more.
     fn conditions_live(&self) -> bool {
@@ -435,12 +463,15 @@ impl Set {
     }
 }
 
-/// A stop, as read: how many of their lines had landed, and System One's `finished` — `None`
-/// when it could not be read.
-#[derive(Clone, Copy, Debug)]
-struct Stop {
+/// One line of theirs, as a reading shows it: which of their lines it was, when it landed, and
+/// what it said. **When is half the evidence.** On 80 stops from one install, how long the line
+/// before had come alone told "more is coming" from "finished" better (AUC 0.66) than System One
+/// reading the words without any times (0.56): lines seconds apart are a run still going.
+#[derive(Clone, Debug)]
+struct Line {
     heard: u64,
-    finished: Option<f64>,
+    at: DateTime<Utc>,
+    text: String,
 }
 
 /// What starts a reading without a message of theirs.
@@ -474,15 +505,20 @@ struct State {
     /// What the last message reading ran, for Cognition's hand-down of that message.
     ran: Option<Ran>,
     runner: Option<Runner>,
-    /// Their lines, as `(heard index, line)`, newest last.
-    lines: VecDeque<(u64, String)>,
+    /// Their lines, newest last. Seeded from the journal as the loop stands up
+    /// ([`Prepared::seed_lines`]), so the first reading after a restart is not of a conversation
+    /// with nothing in it.
+    lines: VecDeque<Line>,
+    /// Our messages accepted into the conversation, ever in this process, and that count as the
+    /// running turn started ([`Set::ours_seen`]).
+    said: u64,
+    said_seen: u64,
     /// What Reaction is owed about its sets, one line each.
     told: Vec<String>,
-    /// What the latest stop read about whether they are done, and how many of their lines it
-    /// had — what a set prepared after it, with nothing said since, is released against.
-    last_stop: Option<Stop>,
     /// The one wait, when armed.
     wait: Option<JoinHandle<()>>,
+    /// The tidying in flight, if any. A newer set starts a newer tidying and ends this one.
+    tidying: Option<JoinHandle<()>>,
     /// The minute of quiet before a held set wakes Reaction, when armed.
     quiet: Option<JoinHandle<()>>,
 }
@@ -507,6 +543,8 @@ pub struct Prepared {
     observatory: Observatory,
     /// `None` keeps nothing on disk — tests.
     path: Option<PathBuf>,
+    /// Where the model that tidies is configured. `None` — tests — tidies nothing.
+    data_dir: Option<PathBuf>,
     /// `true` while no message reading is in flight. The loop waits on it before a turn, so the
     /// turn a message drives always starts after that message's reading.
     idle: watch::Sender<bool>,
@@ -540,6 +578,7 @@ impl Prepared {
             state: std::sync::Mutex::new(state),
             observatory,
             path,
+            data_dir: data_dir.map(Path::to_path_buf),
             idle,
             told_ready: Notify::new(),
             releasing: tokio::sync::Mutex::new(()),
@@ -591,20 +630,21 @@ impl Prepared {
         answering: bool,
     ) -> Vec<String> {
         let directions: Vec<BranchDirection> = branches.iter().map(Branch::direction).collect();
-        let floor = branches.iter().any(|b| b.when.is_floor());
-        let (cleared, evicted, kick) = {
+        let (cleared, evicted) = {
             let mut st = self.lock();
             let before = st.sets.len();
             st.sets.retain(|s| !same_matter(&s.matter, matter));
             let cleared = st.sets.len() < before;
             let mut evicted = Vec::new();
             if !branches.is_empty() {
+                let ours_seen = st.said_seen;
                 let set = st.number(Set {
                     matter: matter.to_string(),
                     branches,
                     said,
                     at: Utc::now(),
                     heard,
+                    ours_seen,
                     answering,
                     held_told: false,
                     id: 0,
@@ -627,7 +667,7 @@ impl Prepared {
                 }
             }
             self.keep(&st.sets);
-            (cleared, evicted, st.runner.as_ref().map(|r| r.kick.clone()).filter(|_| floor))
+            (cleared, evicted)
         };
         if directions.is_empty() {
             if cleared {
@@ -645,10 +685,101 @@ impl Prepared {
                 .record(EventKind::BranchesVoided { matter: Some(gone.clone()), reason: "the oldest, to make room".into() })
                 .await;
         }
-        if let Some(kick) = kick {
-            let _ = kick.send(Kick::Prepared);
-        }
         evicted
+    }
+
+    /// A set was just prepared: tidy what is ready, and read it for the floor — **in the order
+    /// that keeps anyone waiting from waiting on the tidying.** Tidying is background work and a
+    /// reply is not: when what Reaction is answering is something they said, the floor reads at
+    /// once and tidies after, so it may pick from sets not yet tidied; when nobody is waiting — a
+    /// worker's report, the boot wake — it tidies first, and releases from what is left.
+    pub(super) fn after_set(self: &Arc<Self>, answering: bool) {
+        let Some(runner) = self.lock().runner.clone() else { return };
+        if answering {
+            let _ = runner.kick.send(Kick::Prepared);
+        }
+        let this = self.clone();
+        let task = tokio::spawn(async move {
+            if tokio::time::timeout(TIDY_BUDGET, this.tidy()).await.is_err() {
+                tracing::warn!("prepared: tidying ran past its budget; what is ready stays as it is");
+            }
+            if !answering {
+                let _ = runner.kick.send(Kick::Prepared);
+            }
+        });
+        if let Some(earlier) = self.lock().tidying.replace(task) {
+            earlier.abort();
+        }
+    }
+
+    /// Clear what is no longer worth keeping, by the agent's own model reading every ready set
+    /// beside what they said (`judges/tidy.md`), and tell Reaction what went and why.
+    ///
+    /// **It clears on its own, and never the set just prepared.** On 09-26's pairs, told that
+    /// time passing and a change of subject are not reasons, it cleared every set that was one
+    /// matter under a second name and no set about a different thing in twenty tries — and the
+    /// set just written was written with everything, so it is the one whose state is newest.
+    /// Reasoning is on at `low`, since nobody waits on this: it is what took it from 16 of 21
+    /// to 18, and `medium` ran past twelve thousand tokens without answering.
+    async fn tidy(&self) {
+        use anyhow::Context as _;
+        let Some(dir) = &self.data_dir else { return };
+        let (sets, lines) = {
+            let st = self.lock();
+            (st.sets.clone(), st.lines.iter().cloned().collect::<Vec<_>>())
+        };
+        // One set is nobody's newer state, and a set made wrong alone is Reaction's to notice.
+        if sets.len() < 2 {
+            return;
+        }
+        let Some(judge) = Judge::resolve(dir, TIDY_MODEL_KEY) else { return };
+        let started = Instant::now();
+        let input = tidy_input(&sets, &lines, Utc::now());
+        let body = json!({
+            "instructions": crate::identity::rubric_section(crate::identity::judges::TIDY, "Instructions").unwrap_or_default(),
+            "input": [{ "role": "user", "content": [{ "type": "input_text", "text": input }] }],
+            "reasoning": { "effort": "low" },
+            "text": { "format": { "type": "json_object" } },
+            "max_output_tokens": 12_000,
+            "store": false,
+        });
+        let answer = async {
+            let reply = judge.respond(&body, TIDY_BUDGET).await?;
+            let text = judge::output_text(&reply).context("the tidying carried no text")?;
+            tidy_answer(&text, sets.len())
+        }
+        .await;
+        let (clear, why) = match answer {
+            Ok(answer) => answer,
+            Err(err) => {
+                tracing::warn!(error = %format!("{err:#}"), "prepared: tidying failed; what is ready stays as it is");
+                return;
+            }
+        };
+        let gone: Vec<Set> = clear.into_iter().map(|k| sets[k].clone()).collect();
+        tracing::info!(ready = sets.len(), cleared = gone.len(), ms = started.elapsed().as_millis() as u64, "prepared: tidied");
+        if gone.is_empty() {
+            return;
+        }
+        {
+            let mut st = self.lock();
+            st.sets.retain(|s| !gone.iter().any(|g| g.id == s.id));
+            self.keep(&st.sets);
+        }
+        for set in &gone {
+            self.observatory
+                .record(EventKind::BranchesVoided { matter: Some(set.matter.clone()), reason: format!("tidied: {why}") })
+                .await;
+            self.tell(
+                format!("- \"{}\": cleared while tidying what is ready — {why}. If it still stands, prepare it again.", set.matter),
+                false,
+            );
+        }
+    }
+
+    /// The matters ready now, oldest first — what Reaction is shown when it prepares one more.
+    pub(super) fn matters(&self) -> Vec<String> {
+        self.lock().sets.iter().map(|s| s.matter.clone()).collect()
     }
 
     /// What is ready, as every turn's window carries it. Absolute times, so the text changes only
@@ -736,10 +867,43 @@ impl Prepared {
     /// A line of theirs, at `heard` — what a held set is read against.
     fn note_line(&self, heard: u64, line: String) {
         let mut st = self.lock();
-        st.lines.push_back((heard, line));
+        st.lines.push_back(Line { heard, at: Utc::now(), text: line });
         while st.lines.len() > LINES_KEPT {
             st.lines.pop_front();
         }
+    }
+
+    /// Their lines the journal already holds, as the loop stands up — all before anything this
+    /// process has heard. Without them the first stop after a restart was read with none of what
+    /// they said and no idea how long ago: on 09-24 a question 35 minutes old read `finished`
+    /// 0.62 and was taken for someone with more to say.
+    pub(super) fn seed_lines(&self, entries: &[crate::types::JournalEntry]) {
+        use crate::types::JournalEntry;
+        let theirs: Vec<&Message> = entries
+            .iter()
+            .filter_map(|e| match e {
+                JournalEntry::Message { message, .. } if !message.from.is_agent() => Some(message),
+                _ => None,
+            })
+            .collect();
+        let mut st = self.lock();
+        if !st.lines.is_empty() {
+            return;
+        }
+        for message in theirs.iter().rev().take(LINES_KEPT).rev() {
+            st.lines.push_back(Line { heard: 0, at: message.ts, text: super::render_message_line(message) });
+        }
+    }
+
+    /// A Reaction turn started: what it has seen of our own messages is everything out by now.
+    pub(super) fn note_turn_started(&self) {
+        let mut st = self.lock();
+        st.said_seen = st.said;
+    }
+
+    /// One more of our messages was accepted into the conversation.
+    fn note_said(&self) {
+        self.lock().said += 1;
     }
 
     /// Anything they say or type ends the wait and the minute of quiet: they are not quiet.
@@ -780,6 +944,45 @@ impl Prepared {
         st.sets.retain(|s| !s.branches.is_empty());
         self.keep(&st.sets);
     }
+}
+
+/// What the tidying reads: their recent lines, each with its age, then every ready set, numbered
+/// oldest first, each branch as its moment and what it would do.
+fn tidy_input(sets: &[Set], lines: &[Line], now: DateTime<Utc>) -> String {
+    let mut s = String::from("## What the person said recently\n");
+    for l in lines.iter().rev().take(RECENT_LINES).collect::<Vec<_>>().into_iter().rev() {
+        s.push_str(&format!("> ({} ago) {}\n", ago(now - l.at), l.text.strip_prefix('>').unwrap_or(&l.text).replace('\n', "\n  ")));
+    }
+    s.push_str("\n## Ready sets\n");
+    for (n, set) in sets.iter().enumerate() {
+        s.push_str(&format!("### {}. {} — prepared {} ago\n", n + 1, set.matter, ago(now - set.at)));
+        for b in &set.branches {
+            let actions = b.actions.iter().map(Action::describe).collect::<Vec<_>>().join("; ");
+            s.push_str(&format!("- when: {}\n  then: {actions}\n", b.when.as_str()));
+        }
+    }
+    s
+}
+
+/// The tidying's answer, as indexes into the sets it read. A number nobody was shown is ignored,
+/// and so is the newest set: it was written with everything, so nothing ready is newer than it.
+fn tidy_answer(text: &str, count: usize) -> anyhow::Result<(Vec<usize>, String)> {
+    use anyhow::Context as _;
+    let reply: Map<String, Value> =
+        judge::json_object(text).with_context(|| format!("the tidying was not one JSON object: {text}"))?;
+    let why = reply.get("why").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+    let mut clear: Vec<usize> = reply
+        .get("clear")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .filter_map(|n| (n as usize).checked_sub(1))
+        .filter(|&k| k + 1 < count)
+        .collect();
+    clear.sort_unstable();
+    clear.dedup();
+    Ok((clear, why))
 }
 
 /// Two names for one matter: the same words, spacing and case aside.
@@ -838,75 +1041,30 @@ pub(super) async fn serve(reaction: Reaction, mut kicks: mpsc::UnboundedReceiver
             }
             continue;
         }
-        enum Next {
-            Nothing,
-            /// Every floor set was written after the latest stop, and nothing has been said
-            /// since: that stop's reading is the answer, so nothing is asked again.
-            AsRead(Vec<Set>, Stop),
-            Read(mpsc::UnboundedReceiver<Message>),
-        }
-        let heard = floor.heard();
-        let next = {
+        // **Every set is read when it is ready, never on a reading taken before it existed.** The
+        // stop's own reading comes 0.7 s after their line, when nothing but the words is known;
+        // a reply is ready about 18 s later, when how long they have stayed quiet is known too —
+        // and on one install's stops, System One read "finished" better there (AUC 0.62 against
+        // 0.56). A set that went out on the stop's reading also missed whatever went out of ours
+        // in between: on 09-24 an answer was said twice, 17 s apart.
+        let reading = {
             let mut st = reaction.inner.prepared.lock();
-            let floor_sets: Vec<Set> =
-                st.sets.iter().filter(|s| s.branches.iter().any(|b| b.when.is_floor())).cloned().collect();
+            let floor = st.sets.iter().any(|s| s.branches.iter().any(|b| b.when.is_floor()));
             if st.reading.is_some() {
                 st.again = true;
-                Next::Nothing
-            } else if floor_sets.is_empty() {
-                Next::Nothing
+                None
+            } else if !floor {
+                None
             } else {
-                match st.last_stop {
-                    Some(stop) if !forced && stop.heard == heard && floor_sets.iter().all(|s| s.heard >= heard) => {
-                        Next::AsRead(floor_sets, stop)
-                    }
-                    _ => {
-                        let (tx, rx) = mpsc::unbounded_channel();
-                        st.reading = Some(tx);
-                        Next::Read(rx)
-                    }
-                }
+                let (tx, rx) = mpsc::unbounded_channel();
+                st.reading = Some(tx);
+                Some(rx)
             }
         };
-        match next {
-            Next::Nothing => {}
-            Next::Read(rx) => read(reaction.clone(), None, rx, forced).await,
-            Next::AsRead(sets, stop) => as_read(&reaction, sets, stop).await,
+        if let Some(rx) = reading {
+            read(reaction.clone(), None, rx, forced).await;
         }
     }
-}
-
-/// Release floor sets against the latest stop's reading: they were written with everything
-/// they have said, so each fits by construction, and only whether they are done decides. An
-/// unread stop is them done — what the floor did before it asked, for a set written after their
-/// last line.
-async fn as_read(reaction: &Reaction, sets: Vec<Set>, stop: Stop) {
-    let started = Instant::now();
-    let prepared = &reaction.inner.prepared;
-    let Some(runner) = prepared.lock().runner.clone() else { return };
-    let floors = floor_options(&sets);
-    let fits = vec![Some(Fits::Say); floors.len()];
-    let done = stop.finished.is_none_or(|p| p >= cut(FINISHED_KEY, FINISHED_AT, 0.0));
-    let out = release_floor(reaction, &runner, &sets, &floors, &fits, done, false, false, stop.heard, started).await;
-    prepared.apply(&out.gone, &[], &out.held);
-    let pending = prepared.lock().sets.iter().any(|s| s.branch(&When::Finished).is_some());
-    if pending && !done {
-        prepared.arm_wait(if out.acknowledged { PAUSE_RELEASE } else { THOUGHT_RELEASE });
-    }
-    reaction
-        .inner
-        .observatory
-        .record(EventKind::FloorRead {
-            lines: 0,
-            forced: false,
-            finished: stop.finished,
-            outcome: if done { "finished, as the last stop read".into() } else { "has more, as the last stop read".into() },
-            verdicts: out.verdicts,
-            released: out.released,
-            model: None,
-            decided_ms: started.elapsed().as_millis() as u64,
-        })
-        .await;
 }
 
 /// Every condition branch of every live matter, flattened: `b1` is `options[0]`, as (set, index
@@ -955,8 +1113,10 @@ async fn read(reaction: Reaction, first: Option<Message>, mut more: mpsc::Unboun
     let questions = |messages: &[Message]| {
         Arc::new(questions(&sets, !messages.is_empty() && enabled(), forced, !messages.is_empty()))
     };
+    let fallback = Judge::resolve(reaction.inner.memory.data_dir(), FALLBACK_MODEL_KEY);
     let ask_now = |messages: &[Message]| {
-        ask(state(&sets, &recent, &lines(), messages), questions(messages))
+        let standing = Standing::now(&reaction);
+        ask(state(&sets, &recent, &lines(), messages, &standing), questions(messages), fallback.clone())
     };
     let mut asking = ask_now(&messages);
     let as_batch = |messages: &[Message]| -> Vec<LoopInput> {
@@ -1065,15 +1225,6 @@ async fn read(reaction: Reaction, first: Option<Message>, mut more: mpsc::Unboun
         first_action_ms.get_or_insert(ms);
     }
     let FloorOut { gone, held, verdicts, released, acknowledged, waiting, .. } = floor_out;
-    if !messages.is_empty() || !floors.is_empty() {
-        // What this stop said about whether they are done, for a set prepared before the next
-        // line of theirs: it is read against this, at once, rather than waiting on a stop that
-        // will not come. The wait running out is them done.
-        prepared.lock().last_stop = Some(Stop {
-            heard: heard_now,
-            finished: if forced { Some(1.0) } else { finished_p },
-        });
-    }
 
     // What their message took up, of the condition matters: used up whether or not a branch ran.
     let used_up: Vec<u64> = sets
@@ -1129,7 +1280,7 @@ async fn read(reaction: Reaction, first: Option<Message>, mut more: mpsc::Unboun
     );
     let ran_for_cognition = match met {
         Some((k, i)) if !ran.is_empty() => {
-            prepared.tell(told_ran(&sets[k].matter, sets[k].branches[i].when.as_str(), &ran), ran.iter().any(|(_, r)| r.as_ref().is_err_and(|f| f.judgment)));
+            prepared.tell(told_ran(&sets[k].matter, sets[k].branches[i].when.as_str(), &ran), ran.iter().any(|(_, r)| r.is_err()));
             Some(Ran { condition: sets[k].branches[i].when.as_str().to_string(), ran: ran.iter().map(|(a, r)| (a.clone(), r.clone().map_err(|f| f.why))).collect() })
         }
         _ => None,
@@ -1167,6 +1318,7 @@ async fn release_floor(
     arrived: Instant,
 ) -> FloorOut {
     let prepared = &reaction.inner.prepared;
+    let said = prepared.lock().said;
     let mut out = FloorOut::default();
     // `finished`, in the order prepared.
     for (n, (k, when)) in floors.iter().enumerate() {
@@ -1175,10 +1327,14 @@ async fn release_floor(
         }
         let set = &sets[*k];
         let verdict = match fits[n] {
-            // Unread: what it did before it asked — a set written with everything they
-            // have said goes if they are done or cannot be read otherwise; one written
-            // before a line of theirs waits.
-            None if unread => Some(if forced || set.heard >= heard_now { Fits::Say } else { Fits::Hold }),
+            // Unread: what it did before it asked — a set written with everything said on
+            // both sides goes if they are done or cannot be read otherwise; one written
+            // before a line of theirs, or past one of ours, waits.
+            None if unread => Some(if forced || set.written_with_everything(heard_now, said) {
+                Fits::Say
+            } else {
+                Fits::Hold
+            }),
             None => Some(Fits::Say),
             some => some,
         };
@@ -1191,7 +1347,7 @@ async fn release_floor(
                 out.first_action_ms.get_or_insert(arrived.elapsed().as_millis() as u64);
                 let branch = set.branch(&When::Finished).expect("a finished option has a finished branch");
                 let results = run(reaction, runner, set.answering, branch).await;
-                prepared.tell(told_ran(&set.matter, "finished", &results), results.iter().any(|(_, r)| r.as_ref().is_err_and(|f| f.judgment)));
+                prepared.tell(told_ran(&set.matter, "finished", &results), results.iter().any(|(_, r)| r.is_err()));
                 out.released.push(format!("{} (finished)", set.matter));
                 out.gone.push((set.id, vec![When::Finished, When::Paused]));
             }
@@ -1321,18 +1477,134 @@ async fn record_resolved(
         .await;
 }
 
-/// Ask the questions, inside the budget. `None` when nothing is configured to ask — then the
+/// Ask the questions: System One inside its budget, then — when it does not answer — the agent's
+/// own model inside its budget ([`ask_by_model`]). `None` when neither is configured; then the
 /// reading is unread before it begins.
-fn ask(state: String, questions: Arc<Map<String, Value>>) -> Option<JoinHandle<anyhow::Result<decision::Reply>>> {
-    if !decision::available() || questions.is_empty() {
+fn ask(
+    state: String,
+    questions: Arc<Map<String, Value>>,
+    fallback: Option<Judge>,
+) -> Option<JoinHandle<anyhow::Result<decision::Reply>>> {
+    if questions.is_empty() || (!decision::available() && fallback.is_none()) {
         return None;
     }
     let state = Value::String(state);
     Some(tokio::spawn(async move {
-        tokio::time::timeout(BUDGET, decision::ask(&state, &questions, None))
-            .await
-            .map_err(|_| anyhow::anyhow!("timed out"))?
+        let first = if decision::available() {
+            match tokio::time::timeout(SYSTEM_ONE_BUDGET, decision::ask(&state, &questions, None)).await {
+                Ok(Ok(reply)) => return Ok(reply),
+                Ok(Err(err)) => format!("{err:#}"),
+                Err(_) => "timed out".to_string(),
+            }
+        } else {
+            "not configured".to_string()
+        };
+        let Some(judge) = fallback else { anyhow::bail!("System One: {first}") };
+        tracing::warn!(system_one = %first, model = judge.model(), "floor: System One did not answer; the agent's model reads the stop");
+        match tokio::time::timeout(FALLBACK_BUDGET, ask_by_model(&judge, &state, &questions)).await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(err)) => Err(err.context(format!("System One: {first}; then {}", judge.model()))),
+            Err(_) => anyhow::bail!("System One: {first}; then {} timed out", judge.model()),
+        }
     }))
+}
+
+/// System One's questions, put to the agent's own model as the decisions they stand for.
+///
+/// **It answers decisions, not probabilities.** Asked for System One's shape — a probability per
+/// option — it wrote numbers that were text, not measure: fourteen `fits` cases from 09-24's
+/// incidents, three tries each (09-26), got 32 of 42 right with eight cases answered differently
+/// from try to try. Asked for the decision itself, in JSON mode, with one sentence of why written
+/// first: 37 of 42 and three unsteady; and once the rubric stopped letting the run weigh on
+/// answers they asked for, 38 — the same as System One on the same rubric. So each answer
+/// enters as a certainty — `true`/`false` a `noul` of 1 or 0, a choice all its mass on one
+/// option — and every cut on the floor reads it as decided.
+///
+/// **A stand-in for an outage, never the first ask.** Reasoning is off: on, a reading took 7–20
+/// s, nearly all of it thinking; off, p50 0.95 s and p90 1.2 s. An upstream that refuses JSON mode or
+/// `reasoning.effort` = `none` answers an error, and the reading is unread, as before.
+async fn ask_by_model(judge: &Judge, state: &Value, questions: &Map<String, Value>) -> anyhow::Result<decision::Reply> {
+    use anyhow::Context as _;
+    let body = json!({
+        "instructions": decisions_prompt(questions),
+        "input": [{ "role": "user", "content": [{ "type": "input_text", "text": format!("## The state\n{}", state.as_str().unwrap_or_default()) }] }],
+        "reasoning": { "effort": "none" },
+        "text": { "format": { "type": "json_object" } },
+        "max_output_tokens": 400,
+        "store": false,
+    });
+    let reply = judge.respond(&body, FALLBACK_BUDGET).await?;
+    let cost = judge::cost(&reply);
+    // JSON mode "may occasionally return empty content", in the vendor's words: that is a
+    // reading that could not be read.
+    let text = judge::output_text(&reply).context("the reading carried no text")?;
+    Ok(decision::Reply {
+        model: judge.model().to_string(),
+        answers: decisions_of(&text, questions)?,
+        usage: decision::Usage { input_tokens: cost.input, output_tokens: cost.output },
+    })
+}
+
+/// The decisions a reading's questions stand for, as one prompt: how to read the state once, then
+/// each question by its key with what it may be — `true or false` for a `noul`, its options for a
+/// `choice` — and the exact JSON to answer in, `why` first. The rubric's frame opens every
+/// question System One is asked; here it is said once.
+fn decisions_prompt(questions: &Map<String, Value>) -> String {
+    let frame = crate::identity::rubric_section(crate::identity::judges::PREPARED, "Frame").unwrap_or_default();
+    // Written out by hand, not as a `Map`: the map sorts its keys, and `why` has to come first —
+    // the one sentence written before the decisions is what the decisions lean on.
+    let mut shape = vec![r#""why": "<one short sentence: what matters most here>""#.to_string()];
+    let mut decisions = String::new();
+    for (key, q) in questions {
+        let instructions = q.get("instructions").and_then(Value::as_str).unwrap_or_default();
+        let instructions = instructions.strip_prefix(frame).unwrap_or(instructions).trim();
+        match q.get("criteria").and_then(Value::as_object) {
+            Some(criteria) => {
+                let options: Vec<&String> = criteria.keys().collect();
+                shape.push(format!("\"{key}\": \"{}\"", options.first().map(|o| o.as_str()).unwrap_or_default()));
+                let listed = options.iter().map(|o| format!("\"{o}\"")).collect::<Vec<_>>().join(" or ");
+                decisions.push_str(&format!("\n### {key} — {listed}\n{instructions}\n"));
+                for (option, meaning) in criteria {
+                    decisions.push_str(&format!("- \"{option}\": {}\n", meaning.as_str().unwrap_or_default()));
+                }
+            }
+            None => {
+                shape.push(format!("\"{key}\": true"));
+                decisions.push_str(&format!("\n### {key} — true or false\n{instructions}\n"));
+            }
+        }
+    }
+    format!(
+        "You are the timing judge for an assistant in a live conversation. Read the state, then make each \
+         decision below. Reply with a json object only, in exactly this shape (the values shown are \
+         placeholders):\n{{{}}}\n\nHow to read the state: {frame}\n\n## The decisions\n{decisions}",
+        shape.join(", ")
+    )
+}
+
+/// The reply's decisions as answers: `true`/`false` to a question with no options is a `noul` of 1
+/// or 0; a string that is one of a choice's options is that choice with all its mass. Anything
+/// else — a missing key, an option nobody offered — is left out, and the floor reads that
+/// question as unanswered.
+fn decisions_of(text: &str, questions: &Map<String, Value>) -> anyhow::Result<std::collections::BTreeMap<String, decision::Answer>> {
+    use anyhow::Context as _;
+    let reply: Map<String, Value> =
+        judge::json_object(text).with_context(|| format!("the reading was not one JSON object: {text}"))?;
+    let mut answers = std::collections::BTreeMap::new();
+    for (key, q) in questions {
+        let criteria = q.get("criteria").and_then(Value::as_object);
+        let answer = match (reply.get(key), criteria) {
+            (Some(Value::Bool(yes)), None) => decision::Answer::Noul { p: if *yes { 1.0 } else { 0.0 } },
+            (Some(Value::String(pick)), Some(criteria)) if criteria.contains_key(pick) => decision::Answer::Choice {
+                choice: pick.clone(),
+                probabilities: Some(json!({ pick.clone(): 1.0 })),
+                confidence: None,
+            },
+            _ => continue,
+        };
+        answers.insert(key.clone(), answer);
+    }
+    Ok(answers)
 }
 
 /// Why a reading produced no answer.
@@ -1499,8 +1771,11 @@ fn questions(sets: &[Set], conditions: bool, forced: bool, stop: bool) -> Map<St
 /// The state a reading is about: where each matter was left and what is ready for it, with what
 /// they said after it was written; what the agent said most recently; then what they said at this
 /// stop. Nothing else — System One loses accuracy on a padded state.
-fn state(sets: &[Set], recent: &[String], lines: &[(u64, String)], messages: &[Message]) -> String {
+fn state(sets: &[Set], recent: &[String], lines: &[Line], messages: &[Message], standing: &Standing) -> String {
     let said = |said: &[String]| -> String { said.iter().map(|l| format!("< {}\n", l.replace('\n', "\n  "))).collect() };
+    // A line is kept as the transcript renders it, `>` first; its age goes right after that marker.
+    let line = |age: &str, text: &str| format!("> ({age}) {}\n", text.strip_prefix('>').unwrap_or(text).replace('\n', "\n  "));
+    let theirs = |l: &Line| line(&format!("{} ago", ago(standing.now - l.at)), &l.text);
     let mut s = String::from("## Where each matter was left\n");
     for set in sets {
         s.push_str(&format!("### {}\n", set.matter));
@@ -1512,64 +1787,97 @@ fn state(sets: &[Set], recent: &[String], lines: &[(u64, String)], messages: &[M
             s.push_str(&said(&set.said));
         }
         if set.branches.iter().any(|b| b.when.is_floor()) {
-            let since: Vec<&str> = lines.iter().filter(|(i, _)| *i > set.heard).map(|(_, l)| l.as_str()).collect();
+            let since: Vec<&Line> = lines.iter().filter(|l| l.heard > set.heard).collect();
             if since.is_empty() {
                 s.push_str("(written after everything the person has said)\n");
             } else {
                 s.push_str("What the person said after this was written:\n");
                 for l in since {
-                    s.push_str(&format!("> {}\n", l.replace('\n', "\n  ")));
+                    s.push_str(&theirs(l));
                 }
             }
         }
     }
     s.push_str("\n## What the assistant said most recently\n");
-    if recent.is_empty() {
-        s.push_str("(nothing since the person last spoke)\n");
+    match standing.run {
+        0 => s.push_str("(nothing since the person last wrote)\n"),
+        1 => s.push_str("1 message since the person last wrote:\n"),
+        n => s.push_str(&format!("{n} messages since the person last wrote:\n")),
     }
     s.push_str(&said(recent));
-    let earlier: Vec<&str> = lines
-        .iter()
-        .rev()
-        .skip(messages.len())
-        .take(RECENT_LINES)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(|(_, l)| l.as_str())
-        .collect();
+    let earlier: Vec<&Line> =
+        lines.iter().rev().skip(messages.len()).take(RECENT_LINES).collect::<Vec<_>>().into_iter().rev().collect();
     if !earlier.is_empty() {
         s.push_str("\n## What the person said before this stop\n");
         for l in earlier {
-            s.push_str(&format!("> {}\n", l.replace('\n', "\n  ")));
+            s.push_str(&theirs(l));
         }
     }
     s.push_str("\n## What the person said at this stop\n");
     if messages.is_empty() {
-        s.push_str("(nothing new — they have stopped)\n");
+        match standing.quiet {
+            Some(quiet) => s.push_str(&format!("(nothing new — they have said nothing for {})\n", ago(quiet))),
+            None => s.push_str("(nothing new — they have stopped)\n"),
+        }
     } else {
-        s.push_str(&render_messages(messages));
-        s.push('\n');
+        for message in messages {
+            s.push_str(&line("just now", &super::render_message_line(message)));
+        }
     }
     s
+}
+
+/// Where the conversation stands at a reading, beside what was said: how many of ours have gone
+/// out since their last line, and how long they have been quiet. Both are facts a stop cannot be
+/// read without — a fourth message in a row is not a first, and a question left 35 minutes ago
+/// is not one still being asked.
+#[derive(Clone, Copy, Debug)]
+struct Standing {
+    run: u64,
+    quiet: Option<chrono::Duration>,
+    /// The moment the reading is about, which every line's age is counted back from.
+    now: DateTime<Utc>,
+}
+
+impl Default for Standing {
+    fn default() -> Self {
+        Self { run: 0, quiet: None, now: Utc::now() }
+    }
+}
+
+impl Standing {
+    fn now(reaction: &Reaction) -> Self {
+        let now = Utc::now();
+        let last = reaction.inner.prepared.lock().lines.back().map(|l| l.at);
+        Self { run: reaction.inner.unanswered.run(), quiet: last.map(|at| now - at), now }
+    }
+}
+
+/// A span as a person says it: seconds under two minutes, then minutes, then hours.
+fn ago(d: chrono::Duration) -> String {
+    let secs = d.num_seconds().max(0);
+    match secs {
+        0..120 => format!("{secs} seconds"),
+        120..7200 => format!("{} minutes", secs / 60),
+        _ => format!("{} hours", secs / 3600),
+    }
 }
 
 fn render_messages(messages: &[Message]) -> String {
     messages.iter().map(super::render_message_line).collect::<Vec<_>>().join("\n")
 }
 
-/// Why an action did not happen as written, and whether that waits on Reaction's judgment. The
-/// cap on messages since their last does not: nothing Reaction decides can send it until they
-/// write, and their message is the wake that carries it.
+/// Why an action did not happen as written. Every one waits on Reaction's judgment — a show that
+/// went into their list, a ref that no longer resolves, a rung that is gone — so every one arms
+/// the minute of quiet.
 #[derive(Clone, Debug)]
 pub(super) struct Failed {
     why: String,
-    judgment: bool,
 }
 
 impl Failed {
-    fn judged(why: String) -> Self {
-        Self { why, judgment: true }
+    fn because(why: String) -> Self {
+        Self { why }
     }
 }
 
@@ -1591,22 +1899,16 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
     for action in &branch.actions {
         let result: Result<String, Failed> = match action {
             Action::Say { text, hands } => {
-                if !unanswered.fits(1 + hands.len() as u64) {
-                    Err(Failed {
-                        why: format!(
-                            "not sent — {} messages go out at most since their last one, and this would pass it",
-                            super::unanswered::MAX_UNANSWERED
-                        ),
-                        judgment: false,
-                    })
-                } else if runner.beats.send(Beat::Say(text.clone())).await.is_err() {
-                    Err(Failed::judged("not sent — the sequencer is gone".into()))
+                if runner.beats.send(Beat::Say(text.clone())).await.is_err() {
+                    Err(Failed::because("not sent — the sequencer is gone".into()))
                 } else {
                     reaction.inner.speech.note_sent(text);
                     unanswered.note_sent();
+                    prepared.note_said();
                     for file in hands {
                         let _ = runner.beats.send(Beat::Hand(file.clone())).await;
                         unanswered.note_sent();
+                        prepared.note_said();
                     }
                     Ok("sent".to_string())
                 }
@@ -1620,7 +1922,7 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                 Some(up) => {
                     let beat = Beat::Show { id: Some(up), op: op.clone(), source: String::new(), view_ref: None, keep: false };
                     if runner.beats.send(beat).await.is_err() {
-                        Err(Failed::judged("not dismissed — the sequencer is gone".into()))
+                        Err(Failed::because("not dismissed — the sequencer is gone".into()))
                     } else {
                         reaction.inner.speech.note_shown("dismiss — the screen is clear");
                         Ok("dismissed — the screen is clear".to_string())
@@ -1634,7 +1936,7 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                     Some(r) if crate::foundation::attachments::ref_id(r).is_some() => Ok(String::new()),
                     Some(r) => crate::mind::views::resolve_ref(&data_dir, r)
                         .await
-                        .map_err(|e| Failed::judged(format!("not shown — `ref` {r}: {e}"))),
+                        .map_err(|e| Failed::because(format!("not shown — `ref` {r}: {e}"))),
                     None => Ok(source.clone()),
                 };
                 match source {
@@ -1650,7 +1952,7 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                         let keep = matches!(claim, Claim::Keeps { .. });
                         let beat = Beat::Show { id: id.clone(), op: op.clone(), source, view_ref: view_ref.clone(), keep };
                         if runner.beats.send(beat).await.is_err() {
-                            Err(Failed::judged("not shown — the sequencer is gone".into()))
+                            Err(Failed::because("not shown — the sequencer is gone".into()))
                         } else {
                             match claim {
                                 Claim::Takes => {
@@ -1659,7 +1961,7 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                                 }
                                 Claim::Keeps { reading } => {
                                     reaction.inner.speech.note_shown(&format!("{op} {named} — into their list; the screen stayed on {reading}"));
-                                    Err(Failed::judged(format!(
+                                    Err(Failed::because(format!(
                                         "shown into their list, not in front of them: they are still on \"{reading}\", \
                                          which only just went up, so the screen stayed there — the rest did not run"
                                     )))
@@ -1678,9 +1980,9 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                     .await;
                 match delivery {
                     Delivery::Delivered => Ok("delivered".to_string()),
-                    Delivery::Unknown => Err(Failed::judged(format!("not delivered — nothing live at `{to}`"))),
-                    Delivery::UnknownSender => Err(Failed::judged("not delivered — this session is no longer registered".into())),
-                    Delivery::NotPermitted => Err(Failed::judged(format!("not delivered — `{to}` is not reachable from here"))),
+                    Delivery::Unknown => Err(Failed::because(format!("not delivered — nothing live at `{to}`"))),
+                    Delivery::UnknownSender => Err(Failed::because("not delivered — this session is no longer registered".into())),
+                    Delivery::NotPermitted => Err(Failed::because(format!("not delivered — `{to}` is not reachable from here"))),
                 }
             }
         };
@@ -1781,6 +2083,7 @@ mod tests {
             said: said.iter().map(|s| s.to_string()).collect(),
             at: Utc::now(),
             heard: 0,
+            ours_seen: 0,
             answering: true,
             held_told: false,
             id: 0,
@@ -1860,16 +2163,23 @@ mod tests {
     fn a_held_set_is_read_with_what_they_said_after_it_was_written() {
         let mut s = set("Attention", &["finished"], &[]);
         s.heard = 2;
-        let lines = vec![(1, "旧的".to_string()), (2, "问了 O(N²)".to_string()), (3, "然后换来了更统一的结构".to_string())];
-        let st = state(&[s.clone()], &[], &lines, &[]);
-        assert!(st.contains("What the person said after this was written:\n> 然后换来了更统一的结构"), "{st}");
+        let now = Utc::now();
+        let line = |heard, secs, text: &str| Line { heard, at: now - chrono::Duration::seconds(secs), text: text.to_string() };
+        let lines = vec![line(1, 600, "旧的"), line(2, 40, "问了 O(N²)"), line(3, 8, "然后换来了更统一的结构")];
+        let standing = Standing { now, ..Standing::default() };
+        let st = state(&[s.clone()], &[], &lines, &[], &standing);
+        assert!(st.contains("What the person said after this was written:\n> (8 seconds ago) 然后换来了更统一的结构"), "{st}");
         let since = st.split("What the person said after this was written:").nth(1).unwrap().split("\n##").next().unwrap();
         assert!(!since.contains("问了 O(N²)"), "what it saw is not repeated as new: {st}");
-        // What `finished` reads against when the stop itself carried nothing new.
-        assert!(st.contains("## What the person said before this stop\n> 旧的\n> 问了 O(N²)\n> 然后换来了更统一的结构"), "{st}");
+        // What `finished` reads against when the stop itself carried nothing new — and when each
+        // line came, which is half of it.
+        assert!(
+            st.contains("## What the person said before this stop\n> (10 minutes ago) 旧的\n> (40 seconds ago) 问了 O(N²)\n> (8 seconds ago) 然后换来了更统一的结构"),
+            "{st}"
+        );
         assert!(st.contains("(nothing new — they have stopped)"));
         s.heard = 3;
-        assert!(state(&[s], &[], &lines, &[]).contains("(written after everything the person has said)"));
+        assert!(state(&[s], &[], &lines, &[], &standing).contains("(written after everything the person has said)"));
     }
 
     #[tokio::test]
@@ -1990,7 +2300,7 @@ mod tests {
         let p = Prepared::new(Observatory::new(None), None);
         assert!(p.take_told().is_none());
         let ran = vec![
-            ("show show plan/compare".to_string(), Err(Failed::judged("shown into their list, not in front of them".into()))),
+            ("show show plan/compare".to_string(), Err(Failed::because("shown into their list, not in front of them".into()))),
         ];
         p.tell(told_ran("A/B", "finished", &ran), true);
         let told = p.take_told().unwrap();
@@ -2017,4 +2327,74 @@ mod tests {
         let a = Action::Send { to: "cognition".parse().unwrap(), message: "go".into() };
         assert_eq!(serde_json::to_value(&a).unwrap()["do"], "send_message");
     }
+
+    /// The duplicates of 09-24: an answer went out while the turn that had written it was still
+    /// running, and the same matter, reworded, was prepared again and waved through. A set whose
+    /// turn started before one of our messages went out is not written with everything.
+    #[test]
+    fn a_set_written_past_one_of_our_own_messages_is_read_before_it_goes() {
+        let mut s = set("m", &["finished"], &[]);
+        s.heard = 4;
+        s.ours_seen = 2;
+        assert!(s.written_with_everything(4, 2));
+        assert!(!s.written_with_everything(4, 3), "one of ours went out after its turn started");
+        assert!(!s.written_with_everything(5, 2), "one of theirs landed after its turn started");
+    }
+
+    /// A reading is told how many of ours are standing and how long they have been quiet — the
+    /// fourth in a row is not a first, and a question 35 minutes old is not one still being asked.
+    #[test]
+    fn the_state_says_how_many_went_out_and_how_long_they_have_been_quiet() {
+        let s = set("m", &["finished"], &[]);
+        let standing = Standing { run: 3, quiet: Some(chrono::Duration::minutes(35)), ..Standing::default() };
+        let st = state(&[s.clone()], &["a".into()], &[], &[], &standing);
+        assert!(st.contains("3 messages since the person last wrote"), "{st}");
+        assert!(st.contains("they have said nothing for 35 minutes"), "{st}");
+        let st = state(&[s], &[], &[], &[], &Standing::default());
+        assert!(st.contains("(nothing since the person last wrote)"), "{st}");
+        assert_eq!(ago(chrono::Duration::seconds(8)), "8 seconds");
+        assert_eq!(ago(chrono::Duration::hours(3)), "3 hours");
+    }
+
+
+    /// The fallback answers decisions; they enter as certainties, and nothing it was not offered
+    /// gets in.
+    #[test]
+    fn the_fallbacks_decisions_enter_as_certainties() {
+        let asked = Map::from_iter([
+            ("finished".to_string(), json!({ "type": "noul", "instructions": "done?" })),
+            ("fits1".to_string(), json!({ "type": "choice", "instructions": "now?", "criteria": { "say": "a", "hold": "b", "drop": "c" } })),
+            ("fits2".to_string(), json!({ "type": "choice", "instructions": "now?", "criteria": { "say": "a", "hold": "b", "drop": "c" } })),
+        ]);
+        let got = decisions_of(r#"{"why":"x","finished":false,"fits1":"hold","fits2":"later"}"#, &asked).unwrap();
+        assert!(matches!(got.get("finished"), Some(decision::Answer::Noul { p }) if *p == 0.0));
+        assert!(matches!(got.get("fits1"), Some(decision::Answer::Choice { choice, .. }) if choice == "hold"));
+        assert_eq!(fits_of(&Ok(decision::Reply { model: "m".into(), answers: got.clone(), usage: Default::default() }), 1), Some(Fits::Hold));
+        assert!(!got.contains_key("fits2"), "an option nobody offered is no answer");
+        let prompt = decisions_prompt(&asked);
+        assert!(prompt.contains(r#"{"why": "#), "why comes first: {prompt}");
+        assert!(prompt.contains("### fits1 — \"drop\" or \"hold\" or \"say\""), "{prompt}");
+    }
+
+
+
+    /// The tidying reads every set with its age and their lines with theirs, and what it clears
+    /// is only ever an older set it was shown.
+    #[test]
+    fn tidying_reads_every_set_and_never_clears_the_newest() {
+        let now = Utc::now();
+        let mut old = set("球追踪进度", &["finished"], &[]);
+        old.at = now - chrono::Duration::hours(2);
+        let new = set("球追踪：结论", &["finished"], &[]);
+        let lines = vec![Line { heard: 1, at: now - chrono::Duration::seconds(5), text: ">⟨voice: 赵力⟩ 球追踪怎么样了".into() }];
+        let input = tidy_input(&[old, new], &lines, now);
+        assert!(input.contains("> (5 seconds ago) ⟨voice: 赵力⟩ 球追踪怎么样了"), "{input}");
+        assert!(input.contains("### 1. 球追踪进度 — prepared 2 hours ago\n- when: finished"), "{input}");
+        assert!(input.contains("### 2. 球追踪：结论 — prepared"), "{input}");
+        assert_eq!(tidy_answer(r#"{"why":"superseded","clear":[1]}"#, 2).unwrap(), (vec![0], "superseded".to_string()));
+        assert_eq!(tidy_answer(r#"{"why":"x","clear":[2, 9, 0, 1, 1]}"#, 2).unwrap().0, vec![0], "not the newest, nothing unshown");
+        assert!(tidy_answer(r#"{"why":"x","clear":[]}"#, 2).unwrap().0.is_empty());
+        assert!(tidy_answer("", 2).is_err());
+    }
+
 }

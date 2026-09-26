@@ -267,17 +267,20 @@ One message is one matter. Paragraph breaks are part of the text: the face keeps
 ([`segment.rs`](../../src/foundation/segment.rs), in agreement with `sentences.ts`).
 `SAY_MAX_CHARS` is the size of one matter; too long means say less, never send it in pieces.
 
-**Three messages go out between one of the person's and the next.** Everything sent since
-their last message is read at once by someone coming back to it, with every subject that
-moved in the meantime interleaved, so the run is what the standard's bar applies to
-([`reading.md`](../../src/identity/craft/reading.md)) — and the host holds its length. It is
-counted **when the floor releases a set**, not when it is prepared: a fourth message is not
-said — the `say` fails, which stops the rest of its branch, and Reaction is told with its next
-wake ([`unanswered.rs`](../../src/body/reaction/unanswered.rs),
-[host.md](host.md#what-reaction-learns-and-when)). A message from the person — typed,
-spoken, or a handed file, the inputs that become messages — starts the run over; nothing
-else does. The count is taken under the mouth's serial lock, and a loop standing up seeds it
-from the run the journal already ends in, so a restart hands out no fresh allowance.
+**The run between one of the person's messages and the next is read before each message
+goes.** Everything sent since their last message is read at once by someone coming back to it,
+with every subject that moved in the meantime interleaved, so the run is what the standard's bar
+applies to ([`reading.md`](../../src/identity/craft/reading.md)) — and the host holds its
+length **by judgment at release, not by a count**. The first reply to them goes on the stop's
+reading; every message after it goes through the floor's `fits` with the run in front of it
+([host.md § The floor](host.md#one-reading-whenever-what-it-reads-changes)). The count weighs only what nobody
+asked for: an answer to something they asked, or the result of work they asked for, is owed
+however long the run, and the longer the run, the less a progress note, an aside or a reminder
+is worth reading now. One that is not is held until they next write — held, not refused, and Reaction is told
+([`unanswered.rs`](../../src/body/reaction/unanswered.rs)). A message from the person — typed,
+spoken, or a handed file, the inputs that become messages — starts the run over; nothing else
+does. A loop standing up seeds it from the run the journal already ends in, so a restart reads
+the run the person has not answered.
 
 Where each piece of work got to is on its task row, one subject apart from the next and only
 its newest state, which is what somebody catching up can read. A row `waiting` on them reads
@@ -579,8 +582,8 @@ because an arrangement the person asked for is not held back over its wording.
 | **Grain lives in the existing per-subject read** | Reflection already learns what the agent's words earn per subject; a second store would be structure with the same job |
 | **No derived load score** | The bar's float is judged from facts in the window; the host's presence estimate was deleted because nothing real could produce it ([`host.md`](host.md)) |
 | **One matter per message; structure is paragraphs** | Supersedes "three short messages" in [`text-transcript.md`](text-transcript.md) |
-| **Three messages between one of theirs and the next, held in host code at release** | The person asked for a low cap (2026-09-17). The rule was already in `reaction.md` — "one quiet word beats a string of pings" — and 71% of messages still sat in runs of four or more, so the prompt alone has been measured. The count is a fact about the conversation, the same kind as length, and the refusal names it without judging the words |
-| **No exemption for urgent, and no backstop** | A flag the writer sets for itself would be set on everything. What needs the person is a `waiting` line on its row, drawn as *Needs you* where they come back to, and first when they next write. The floor has no backstop either — a line it holds is held, not thrown away, so there is no run of refusals to break out of — and three messages already standing are not silence |
+| **The run is judged at release, by the floor's reading, not capped** | The person asked for a low cap (2026-09-17), because the rule in `reaction.md` alone — "one quiet word beats a string of pings" — left 71% of messages in runs of four or more: the writer's own judgment had been measured. A cap of three in `say` held from 09-17 to 09-25 and was the wrong shape once the floor held answers and let them out together: four questions in a row earned three answers, and the refused fourth was prepared again six times (09-24). The person's call (2026-09-25): the count is an input to a judgment, not a line. The judgment stays out of the writer — it is System One's `fits`, at release, per message, with the run in front of it — so this is not the prompt-only arrangement that was measured |
+| **No exemption for urgent, and no backstop** | A flag the writer sets for itself would be set on everything. What needs the person is a `waiting` line on its row, drawn as *Needs you* where they come back to, and first when they next write. The floor has no backstop either — a line it holds is held, not thrown away, so there is no run of refusals to break out of |
 | **The primary number is the person's corrections** | The rehearsal's blind judge marked as *dropped* an item the person said was right to leave out; labels drift toward completeness |
 | **Changes are replayed before they land** | Two prompt changes without a measurement between them cannot be told apart |
 | **Bound to the artifact class, not to the speech verb** | A mechanism wired to one verb covers what that verb carries. Beside a speech path with triage, a check, an audit, a number and a replay set, 41 of 41 task records opened in four days carried jargon and machine timestamps, against rules written in three prompts |

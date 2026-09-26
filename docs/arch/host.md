@@ -12,7 +12,8 @@ while the thinking layers are slow, confused, or dead. Where it does ask one —
 [room screen](#the-room-screen) and the pre-send check
 ([`legibility.md`](legibility.md#e-pre-send-check--typed-questions-to-system-one)) — it asks
 System One a typed question on a budget, and a timeout or an error is what the host did before
-it asked.
+it asked. [The floor's reading](#one-reading-whenever-what-it-reads-changes) alone has a second asker: every reply
+waits on it, so when System One does not answer it asks the agent's own model the same questions.
 
 ## Decisions
 
@@ -144,41 +145,107 @@ that is held instead of dropped has no loop to break out of.
 
 Only the first split is mechanical. *Stopped* is a fact — the batch settled — but *done* is not:
 someone mid-thought and someone finished produce the same silence, so the difference is read
-from what they said. It is one question with one cut, not two: whether a pause earns an
+from what they said and when they said it. It is one question with one cut, not two: whether a pause earns an
 acknowledgment or plain listening is not a second band on `finished` but `fits` asked of the
 `paused` set itself — 收到，还有要补的吗 fits a stop after a finished question in a run of them,
 and not a stop after 然后另外.
 
-**A stop is a state, not only an event.** A set prepared while the room is already stopped — a
-turn woken by a worker's report while they sit quietly, or one still thinking after they
-finished — is read at once against the latest reading, not held for a stop that will not come.
+#### One reading, whenever what it reads changes
 
-#### One reading, at every stop
+**Whether to say something, and which, is one judgment**: given the conversation — their lines,
+each with when it came; what the agent has said since their last line, and how many; how long
+they have been quiet — and the sets that are ready, what goes now? It has no state of its own
+beyond those inputs, so **it is read again whenever one of them changes**, and at no other time:
 
-When a batch settles ([surfaces.md § Batching](surfaces.md#batching)) — they have stopped, for
-now — the host asks System One once, over the recent lines with their ages and what the agent
-said last, every question the moment raises:
+| What changed | When | What only this change adds |
+|---|---|---|
+| **They said something** | the batch settles ([surfaces.md § Batching](surfaces.md#batching)), 0.7 s after their line | a message, so the [condition branches' own questions](agents.md#a-message-picks-at-most-one) are asked; and a fresh stop, the one moment a `paused` acknowledgment can fit |
+| **A set was prepared** | Reaction calls `hi_prepare` — about 18 s into a turn — while they are not talking or typing | nothing but the set; by then how long they have stayed quiet is known too |
+| **Time passed** | [the one wait](#the-one-wait) runs out | the quiet itself, which is the evidence that they are done |
+
+**A reading is never reused after its inputs change.** It once was: a set prepared after a stop
+was released on that stop's reading, taken 0.7 s after their line when only the words were
+known, not on one of its own. Read when it is ready instead, `finished` knows how long they have
+stayed quiet — on one install's stops System One read it better there (AUC 0.62 against 0.56,
+09-26, not the same stops, so a signal and not a result) — and `fits` sees whatever of ours went
+out in between: when the old reading was reused, an answer went out and the same matter,
+reworded, followed 17 s later (09-24). While they are talking or typing nothing is read; their
+line will land and change the inputs anyway.
+
+Each reading asks System One once, in `judges/prepared.md`'s words, everything the change
+raises:
 
 - **`finished`** (`noul`) — have they finished what they were saying, or stopped with more to
   come?
 - for each prepared `finished` or `paused` action set, **`fits`** (`choice`: `say` · `hold` ·
   `drop`) — against what they have said *since it was written*: still right and wanted now;
-  right but not for this moment (an aside while they are in the middle of something else); or
-  made wrong by what they said since;
+  right but not for this moment (an aside while they are in the middle of something else, or one
+  more message nobody asked for on a run that is already long); or made wrong or already answered
+  by what was said since;
 - the [content branches' own questions](agents.md#a-message-picks-at-most-one) — `which`,
-  `qualified`, `on` — when the batch carries a message of theirs.
+  `qualified`, `on` — when what changed is a message of theirs.
 
 `finished` at or above its cut releases `finished` sets; below it, the stop releases a `paused`
 set if one is ready and `fits` says `say`, and otherwise the floor keeps listening. A set judged
-`hold` stays where it is for a later stop; `drop` ends it, with the reason. A timeout or an
-error is what the floor did before it could ask: a set written after everything they have said
-goes out if they are not talking; one written before a line of theirs stays held.
+`hold` stays where it is for a later stop; `drop` ends it, with the reason.
+
+**The run is read, not capped.** Every message of ours since their last line is one more in
+what they read in one pass on coming back ([legibility.md § F](legibility.md#f-delivery)), so
+each makes one more message that nobody asked for — a progress note, an aside, a reminder —
+less worth reading now, and `fits` holds such a message for their next one. An answer to
+something they asked, or the result of work they asked for, is owed however long the run: a run
+of questions is owed a run of answers. The first wording let the count bear on everything, and
+the fallback reader held a fourth answer on "three already sent" (09-26). It was a cap of three in `say` until 09-25, and a floor that holds
+answers and lets them out together made that the wrong shape: four questions asked in a row
+earned three answers, the fourth was refused, and the refused line was prepared again six times
+over two hours.
+
+**When System One does not answer, the agent's model does.** System One gets 3 s — its p99 is
+2.2 s, so past that is an outage, and on 09-24 one ran 22 minutes with every answer waiting on
+the one wait. Then the same questions go to the model Reaction runs on (`floor_fallback_model`
+to name another) as **the decisions they stand for**, not as probabilities: one JSON object in
+JSON mode, a sentence of `why` first, then `finished: true|false` and each `fits` as the option
+itself, entering the floor as certainties. Reasoning is off, and 6 s is its budget; p90 1.2 s
+measured. Asked for System One's own shape instead, it wrote probabilities that were text, not
+measure. On fourteen `fits` cases from 09-24's incidents, three tries each, under the rule that
+the run weighs only what nobody asked for (09-26): System One and this model both 38 of 42, one
+case unsteady each, and three of each's four misses on the one case whose right answer is in
+doubt. Asked for probabilities, this model had scored 32. It stands in for an outage and is never asked first. Only
+a stop neither answers is a guess, which is what the floor did before it could ask: a set written
+with everything said on both sides goes out if they are not talking; any other stays held.
 
 The same reading is what makes holding safe. The argument against held drafts was that what
 releases one — their falling silent, having just said something — is exactly what makes it
 stale. That was true of a draft released blind. A held set is released only after `fits` has
 read it against what they said since, so staleness is judged per set, not assumed of all of
 them.
+
+#### Tidying what is ready
+
+What is ready should read like what a person has in mind about each thing they are handling:
+**one set per matter, its newest state, cleanly apart from the next.** Reaction is meant to keep
+it that way — a new thought on something already ready is a revision of that set, under its name
+— and mostly does; when a matter goes in under a second name, both the old state and the new one
+wait, and both go out. That happened on 09-24: 「三页 playground 都好了」 and 「三页 playground
+都挂上了」 were released one after the other, and the three pages were shown twice.
+
+So **every time a set is prepared, the host tidies in the background**: the agent's own model
+reads what the person said recently and every set that is ready, and clears the older of two
+sets on the same matter, or one that something since has made wrong (`judges/tidy.md`). It
+clears on its own, never the set just prepared, and tells Reaction what it cleared and why with
+its next wake. It is **background work, and the reply is not**: when the set answers something
+they said, the floor reads at once and the tidying runs after it, so a release may come from
+sets not yet tidied; when nobody is waiting — a worker's report, the boot wake — it tidies first
+and releases from what is left, within 20 s.
+
+Measured on 09-26 against seven pairs of sets from 09-23/24, five tries each: every pair that was
+one matter under two names cleared, and none of the twenty tries on a pair about different
+things cleared anything. Two things made the difference. It reads the conversation — without it,
+two questions asked a minute apart read as one matter and an owed answer was cleared. And the
+rule names what is *not* a reason — time passing, a change of subject — since the first wording,
+"the conversation has moved past it", cleared a set waiting for them to log in. Reasoning is on,
+at `low`: nobody waits on it, and at `medium` it ran past twelve thousand tokens without an
+answer.
 
 #### The one wait
 
@@ -203,16 +270,14 @@ What happened to its sets — said, held and why, dropped and why, an action tha
 back to Reaction **without a turn of its own**:
 
 - **into the running turn**, when one is running, by the same `turn/steer` that carries their
-  new lines into it — so a turn that is still thinking knows a line has gone out and does not
-  write it again;
+  new lines into it — so a turn that is still thinking learns a line has gone out at its next
+  step. A set it wrote before that step is read before it goes, not trusted to have known;
 - **with the next wake**, whatever wakes it — their message, a worker's report, mail — as a
   section of that turn's window;
 - **after a minute of quiet, only if something is waiting on its judgment** — a set held
   `hold`, or an action that did not happen as written. That is the one case with nothing else
   coming to carry it, and a minute of quiet after they finished is the moment an aside was
-  waiting for. A set that simply went out is carried by the next wake and never costs a turn,
-  and so is a line stopped by the [cap on messages since their last](legibility.md): nothing
-  Reaction decides can send it until they write, and their message is the wake that carries it.
+  waiting for. A set that simply went out is carried by the next wake and never costs a turn.
 
 #### Their lines reach the turn that is thinking
 
@@ -263,7 +328,7 @@ adds up to the budget.
 
 **What it does not do: decide whether a room line makes a prepared set stale.** A room line that
 lands while a turn is generating is steered into it like any other, and at the next stop the
-[`fits` reading](#one-reading-at-every-stop) reads the set against it. That used to be the larger
+[`fits` reading](#one-reading-whenever-what-it-reads-changes) reads the set against it. That used to be the larger
 half of the harm measured in the one crowded scene looked at closely — on 08-30, five of eight
 replies were refused because of side talk — when any line at all refused a reply. Now side talk
 costs a reply only if `fits` reads it as changing what the reply should be, and the screen's own
@@ -919,7 +984,7 @@ where fix-forward genuinely does not apply.
   keeps being taken.
 - **Whether side talk makes a prepared set stale is left to `fits`.** A room line that lands
   during a generation no longer refuses anything; it is read with the rest at the next stop
-  ([One reading](#one-reading-at-every-stop)). Whether `fits` tells a remark at the next table
+  ([One reading](#one-reading-whenever-what-it-reads-changes)). Whether `fits` tells a remark at the next table
   from a change of mind has not been measured — on 08-30 five of eight replies in the photo scene
   were refused by side talk, and that scene is the one to replay. `Talking or typing` is a
   different matter and stays as it is: talking over anyone is rude, whoever they are talking to.

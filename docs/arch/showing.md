@@ -337,8 +337,8 @@ projection; putting it up needs no worker, no view and no review.
 `From::Agent` with `Content::File` is a message like any other, and nothing has ever minted
 one. A `say` carrying `attach` mints it, when the floor releases it. One content per message
 still holds: the words are one message and each
-thing handed over is one more, enqueued together as one arrival, and **each counts toward the
-three messages between one of theirs and the next** ([legibility.md § F](legibility.md#f-delivery)) —
+thing handed over is one more, enqueued together as one arrival, and **each counts in the run
+between one of theirs and the next** ([legibility.md § F](legibility.md#f-delivery)) —
 a picture in the conversation is read like one. A show points at something and takes it back;
 a hand-over is kept in the conversation; which one a moment wants is Reaction's call, and the
 object is the same either way.
@@ -556,7 +556,7 @@ Each phase compiles, ships, and is worth having without the next.
 | **Previews at the tile's size, in JPEG** | A tile is looked at, not edited; fitting it is an order of magnitude off every Home, and lossy WebP's further quarter costs a native library on every platform |
 | **One browser, one queue** | Four render paths each launching Chromium, one of them locked, is the cost that grows with use |
 | **`made` stays beside `attach`** | It is witnessed, not said; a builder that never writes a line still has its view placed on its task |
-| **A hand-over counts toward the three messages** | A picture in the conversation is read like one |
+| **A hand-over counts in the run between their messages** | A picture in the conversation is read like one |
 
 ## Open
 

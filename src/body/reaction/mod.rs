@@ -1726,9 +1726,12 @@ impl Reaction {
             .recent(since, crate::foundation::server::SEED_SCAN_MAX)
             .await
         {
-            Ok(entries) => self.inner.unanswered.seed(unanswered::trailing_run(&entries)),
-            // Fails open to an empty run, which is the host before it had a cap: a restart
-            // with an unreadable journal lets up to three more out. Logged, not surfaced.
+            Ok(entries) => {
+                self.inner.unanswered.seed(unanswered::trailing_run(&entries));
+                self.inner.prepared.seed_lines(&entries);
+            }
+            // Fails open to an empty run and no lines: the first reading after the restart is
+            // of less than was said. Logged, not surfaced.
             Err(err) => tracing::error!(
                 error = %format!("{err:#}"),
                 "could not read the run since their last message; starting from none"
@@ -2382,6 +2385,7 @@ async fn run_reaction_turn(
     // the one thing the screen needs to know about a turn (`ViewBus::claim`).
     let answering = batch.iter().any(|input| matches!(input, LoopInput::Message(_)));
     reaction.inner.floor.note_turn_started(turn_id, answering);
+    reaction.inner.prepared.note_turn_started();
     // A condition branch that ran on their message is Cognition's to be told beside the
     // hand-down of it. What this turn is told about its sets rides `## New signals`.
     let branch_ran = reaction.inner.prepared.take_ran();

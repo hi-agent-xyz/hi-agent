@@ -150,6 +150,9 @@ pub mod judges {
     /// Where the person's message went, against the branches Reaction prepared, matter by matter
     /// — as typed questions, by [`super::rubric_section`].
     pub const PREPARED: &str = include_str!("judges/prepared.md");
+    /// Which of the sets Reaction has ready are no longer worth keeping — one JSON answer, read in
+    /// the background every time a set is prepared.
+    pub const TIDY: &str = include_str!("judges/tidy.md");
 }
 
 /// A judge's whole instructions: its rubric, then the reading standard it judges against.

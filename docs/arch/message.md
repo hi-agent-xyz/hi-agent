@@ -293,7 +293,7 @@ something it *hands over* and the person keeps. `Content` does not branch on who
 
 **It is minted by a `say` action carrying an attachment** ([showing.md](showing.md#in-the-conversation)),
 when the floor releases it: the words are one message and each thing handed over is one more,
-enqueued together as one arrival, and each counts toward the three messages between one of the person's and the next.
+enqueued together as one arrival, and each counts in the run between one of the person's messages and the next.
 The ref is the attachment's `att:` id, never a path; the person's own files keep their signal
 refs, and one viewer draws both.
 

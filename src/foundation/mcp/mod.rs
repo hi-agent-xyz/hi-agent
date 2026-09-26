@@ -1381,7 +1381,7 @@ fn prepare_tool() -> Value {
                                     "properties": {
                                         "do": { "type": "string", "enum": ["say", "show", "send_message"] },
                                         "text": { "type": "string", "description": "say: what to say, as natural spoken language — plain text, no markdown; line breaks between paragraphs are kept." },
-                                        "attach": { "type": "array", "items": { "type": "string" }, "maxItems": 4, "description": "say: attachments to hand over with these words, by `att:` id — each lands in the conversation right after the words and counts as a message toward the three." },
+                                        "attach": { "type": "array", "items": { "type": "string" }, "maxItems": 4, "description": "say: attachments to hand over with these words, by `att:` id — each lands in the conversation right after the words and counts as one more message in the run since their last." },
                                         "ref": { "type": "string", "description": "show: a view ref a builder reported (e.g. `project/view`), or an attachment's `att:` id to put a picture or a clip up as itself." },
                                         "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show: defaults to show. The screen holds one view; show replaces it, replace swaps the same id in place, dismiss clears it." },
                                         "id": { "type": "string", "description": "show: the on-screen slot, so replace can target it. A dismiss with none clears whatever is up." },

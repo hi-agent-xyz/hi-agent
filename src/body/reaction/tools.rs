@@ -273,6 +273,10 @@ impl ToolSink {
             .prepared
             .set(&matter, kept, mouth.speech.said_since_their_last(), heard, answering)
             .await;
+        if !whens.is_empty() {
+            mouth.prepared.after_set(answering);
+        }
+        let others: Vec<String> = mouth.prepared.matters().into_iter().filter(|m| m != &matter).collect();
         let mut ack = if whens.is_empty() {
             format!("not prepared — every line was sent back, so nothing is prepared for \"{matter}\"")
         } else {
@@ -289,6 +293,16 @@ impl ToolSink {
             ack.push_str(&format!(
                 ". To make room, the conditions prepared for {} are gone",
                 evicted.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        // What else is ready, at the moment of writing — a turn sees the list when it starts,
+        // not what it prepared since. One matter under two names is how the same answer went
+        // out twice on 09-24.
+        if !others.is_empty() && !whens.is_empty() {
+            ack.push_str(&format!(
+                ". Also ready: {} — if this is a new thought on one of those, it is a revision of that one: \
+                 prepare it under that matter's name, merged, and nothing goes out twice",
+                others.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ")
             ));
         }
         Ok(ack)
