@@ -150,6 +150,7 @@ const OUT_OF_ENERGY: &str = include_str!("factory/vendor-outage.jsx");
 const REVIEW_VIEWS: &[(&str, &str)] = &[
     ("home", include_str!("factory/home.jsx")),
     ("stats", include_str!("factory/stats.jsx")),
+    ("system-status", include_str!("factory/system-status.jsx")),
     ("tasks", include_str!("factory/tasks.jsx")),
     ("skills", include_str!("factory/skills.jsx")),
     ("memories", include_str!("factory/memories.jsx")),

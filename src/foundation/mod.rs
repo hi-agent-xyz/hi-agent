@@ -45,5 +45,6 @@ pub mod segment;
 pub mod server;
 pub mod shutdown;
 pub mod surfaces;
+pub mod system_status;
 pub mod tunnel;
 pub mod vendors;

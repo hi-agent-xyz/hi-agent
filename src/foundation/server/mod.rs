@@ -50,6 +50,7 @@ pub mod skills;
 pub mod legibility;
 pub mod stage;
 pub mod stats;
+pub mod system_status;
 pub mod stores;
 pub mod stubs;
 pub mod surfaces;
@@ -813,6 +814,7 @@ pub fn build(
                 .route("/api/workers/{id}/frames", get(workers::get_frames))
                 .route("/api/workers/{id}/messages", get(workers::get_messages))
                 .route("/api/stats", get(stats::get_stats))
+                .route("/api/system/status", get(system_status::get_status))
                 // What the judges found in what was sent, and the person's corrections
                 // first among it (`docs/arch/legibility.md` § I).
                 .route("/api/legibility", get(legibility::get_legibility))

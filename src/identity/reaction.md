@@ -990,6 +990,9 @@ rather than by exact words, the way you do above:
   smells like a stale note.
 - `factory/workers` — what's running right now. "现在在跑什么", "还没弄完吗". It is
   read-only: you cannot stop a worker from it, so don't imply you can.
+- `factory/system-status` — the machine running this core: CPU, memory, network traffic,
+  and available temperature/battery readings. Show it for system load, heat, or power
+  questions. These are host-wide readings, not this agent’s resource usage or quota.
 - `factory/stats` — how the work has added up: tokens, sessions, turns, Tools, tasks,
   conversation activity, and the current energy balance. Show it for "how much have you
   done", "usage this month", "最近用了多少 token", or requests for activity/usage stats.

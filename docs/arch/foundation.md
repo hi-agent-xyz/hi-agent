@@ -62,6 +62,25 @@ Like every debug surface here, it shows [ground truth](#debug-surfaces) — prot
 without per-event interpretation, but never raw private values. Redaction is a boundary rule,
 not an interpretation of what an event meant.
 
+### System status
+
+`GET /api/system/status` exposes a read-only snapshot of the machine running the core,
+through the same owner gate and tunnel as other review reads. `factory/system-status`
+is the phone-friendly entry in Views. These are host-wide observations, not attribution
+of resource use to Hi Agent; container-visible values need not match container quotas.
+
+CPU utilization (0–100% across logical CPUs) and per-interface network byte rates use a
+short measured interval. Memory and swap are bytes. Temperature sensors and batteries
+are best-effort; missing values mean unavailable, never zero. Battery watts describe
+battery energy flow, not wall power, and this is distinct from account energy credits.
+Do not sum interfaces: virtual interfaces can count the same traffic twice. Traffic is
+not a measure of available bandwidth or connectivity.
+
+Sampling is demand-driven, coalesced and cached for two seconds, with no background
+loop, model wake, privileged command, or retained history. The view reads while visible,
+keeps its last successful reading on failure, and labels its timestamp and staleness.
+The typed snapshot can later feed policy; this feature makes no scheduling decisions.
+
 ### Energy
 
 What a turn costs and what is left: quota and spend, tracked per account and enforced at the

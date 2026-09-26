@@ -227,6 +227,15 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = "0.18"
 
+# Read-only host telemetry; no process enumeration or privileged commands.
+[dependencies.sysinfo]
+version = "0.37"
+default-features = false
+features = ["system", "network", "component"]
+
+[dependencies.battery]
+version = "0.7"
+
 [dev-dependencies]
 # tempfile is used by integration tests for throwaway data dirs.
 tempfile = "3"

@@ -424,6 +424,7 @@ async fn every_review_surface_renders_on_a_core_that_has_nothing_yet() {
 
     let surfaces: &[(&str, &str)] = &[
         ("stats", include_str!("../src/mind/views/factory/stats.jsx")),
+        ("system-status", include_str!("../src/mind/views/factory/system-status.jsx")),
         ("tasks", include_str!("../src/mind/views/factory/tasks.jsx")),
         ("skills", include_str!("../src/mind/views/factory/skills.jsx")),
         ("memories", include_str!("../src/mind/views/factory/memories.jsx")),
