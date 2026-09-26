@@ -538,7 +538,7 @@ pub async fn post_audio(
         delivered.push_str(&note);
         speaker = matched;
     }
-    if !deliver_transcript(&state, stream, &delivered, Some((ts, id, media)), speaker).await {
+    if !deliver_transcript(&state, stream, &delivered, Some((ts, id, media)), speaker, None).await {
         return (StatusCode::SERVICE_UNAVAILABLE, "inbound channel closed\n").into_response();
     }
 
@@ -771,7 +771,17 @@ pub async fn ingest_pcm_stream(
                 },
                 _ = ticker.tick() => seg.tick(Instant::now()),
             };
-            for sentence in cuts {
+            // What stays pending as each line goes out: the lines after it in this
+            // same cut, then the segmenter's own tail. That becomes the preview in
+            // the step the line lands, so the words are never in neither place.
+            let rests: Vec<String> = (0..cuts.len())
+                .map(|i| {
+                    let mut rest = cuts[i + 1..].join(" ");
+                    rest.push_str(&seg.tail());
+                    rest
+                })
+                .collect();
+            for (sentence, rest) in cuts.into_iter().zip(rests) {
                 // Who the voiceprint placed this sentence with, if anyone. It rides
                 // the signal as its sender on EVERY line — that is a field, and a
                 // field costs nothing to repeat.
@@ -814,7 +824,8 @@ pub async fn ingest_pcm_stream(
                     line.push_str(&format!(" ⟨{tag}⟩"));
                     source_noted = true;
                 }
-                deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker).await;
+                deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker, Some(&rest))
+                    .await;
             }
             // The pending line: what has been heard and has not become a message
             // yet. That is the segmenter's own tail, not the recognizer's rolling
@@ -834,7 +845,7 @@ pub async fn ingest_pcm_stream(
             {
                 line.push_str(&format!(" ⟨{tag}⟩"));
             }
-            deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker).await;
+            deliver_transcript(&relay_state, relay_stream.clone(), &line, None, speaker, Some("")).await;
         }
         // Nothing can be pending once the recognition stream is over: whatever the
         // preview held either just landed as that flush, or was never going to.
@@ -936,7 +947,7 @@ pub async fn ingest_pcm_stream(
     drop(audio_tx);
     let joined = match stt_ended {
         Some(joined) => Some(joined),
-        None => tokio::time::timeout(Duration::from_secs(5), stt_task).await.ok(),
+        None => tokio::time::timeout(Duration::from_secs(5), &mut stt_task).await.ok(),
     };
     match joined {
         Some(Err(err)) => tracing::warn!(error = %err, "audio ingest STT task panicked"),
@@ -947,10 +958,25 @@ pub async fn ingest_pcm_stream(
             crate::foundation::energy_state::note_402_error(&state.data_dir, &err);
             tracing::warn!(error = %format!("{err:#}"), "audio ingest STT ended");
         }
-        None => tracing::warn!("audio ingest STT did not finalize in time"),
+        None => {
+            tracing::warn!("audio ingest STT did not finalize in time");
+            // Dropping the task is what releases its transcript sender; a timed-out
+            // handle left alone would keep the out task below waiting on it.
+            stt_task.abort();
+        }
         _ => {}
     }
-    out_task.abort();
+    // The out task is **awaited, never aborted**: it ends on its own once the STT
+    // task's sender is gone, and what it does on the way out is the last sentence —
+    // the final the recognizer sends *because* the audio closed, then the flush that
+    // delivers it (or, with no final, the preview's own words). Aborting here raced
+    // that and lost it: on 2026-09-25 a 90-char request ended with the mic, its final
+    // reached the frame log at 10:26:08.733, and it never became a message. There is
+    // no bound for the same reason — delivery waits a bounded time on the journal
+    // and nothing else here can stall it, so a bound would only be a way to drop it.
+    if let Err(err) = out_task.await {
+        tracing::error!(error = %err, "audio ingest delivery task panicked");
+    }
 }
 
 /// Deliver one finalized transcript on the **audio** channel — journal it, echo
@@ -964,12 +990,17 @@ pub async fn ingest_pcm_stream(
 ///
 /// `speaker` is the subject a voiceprint **matched**, when one did — never a guess
 /// and never a name read out of the words. Everything else is unattributed.
+///
+/// `rest` is, for the live mic, what is still heard and unsent once this line is
+/// out: the preview becomes exactly that in the same step the line lands. A posted
+/// clip had no preview and passes `None`.
 async fn deliver_transcript(
     state: &AppState,
     stream: Option<String>,
     text: &str,
     clip: Option<(DateTime<Utc>, String, Media)>,
     speaker: Option<String>,
+    rest: Option<&str>,
 ) -> bool {
     let (ts, id, media) = match clip {
         Some((ts, id, media)) => (ts, id, Some(media)),
@@ -995,13 +1026,14 @@ async fn deliver_transcript(
         task: None,
     };
     let entry = JournalEntry::Message { channel: Channel::Audio, message: message.clone() };
-    if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
-    }
+    state.memory.journal.append_inbound(entry).await;
     // Append before dispatching inward. A spoken line is a message like a typed
     // one, so it rides the text channel into the conversation (a display concern);
     // the journal above keeps it on `Audio`, where it was actually heard.
-    state.note_message(Channel::Text, message.clone());
+    match rest {
+        Some(rest) => state.note_settled(Channel::Text, message.clone(), rest),
+        None => state.note_message(Channel::Text, message.clone()),
+    }
     if let Err(err) = state.inbound.send(Inbound::Message(message)).await {
         tracing::error!(error = %err, "inbound channel closed");
         return false;

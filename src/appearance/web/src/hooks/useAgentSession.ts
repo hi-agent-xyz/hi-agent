@@ -275,7 +275,10 @@ export function useAgentSession(): AgentSession {
                 break;
               // One message, complete. The agent's own messages pulse the
               // activity meter; the person's don't, since the field reacts to
-              // the agent thinking, not to typing.
+              // the agent thinking, not to typing. The preview is not touched:
+              // the backend settles it with its own interim frame, and a reply
+              // landing mid-sentence used to blank words the person had watched
+              // go in.
               case "append": {
                 const { message } = frame;
                 if (message.role === "agent") {
@@ -288,7 +291,6 @@ export function useAgentSession(): AgentSession {
                   messages: prev.messages.some((m) => m.id === message.id)
                     ? prev.messages
                     : [...prev.messages, message],
-                  interim: undefined,
                 }));
                 break;
               }

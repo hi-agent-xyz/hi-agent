@@ -507,7 +507,8 @@ async fn the_same_delivery_sent_twice_is_one_arrival() {
 }
 
 /// A rolling recognition partial is a preview of a message, not a message: it
-/// never enters the list, and the settled line clears it.
+/// never enters the list, and only its own line settling ends it — a line typed
+/// meanwhile is a different message and leaves the preview where it is.
 #[tokio::test]
 async fn an_interim_is_not_a_message() {
     let (base, _dir, seams, _memory) = spawn_server().await;
@@ -519,7 +520,20 @@ async fn an_interim_is_not_a_message() {
         .note_interim(hi_agent::types::Channel::Text, "what day is");
     assert_eq!(feed.next().await, Frame::Interim(Some("what day is".into())));
 
-    post_text(&base, "what day is it?").await;
+    post_text(&base, "typed meanwhile").await;
+    assert_eq!(feed.next().await.appended().text, "typed meanwhile");
+
+    seams.state.note_settled(
+        hi_agent::types::Channel::Text,
+        hi_agent::types::Message {
+            id: "spoken".into(),
+            ts: chrono::Utc::now(),
+            from: hi_agent::types::Author::Person(hi_agent::types::Sender::unknown()),
+            content: hi_agent::types::Content::Speech { text: "what day is it?".into(), audio: None },
+            task: None,
+        },
+        "",
+    );
     assert_eq!(feed.next().await, Frame::Interim(None));
     assert_eq!(feed.next().await.appended().text, "what day is it?");
 }

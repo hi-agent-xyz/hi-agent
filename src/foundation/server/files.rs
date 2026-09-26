@@ -277,9 +277,7 @@ pub(crate) async fn deliver_artifact(
     // settle window from splitting one arrival across two turns.
     for message in &messages {
         let entry = JournalEntry::Message { channel: Channel::File, message: message.clone() };
-        if let Err(err) = state.memory.journal.append(entry).await {
-            tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting file anyway");
-        }
+        state.memory.journal.append_inbound(entry).await;
         super::tasks::record_said_on(state, message).await;
     }
     for message in messages {

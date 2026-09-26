@@ -29,6 +29,12 @@ use crate::types::{
 
 use super::layout;
 
+/// How long an inbound line waits on its journal write before it is shown and
+/// delivered anyway. A healthy write is milliseconds (one appended line and an
+/// fsync); this only decides when a stalled disk stops holding up what somebody
+/// just said.
+const INBOUND_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[derive(Clone)]
 pub struct Journal {
     inner: Arc<Inner>,
@@ -79,6 +85,27 @@ impl Journal {
         file.flush().await?;
         file.sync_data().await?;
         Ok(())
+    }
+
+    /// Append something a person just said or handed over, without letting the
+    /// record hold up the thing it records.
+    ///
+    /// The write runs as its own task and is waited on for at most
+    /// [`INBOUND_WAIT`]. A write that fails or stalls is a problem with the log and
+    /// is logged as one; the caller goes on to show and deliver the line either
+    /// way, and a stalled write still lands, whole, whenever the disk comes back —
+    /// it is never cut off mid-line by a dropped future.
+    pub async fn append_inbound(&self, entry: JournalEntry) {
+        let journal = self.clone();
+        let write = tokio::spawn(async move { journal.append(entry).await });
+        match tokio::time::timeout(INBOUND_WAIT, write).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(err))) => {
+                tracing::error!(error = %format!("{err:#}"), "journal append failed; delivering anyway")
+            }
+            Ok(Err(err)) => tracing::error!(error = %err, "journal append panicked; delivering anyway"),
+            Err(_) => tracing::error!("journal append stalled; delivering anyway, the write continues"),
+        }
     }
 
     /// The entries at or after `since`, oldest first, capped at the most recent

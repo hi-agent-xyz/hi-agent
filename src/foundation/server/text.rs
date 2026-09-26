@@ -358,9 +358,7 @@ async fn post_words(
         task,
     };
     let entry = JournalEntry::Message { channel: Channel::Text, message: message.clone() };
-    if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::error!(error = %format!("{err:#}"), "journal append failed; accepting signal anyway");
-    }
+    state.memory.journal.append_inbound(entry).await;
     // The row keeps it before anyone is told, so whichever rung goes to read the row after
     // this line reaches it finds the answer already there.
     super::tasks::record_said_on(state, &message).await;

@@ -170,8 +170,8 @@ sentences that already went out, so publishing it put the person's own last line
 the screen a second time, in a preview bubble, directly under the message of it.
 
 **It is republished the instant the line it was previewing lands**, in the same step
-that appends the message — not when the recognizer next says something. `append` clears
-the preview, which is right; what was wrong was leaving it cleared until the next rolling
+that appends the message — not when the recognizer next says something. Settling the line
+replaces the preview with what is still pending, which is right; what was wrong was leaving it cleared until the next rolling
 partial happened to arrive. Measured on the owner's own audio (2026-09-09, 164 s replayed
 through the recognizer): partials arrive a median 356 ms apart, but the gap after a
 message settles ran to **1.9 s**, three times in ten. That blank, and the fact that the
@@ -182,9 +182,19 @@ preview then came back showing the sentence that had just settled above it, is t
 That timer could only ever fire *before* the message it was previewing — a partial stops
 updating the moment the person stops talking, while the line settles later still — so it
 is gone. It was never observed firing in that replay, and it is not what the blanking
-was; it is removed because a preview whose line has not settled is not stale. Two events end a preview now: the line landing (`append` clears it, which is
-the same event as the message appearing), and the recognition stream ending (an empty
-`interim`). Nothing else may.
+was; it is removed because a preview whose line has not settled is not stale. Two events end a preview now: **its own** line landing (the same step as that message
+appearing), and the recognition stream ending (an empty `interim`). Nothing else may —
+in particular not some *other* message: an agent reply or a typed line landing while
+somebody is mid-sentence leaves their preview where it is. On 2026-09-25 an agent reply
+did blank one, and to the person that is indistinguishable from losing what they said.
+
+**A stream ending delivers before it clears.** Whatever the preview held — a final still
+settling, a fragment held for its continuation, a partial the recognizer never finalized
+— goes out as a message first, the partial in its last-shown words. A preview may only
+ever end by becoming a message. The 2026-09-25 loss was this step being cut short: the
+mic closed, the recognizer's closing final arrived, and the task that would have sent it
+was aborted first. Nor may the record hold it up: a journal write that fails or stalls
+is logged and the line is delivered anyway.
 
 ## Durability
 

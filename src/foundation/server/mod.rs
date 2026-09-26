@@ -444,10 +444,24 @@ impl AppState {
     /// live conversation and the one a restart rebuilds cannot disagree about who
     /// was talking.
     pub fn note_message(&self, channel: Channel, message: crate::types::Message) {
+        self.publish_message(channel, message, None);
+    }
+
+    /// [`Self::note_message`] for the line a recognition preview became: the preview
+    /// is set to `rest`, what is still heard and unsent, in the same step. Nothing
+    /// else ends a preview while its stream is open.
+    pub fn note_settled(&self, channel: Channel, message: crate::types::Message, rest: &str) {
+        self.publish_message(channel, message, Some(rest));
+    }
+
+    fn publish_message(&self, channel: Channel, message: crate::types::Message, rest: Option<&str>) {
         let wire = transcript::Wire::from(message);
         let text = wire.text.clone();
         let ts = wire.ts;
-        self.transcript.append(wire);
+        match rest {
+            Some(rest) => self.transcript.settle(wire, rest),
+            None => self.transcript.append(wire),
+        }
         let _ = self.input_echo.send(InputEcho { channel, text, is_final: true, ts });
     }
 

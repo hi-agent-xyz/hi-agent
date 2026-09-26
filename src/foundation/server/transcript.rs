@@ -211,25 +211,44 @@ impl Transcript {
         let _ = self.tx.send(frame);
     }
 
-    /// Append one message and publish it. The settled line also clears any interim,
-    /// which is the same event: the preview became the message.
+    /// Append one message and publish it. **The interim is left alone**: an agent
+    /// reply or a typed line landing while somebody is mid-sentence is not their
+    /// words settling, and blanking the preview then showed words they could see
+    /// going in vanish. Only [`Self::settle`] — the line the preview *was* — ends it.
     pub fn append(&self, message: Wire) {
-        let frames = {
+        self.settle_or_append(message, None);
+    }
+
+    /// Append the line a preview became, and in the same step set the preview to
+    /// `rest` — whatever is still heard and not yet sent (empty for nothing). One
+    /// lock, so no subscriber ever sees the words in neither place.
+    pub fn settle(&self, message: Wire, rest: &str) {
+        self.settle_or_append(message, Some(rest));
+    }
+
+    fn settle_or_append(&self, message: Wire, rest: Option<&str>) {
+        let interim = {
             let mut inner = self.inner.lock().expect("transcript mutex poisoned");
-            let cleared = inner.interim.take().is_some();
+            let interim = rest.and_then(|rest| {
+                let next = Some(rest.trim()).filter(|r| !r.is_empty()).map(str::to_owned);
+                (inner.interim != next).then(|| {
+                    inner.interim = next.clone();
+                    next
+                })
+            });
             inner.messages.push_back(message.clone());
             trim(&mut inner.messages);
-            (cleared, message)
+            interim
         };
-        if frames.0 {
-            let _ = self.tx.send(Frame::Interim(None));
+        if let Some(interim) = interim {
+            let _ = self.tx.send(Frame::Interim(interim));
         }
-        let _ = self.tx.send(Frame::Append(frames.1));
+        let _ = self.tx.send(Frame::Append(message));
     }
 
     /// Set the line being recognized — the words heard so far that have not become
     /// a message yet. Empty means none, which is the only way this clears other
-    /// than [`Self::append`] settling the line it was previewing.
+    /// than [`Self::settle`] landing the line it was previewing.
     ///
     /// **It is not on a clock.** It used to expire three seconds after its last
     /// update, and that was the wrong owner for the question: a rolling partial
@@ -573,12 +592,39 @@ mod tests {
         let (opening, mut rx) = t.subscribe();
         assert!(matches!(opening, Frame::Reset { interim: Some(_), .. }));
 
-        t.append(msg("1", Role::User, "what day is it?"));
+        t.settle(msg("1", Role::User, "what day is it?"), "");
         assert_eq!(rx.recv().await.unwrap(), Frame::Interim(None));
         let Frame::Append(m) = rx.recv().await.unwrap() else {
             panic!("expected the settled message");
         };
         assert_eq!(m.text, "what day is it?");
+    }
+
+    #[tokio::test]
+    async fn a_settled_message_leaves_what_is_still_pending_in_the_preview() {
+        let t = Transcript::new();
+        t.note_interim("你好。然后我");
+        let (_, mut rx) = t.subscribe();
+
+        t.settle(msg("1", Role::User, "你好。"), "然后我");
+        assert_eq!(rx.recv().await.unwrap(), Frame::Interim(Some("然后我".into())));
+        assert!(matches!(rx.recv().await.unwrap(), Frame::Append(_)));
+    }
+
+    /// 2026-09-25: the agent answered while the person was still talking, the
+    /// append blanked the preview, and words they had watched go in were gone.
+    #[tokio::test]
+    async fn another_message_landing_leaves_the_preview_alone() {
+        let t = Transcript::new();
+        t.note_interim("然后这个概念解释");
+        let (_, mut rx) = t.subscribe();
+
+        t.append(msg("1", Role::Agent, "好，我这就去弄。"));
+        t.append(msg("2", Role::User, "typed meanwhile"));
+        assert!(matches!(rx.recv().await.unwrap(), Frame::Append(_)));
+        assert!(matches!(rx.recv().await.unwrap(), Frame::Append(_)));
+        let (Frame::Reset { interim, .. }, _) = t.subscribe() else { panic!("expected a reset") };
+        assert_eq!(interim.as_deref(), Some("然后这个概念解释"));
     }
 
     #[tokio::test(start_paused = true)]
