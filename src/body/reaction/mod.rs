@@ -2516,7 +2516,7 @@ async fn run_reaction_turn(
                 // Closed: nothing more can arrive, and the turn still deserves to finish.
                 None => break (&mut drive).await,
                 Some(input) => {
-                    if steer_in(reaction, &session, &input).await {
+                    if steer_in(&session, &input).await {
                         steered.push(input);
                     } else {
                         arrived.push(input);
@@ -3517,7 +3517,7 @@ const STEER_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// The heading is a fact about delivery — this reached a turn already under way — and what
 /// it obliges is `reaction.md`'s to say.
-async fn steer_in(reaction: &Reaction, session: &AgentSession, input: &LoopInput) -> bool {
+async fn steer_in(session: &AgentSession, input: &LoopInput) -> bool {
     let LoopInput::Message(m) = input else { return false };
     if m.from.is_agent() {
         return false;
