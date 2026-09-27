@@ -931,6 +931,16 @@ function wirePath(from, to) {
  */
 const OVERVIEW = 0.8;
 const CANDIDATES = 64;
+/**
+ * **A zoom out buys cards, down to here.** The cut is made at the scale the person zoomed out
+ * to rather than at `OVERVIEW`, so the room a zoom out opens around the chart is filled by
+ * the next hottest cards instead of left empty. Below this a title is under 10px, a card says
+ * nothing more than that it is there, and adding more of them is crowding rather than content;
+ * the zoom still goes on down to `ZOOM_MIN`, and the chart is simply drawn smaller.
+ */
+const REACH_MIN = 0.6;
+/** How long a zoom rests before the cut follows it: a recut in mid-pinch moves what is being pinched. */
+const REACH_SETTLE_MS = 250;
 
 /**
  * How much a card is in hand: waiting on the person first — the one status that asks them to
@@ -965,7 +975,7 @@ const inHand = (node) => heat(node)[0] >= 1;
 
 /**
  * **The model is the whole graph; this picks what the window draws of it**, in `frame` at
- * `OVERVIEW`, and counts what a group holds in hand that did not fit.
+ * `scale` — `OVERVIEW` until the person zooms out (`REACH_MIN`) — and counts what a group holds in hand that did not fit.
  *
  * Nothing but a spent cancellation is kept out of the model (`onHome`), so this is the only
  * place any other card is ever left off the chart. Cards are offered hottest first — the tier
@@ -998,10 +1008,10 @@ const inHand = (node) => heat(node)[0] >= 1;
  * that finished" is not one, and the number would be the ledger's depth rather than anything
  * about the work. History that did not fit is simply not drawn.
  */
-function budgeted(model, frame, tones) {
+function budgeted(model, frame, tones, scale = OVERVIEW) {
   const children = childIndex(model);
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
-  const room = { w: frame.w / OVERVIEW, h: frame.h / OVERVIEW };
+  const room = { w: frame.w / scale, h: frame.h / scale };
   const all = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
     .sort((a, b) => { const x = heat(a), y = heat(b); return y[0] - x[0] || y[1] - x[1]; });
   // **What the fitting loop costs is bounded by the window, not by the ledger.** Every offer
@@ -1305,9 +1315,13 @@ export default function Home() {
   const focused = useMemo(() => focusOn(model, focus), [model, focus]);
   const shown = focused || model;
   const mobile = frame.w < 760;
+  // **The scale the cut is made at.** `OVERVIEW` until the person zooms out, then what they zoomed
+  // out to (`REACH_MIN`), and it only ever grows the chart: zooming back in to read a card keeps
+  // the cards around it rather than taking them away under the pointer. Another centre starts over.
+  const [reach, setReach] = useState(OVERVIEW);
   // The narrow flow is a list the page scrolls, so only the chart has a window to fill.
-  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones)),
-    [shown, frame, tones, mobile]);
+  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones, reach)),
+    [shown, frame, tones, mobile, reach]);
   const chart = useMemo(() => arrange(overview.model, tones), [overview, tones]);
   const path = useMemo(() => (focused ? trail(model, focus) : []), [model, focused, focus]);
   const settled = sourcesSettled && ledgerSettled;
@@ -1364,6 +1378,29 @@ export default function Home() {
     if (held !== null || mobile || !frameMeasured || !viewport.current) return;
     scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
   }, [held, mobile, frameMeasured, chart, frame, scale, offset.x, offset.y]);
+  // Once a zoom out rests, the cut follows it. What it adds is cut to the window's shape at the
+  // scale they are looking at, so the grown drawing is put in the window's middle: left where
+  // the pointer happened to be, the cards it came for would land half outside it. The glide
+  // carries every card that stays from where it was on screen, so the move reads as the chart
+  // opening out, not as a jump. A recut that adds nothing moves nothing.
+  const regrown = useRef(null);
+  useEffect(() => {
+    if (held === null || mobile) return undefined;
+    const timer = setTimeout(() => {
+      const next = Math.max(REACH_MIN, Math.min(OVERVIEW, held));
+      if (next >= reach) return;
+      regrown.current = new Set(chart.placed.map((row) => row.node.id));
+      setReach(next);
+    }, REACH_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [held, mobile, reach, chart]);
+  useLayoutEffect(() => {
+    const before = regrown.current;
+    if (!before || !viewport.current) return;
+    regrown.current = null;
+    if (chart.placed.every((row) => before.has(row.node.id))) return;
+    scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
+  }, [chart]);
   // After the centring above, never before it: a glide starts from where a card was on screen,
   // and needs the scroll this drawing ends up at to say where that is now.
   const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1374,6 +1411,7 @@ export default function Home() {
     if (next === live.current.focus) return;
     setFocus(next);
     setHeld(null);
+    setReach(OVERVIEW);
     writePlace({ focus: next });
   }, []);
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);

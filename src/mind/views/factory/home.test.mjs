@@ -824,6 +824,19 @@ test("the chart keeps every group and cuts only cards, hottest first, until the 
   assert.equal(small.hidden.size, 0);
 });
 
+test("a zoom out is filled with the next hottest cards, still cut to the window at the scale zoomed out to", () => {
+  const model = twoGroups(12), at = (scale) => budgeted(model, LAPTOP, undefined, scale);
+  const overview = at(0.8), out = at(0.6);
+  const before = ids(overview.model, "task"), after = ids(out.model, "task");
+  assert.ok(after.length > before.length, `zooming out draws more (${before.length} -> ${after.length})`);
+  assert.ok(after.length < 24, "and still not everything");
+  assert.ok(before.every((id) => after.includes(id)), "every card that was drawn stays drawn");
+  const chart = arrange(out.model);
+  assert.ok(chart.width <= LAPTOP.w / 0.6 && chart.height <= LAPTOP.h / 0.6, "the whole fits the window at the scale zoomed out to");
+  assert.equal(out.hidden.get("group:A") + out.hidden.get("group:B"), 24 - after.length, "and the count shrinks by what it drew");
+  assert.deepEqual(ids(budgeted(model, LAPTOP).model, "task"), before, "the overview scale is the default");
+});
+
 test("ungrouped work competes like any other, and one waiting on the person comes before fresher work", () => {
   // Someone who has never grouped anything has only ungrouped cards. Exempting them meant nothing
   // was ever cut for that person — and, watched, nineteen closed ones left every group bare.
