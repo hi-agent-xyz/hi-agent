@@ -931,14 +931,6 @@ function wirePath(from, to) {
  */
 const OVERVIEW = 0.8;
 const CANDIDATES = 64;
-/**
- * **A zoom out buys cards, down to here.** The cut is made at the scale the person zoomed out
- * to rather than at `OVERVIEW`, so the room a zoom out opens around the chart is filled by
- * the next hottest cards instead of left empty. Below this a title is under 10px, a card says
- * nothing more than that it is there, and adding more of them is crowding rather than content;
- * the zoom still goes on down to `ZOOM_MIN`, and the chart is simply drawn smaller.
- */
-const REACH_MIN = 0.6;
 /** How long a zoom rests before the cut follows it: a recut in mid-pinch moves what is being pinched. */
 const REACH_SETTLE_MS = 250;
 
@@ -975,7 +967,10 @@ const inHand = (node) => heat(node)[0] >= 1;
 
 /**
  * **The model is the whole graph; this picks what the window draws of it**, in `frame` at
- * `scale` — `OVERVIEW` until the person zooms out (`REACH_MIN`) — and counts what a group holds in hand that did not fit.
+ * `scale` — `OVERVIEW`, or whatever the person has zoomed out to — and counts what a group holds in
+ * hand that did not fit. **Zoomed in past `OVERVIEW` the window holds a part of the chart, and
+ * `around` is the group it is on**: the chart is cut at `OVERVIEW` as usual, and then that group
+ * is filled until it alone is the window's shape at `scale` (step 5).
  *
  * Nothing but a spent cancellation is kept out of the model (`onHome`), so this is the only
  * place any other card is ever left off the chart. Cards are offered hottest first — the tier
@@ -1000,6 +995,10 @@ const inHand = (node) => heat(node)[0] >= 1;
  * 4. **Pictures last, in what width is left.** A picture spends a rank of width and the width is
  *    both sides' at once, so offered with its card, one picture on the right kept a card still in
  *    progress out of its inner group on the left, and the branch showed one closed eight hours before.
+ * 5. **Then the group the window is on, if it is zoomed in on one.** Its cards that did not fit,
+ *    hottest first and their pictures after, each while the group's own drawing still fits the
+ *    window at `scale`. What the rest of the chart does meanwhile is off screen, and it keeps the
+ *    overview's cut: taking cards out there would move the branch being read.
  *
  * What is drawn keeps the order the record gives it: heat decides whether a card is on the chart,
  * never where, so an update moves only the cards it changes.
@@ -1008,10 +1007,10 @@ const inHand = (node) => heat(node)[0] >= 1;
  * that finished" is not one, and the number would be the ledger's depth rather than anything
  * about the work. History that did not fit is simply not drawn.
  */
-function budgeted(model, frame, tones, scale = OVERVIEW) {
+function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
   const children = childIndex(model);
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
-  const room = { w: frame.w / scale, h: frame.h / scale };
+  const room = { w: frame.w / Math.min(scale, OVERVIEW), h: frame.h / Math.min(scale, OVERVIEW) };
   const all = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
     .sort((a, b) => { const x = heat(a), y = heat(b); return y[0] - x[0] || y[1] - x[1]; });
   // **What the fitting loop costs is bounded by the window, not by the ledger.** Every offer
@@ -1042,10 +1041,10 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
     return { ...model, nodes: model.nodes.filter((n) => ids.has(n.id)),
       edges: model.edges.filter((e) => ids.has(e.from) && ids.has(e.to)) };
   };
-  const offer = (ids) => {
+  const whole = (drawn) => drawn.width <= room.w && drawn.height <= room.h;
+  const offer = (ids, fits = whole) => {
     ids.forEach((id) => shown.add(id));
-    const drawn = arrange(cut(), tones);
-    if (drawn.width <= room.w && drawn.height <= room.h) return true;
+    if (fits(arrange(cut(), tones))) return true;
     ids.forEach((id) => shown.delete(id));
     return false;
   };
@@ -1058,9 +1057,21 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
     if (!shown.has(card.id) && inHand(card) && !floored.has(branch) && offer([card.id])) floored.add(branch);
   }
   for (const card of cards) if (!shown.has(card.id)) offer([card.id]);
-  for (const card of cards) {
-    const tiles = shown.has(card.id) ? (children.get(card.id) || []).filter((k) => k.kind === "result").map((k) => k.id) : [];
-    if (tiles.length && !offer(tiles)) offer(tiles.slice(0, 1));
+  const pictures = (list, fits) => {
+    for (const card of list) {
+      const tiles = shown.has(card.id) ? (children.get(card.id) || []).filter((k) => k.kind === "result").map((k) => k.id) : [];
+      if (tiles.length && !offer(tiles, fits)) offer(tiles.slice(0, 1), fits);
+    }
+  };
+  pictures(cards);
+  const lens = around && scale > OVERVIEW && model.nodes.find((n) => n.id === around)?.kind === "group"
+    ? subtree(model, around) : null;
+  if (lens) {
+    const view = { w: frame.w / scale, h: frame.h / scale };
+    const fits = (drawn) => { const box = extent(drawn, lens); return !box || (box.w <= view.w && box.h <= view.h); };
+    const inside = all.filter((n) => lens.has(n.id)).filter((n, i) => inHand(n) || i < CANDIDATES);
+    for (const card of inside) if (!shown.has(card.id)) offer([card.id], fits);
+    pictures(inside, fits);
   }
   const hidden = new Map();
   for (const card of all) {
@@ -1068,6 +1079,40 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
     hidden.set(parent.get(card.id), (hidden.get(parent.get(card.id)) || 0) + 1);
   }
   return { model: cut(), hidden };
+}
+
+/** A node and everything under it on the chart. */
+function subtree(model, id) {
+  const children = childIndex(model), out = new Set();
+  const walk = (at) => { out.add(at); for (const kid of children.get(at) || []) walk(kid.id); };
+  walk(id);
+  return out;
+}
+
+/** Where the rows in `ids` sit in a drawing, as one box; null when none of them is drawn. */
+function extent(chart, ids) {
+  const rows = chart.placed.filter((row) => ids.has(row.node.id));
+  if (!rows.length) return null;
+  const x = Math.min(...rows.map((r) => r.x)), y = Math.min(...rows.map((r) => r.y));
+  return { x, y, w: Math.max(...rows.map((r) => r.x + r.w)) - x, h: Math.max(...rows.map((r) => r.y + r.h)) - y };
+}
+
+/**
+ * **The group a zoomed-in window is on**: the group of whatever is drawn nearest the window's
+ * middle (`point`, in chart units), or that thing itself when it is a group. Null on the core
+ * and on work that has no group, which the overview's cut already draws. The group it was on
+ * already is kept while the middle is still inside it, so a pan that stays in a branch never
+ * recuts it, and a recut that moves a neighbour's label near the middle cannot flip it back.
+ */
+function subjectAt(chart, model, point, was) {
+  const inside = (box) => box && point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h;
+  if (was && inside(extent(chart, subtree(model, was)))) return was;
+  const gap = (r) => Math.hypot(Math.max(r.x - point.x, 0, point.x - r.x - r.w), Math.max(r.y - point.y, 0, point.y - r.y - r.h));
+  const nearest = [...chart.placed].sort((a, b) => gap(a) - gap(b))[0];
+  const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
+  const kinds = new Map(model.nodes.map((n) => [n.id, n.kind]));
+  for (let at = nearest?.node.id; at && at !== model.rootId; at = parent.get(at)) if (kinds.get(at) === "group") return at;
+  return null;
 }
 
 /**
@@ -1315,12 +1360,12 @@ export default function Home() {
   const focused = useMemo(() => focusOn(model, focus), [model, focus]);
   const shown = focused || model;
   const mobile = frame.w < 760;
-  // **The scale the cut is made at.** `OVERVIEW` until the person zooms out, then what they zoomed
-  // out to (`REACH_MIN`), and it only ever grows the chart: zooming back in to read a card keeps
-  // the cards around it rather than taking them away under the pointer. Another centre starts over.
-  const [reach, setReach] = useState(OVERVIEW);
+  // **The cut follows the window, both ways.** Its scale is `OVERVIEW` or anything the person
+  // zooms out to, down to `ZOOM_MIN`; past `OVERVIEW` it is the overview's cut, and `around` is
+  // the group the window is on, filled to the window. Another centre starts over.
+  const [reach, setReach] = useState({ scale: OVERVIEW, around: null });
   // The narrow flow is a list the page scrolls, so only the chart has a window to fill.
-  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones, reach)),
+  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones, reach.scale, reach.around)),
     [shown, frame, tones, mobile, reach]);
   const chart = useMemo(() => arrange(overview.model, tones), [overview, tones]);
   const path = useMemo(() => (focused ? trail(model, focus) : []), [model, focused, focus]);
@@ -1378,28 +1423,58 @@ export default function Home() {
     if (held !== null || mobile || !frameMeasured || !viewport.current) return;
     scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
   }, [held, mobile, frameMeasured, chart, frame, scale, offset.x, offset.y]);
-  // Once a zoom out rests, the cut follows it. What it adds is cut to the window's shape at the
-  // scale they are looking at, so the grown drawing is put in the window's middle: left where
-  // the pointer happened to be, the cards it came for would land half outside it. The glide
-  // carries every card that stays from where it was on screen, so the move reads as the chart
-  // opening out, not as a jump. A recut that adds nothing moves nothing.
-  const regrown = useRef(null);
+  // Once a zoom or a pan rests, the cut follows it. At `OVERVIEW` and below, a cut made at the
+  // scale they are looking at is the window's shape at that scale, so it is put in the window's
+  // middle: left where the pointer happened to be, the cards a zoom out came for would land half
+  // outside it. Past `OVERVIEW` the window holds one group filled to its shape, and it is that
+  // group that is put in the middle. When neither fits, the card nearest the window's middle is
+  // kept where it was on screen. The glide carries every card that stays from where it was, so
+  // the move reads as the chart opening out or closing in, not as a jump. A recut that changes
+  // nothing moves nothing.
+  const [rested, setRested] = useState(0);
+  const resting = useRef(null);
+  const onScroll = (event) => {
+    glides.onScroll(event);
+    clearTimeout(resting.current);
+    resting.current = setTimeout(() => setRested((n) => n + 1), REACH_SETTLE_MS);
+  };
+  useEffect(() => () => clearTimeout(resting.current), []);
+  const recut = useRef(null);
   useEffect(() => {
     if (held === null || mobile) return undefined;
     const timer = setTimeout(() => {
-      const next = Math.max(REACH_MIN, Math.min(OVERVIEW, held));
-      if (next >= reach) return;
-      regrown.current = new Set(chart.placed.map((row) => row.node.id));
+      const el = viewport.current;
+      if (!el) return;
+      const middle = { x: (el.scrollLeft + frame.w / 2 - offset.x) / scale, y: (el.scrollTop + frame.h / 2 - offset.y) / scale };
+      const next = { scale: Math.min(OVERVIEW, held),
+        around: held > OVERVIEW ? subjectAt(chart, overview.model, middle, reach.around) : null };
+      if (next.scale === reach.scale && next.around === reach.around) return;
+      const onScreen = (row) => ({ x: offset.x + (row.x + row.w / 2) * scale - el.scrollLeft,
+        y: offset.y + (row.y + row.h / 2) * scale - el.scrollTop });
+      recut.current = { around: next.around, was: new Map(chart.placed.map((row) => [row.node.id, onScreen(row)])) };
       setReach(next);
     }, REACH_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [held, mobile, reach, chart]);
+  }, [held, mobile, reach, chart, overview, scale, frame, offset.x, offset.y, rested]);
   useLayoutEffect(() => {
-    const before = regrown.current;
+    const before = recut.current;
     if (!before || !viewport.current) return;
-    regrown.current = null;
-    if (chart.placed.every((row) => before.has(row.node.id))) return;
-    scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
+    recut.current = null;
+    const { was, around } = before;
+    if (chart.placed.length === was.size && chart.placed.every((row) => was.has(row.node.id))) return;
+    const fits = (box) => box.w * scale <= frame.w && box.h * scale <= frame.h;
+    const group = around ? extent(chart, subtree(overview.model, around)) : null;
+    const whole = { x: 0, y: 0, w: chart.width, h: chart.height };
+    const box = group && fits(group) ? group : fits(whole) ? whole : null;
+    if (box) { scrollToPoint({ x: box.x + box.w / 2, y: box.y + box.h / 2 }); return; }
+    const middle = { x: frame.w / 2, y: frame.h / 2 };
+    const gap = (p) => Math.hypot(p.x - middle.x, p.y - middle.y);
+    const anchor = chart.placed.filter((row) => was.has(row.node.id))
+      .sort((a, b) => gap(was.get(a.node.id)) - gap(was.get(b.node.id)))[0];
+    if (!anchor) { scrollToPoint({ x: chart.width / 2, y: chart.height / 2 }); return; }
+    const at = was.get(anchor.node.id);
+    viewport.current.scrollTo({ left: offset.x + (anchor.x + anchor.w / 2) * scale - at.x,
+      top: offset.y + (anchor.y + anchor.h / 2) * scale - at.y, behavior: "instant" });
   }, [chart]);
   // After the centring above, never before it: a glide starts from where a card was on screen,
   // and needs the scroll this drawing ends up at to say where that is now.
@@ -1411,7 +1486,7 @@ export default function Home() {
     if (next === live.current.focus) return;
     setFocus(next);
     setHeld(null);
-    setReach(OVERVIEW);
+    setReach({ scale: OVERVIEW, around: null });
     writePlace({ focus: next });
   }, []);
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
@@ -1482,7 +1557,7 @@ export default function Home() {
         </span>)}
       </nav>}
       <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
-        onScroll={glides.onScroll} onPointerDown={(e) => {
+        onScroll={onScroll} onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
         const el = e.currentTarget;
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });

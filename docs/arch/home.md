@@ -64,18 +64,22 @@ one-shot that an empty intermediate tree could use up; it is redone until the pe
 window. **A zoom, a drag or a plain scroll takes it**, and from then an update keeps their
 scroll, until they take another centre — a new chart, which opens whole again.
 
-**A zoom out buys cards.** The room a zoom out opens around the chart is not left empty: once the
-zoom rests, the cut is made again at the scale they zoomed out to, by the same rules and in the
-same order — the next hottest cards, still only as many as fit the window at that scale — and the
-grown drawing is put in the window's middle, the cards that stay gliding there from where they
-were. It is still a part: the groups' counts shrink by what was drawn, and pressing a group is
-still the way to the whole of its branch. Two limits keep it a chart rather than a crowd:
+**What is drawn follows the window: its scale, and where it is.** A card outside the window is
+not seen, and one cut by its edge reads badly, so once a zoom or a pan rests the cut is made again
+for what the window is now looking at, by the same rules and in the same order — the next hottest
+cards, and only as many as fit — with the cards that stay gliding from where they were. It is
+still a part: the groups' counts shrink by what was drawn, and pressing a group is still the way
+to the whole of its branch.
 
-- **It only grows.** Zooming back in to read a card keeps the cards around it rather than taking
-  them away under the pointer; the cut returns to the overview scale when another centre is taken.
-- **It stops at 0.6**, where a title is 10px. Below that a card says only that it is there, and
-  more of them is crowding, not content; the zoom still goes on down to 0.25, drawing the same
-  cards smaller.
+- **At 0.8 and below, the window holds the whole chart**, so the whole is cut at the scale zoomed
+  to and put in the window's middle. Zooming out buys cards all the way down to the zoom's floor
+  of 0.25; zooming back in gives them back, until the cut is the overview's again at 0.8.
+- **Past 0.8, the window holds one group**, the one drawn nearest its middle. That group is filled,
+  hottest first, until it alone is the window's shape at that scale, and it is put in the window's
+  middle. The rest of the chart is off screen and keeps the overview's cut: taking cards out there
+  would move the branch being read. A pan that leaves the group recuts for the one it lands on;
+  one that stays inside it changes nothing. On the core, or on work with no group, there is no
+  group to fill and the cut is the overview's.
 
 Pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and dragging pans from anywhere a tap
 would not open. Two fingers pan it too, except the one roll that is the host's: from the room,

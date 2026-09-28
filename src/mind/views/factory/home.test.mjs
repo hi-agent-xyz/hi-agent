@@ -837,6 +837,33 @@ test("a zoom out is filled with the next hottest cards, still cut to the window 
   assert.deepEqual(ids(budgeted(model, LAPTOP).model, "task"), before, "the overview scale is the default");
 });
 
+test("the cut follows the zoom all the way down, drawing more at each smaller scale", () => {
+  const model = twoGroups(24), count = (scale) => ids(budgeted(model, LAPTOP, undefined, scale).model, "task").length;
+  const counts = [0.8, 0.6, 0.4, 0.25].map(count);
+  for (let i = 1; i < counts.length; i++) assert.ok(counts[i] >= counts[i - 1], `never fewer as it zooms out (${counts})`);
+  assert.ok(counts[3] > counts[1], `below 0.6 still buys cards (${counts})`);
+});
+
+test("zoomed in on a group, that group is filled to the window and the rest keeps the overview's cut", () => {
+  const tasks = [], groups = [];
+  for (const g of ["A", "B", "C", "D"]) {
+    const members = [];
+    for (let i = 0; i < 12; i++) { tasks.push(task(`${g}${i}`, "doing", 1 + i * 4 + groups.length)); members.push(`${g}${i}`); }
+    groups.push({ label: g, members });
+  }
+  const model = project({ tasks, groups });
+  const overview = budgeted(model, LAPTOP), zoomed = budgeted(model, LAPTOP, undefined, 1.2, "group:A");
+  const of = (cut, g) => ids(cut.model, "task").filter((id) => id.startsWith(`task:${g}`));
+  assert.ok(of(zoomed, "A").length > of(overview, "A").length, `the group the window is on draws more (${of(overview, "A").length} -> ${of(zoomed, "A").length})`);
+  for (const g of ["B", "C", "D"]) assert.deepEqual(of(zoomed, g), of(overview, g), `${g}, off screen, is left as it was`);
+  const chart = arrange(zoomed.model), rows = chart.placed.filter((r) => r.node.id === "group:A" || r.node.id.startsWith("task:A"));
+  const h = Math.max(...rows.map((r) => r.y + r.h)) - Math.min(...rows.map((r) => r.y));
+  assert.ok(h <= LAPTOP.h / 1.2, "and the group alone fits the window at the scale zoomed in to");
+  assert.equal(zoomed.hidden.get("group:A"), 12 - of(zoomed, "A").length, "its count shrinks by what it drew");
+  assert.deepEqual(ids(budgeted(model, LAPTOP, undefined, 0.8, "group:A").model, "task"), ids(overview.model, "task"),
+    "at the overview scale and below the whole window is the chart, and no group is favoured");
+});
+
 test("ungrouped work competes like any other, and one waiting on the person comes before fresher work", () => {
   // Someone who has never grouped anything has only ungrouped cards. Exempting them meant nothing
   // was ever cut for that person — and, watched, nineteen closed ones left every group bare.
