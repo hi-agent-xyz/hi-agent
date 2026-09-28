@@ -100,11 +100,13 @@ const MIN_SCALE = 0.6;
  * Pure, and exported, because it is the whole of the policy and the only part worth
  * testing without a browser.
  *
- * **`width` is the slot's, not the window's**, and the difference is not academic: with
- * the panel open beside a view the slot is 432 of an 852px landscape phone. Measured on a
- * live instance, an earlier version of this took the window's width and scaled a
- * half-width slot by the whole window's factor, so the view was told 649 rather than
- * either number meaning anything.
+ * **`width` is the slot's, not the window's.** They are the same number while the panel
+ * floats over the view rather than pushing it (`docs/arch/stage.md` § *The middle stop
+ * floats*); the slot is still what is measured, because it is the box the view is laid
+ * out in and the window is only usually its size. Measured on a live instance when the
+ * panel did push, an earlier version took the window's width and scaled a half-width
+ * slot by the whole window's factor, so the view was told 649 rather than either number
+ * meaning anything.
  *
  * **Coarse** is the other condition, and it keeps the pointer out of it: a desktop window
  * dragged narrow is a choice its owner can undo, while a phone's width is the device.
@@ -160,9 +162,8 @@ export function installShape(): void {
  *
  * **On the slot and not on `<html>`, because the question is about the slot.** The two
  * flags above are facts about the device and belong to the document; this one is a fact
- * about one box, and the box is not the window — the panel takes 420 of an 852px
- * landscape phone. A `resize` listener would miss that entirely: the window does not
- * change when the panel opens.
+ * about one box, and the box is not necessarily the window. A `resize` listener would
+ * answer the window's question instead.
  *
  * `ResizeObserver` rather than a media query for the same reason, and it covers the
  * rotation and the window drag for free, since both reach the slot as a resize.

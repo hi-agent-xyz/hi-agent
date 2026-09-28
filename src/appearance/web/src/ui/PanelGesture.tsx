@@ -4,7 +4,6 @@ import {
   advance,
   fills,
   leftOf,
-  pushes,
   reach,
   retreat,
   rolled,
@@ -42,7 +41,7 @@ import type { Shape } from "../lib/shape";
  * *This replaced a pair of strips nailed to the window's own two edges — the right
  * one advancing a stop, the left one retreating. The pair was the whole mental
  * model and it was wrong in exactly one place, which happens to be the desktop's
- * resting arrangement: with the panel beside the view, the thing a hand reaches
+ * resting arrangement: with the panel over the view's right-hand side, the thing a hand reaches
  * for is the boundary it can see, not the far edge of the window. The seam is that
  * boundary, and at the other two stops it lands precisely where each of the old
  * strips already was. It also gives back the twenty points the pair charged for at
@@ -97,7 +96,7 @@ import type { Shape } from "../lib/shape";
  *
  * **What momentum cannot do is carry the panel somewhere nobody asked for.** A run
  * moves the edge to the neighbouring stop and not one pixel further (`reach`), so a
- * hard flick out of the room comes to rest beside the view rather than over it and
+ * hard flick out of the room comes to rest at the middle stop rather than across the whole window and
  * the surplus is absorbed against the detent. That is the touch flick's *one throw
  * is one step*, enforced as a range because here it has to hold against travel the
  * hand did not make. The pointer is not clamped this way and should not be: every
@@ -147,16 +146,10 @@ import type { Shape } from "../lib/shape";
  * the stop at the moment of release, so the content re-lays once, while the box is
  * already on its way.
  *
- * **The content does not reflow under the hand, and the edge is a window onto it
- * too.** The view plane's inset is keyed on the committed stop, so a panel pulled
- * *in* slides over the board and the board re-lays once, on release. A panel pulled
- * back *out* from the middle stop is the other way round: it uncovers the board, and
- * a board still at its inset width would leave bare paper between its edge and the
- * panel's for the whole of the drag — measured at 400px on a seam drag and 252px on
- * a trackpad swipe. So the moment the edge passes the board's, the board takes the
- * width it is being revealed at (`data-revealing`) and re-lays once, behind the
- * glass. A compiled board re-flowing sixty times a second is the one cost of pushing
- * that would have made pushing not worth it, and this is still once a gesture.
+ * **The board under the panel is not touched by any of this.** The panel floats
+ * over the view at every stop and never insets it (`docs/arch/stage.md` § *The
+ * middle stop floats*), so a gesture covers and uncovers a board that keeps its
+ * width throughout.
  */
 
 /** How long a settle takes. Named here because both ends need it — the stylesheet
@@ -269,7 +262,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
   };
 
   /** Put the edge here, and remember how fast it got there. */
-  const moveTo = (box: HTMLElement, left: number, at: number, floor = 0, ceiling = Infinity) => {
+  const moveTo = (left: number, at: number, floor = 0, ceiling = Infinity) => {
     const state = drag.current;
     if (!state) return;
     const next = Math.min(Math.max(Math.max(0, floor), left), Math.min(state.width, ceiling));
@@ -278,21 +271,17 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     state.left = next;
     state.lastT = at;
     for (const rider of state.riders) rider.style.setProperty("--hi-panel-left", `${next}px`);
-    // Past the board's own edge, the panel is uncovering the board rather than
-    // covering it. Once a gesture: pulled back in again, it stays revealed until the
-    // release says where it lands.
-    if (pushes(state.from) && next > state.startLeft) box.setAttribute("data-revealing", "");
   };
 
   /**
    * Let go, and land on a stop.
    *
-   * **React is told immediately, not when the animation is over.** The view plane's
-   * inset is keyed on the committed stop, so every millisecond between the panel
-   * setting off and `onStop` being called is a millisecond the board sits at its old
-   * width while the panel slides over it — and it showed: measured from the room on
-   * a trackpad, the panel reached its stop at 399ms and the board did not begin
-   * giving up its width until 2282ms.
+   * **React is told immediately, not when the animation is over.** The panel's
+   * measure and its float off the window's edges are keyed on the committed stop, so
+   * every millisecond between the panel setting off and `onStop` being called is a
+   * millisecond the box travels at the shape of the stop it is leaving. Measured from
+   * the room on a trackpad when the view was still pushed, the panel reached its stop
+   * at 399ms and the stop was not committed until 2282ms.
    *
    * **And told synchronously, so the gesture's own values go in the same breath.**
    * The settle used to be written inline as a target in px and cleared on a
@@ -300,10 +289,9 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
    * target from the stop's. It could: the transition starts at the next style pass,
    * a frame or more after the write, so the timer fired before it had finished and
    * clearing the target started a fresh quarter-second from wherever it had got to.
-   * The panel's tail trailed the board's, and the seam opened. With the stop committed
-   * inside `flushSync`, `data-stop` and the removal of every value the gesture wrote
-   * land in one style change, so the panel's `left` and the board's one step of
-   * `right` are timed from the same frame.
+   * With the stop committed inside `flushSync`, `data-stop` and the removal of every
+   * value the gesture wrote land in one style change, so everything the settle moves
+   * is timed from the same frame.
    *
    * The timer that remains is a guard and nothing else: a gesture gripped mid-settle
    * would start from the stop's resting position, not from where the box is drawn.
@@ -324,9 +312,8 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     }
     // Where the gesture put the edge gives way to where the stop puts it — or, for a
     // hand that changed its mind, back to where it began — animated by the transition
-    // the gesture switched off. A board that was being revealed is told the same stop.
+    // the gesture switched off.
     for (const rider of state.riders) rider.style.removeProperty("--hi-panel-left");
-    box.removeAttribute("data-revealing");
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLSpanElement>) => {
@@ -357,7 +344,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
     // Pixel for pixel: the edge goes where it was, plus however far the hand has
     // moved since it took hold.
     state.travelled = Math.max(state.travelled, Math.abs(event.clientX - state.startX));
-    moveTo(box, state.startLeft + (event.clientX - state.startX), event.timeStamp);
+    moveTo(state.startLeft + (event.clientX - state.startX), event.timeStamp);
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLSpanElement>) => {
@@ -469,7 +456,7 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
       // Scrolling right is fingers moving left, which is the direction the same
       // hand would drag the edge — so the edge moves against the roll.
       const [floor, ceiling] = reach(state.from, live.current.shape, state.width, state.panelW);
-      moveTo(box, state.left - x, event.timeStamp, floor, ceiling);
+      moveTo(state.left - x, event.timeStamp, floor, ceiling);
 
       // **The edge has run out of reach, so this swipe is already decided** — land it
       // now instead of sitting on it until the momentum dies. Waiting for silence is
@@ -539,8 +526,8 @@ function beneath(event: WheelEvent, root: HTMLElement): Beneath {
     if (node.scrollWidth <= node.clientWidth) continue;
     const across = getComputedStyle(node).overflowX;
     if (across !== "auto" && across !== "scroll") continue;
-    // The room is the view plane: the whole window at `room`, the board's share of it
-    // at `panel`. A scroller in the panel is never the room.
+    // The room is the view plane, which is the whole window at every stop. A scroller
+    // in the panel is never the room.
     const room = node.closest(".hi-plane--view");
     return room && fills(node.getBoundingClientRect(), room.getBoundingClientRect())
       ? "room"

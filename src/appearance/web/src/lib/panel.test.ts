@@ -11,7 +11,6 @@ import {
   leftOf,
   measureOf,
   opened,
-  pushes,
   reach,
   retreat,
   rolled,
@@ -71,13 +70,6 @@ describe("the axis", () => {
     expect(depth("wide", "full")).toBe(2);
   });
 
-  it("pushes the view only at the middle stop", () => {
-    // `full` covers rather than insets, so a view asked to reflow to zero width
-    // is a bug, not a stop.
-    expect(pushes("panel")).toBe(true);
-    expect(pushes("full")).toBe(false);
-    expect(pushes("room")).toBe(false);
-  });
 });
 
 describe("where a stop puts the panel's left edge", () => {
@@ -265,14 +257,11 @@ describe("the edge the gesture begins on", () => {
   });
 });
 
-// The panel is pulled back out from the middle stop over a board that is still at its
-// inset width. Unless the inset gives way while the board is being revealed, the seam
-// tears into two edges with bare paper between them for the length of the drag.
-describe("the board under a retreating panel", () => {
-  it("drops its inset while the edge is revealing it", () => {
-    const rule = CSS.match(/^\.hi-root\[data-stop="panel"\][^{]*\.hi-plane--view \{[^}]*\}/m)?.[0] ?? "";
-    expect(rule, "the middle stop insets the view plane").toContain("right: var(--hi-panel-width)");
-    expect(rule).toContain(':not([data-revealing])');
+// The middle stop floats over the view. An inset on the view plane is the push it
+// replaced, and it would re-lay a board every time the person opened the panel.
+describe("the view under the panel", () => {
+  it("is never inset by it", () => {
+    expect(CSS).not.toMatch(/\.hi-plane--view \{[^}]*right:/);
   });
 });
 

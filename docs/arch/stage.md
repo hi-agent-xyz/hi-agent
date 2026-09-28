@@ -294,7 +294,7 @@ trackpad's swipe.
 | Stop | The view gets | The panel is |
 |---|---|---|
 | `room` | the whole frame | off-screen |
-| `panel` | the frame minus the panel's measure, **reflowed** | ~420px against the right edge |
+| `panel` | the whole frame, **partly covered** | a ~420px card floating 12px off the right edge |
 | `full` | nothing | the whole frame |
 
 **Not every shape has every stop.** A 390px screen cannot be split into two usable columns —
@@ -394,6 +394,9 @@ is what replaced it.*
 ### The seam is one line under a hand too
 
 *September 17, 2026.*
+
+*September 28: the board half of this — the inset, `data-revealing` — is deleted with the push
+(*The middle stop floats*). The atomic handover still stands.*
 
 The section above made the seam one line **while settling**. It was two lines for as long as a
 hand was pulling the panel back out from the middle stop, and that is the gesture closing the
@@ -525,6 +528,9 @@ which the tabs were not, each in its own direction.
   the tab to compare what is up with what was is still the common reason to open it.
 ### Why the rail is allowed back at the middle stop
 
+*September 28: it is not. The middle stop floats — see the next section. This one is kept
+for the argument it lost on.*
+
 At `panel` the view plane insets and the content reflows into what is left. That is the rail,
 which [The popover](#the-popover) killed on August 17 — so the reversal has to answer that
 section, not step around it.
@@ -550,6 +556,38 @@ will scroll. This is payable because it is the person's own action and because `
 more stop away when they would rather have the panel whole — but it is a cost, not a wash, and
 the fix if it bites is composing views for a narrower frame, never a host that refuses to
 push.
+
+### The middle stop floats
+
+*September 28, 2026.* **At `panel` the panel is a card floating over the view — 12px off the
+window's top, right and bottom, rounded and lifted — and the view keeps the whole frame. No
+stop insets the view plane.** On a phone, which has no middle stop, the panel is a page at
+every stop it has; the gap is zero there and the card's corners and lift are not drawn.
+
+The section above defended the push on *who fires it*: the person pulls the panel in, so the
+person chose the reflow. That answers whether the reflow is legitimate, not whether it is
+wanted, and from the desktop it was not: opening the panel to type a line re-laid whatever
+the agent had up — a mind map, a board — around a column the person had not asked to give
+it. **The person asked for the panel, not for a different view.** A card over the right-hand
+side costs what it covers and nothing else; the view underneath is the one it was composed
+for, and it is exactly where it was when the panel goes away.
+
+What went with the push, deleted rather than kept for a stop that no longer needs it:
+
+- the view plane's `right: var(--hi-panel-width)` at `panel`, and the step timing it needed;
+- `data-revealing` and `pushes()`, which existed only to hand a board back its width while
+  the panel was being pulled off it (*The seam is one line under a hand too*);
+- the claim in *Accepted, as costs* that a view reflows when the panel opens.
+
+`--hi-panel-width` is now the panel's **footprint** — the card plus the gap on its right —
+so the gesture's arithmetic (`leftOf`, `settle`, `reach`) is unchanged: it still moves one
+edge between three positions. The card is the aside itself, with its float as `top`,
+`right` and `bottom`; the measure box inside it is still pinned right and still what a drag
+reveals.
+
+**The cost, stated:** at `panel` the right ~432px of a view is behind the card. A view that
+puts something the person needs in that band has to be scrolled, or the panel put away —
+the same trade the popover made, and the reason `full` and `room` are each one step off.
 
 ### The room keeps one button
 
@@ -776,7 +814,8 @@ idiom, so it still boots to the room.
   (*The room keeps one button*).
 - **The room's bottom-right corner is the button's.** A view that holds content clear of
   `--hi-chrome-bottom` loses nothing; one that paints to the edge has a disc over its corner.
-- **A view reflows when the person pulls the panel to the middle stop.** Above.
+- ~~**A view reflows when the person pulls the panel to the middle stop.**~~ It floats
+  instead (*The middle stop floats*); what it costs now is the band it covers.
 - **Turning the mic on is two acts, not one.** The tax [The phone stacks pages](#the-phone-stacks-pages)
   refused to pay, paid. Whether it is *on* is no longer hidden: the button wears the ring.
 - **A tap in twenty points either side of the panel's left edge may do nothing but move the
@@ -800,12 +839,9 @@ idiom, so it still boots to the room.
   waits ~120ms before it snaps. A swipe that reaches the detent does not wait at all — see
   *The settle is where the stop is committed*, which is where the old version of this bullet
   said the beat cost nothing and was wrong.
-- **Pulling the panel back out from `panel` re-lays the board when the gesture starts, not
-  when it ends, and twice if the hand brings the panel back.** *The seam is one line under a
-  hand too* above.
-- **The board does not glide to its new width.** It changes in one step per settle, behind the
-  panel on the side that changes; the side that can be seen re-lays in a single frame — at the
-  start when it widens, at the end when it narrows. *What a frame of the axis costs* above.
+- ~~**Pulling the panel back out from `panel` re-lays the board when the gesture starts.**~~
+  ~~**The board does not glide to its new width.**~~ Both were costs of the push, and nothing
+  re-lays the board now (*The middle stop floats*).
 
 ### Open
 

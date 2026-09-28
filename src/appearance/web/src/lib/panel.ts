@@ -83,12 +83,6 @@ export function depth(shape: Shape, at: Stop): number {
   return stops(shape).indexOf(at);
 }
 
-/** Whether the view plane has to give up width at this stop. `full` does not
- * inset the view — it covers it — so only the middle stop pushes. */
-export function pushes(at: Stop): boolean {
-  return at === "panel";
-}
-
 // --- The gesture's arithmetic ------------------------------------------
 //
 // Kept here rather than in `ui/PanelGesture.tsx` so the rules can be tested at a
@@ -130,6 +124,11 @@ export function leftOf(stop: Stop, width: number, panelW: number): number {
  * The room borrows the measure of the stop it opens to, so pulling the panel in
  * changes no width at all: on a window that is the sidebar's, on a phone the
  * screen's.
+ *
+ * `panelW` here and in `leftOf` is the panel's **footprint** at the middle stop —
+ * the card and the gap it floats off the window's right-hand edge by
+ * (`--hi-panel-width` in `global.css`) — so the arithmetic is the same whether the
+ * box stands against the edge or floats a few points in from it.
  */
 export function measureOf(stop: Stop, shape: Shape, width: number, panelW: number): number {
   const at = stop === "room" ? opened(shape) : stop;
@@ -276,8 +275,8 @@ export function fills(scroller: Box, room: Box): boolean {
  * make. Momentum keeps delivering frames after the fingers have lifted, and there
  * is no honest way to tell those frames from the ones the hand drove — so rather
  * than guess, the edge is simply stopped where the person could have meant to stop
- * it. A hard flick out of the room comes to rest beside the view instead of
- * carrying on over it, and the extra momentum is absorbed against the detent
+ * it. A hard flick out of the room comes to rest at the middle stop instead of
+ * carrying on across the whole window, and the extra momentum is absorbed against the detent
  * rather than acted on.
  *
  * **The pointer is deliberately not clamped this way.** A finger or a mouse on the

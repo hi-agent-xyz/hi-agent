@@ -53,7 +53,8 @@ interface PanelProps {
  *
  * **Two boxes, because the panel has two measures and only one of them is where
  * it is.** The `aside` is the window — it starts at the panel's left edge and runs
- * to the right-hand side of the screen, and a drag moves that edge pixel by pixel.
+ * to the right-hand side of the screen — or, at the middle stop, to the gap the card
+ * floats off it by — and a drag moves that edge pixel by pixel.
  * The box inside it is laid out at the measure of the stop and is pinned to the
  * right, so a drag *reveals* the panel rather than re-laying it: a conversation
  * being pulled in does not re-wrap every line on the way (`lib/panel.ts`

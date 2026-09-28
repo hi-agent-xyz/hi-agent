@@ -98,7 +98,7 @@ export function Shell() {
 
   // Rotating a phone into landscape makes it `wide`, which has a stop the phone
   // does not — and being at `full` on a shape that no longer offers it would leave
-  // the panel covering a window it should be sitting beside. Re-seat rather than
+  // the panel covering a window it should be floating over one side of. Re-seat rather than
   // re-seed: the person's position on the axis is kept as closely as the new shape
   // allows, so a panel that was open stays open.
   const shapeRef = useRef(shape);
@@ -327,8 +327,8 @@ export function Shell() {
           tab={tab}
           onTab={setTab}
           // Choosing a view moves the screen. If the panel is covering that screen,
-          // step it back so the person can see what they picked; if it is sitting
-          // beside it, they already can.
+          // step it back so the person can see what they picked; if it is a card over
+          // one side of it, they already can.
           onChose={() => setStop((at) => (at === "full" ? retreat(shape, at) : at))}
           onClose={shape === "tv" ? undefined : () => setStop("room")}
           {...channels}

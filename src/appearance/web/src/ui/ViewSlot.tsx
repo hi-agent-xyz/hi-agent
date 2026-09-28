@@ -120,9 +120,8 @@ export const ViewSlot = memo(function ViewSlot() {
 /**
  * One layer, holding the size question for the view inside it.
  *
- * The layer measures itself rather than the window, because the two are different
- * numbers whenever the panel is open beside it — 432 of an 852px landscape phone — and
- * it is the layer the view is laid out in. See [`watchViewZoom`].
+ * The layer measures itself rather than the window, because it is the layer the view
+ * is laid out in, and the window is only usually its size. See [`watchViewZoom`].
  */
 function ViewLayer({ moduleUrl }: { moduleUrl: string }) {
   const attach = useCallback((node: HTMLDivElement | null) => {

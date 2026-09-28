@@ -437,7 +437,9 @@ button,
   user-select: none;
 }
 
-/* The panel's measure at the middle stop, declared so it can be *read*.
+/* How far in from the window's right-hand side the panel's left edge stands at the
+   middle stop — the card and the gap it floats off the edge by — declared so it can
+   be *read*.
    `ui/PanelGesture.tsx` needs this number in pixels to work out where a stop puts the
    panel's left edge, and an unregistered custom property's computed value is the
    token stream it was written as — `getPropertyValue` hands back the literal
@@ -452,7 +454,7 @@ button,
 @property --hi-panel-width {
   syntax: "<length>";
   inherits: true;
-  initial-value: 420px;
+  initial-value: 432px;
 }
 
 /* Where the panel's left edge is, which is the whole of where the panel is. Every
@@ -510,19 +512,30 @@ button,
   --z-view: 1;
   --z-cover: 2;
 
-  /* The panel's measure at the middle stop — a readable line, never a column of
+  /* The panel's card at the middle stop — a readable line, never a column of
      two-word wraps, and it gives way to the window on anything small enough that a
-     fixed 420px would run off the edge. Read by the stylesheet for geometry and by
+     fixed 420px would run off the edge. */
+  --hi-panel-card: min(420px, calc(100vw - 40px));
+
+  /* How far the card floats off the window's edges at the middle stop. It floats
+     rather than standing against the edge because it is *over* the view, not beside
+     it: the view keeps the whole frame at every stop and is never reflowed by the
+     panel (`docs/arch/stage.md` § *The middle stop floats*). A phone has no middle
+     stop and sets this to nothing. */
+  --hi-panel-gap: 12px;
+
+  /* The card and the gap on its right, as one number: where the middle stop puts the
+     panel's left edge. Read by the stylesheet for geometry and by
      `ui/PanelGesture.tsx` for the drag's arithmetic, which is why it is a token and not
      a literal in one rule. */
-  --hi-panel-width: min(420px, calc(100vw - 40px));
+  --hi-panel-width: calc(var(--hi-panel-card) + var(--hi-panel-gap));
 
   /* How wide the box behind that edge is laid out — **two values and never a
      third**, the sidebar's measure or the screen's (`lib/panel.ts` § `measureOf`).
      The edge moves under a finger and this does not, so a drag reveals the panel
      instead of re-wrapping every line in it on the way in. It changes once a
      gesture, at the moment of release, with the stop the position is settling to. */
-  --hi-panel-measure: var(--hi-panel-width);
+  --hi-panel-measure: var(--hi-panel-card);
 
   /* A readable measure for anything the panel is asked to show across a whole
      window: the conversation's column at the `full` stop is this wide and centred,
@@ -541,7 +554,7 @@ button,
 }
 
 .hi-root[data-stop="panel"] {
-  --hi-panel-measure: var(--hi-panel-width);
+  --hi-panel-measure: var(--hi-panel-card);
 }
 
 .hi-root[data-stop="panel"] [data-rides-edge] {
@@ -563,6 +576,11 @@ button,
    said in the only place the stylesheet knows the shape. */
 :root[data-shape="phone"] .hi-root[data-stop="room"] {
   --hi-panel-measure: 100vw;
+}
+
+/* A phone's panel is a page, never a card: it has no middle stop to float at. */
+:root[data-shape="phone"] .hi-root {
+  --hi-panel-gap: 0px;
 }
 
 /* While a finger has the edge. The transitions are off so the panel and the strip
@@ -588,41 +606,12 @@ button,
   z-index: var(--z-ground);
 }
 
-/* The agent's plane, and the one rule that makes the middle stop a *push* rather
-   than an overlay: the view gives up the panel's measure and reflows into what is
-   left. Keyed on the committed stop — never on where the drag has the edge — because
-   a compiled board re-laying itself sixty times a second under a moving finger is the
-   one cost of pushing that would have made pushing not worth it.
-
-   **The one thing a drag may do to it is reveal it, once.** A panel pulled in slides
-   over the view, and the view re-flows when the stop lands. A panel pulled back out
-   from this stop uncovers the view instead, and a view held at its inset width left
-   bare paper between its edge and the panel's for as long as the hand was moving —
-   the seam, which is one line at rest, torn into two. So once the edge has passed
-   the view's own, `data-revealing` hands the view the whole frame behind the glass
-   (`ui/PanelGesture.tsx`); it re-flows then instead of on release, and the release
-   takes the attribute away in the same style change that tells it the stop.
-
-   **And a settle re-flows it once too, which is why its width does not animate.** It
-   used to: `right` ran on the panel's quarter-second, and a moving `right` is a board
-   laid out afresh on every frame of it — 31ms a frame in WebKit with a report up
-   (0.1ms in Chromium), so every open, close and release played at about thirty frames
-   with the panel dragged down alongside it. The width changes in one step instead, at
-   the one moment in each direction when the panel is standing over the part that
-   changes. Widening lands at once, before the panel has uncovered anything — the same
-   thing the reveal does under a hand. Narrowing waits out the quarter-second
-   (`step-end`), while the panel slides in over a board that still has its width, and
-   lands when the panel has arrived.
-
-   `full` does not inset: it covers. A view asked to reflow to zero width is a bug,
-   not a stop. */
+/* The agent's plane. **It is never inset by the panel, at any stop**: the middle
+   stop floats a card over the view rather than pushing it narrower, so a view is laid
+   out for the frame it was composed for and is not re-laid because the person opened
+   the panel (`docs/arch/stage.md` § *The middle stop floats*). `full` covers it. */
 .hi-plane--view {
   z-index: var(--z-view);
-}
-
-.hi-root[data-stop="panel"]:not([data-revealing]) .hi-plane--view {
-  right: var(--hi-panel-width);
-  transition: right 260ms step-end;
 }
 
 /* The person's plane is transparent to the pointer as a whole; each surface on it
@@ -687,22 +676,34 @@ button,
    scroller keep its position and its already-fetched scrollback across every open
    and close.
 
+   At the middle stop it is a card floating `--hi-panel-gap` off the window's top,
+   right and bottom, over the view rather than beside it. At `full` it is the window,
+   edge to edge; on a phone the gap is nothing, so it is a page at every stop.
+
    No z-index: it sits on the `cover` plane, after the camera and before the edge
    strips in DOM order, which is all the ordering it has ever needed. */
 .hi-panel {
   position: absolute;
   left: var(--hi-panel-left);
-  top: 0;
-  bottom: 0;
-  right: 0;
+  top: var(--hi-panel-gap);
+  bottom: var(--hi-panel-gap);
+  right: var(--hi-panel-gap);
   pointer-events: auto;
   overflow: hidden;
-  border-left: 1px solid var(--host-surface-border);
+  border: 1px solid var(--host-surface-border);
+  border-radius: 16px;
   background: var(--host-surface-strong);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  box-shadow: -18px 0 60px var(--host-shadow-strong);
-  transition: left 260ms var(--host-ease);
+  box-shadow: 0 1px 3px var(--host-shadow), 0 18px 60px var(--host-shadow-strong);
+  transition: left 260ms var(--host-ease), top 260ms var(--host-ease),
+    right 260ms var(--host-ease), bottom 260ms var(--host-ease),
+    border-radius 260ms var(--host-ease), box-shadow 260ms var(--host-ease);
+}
+
+/* Off the side of the window, the lift would still fall across its right-hand edge. */
+.hi-panel[data-stop="room"] {
+  box-shadow: none;
 }
 
 /* Everything in the panel, laid out at the measure of the stop rather than at
@@ -730,9 +731,15 @@ button,
 }
 
 /* At the full stop it is the window, so the seam and the lift have nothing to sit
-   against and only draw a line down the middle of the screen. */
-.hi-panel[data-stop="full"] {
-  border-left-color: transparent;
+   against and only draw a line down the middle of the screen. A phone's panel is
+   this at every stop it has. */
+.hi-panel[data-stop="full"],
+:root[data-shape="phone"] .hi-panel {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-color: transparent;
+  border-radius: 0;
   box-shadow: none;
 }
 
@@ -747,8 +754,14 @@ button,
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  padding-top: max(10px, var(--hi-safe-top));
+  /* The card already stands the gap below the window's top, so the titlebar strip
+     is owed only what the gap has not cleared. */
+  padding-top: max(10px, calc(var(--hi-safe-top) - var(--hi-panel-gap)));
   border-bottom: 1px solid var(--host-line);
+}
+
+.hi-panel[data-stop="full"] .hi-panel-head {
+  padding-top: max(10px, var(--hi-safe-top));
 }
 
 .hi-panel-tabs {
@@ -1335,7 +1348,7 @@ button,
 
 /* **A room too small to lay a view out in is told a bigger number and drawn to fit.**
    `lib/shape.ts` decides when and by how much, measuring *this* box — not the window,
-   which is a different number the moment the panel is open beside it.
+   because the question is about the box the view is laid out in.
 
    It works only because of the container above. `zoom` is a layout scale, so the slot
    really does become `--hi-view-target` CSS pixels wide and a container query really
@@ -1647,9 +1660,10 @@ button,
    corner, as short as its two rows allowed because it was opened to compare what
    was up with something that was — and a tall sheet would have covered the very
    thing being compared. The axis answers that now instead of the height does: at
-   the middle stop the panel sits *beside* what it is being compared against
-   (`docs/arch/stage.md` § *The panel, and the axis it runs on*), so the tab can
-   have the panel's whole body and still cover nothing.
+   the middle stop the panel is a card over the right-hand side of the window and
+   leaves the rest of what it is being compared against in view
+   (`docs/arch/stage.md` § *The middle stop floats*), so the tab can have the
+   panel's whole body.
 
    So it draws no box of its own — no float, no corner, no surface, no lift. The
    panel is the box; this is what is in it.
@@ -2056,6 +2070,11 @@ button,
    and the whole panel shrinks — the tail of the conversation stays readable above
    the keys rather than only the line clearing them. */
 .hi-panel {
+  bottom: calc(var(--hi-panel-gap) + var(--hi-keyboard, 0px));
+}
+
+.hi-panel[data-stop="full"],
+:root[data-shape="phone"] .hi-panel {
   bottom: var(--hi-keyboard, 0px);
 }
 
@@ -2076,8 +2095,8 @@ button,
    screen**: the window's right-hand side at `room`, the seam between the view and
    the panel at `panel`, the window's left-hand side at `full`. Two of those are
    exactly where a nailed-down pair of strips used to be; the third is the one that
-   was wrong, and it is the desktop's resting arrangement — with the panel beside
-   the view, a hand goes for the boundary it can see, not the far edge of the
+   was wrong, and it is the desktop's resting arrangement — with the panel over
+   the view's right-hand side, a hand goes for the boundary it can see, not the far edge of the
    window.
 
    `clamp` keeps the whole strip on screen where the edge is the screen's own: at
@@ -2257,6 +2276,26 @@ button,
   width: 44px;
   height: 44px;
   margin-right: -10px;
+}
+
+/* A phone's head is two rows. On one, the tabs, four 44px discs and the close button
+   come to about 430px, and a portrait phone is 375–430: the close button, last in the
+   row, was the part clipped off, so the panel had no way out drawn on screen. The
+   tabs and the way out share the first row; the discs take the second, whole. */
+:root[data-shape="phone"] .hi-panel-head {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+:root[data-shape="phone"] .hi-panel-close {
+  order: 1;
+  margin-left: auto;
+}
+
+:root[data-shape="phone"] .hi-panel-head .hi-channels {
+  order: 2;
+  flex-basis: 100%;
+  margin-left: 0;
 }
 
 /* --- The views tab, with the panel across the whole window --------------
