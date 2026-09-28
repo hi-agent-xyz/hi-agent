@@ -331,6 +331,9 @@ export function Shell() {
           // one side of it, they already can.
           onChose={() => setStop((at) => (at === "full" ? retreat(shape, at) : at))}
           onClose={shape === "tv" ? undefined : () => setStop("room")}
+          onToggleFull={
+            shape === "wide" ? () => setStop((at) => (at === "full" ? "panel" : "full")) : undefined
+          }
           {...channels}
         >
           <Chat

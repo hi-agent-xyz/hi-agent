@@ -30,6 +30,9 @@ interface PanelProps {
   /** Put the panel away. Absent on the television, whose remote has a Back button
    * for exactly this and no pointer to press one on screen with. */
   onClose?: () => void;
+  /** Between the card and the whole window. Only where both exist — a wide screen;
+   * a phone's panel is already the whole screen and a television has no `full`. */
+  onToggleFull?: () => void;
 }
 
 /**
@@ -73,7 +76,16 @@ interface PanelProps {
  * up, so leaving the tab should genuinely stop it — mounting it with the tab is
  * the honest way to say that.
  */
-export function Panel({ stop, tab, onTab, children, onChose, onClose, ...channels }: PanelProps) {
+export function Panel({
+  stop,
+  tab,
+  onTab,
+  children,
+  onChose,
+  onClose,
+  onToggleFull,
+  ...channels
+}: PanelProps) {
   return (
     <aside
       className="hi-panel"
@@ -111,6 +123,31 @@ export function Panel({ stop, tab, onTab, children, onChose, onClose, ...channel
             </button>
           </div>
           <ChannelControls {...channels} />
+          {onToggleFull && (
+            // A card's other window control. Dragging its left edge still reaches
+            // `full`, but a mouse should not have to find an edge to get there.
+            <button
+              type="button"
+              className="hi-panel-close hi-panel-full"
+              onClick={onToggleFull}
+              title={stop === "full" ? "back to the card" : "fill the window"}
+              aria-label={stop === "full" ? "shrink the panel" : "expand the panel"}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+                <path
+                  d={
+                    stop === "full"
+                      ? "M10 4v6H4M14 20v-6h6M10 10L4 4M14 14l6 6"
+                      : "M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6"
+                  }
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
           {onClose && (
             // The way out, drawn. The panel's way in is a button, so the way back is
             // one too: an edge was the only exit on a phone, and on Android both of

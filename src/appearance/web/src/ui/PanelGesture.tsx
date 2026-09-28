@@ -299,15 +299,28 @@ export function PanelGesture({ shape, stop, onStop, root }: PanelGestureProps) {
   const land = (box: HTMLElement, next: Stop) => {
     const state = drag.current;
     drag.current = null;
+    // Landing in the room, the card fades out from where the hand left it rather than
+    // drifting back to its resting spot first (`global.css` § the room's card). How far
+    // right of the middle stop's position that is; zero on a phone, which has no card.
+    const away = state && next === "room" ? Math.max(0, state.left - (state.width - state.panelW)) : 0;
+    if (state && away > 0) {
+      for (const rider of state.riders) rider.style.setProperty("--hi-panel-away", `${away}px`);
+    }
     box.removeAttribute("data-dragging");
     if (!state) return;
 
     if (next !== state.from) {
       const { onStop: go } = live.current;
       flushSync(() => go(next));
+    }
+    // The guard below, and the moment the fade is over and the card can go back to
+    // resting where it opens from.
+    if (next !== state.from || away > 0) {
+      const riders = state.riders;
       if (settling.current) clearTimeout(settling.current);
       settling.current = setTimeout(() => {
         settling.current = null;
+        for (const rider of riders) rider.style.removeProperty("--hi-panel-away");
       }, PANEL_MS);
     }
     // Where the gesture put the edge gives way to where the stop puts it — or, for a

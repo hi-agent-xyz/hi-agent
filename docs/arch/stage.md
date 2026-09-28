@@ -589,6 +589,30 @@ reveals.
 puts something the person needs in that band has to be scrolled, or the panel put away —
 the same trade the popover made, and the reason `full` and `room` are each one step off.
 
+### The card appears; it does not slide in
+
+*September 28, 2026.* Floating the middle stop changed what the panel *is* on a wide screen,
+and three of its behaviours were still a drawer's: it slid in from off the window's edge, the
+close button sent it back off that edge, and dragging its left edge right clipped it away a
+strip at a time. A card that lives where it is drawn does none of those.
+
+- **Opening and closing are a fade and a 4% scale, anchored at the bottom-right corner** —
+  the launcher's corner, so the card comes out of the button and goes back into it. 220ms in,
+  160ms out; the edge does not move at all. This is the resting `room` on a wide screen:
+  the card at the middle stop's position, transparent and `visibility: hidden`.
+- **Under a hand, the edge is read two ways.** Left of the middle stop's position it is the
+  card's left edge, so dragging toward `full` grows the card from its right-hand side, as
+  before. Right of it the card keeps its size and is carried by `transform`, so pulling it
+  right throws the whole card away and a trackpad swipe from the room brings the whole card
+  in. A gesture that lands in the room fades the card out from where the hand let go
+  (`--hi-panel-away`) instead of letting it drift back to its resting spot first.
+- **The head carries a fill/shrink toggle beside ×**, the card's other window control. The
+  seam drag still reaches `full`; the toggle means a mouse does not have to find it.
+
+`lib/panel.ts` is untouched: stops, `leftOf`, `settle` and `reach` are the same numbers,
+and only the stylesheet's reading of the edge changed. A phone keeps the page: it has no
+card, its panel slides as it did, and none of the above applies.
+
 ### The room keeps one button
 
 *September 25, 2026.* **The room's way in is a round button in its bottom-right corner, and
@@ -827,8 +851,8 @@ idiom, so it still boots to the room.
   way** (*September 17*): pointer capture does not stop WebKit reading a press dragged across
   the page as a text selection. Unclaimed, one drag on the edge highlighted 31,508 characters
   across the board and the conversation, while Chromium selected none.
-- **A mouse cannot click its way from `panel` to `full`.** *One handle, and it is the seam*
-  above.
+- ~~**A mouse cannot click its way from `panel` to `full`.**~~ The card's head has a
+  fill/shrink toggle (*The card appears; it does not slide in*).
 - **From the room, a canvas that fills it cannot be panned toward its right-hand side by two
   fingers.** That roll opens the panel. Dragging pans the canvas in every direction, and so
   does a diagonal roll. *Except a scroller that is the room* above.
