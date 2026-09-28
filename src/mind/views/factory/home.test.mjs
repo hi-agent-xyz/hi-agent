@@ -864,6 +864,44 @@ test("zoomed in on a group, that group is filled to the window and the rest keep
     "at the overview scale and below the whole window is the chart, and no group is favoured");
 });
 
+test("zoomed out past its depth, a tall group's cards stand in columns on a tray, hung off one wire", () => {
+  const tasks = [], big = [], small = [];
+  for (let i = 0; i < 30; i++) { tasks.push(task(`big${i}`, "doing", 1 + i)); big.push(`big${i}`); }
+  for (let i = 0; i < 3; i++) { tasks.push(task(`small${i}`, "doing", 40 + i)); small.push(`small${i}`); }
+  const model = project({ tasks, groups: [{ label: "Big", members: big }, { label: "Small", members: small }] });
+  const narrow = budgeted(model, LAPTOP, undefined, 0.8), wide = budgeted(model, LAPTOP, undefined, 0.3);
+  const chart = arrange(wide.model), tray = chart.placed.find((r) => r.node.id === "tray:group:Big");
+  assert.ok(tray, "the tall group stands on a tray");
+  assert.ok(ids(wide.model, "task").length > ids(narrow.model, "task").length + 10,
+    `and draws much more of itself (${ids(narrow.model, "task").length} -> ${ids(wide.model, "task").length})`);
+  assert.ok(chart.width <= LAPTOP.w / 0.3 && chart.height <= LAPTOP.h / 0.3, "still inside the window");
+  const onTray = chart.placed.filter((r) => r.node.id.startsWith("task:big"));
+  for (const r of onTray) assert.ok(r.x >= tray.x && r.x + r.w <= tray.x + tray.w && r.y >= tray.y && r.y + r.h <= tray.y + tray.h, `${r.node.id} is on the tray`);
+  for (const a of onTray) for (const b of onTray) if (a !== b)
+    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, `${a.node.id} and ${b.node.id} do not overlap`);
+  assert.ok(chart.wires.some((w) => w.from === "group:Big" && w.to === "tray:group:Big"), "the group's wire goes to the tray");
+  assert.ok(!chart.wires.some((w) => w.to.startsWith("task:big")), "and not to each card on it");
+});
+
+test("each branch's side is the split that balances the work in hand, and a zoom never moves it", () => {
+  // Record order puts the large group last: taken alternately it landed beside two others.
+  const tasks = [], groups = [];
+  for (const [label, n] of [["A", 3], ["B", 3], ["C", 12]]) {
+    const members = [];
+    for (let i = 0; i < n; i++) { tasks.push(task(`${label}${i}`, "doing", 1 + i)); members.push(`${label}${i}`); }
+    groups.push({ label, members });
+  }
+  const model = project({ tasks, groups });
+  const sideAt = (scale) => {
+    const chart = arrange(budgeted(model, LAPTOP, undefined, scale).model);
+    return Object.fromEntries(["A", "B", "C"].map((g) => [g, chart.placed.find((r) => r.node.id === `group:${g}`).dir]));
+  };
+  const sides = sideAt(0.8);
+  assert.equal(sides.A, sides.B, "the two small groups share a side");
+  assert.notEqual(sides.C, sides.A, "and the large one has the other to itself");
+  for (const scale of [0.6, 0.4, 0.25]) assert.deepEqual(sideAt(scale), sides, `unchanged at ${scale}`);
+});
+
 test("ungrouped work competes like any other, and one waiting on the person comes before fresher work", () => {
   // Someone who has never grouped anything has only ungrouped cards. Exempting them meant nothing
   // was ever cut for that person — and, watched, nineteen closed ones left every group bare.
@@ -946,11 +984,11 @@ test("a group taken as the centre draws everything it holds in hand, at any dept
   assert.equal(inside.hidden.size, 0);
   // Not only the cards hanging off the centre: an inner group's are the branch's too, and they
   // used to have to win room against the window like any other.
-  const nested = project({ tasks: Array.from({ length: 12 }, (_, i) => task(`t${i}`, "doing", 1 + i)),
-    groups: [{ label: "A", members: ["t0", "t1", "t2", "t3", "t4", "t5"],
-      groups: [{ label: "Inner", members: ["t6", "t7", "t8", "t9", "t10", "t11"] }] }] });
+  const t = (from, to) => Array.from({ length: to - from }, (_, i) => `t${from + i}`);
+  const nested = project({ tasks: Array.from({ length: 24 }, (_, i) => task(`t${i}`, "doing", 1 + i)),
+    groups: [{ label: "A", members: t(0, 12), groups: [{ label: "Inner", members: t(12, 24) }] }] });
   const branch = budgeted(focusOn(nested, "group:A"), LAPTOP);
-  assert.equal(ids(branch.model, "task").length, 12);
+  assert.equal(ids(branch.model, "task").length, 24);
   assert.equal(branch.hidden.size, 0);
   // It is the one thing here that may overflow, which is what the overview scale and a scroll
   // are for: the window opens at 0.8 rather than shrinking to whatever the day forces.

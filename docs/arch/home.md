@@ -96,13 +96,37 @@ label and a count, *3 more* / *还有 3 项*, 56px tall, still holding its rank 
 the way to them. Only cards are cut, and only until the drawing is the window's shape at the
 overview scale.
 
-Two other ways of using the width were tried and rejected, both because they changed what the
-chart says rather than how much of it fits:
+**Width the window has to spare is spent on columns, on a tray.** Width is bought by depth, so a
+chart zoomed out past its own depth drew a tall column in a wide window: on a live day at 0.25 it
+was 2436 wide in a room of 6048, and the in-hand cards it put away were all in the one tall group.
+So when the drawing is narrower than the window and cards are still put away, a group's cards
+that have nothing under them stand in columns on a tray — filling a column top to bottom before
+the next, the first column nearest the group — and a column is added to whichever group lowers the
+drawing most, until the width runs out or nothing is left. The core's own such cards stand on a
+tray of their own, one to a side. On that live day at 0.25 it drew 188 of 206 cards, every one in
+hand, in 4904 of the 6048.
 
-- **Packing siblings into blocks.** A run of cards with nothing under them was laid out two to a
-  row, which took one day from 0.39 to 0.57 at whole-chart scale. But a block's second column
-  lands exactly where the next rank sits, and position across the chart is how it says depth:
-  a sibling beside a card reads as one level below it.
+Packing siblings in blocks was tried once before and rejected: a block's second column lands
+exactly where the next rank sits, and position across the chart is how it says depth, so a sibling
+beside a card read as one level below it. **The tray is the answer to that**, and it is why the
+columns are not simply rows of cards: the cards stand on one box, the group's wire goes to the box
+rather than to each card, and the gap between columns is the tray's 12px rather than a rank's
+gutter — so the block reads as one thing hanging off the group. A card with a picture or a session
+under it keeps its place in the tree, where its depth is. **At the overview, pictures have the
+width first** — it is the scale they were fitted for, and a 0.8 chart has no width left over for
+columns; zoomed out, a picture is a thumbnail and the person asked for more of the day, so the
+columns have it first and the pictures what remains.
+
+**Each branch's side is the split that leaves the two closest in height**, weighed on everything
+the branch holds in hand rather than on what one cut draws, so a zoom never moves a branch across
+the core. A branch with nothing in hand weighs nothing in that split and is dealt afterwards to the
+shorter side. Taking branches alternately in the record's order, as before, left a large group that
+came late on the side already holding two others — 1100px taller than the other, seven cards not
+drawn.
+
+One other way of using the width was tried and rejected, because it changed what the chart says
+rather than how much of it fits:
+
 - **Drawing first-level groups alone.** It narrowed the chart to the 1348 it was meant to grow out
   of, and hung inner groups' cards straight off their parent, which is a different tree.
 
@@ -124,10 +148,12 @@ Cards are offered hottest first, each tried against the whole chart laid out afr
    passed over and the next is tried, so the shorter side fills. **History is the tail of this
    pass**: a branch's finished work is drawn in whatever room its live work leaves, which on a
    full day is none, and in a group taken as the centre is most of the window.
-4. **Pictures last, in the width that is left.** A picture spends a rank of width, and the width is
+4. **Pictures, in the width that is left.** A picture spends a rank of width, and the width is
    both sides' at once. Offered with its card, one picture on the right kept a card still in
    progress out of its inner group on the left, and the branch drew one closed eight hours
    before.
+5. **Columns, in whatever width is left after that**, and the cards passed over are offered again
+   into the height they free. Zoomed out, this comes before the pictures (above).
 
 **Heat is a tier and then a time**: waiting on the person, then anybody running on it, then
 open, then closed and in hand, then history — and within a tier, how lately it moved. **The tier
@@ -145,8 +171,12 @@ it.
 **What the fitting loop costs is the window's, not the ledger's.** Every offer lays the whole
 chart out again, and the model can hold hundreds of rows against a window that draws a dozen. So
 the candidates are everything in hand — always, however much of it there is — and then history
-64 deep, which is several times what any window has drawn. On a 211-row instance the whole pass
-costs 19ms against the 16ms it cost when the model held 80 nodes.
+64 deep at the overview, which is several times what that window has drawn, and deeper by the
+room's area when zoomed out. On a 211-row instance the whole pass costs 19ms against the 16ms it
+cost when the model held 80 nodes. Cards are offered in runs that double while they fit and halve
+when not, and once one card under a parent is passed over the rest under it are too — they cost
+the same height in the same place. With columns, a 206-row instance costs about 30ms at the
+overview and 315ms at 0.25, once, when the zoom rests.
 
 **The overview scale is 0.8**, measured against one day's record (22 open cards, nine pictures,
 eight groups, two of them inner) in a 1512×855 window:
@@ -934,8 +964,8 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   with no card under it — is undecided, and the reason it does not today is the same one that
   refuses an empty heading anywhere else.
 - **The order within a side is the record's, but which side is not.** Groups and ungrouped
-  tasks are fed to the layout in the order the record gives, and the two-sided balance then
-  takes them alternately as weight allows, so "first in the file" means near the core rather
+  tasks are fed to the layout in the order the record gives, and the side each lands on is the
+  split that balances the work in hand, so "first in the file" means near the core rather
   than a place a person can predict. Making a branch's side its own property is the work that
   would make position learnable, and it is not started. The cost is also paid on every update
   that tips the balance: on the measured one above, five of fifteen surviving nodes changed

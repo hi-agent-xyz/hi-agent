@@ -769,6 +769,25 @@ const FOCUS_W = 240, FOCUS_H = 80;
 function dimensions(node) {
   return node?.kind === "group" ? { w: GROUP_W, h: GROUP_H } : { w: CARD_W, h: CARD_H };
 }
+/**
+ * **A group's cards can stand in columns, on a tray, when the window has width to spare.** Width
+ * is bought by depth, so a chart zoomed out past its own depth left most of a wide window empty
+ * while one tall group stopped every other card being drawn: on a live day at 0.25 the drawing
+ * was 2436 wide in a room of 6048 and the in-hand cards it put away were all in that group.
+ *
+ * Columns were tried once before, as siblings packed two to a row, and lost because a second
+ * column lands where the next rank sits and reads as one level below. The tray is what answers
+ * that: the cards stand on one box, the group's wire goes to the box rather than to each card,
+ * and the gap between columns is a tray's, far tighter than any rank's gutter — so the block
+ * reads as one thing hanging off the group, not as a rank. Only cards with nothing under them go
+ * on it; a card with a picture or a session keeps its place in the tree, where its depth is.
+ * Cards fill a column top to bottom before the next, the first column nearest the group.
+ */
+const TRAY_GAP = 12, TRAY_PAD = 12;
+function trayBox(count, cols) {
+  const rows = Math.ceil(count / cols);
+  return { w: cols * CARD_W + (cols - 1) * TRAY_GAP + 2 * TRAY_PAD, h: rows * CARD_H + (rows - 1) * TRAY_GAP + 2 * TRAY_PAD };
+}
 
 /**
  * **Home opens whole, and the scale that takes is chosen, not left to the day.** It opened fitted
@@ -852,8 +871,18 @@ function arrange(model, tones = branchTones(model)) {
   const root = model.nodes.find((n) => n.id === model.rootId);
   const rootBox = root.kind === "core" ? { w: CORE_W, h: CORE_H } : { w: FOCUS_W, h: FOCUS_H };
   const branches = children.get(model.rootId).filter((n) => n.kind !== "overview");
-  const tree = (node) => ({ node, ...dimensions(node),
-    children: (children.get(node.id) || []).map(tree) });
+  const columns = model.layout?.columns || new Map(), trays = new Map();
+  const tree = (node) => {
+    const kids = children.get(node.id) || [];
+    const cols = node.kind === "group" ? columns.get(node.id) || 1 : 1;
+    const loose = cols > 1 ? kids.filter((k) => k.kind !== "group" && !(children.get(k.id) || []).length) : [];
+    if (loose.length < 2) return { node, ...dimensions(node), children: kids.map(tree) };
+    const tray = { id: `tray:${node.id}`, kind: "tray", title: "", data: { group: node.id }, sourceRefs: [] };
+    trays.set(tray.id, { group: node.id, cards: loose, cols: Math.min(cols, loose.length) });
+    return { node, ...dimensions(node), children: [
+      { node: tray, ...trayBox(loose.length, Math.min(cols, loose.length)), children: [] },
+      ...kids.filter((k) => !loose.includes(k)).map(tree)] };
+  };
   const weight = (t, rank = 1) => Math.max(t.h,
     t.children.reduce((n, c) => n + weight(c, rank + 1) + gapAt(rank + 1), 0));
   const sides = [[], []], load = [0, 0];
@@ -868,9 +897,24 @@ function arrange(model, tones = branchTones(model)) {
     const [ak, ai, aid] = rank(a), [bk, bi, bid] = rank(b);
     return ak - bk || ai - bi || aid.localeCompare(bid);
   });
+  // The side is `budgeted`'s, when it gave one (`sideOf`); a model drawn without one is taken
+  // alternately as weight allows.
+  const chosen = model.layout?.sides;
   for (const branch of inOrder) {
-    const t = tree(branch), side = load[0] <= load[1] ? 0 : 1;
+    const t = tree(branch), side = chosen?.has(branch.id) ? chosen.get(branch.id) : load[0] <= load[1] ? 0 : 1;
     sides[side].push(t); load[side] += weight(t);
+  }
+  // Work on the core with nothing under it stands on a tray of its own, one to a side, keyed
+  // `<root>:<side>` in `columns`, where the first of its cards stood.
+  for (let side = 0; side < 2; side++) {
+    const key = `${model.rootId}:${side}`, cols = columns.get(key) || 1;
+    const loose = cols > 1 ? sides[side].filter((t) => t.node.kind !== "group" && !t.children.length) : [];
+    if (loose.length < 2) continue;
+    const tray = { id: `tray:${key}`, kind: "tray", title: "", data: { group: model.rootId }, sourceRefs: [] };
+    trays.set(tray.id, { group: model.rootId, cards: loose.map((t) => t.node), cols: Math.min(cols, loose.length) });
+    const first = sides[side].indexOf(loose[0]);
+    sides[side] = sides[side].filter((t) => !loose.includes(t));
+    sides[side].splice(first, 0, { node: tray, ...trayBox(loose.length, Math.min(cols, loose.length)), children: [] });
   }
   const placed = [{ node: root, x: -rootBox.w / 2, y: -rootBox.h / 2, ...rootBox, dir: 0 }];
   for (let side = 0; side < 2; side++) {
@@ -886,8 +930,18 @@ function arrange(model, tones = branchTones(model)) {
     layout(hub);
     const dir = side === 0 ? 1 : -1;
     for (const n of hub.descendants().slice(1)) {
-      placed.push({ node: n.data.node, w: n.data.w, h: n.data.h, dir,
-        x: dir > 0 ? n.y : -n.y - n.data.w, y: n.x - n.data.h / 2 });
+      const row = { node: n.data.node, w: n.data.w, h: n.data.h, dir,
+        x: dir > 0 ? n.y : -n.y - n.data.w, y: n.x - n.data.h / 2 };
+      placed.push(row);
+      const tray = trays.get(row.node.id);
+      if (!tray) continue;
+      const rows = Math.ceil(tray.cards.length / tray.cols);
+      tray.cards.forEach((card, i) => {
+        const col = Math.floor(i / rows), line = i % rows;
+        const near = TRAY_PAD + col * (CARD_W + TRAY_GAP);
+        placed.push({ node: card, w: CARD_W, h: CARD_H, dir,
+          x: dir > 0 ? row.x + near : row.x + row.w - near - CARD_W, y: row.y + TRAY_PAD + line * (CARD_H + TRAY_GAP) });
+      });
     }
   }
   const x0 = Math.min(...placed.map((n) => n.x)) - MARGIN;
@@ -896,8 +950,12 @@ function arrange(model, tones = branchTones(model)) {
   const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + MARGIN;
   for (const row of placed) { row.x -= x0; row.y -= y0; }
   const byId = new Map(placed.map((p) => [p.node.id, p]));
-  const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) =>
-    ({ ...edge, paint: branchPaint(tones.get(edge.to)), d: wirePath(byId.get(edge.from), byId.get(edge.to)) }));
+  const onTray = new Set([...trays.values()].flatMap((t) => t.cards.map((c) => c.id)));
+  const edges = [...model.edges.filter((e) => e.primary && !onTray.has(e.to)),
+    ...[...trays].map(([id, t]) => ({ id: `${t.group}/contains/${id}`, from: t.group, to: id, relation: "contains", primary: true }))];
+  const tone = (id) => tones.get(trays.get(id)?.group ?? id);
+  const wires = edges.filter((e) => byId.has(e.from) && byId.has(e.to)).map((edge) =>
+    ({ ...edge, paint: branchPaint(tone(edge.to)), d: wirePath(byId.get(edge.from), byId.get(edge.to)) }));
   return { placed, wires, width, height };
 }
 
@@ -1016,9 +1074,10 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
   // **What the fitting loop costs is bounded by the window, not by the ledger.** Every offer
   // lays the whole chart out again, and a complete model can hold hundreds of rows against a
   // window that draws a dozen. Everything in hand is always a candidate — the sort puts it
-  // first — and history is offered `CANDIDATES` deep, which is several times what any window
-  // has ever drawn.
-  const cards = all.filter((n, i) => inHand(n) || i < CANDIDATES);
+  // first — and history is offered `CANDIDATES` deep at the overview scale, which is several
+  // times what that window has ever drawn, and deeper by the room's area when zoomed out.
+  const depth = Math.ceil(CANDIDATES * (OVERVIEW / Math.min(scale, OVERVIEW)) ** 2);
+  const cards = all.filter((n, i) => inHand(n) || i < depth);
   const shown = new Set();
   const groupsAbove = (id) => {
     const out = [];
@@ -1032,6 +1091,7 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
   // its content used to be is what this surface refuses.
   const standing = new Set();
   for (const card of all) if (inHand(card)) for (const id of groupsAbove(card.id)) standing.add(id);
+  const layout = { sides: sideOf(model, all), columns: new Map() };
   const cut = () => {
     const reached = new Set();
     for (const id of shown) for (const above of groupsAbove(id)) reached.add(above);
@@ -1039,7 +1099,7 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
       || (n.kind === "group" && (standing.has(n.id) || reached.has(n.id)));
     const ids = new Set(model.nodes.filter(keep).map((n) => n.id));
     return { ...model, nodes: model.nodes.filter((n) => ids.has(n.id)),
-      edges: model.edges.filter((e) => ids.has(e.from) && ids.has(e.to)) };
+      edges: model.edges.filter((e) => ids.has(e.from) && ids.has(e.to)), layout };
   };
   const whole = (drawn) => drawn.width <= room.w && drawn.height <= room.h;
   const offer = (ids, fits = whole) => {
@@ -1047,6 +1107,27 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
     if (fits(arrange(cut(), tones))) return true;
     ids.forEach((id) => shown.delete(id));
     return false;
+  };
+  // **Offering many costs a layout per batch, not per card.** Cards are offered in runs that
+  // double while they fit and halve when not, and a card that does not fit alone is passed over
+  // as before. Once one card under a parent is passed over, the rest under it are too: they cost
+  // the same height in the same place. On the core, each card is a branch of its own, and the
+  // same holds per side (`sideOf` fixes which).
+  const place = (card) => (parent.get(card.id) === model.rootId ? `${model.rootId}:${layout.sides.get(card.id)}` : parent.get(card.id));
+  const fill = (list, fits = whole) => {
+    const full = new Set();
+    const open = (card) => !shown.has(card.id) && !full.has(place(card));
+    let at = 0, run = 1;
+    while (at < list.length) {
+      const batch = [];
+      let end = at;
+      for (; end < list.length && batch.length < run; end++) if (open(list[end])) batch.push(list[end]);
+      if (!batch.length) break;
+      if (offer(batch.map((c) => c.id), fits)) { at = end; run *= 2; continue; }
+      if (run > 1) { run = Math.max(1, run >> 1); continue; }
+      full.add(place(batch[0]));
+      at = list.indexOf(batch[0]) + 1;
+    }
   };
   const branchOf = (id) => { let at = id; while (parent.get(at) !== model.rootId) at = parent.get(at); return at; };
   const pressedInto = model.nodes.find((n) => n.id === model.rootId)?.kind === "group";
@@ -1056,13 +1137,42 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
     const branch = branchOf(card.id);
     if (!shown.has(card.id) && inHand(card) && !floored.has(branch) && offer([card.id])) floored.add(branch);
   }
-  for (const card of cards) if (!shown.has(card.id)) offer([card.id]);
+  fill(cards);
   const pictures = (list, fits) => {
     for (const card of list) {
       const tiles = shown.has(card.id) ? (children.get(card.id) || []).filter((k) => k.kind === "result").map((k) => k.id) : [];
       if (tiles.length && !offer(tiles, fits)) offer(tiles.slice(0, 1), fits);
     }
   };
+  // At the overview the pictures have the width first — it is the scale they were fitted for.
+  // Zoomed out, a picture is a thumbnail and the person asked for more of the day, so the cards'
+  // columns do.
+  if (scale >= OVERVIEW) pictures(cards);
+  // 3b. **Width the window has and the chart does not use is spent on columns** (`TRAY_GAP`): a
+  // column is added to whichever group lowers the drawing most, and the cards that did not fit
+  // are offered again into the height it freed, until the width runs out or nothing is left.
+  for (let widened = 0; widened < WIDEN_MAX && cards.some((c) => !shown.has(c.id)); widened++) {
+    const now = cut(), drawn = arrange(now, tones);
+    if (drawn.width >= room.w) break;
+    // Only a group with more cards that could stand on a tray than it has columns can be widened.
+    const kids = childIndex(now);
+    const bare = (k) => k.kind !== "group" && k.kind !== "overview" && !(kids.get(k.id) || []).length;
+    const loose = (id) => (id.startsWith(`${model.rootId}:`)
+      ? (kids.get(model.rootId) || []).filter((k) => bare(k) && `${model.rootId}:${layout.sides.get(k.id)}` === id)
+      : (kids.get(id) || []).filter(bare)).length;
+    const hosts = [`${model.rootId}:0`, `${model.rootId}:1`, ...now.nodes.filter((n) => n.kind === "group" && n.id !== model.rootId).map((n) => n.id)];
+    let best = null;
+    for (const id of hosts.filter((h) => loose(h) > (layout.columns.get(h) || 1))) {
+      const was = layout.columns.get(id) || 1;
+      layout.columns.set(id, was + 1);
+      const tried = arrange(cut(), tones);
+      if (whole(tried) && tried.height < drawn.height && (!best || tried.height < best.height)) best = { id, height: tried.height };
+      if (was === 1) layout.columns.delete(id); else layout.columns.set(id, was);
+    }
+    if (!best) break;
+    layout.columns.set(best.id, (layout.columns.get(best.id) || 1) + 1);
+    fill(cards);
+  }
   pictures(cards);
   const lens = around && scale > OVERVIEW && model.nodes.find((n) => n.id === around)?.kind === "group"
     ? subtree(model, around) : null;
@@ -1070,7 +1180,7 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
     const view = { w: frame.w / scale, h: frame.h / scale };
     const fits = (drawn) => { const box = extent(drawn, lens); return !box || (box.w <= view.w && box.h <= view.h); };
     const inside = all.filter((n) => lens.has(n.id)).filter((n, i) => inHand(n) || i < CANDIDATES);
-    for (const card of inside) if (!shown.has(card.id)) offer([card.id], fits);
+    fill(inside, fits);
     pictures(inside, fits);
   }
   const hidden = new Map();
@@ -1079,6 +1189,49 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
     hidden.set(parent.get(card.id), (hidden.get(parent.get(card.id)) || 0) + 1);
   }
   return { model: cut(), hidden };
+}
+
+/** The most columns the fitting loop adds in one cut: each costs a pass over the cards. */
+const WIDEN_MAX = 32;
+
+/**
+ * **Which side of the core each branch is drawn on**, as the partition that leaves the two sides
+ * closest in height, each side keeping the record's order. It is weighed on everything a branch
+ * holds in hand, not on what one cut draws, so a zoom that buys or gives back cards never moves a
+ * branch across the core. Taking branches alternately in the record's order left a large group
+ * that came late on the side already holding two others: on a live day that side was 1100px taller
+ * than the other, which is seven cards that were not drawn.
+ */
+function sideOf(model, cards) {
+  const children = childIndex(model);
+  const branches = (children.get(model.rootId) || []).filter((n) => n.kind !== "overview");
+  const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
+  const branchOf = (id) => { let at = id; while (parent.get(at) && parent.get(at) !== model.rootId) at = parent.get(at); return at; };
+  const load = new Map();
+  for (const card of cards.filter(inHand)) { const b = branchOf(card.id); load.set(b, (load.get(b) || 0) + CARD_H + gapAt(2)); }
+  const held = branches.filter((b) => load.has(b.id));
+  const weights = held.map((b) => load.get(b.id) + (b.kind === "group" ? GROUP_H : 0));
+  const sides = new Map(), sum = [0, 0];
+  if (held.length <= 16) {
+    let best = Infinity, pick = 0;
+    for (let mask = 0; mask < 1 << held.length; mask++) {
+      const side = [0, 0];
+      weights.forEach((w, i) => { side[(mask >> i) & 1] += w; });
+      if (Math.max(...side) < best) { best = Math.max(...side); pick = mask; }
+    }
+    held.forEach((b, i) => { sides.set(b.id, (pick >> i) & 1); sum[(pick >> i) & 1] += weights[i]; });
+  } else {
+    [...held.keys()].sort((a, b) => weights[b] - weights[a]).forEach((i) => {
+      const side = sum[0] <= sum[1] ? 0 : 1; sides.set(held[i].id, side); sum[side] += weights[i];
+    });
+  }
+  // A branch with nothing in hand is drawn only in room the work left, so it weighs nothing in
+  // the split above and is then dealt to whichever side is shorter, in the record's order.
+  for (const b of branches) {
+    if (sides.has(b.id)) continue;
+    const side = sum[0] <= sum[1] ? 0 : 1; sides.set(b.id, side); sum[side] += b.kind === "group" ? GROUP_H : CARD_H;
+  }
+  return sides;
 }
 
 /** A node and everything under it on the chart. */
@@ -1111,7 +1264,8 @@ function subjectAt(chart, model, point, was) {
   const nearest = [...chart.placed].sort((a, b) => gap(a) - gap(b))[0];
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
   const kinds = new Map(model.nodes.map((n) => [n.id, n.kind]));
-  for (let at = nearest?.node.id; at && at !== model.rootId; at = parent.get(at)) if (kinds.get(at) === "group") return at;
+  const start = nearest?.node.kind === "tray" ? nearest.node.data.group : nearest?.node.id;
+  for (let at = start; at && at !== model.rootId; at = parent.get(at)) if (kinds.get(at) === "group") return at;
   return null;
 }
 
@@ -1609,10 +1763,12 @@ export default function Home() {
                 A row on its way out is still a row, so its card keeps its element and its
                 picture while it fades; it just cannot be pressed. */}
             {glides.rows.map(({ row, leaving, delay }) => <div key={row.node.id} className="hi-work__position"
-              data-row={row.node.id} data-dir={row.dir} data-leaving={leaving ? "" : undefined} inert={leaving}
+              data-row={row.node.id} data-dir={row.dir} data-tray={row.node.kind === "tray" ? "" : undefined} data-leaving={leaving ? "" : undefined} inert={leaving}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
                 "--enter-delay": `${delay}ms` }}>
-              {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now}
+              {row.node.kind === "tray" ? <div className="hi-work__tray"
+                style={{ "--group-tone": branchPaint(tones.get(row.node.data.group), "label") }} />
+                : row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now}
                 more={overview.hidden.get(row.node.id)} openRef={openRef} />
                 : <Node node={row.node} root={row.node.id === shown.rootId} up={up}
                   more={overview.hidden.get(row.node.id)} {...common} />}
@@ -1974,6 +2130,10 @@ const CSS = `
 .hi-work__wires path { fill:none; stroke-width:2.6; stroke-linecap:round; opacity:0.95; animation:hi-work-wire-enter 380ms ease var(--enter-delay, 0ms) backwards; }
 /* A glide is a transform on the row, from its top-left corner — see useGlide. */
 .hi-work__position { position:absolute; transform-origin:0 0; }
+.hi-work__position[data-tray] { z-index:-1; }
+.hi-work__tray { width:100%; height:100%; box-sizing:border-box; border-radius:18px;
+  background:color-mix(in srgb, var(--group-tone) 7%, transparent);
+  border:1px solid color-mix(in srgb, var(--group-tone) 22%, transparent); }
 /* The core is the same glass one step more solid and one step warmer: it holds the most text
    of anything on the chart, so it is the one pane where the wash behind is a cost. */
 .hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:linear-gradient(145deg, color-mix(in srgb, var(--work-warm) 7%, var(--work-pane-top)), var(--work-pane-top) 45%, color-mix(in srgb, var(--work-cool) 6%, var(--work-pane-top))); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:14px; }
