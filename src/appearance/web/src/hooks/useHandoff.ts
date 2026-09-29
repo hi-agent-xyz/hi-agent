@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type DragEvent as ReactDragEvent,
 } from "react";
@@ -56,6 +57,26 @@ export function useHandoff({ openConversation, pasteIntoTextInput }: UseHandoffO
     [openConversation],
   );
 
+  // A drag that began on this page is not a handover. WebKit gives an image dragged
+  // inside a view a "Files" flavor, so without this a slight drag of a picture in a
+  // view posts that picture into the conversation. Only a drag from outside the
+  // document — the desktop, another app — carries no `dragstart` here.
+  const dragFromPage = useRef(false);
+  useEffect(() => {
+    const start = () => {
+      dragFromPage.current = true;
+    };
+    const end = () => {
+      dragFromPage.current = false;
+    };
+    document.addEventListener("dragstart", start, true);
+    document.addEventListener("dragend", end, true);
+    return () => {
+      document.removeEventListener("dragstart", start, true);
+      document.removeEventListener("dragend", end, true);
+    };
+  }, []);
+
   // Bound to enter as well as over: cancelling both is what makes the face a drop
   // target at all, and left alone the browser navigates to the dropped file.
   const onFileDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
@@ -67,9 +88,15 @@ export function useHandoff({ openConversation, pasteIntoTextInput }: UseHandoffO
 
   const onFileDrop = useCallback(
     (event: ReactDragEvent<HTMLDivElement>) => {
+      // Cleared here as well as on dragend: a source a view unmounts mid-drag never
+      // gets its dragend, and a stuck flag must not outlive the drop it spoiled.
+      const fromPage = dragFromPage.current;
+      dragFromPage.current = false;
       if (!transferHasFiles(event.dataTransfer)) return;
+      // Still claimed, so the page does not navigate to the dragged picture.
       event.preventDefault();
       event.stopPropagation();
+      if (fromPage) return;
       void sendFiles(filesFromTransfer(event.dataTransfer));
     },
     [sendFiles],
