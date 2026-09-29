@@ -1481,6 +1481,7 @@ impl Reaction {
     /// time. Publishes only on the edge: this fires once per request, and in the ordinary
     /// case the gate is already up and there is nothing to say.
     async fn note_upstream_answered(&self) {
+        crate::foundation::energy_state::note_answered();
         if self.inner.vendor.note_success() {
             tracing::info!("vendor answered; turns resume");
             self.inner.vendor_wake.notify_waiters();

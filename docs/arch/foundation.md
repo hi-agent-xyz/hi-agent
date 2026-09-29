@@ -91,6 +91,15 @@ on its own clock, and the person can do something about it — so it is surfaced
 early rather than as a failed turn. The failure this exists for is an agent that goes quietly
 useless and does not say why.
 
+**A balance is a claim; an answered request is the proof.** A pause is raised by an actual
+402 and lifted by a positive balance, because a refill is usually what ended it. But the
+balance and the gateway are two systems, and they can disagree: on 2026-09-23 the broker
+reported energy left while the gateway answered `402 Insufficient Balance` ~2,900 times in
+13 hours, and the pause was lifted and re-raised every six seconds for all of them. So a 402
+that arrives after the balance lifted the pause, before any request has been answered, is
+held against the balance: its next word is not acted on for a gap that doubles from 30
+seconds to a 30-minute cap. The first request answered — on any session — restores it.
+
 ---
 
 # Tools
