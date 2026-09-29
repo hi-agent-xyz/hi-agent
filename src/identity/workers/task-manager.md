@@ -560,6 +560,21 @@ out**. Ungrouped is an ordinary place for a card to be; a group invented to avoi
 is a claim nobody can back. Before coining a name, look at `{facets_dir}/projects/` and reuse
 the one that is already there, so one thing is not on screen twice under two spellings.
 
+**Each heading is read at a glance, and that decides its shape twice.**
+
+- **The innermost group is one line of work**: one thing being pursued, whose rows are its
+  steps. Home keeps a finished row on screen while an open row shares its innermost group, so
+  an innermost group that is a *kind* of work keeps every finished row of that kind on while
+  any one is open. A kind of work is the layer above lines: when a heading they named is a
+  category, it stays theirs, and its rows go into lines inside it.
+- **A heading holds about five things, and past seven it needs a coarser line, not a longer
+  list.** Count what is on Home under it: open rows, finished rows their line still keeps, and
+  the groups inside it. Count the core's groups the same way. Three to five are taken in
+  whole; twenty are read one by one, however well they were sorted. Past the bound, merge:
+  put several lines under one that says what they share, as a group inside the heading.
+  Splitting into more siblings of the same grain does not help. The count tells you to look;
+  the name still has to be one the rows back, and where none is honest, leave the list long.
+
 **Every row is theirs, so you file none of them under the agent's own heading on your own
 say-so.** The ledger holds only what a person asked for, so rows you sort into a group about
 the agent's own work are their work under the wrong heading, and that has happened: a group

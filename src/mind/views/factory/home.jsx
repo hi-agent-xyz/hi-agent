@@ -954,10 +954,14 @@ function heat(node) {
  * ever left off the chart. Cards are offered hottest first — the tier in `heat` — and each is
  * tried against the whole chart laid out afresh:
  *
- * 1. **In a group taken as the centre, everything it holds in hand is drawn**, at any depth
- *    below it, inner groups and pictures included: the person pressed in to see this thread.
- *    It is the one thing here that may overflow the window, which is what the overview scale
- *    and a scroll are for. On the whole chart the core's own cards — ungrouped work — get no such pass.
+ * 1. **In a group taken as the centre, its own cards are all drawn, with their pictures**: the
+ *    person pressed in to see them. It is the one thing here that may overflow the window, which
+ *    is what the overview scale and a scroll are for. **An inner group is cut like any branch** —
+ *    its hottest card, then what fits, then its count — and pressing it is the way to the rest.
+ *    Drawing every depth at once was watched failing: pressed into 「学习类」, a group holding one
+ *    inner group, drew 28 cards at 36 rows and opened as a strip down the middle of the window, a
+ *    third of its width in use. One level at a time is what keeps a press legible at any depth.
+ *    On the whole chart the core's own cards — ungrouped work — get no such pass.
  *    Exempting them was watched failing: a render with no transcript held nineteen closed,
  *    ungrouped notices, they took the whole window, and every group was left a bare label. And
  *    for someone who has never grouped anything, every card is ungrouped, so nothing would ever
@@ -1025,7 +1029,11 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
   // branch that already overflows it — and a refused offer takes back what it was given — so a
   // group taken as the centre drew none at all.
   const pressedInto = model.nodes.find((n) => n.id === model.rootId)?.kind === "group";
-  if (pressedInto) for (const n of model.nodes) if (n.kind === "task" || n.kind === "activity" || n.kind === "result") shown.add(n.id);
+  if (pressedInto) for (const n of model.nodes) {
+    const own = parent.get(n.id) === model.rootId && (n.kind === "task" || n.kind === "activity");
+    const ownPicture = n.kind === "result" && parent.get(parent.get(n.id)) === model.rootId;
+    if (own || ownPicture) shown.add(n.id);
+  }
   const floored = new Set();
   for (const card of cards) {
     const branch = branchOf(card.id);

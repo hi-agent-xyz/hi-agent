@@ -913,27 +913,32 @@ test("a group that lost the fit is still a heading, and counts what it holds", (
   assert.equal(drawn.hidden.get("group:Busy"), 16 - ids(drawn.model, "task").length);
 });
 
-test("a group taken as the centre draws everything it holds in hand, at any depth", () => {
+test("a group taken as the centre draws all its own cards, and cuts an inner group like any branch", () => {
   const model = twoGroups(8), overview = budgeted(model, LAPTOP);
   assert.ok(overview.hidden.get("group:A") > 0, "the overview puts some of A away");
   const inside = budgeted(focusOn(model, "group:A"), LAPTOP);
   assert.equal(ids(inside.model, "task").length, 8);
   assert.equal(inside.hidden.size, 0);
-  // Not only the cards hanging off the centre: an inner group's are the branch's too, and they
-  // used to have to win room against the window like any other.
+  // One level at a time: the centre's own cards are all drawn, an inner group's win room
+  // against the window like any branch, and what they lose is counted for a press.
   const t = (from, to) => Array.from({ length: to - from }, (_, i) => `t${from + i}`);
   const nested = project({ tasks: Array.from({ length: 24 }, (_, i) => ({ ...task(`t${i}`, "doing", 1 + i),
       attached: i % 6 ? [] : [made(`views/p${i}`, `P${i}`, `/p${i}.png`)] })),
     groups: [{ label: "A", members: t(0, 12), groups: [{ label: "Inner", members: t(12, 24) }] }] });
   const branch = budgeted(focusOn(nested, "group:A"), LAPTOP);
-  assert.equal(ids(branch.model, "task").length, 24);
-  assert.equal(branch.hidden.size, 0);
-  // Pictures too: offered against the window, they never fit a branch already taller than it.
-  assert.equal(ids(branch.model, "result").length, 4);
-  // It is the one thing here that may overflow, which is what the overview scale and a scroll
+  const drawnIds = new Set(ids(branch.model, "task"));
+  assert.ok(t(0, 12).every((id) => drawnIds.has(`task:${id}`)), "every card of the centre's own");
+  assert.ok(drawnIds.size < 24, "not the inner group's whole");
+  assert.equal(branch.hidden.get("group:Inner"), 24 - drawnIds.size);
+  assert.deepEqual(ids(branch.model, "group").sort(), ["group:A", "group:Inner"]);
+  // The centre's own cards bring their pictures: offered against the window, they never fit a
+  // branch already taller than it. t0 and t6 are the centre's own that made one.
+  assert.ok(["result:view:views/p0", "result:view:views/p6"].every((id) => ids(branch.model, "result").includes(id)));
+  // The centre's own cards may still overflow, which is what the overview scale and a scroll
   // are for: the window opens at 0.8 rather than shrinking to whatever the day forces.
-  assert.ok(arrange(branch.model).height > LAPTOP.h / 0.8);
   assert.equal(opening(arrange(branch.model), LAPTOP), 0.8);
+  // Pressing the inner group is the way to the rest of it.
+  assert.equal(ids(budgeted(focusOn(nested, "group:Inner"), LAPTOP).model, "task").length, 12);
 });
 
 test("the tier is what keeps a notice from crowding the work in hand", () => {

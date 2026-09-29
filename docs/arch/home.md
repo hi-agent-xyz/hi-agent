@@ -43,8 +43,9 @@ there — see *What the window holds* below.
 and nothing else — the group where the core stood, a size up, with its tasks, inner groups,
 sessions and pictures around it, laid out by the same rules and in the colour the branch wears
 on the whole chart. It is a lens the person takes, not a collapse the surface imposes, and **it is the one thing
-that adds**: the branch has the whole window, so everything it holds in hand is drawn at any
-depth, inner groups included. Pressing
+that adds**: the branch has the whole window, so every card the group itself holds in hand is
+drawn. **Its inner groups are cut like any branch** — a heading, its hottest cards, *N more* —
+and pressing one is the way into it, so a press goes one level down and no further. Pressing
 the group at the centre steps back out one level, and a trail at the top of the window names
 every group from the core down, each one a way back; the whole chart has no trail over it,
 the way it has no zoom control. Stepping in or out opens the new chart whole, cut on its own
@@ -123,10 +124,15 @@ drawn.
 
 Cards are offered hottest first, each tried against the whole chart laid out afresh:
 
-1. **In a group taken as the centre, everything it holds in hand is drawn** — at any depth below
-   it, inner groups included — because the person pressed in to see this thread. It is the one
-   thing on this surface that may overflow the window, which is what the overview scale and a
-   scroll are for. Ungrouped work on the whole chart gets no such pass. Exempting it was
+1. **In a group taken as the centre, its own cards are all drawn**, because the person pressed in
+   to see them. It is the one thing on this surface that may overflow the window, which is what
+   the overview scale and a scroll are for. **An inner group is cut like any other branch**, by
+   the rules below. Drawing every depth at once was built first and watched failing: pressed
+   into 「学习类」, which held its own sixteen rows and one inner group of seventeen, the branch
+   drew 28 cards at 36 rows and opened as a strip down the middle of the window with most of its
+   width empty. That is the same wall the whole chart hits — height bought by cards, width by
+   depth — and one level at a time is how a press stays inside it. How far that level spreads is
+   the arrangement's to keep small (§ *Grouping*). Ungrouped work on the whole chart gets no such pass. Exempting it was
    watched failing: a render with no transcript held nineteen closed, ungrouped notices, they
    took the whole window, and every group was left a bare label. And someone who has never
    grouped anything has nothing *but* ungrouped work, so nothing would ever be cut for them.
@@ -547,6 +553,29 @@ was a `project:` field on the task record, and it is the wrong shape twice over:
 to one axis, and it puts a claim that only one surface consumes into a record everything
 reads.
 
+**The innermost group is one line of work, and a kind of work is the layer above it.** A line
+is one thing being pursued, and its rows are its steps. Home reads the innermost group that
+way: a finished row stays on while an open row shares its innermost group (§ *In hand*). So an
+innermost group that is a category keeps every finished row of that category on while any one
+is open. That was measured on 「学习类」, which held its rows directly: one open GRPO page kept
+eight finished concept pages on, an open 金铲铲 assistant kept three more, and its inner group
+「视频理解」 kept ten on four. 28 cards, 7 of them open. The person had already said what the
+shape should be: *one parent node and branches*, whenever one thing has several tasks or
+reports. A category they name stays their heading, and its rows go into lines inside it.
+
+**A heading holds about five things, and past seven it gets a coarser line, not a longer list.**
+The chart is read at a glance, and attention is the bound: three to five lines are taken in
+whole, and twenty are read one at a time, whatever rule sorted them. So what counts is what is
+on Home under a heading — open rows, finished rows their line keeps, and the groups inside it —
+and at every level, the core's first-level groups included. Past the bound, the move is to
+merge: several lines go under one that says what they share, as a group inside the heading.
+Dividing into more siblings of the same grain does not help. The count is a signal to the
+writer, not a rule the code enforces: a merge still needs a name the rows back, and where none
+is honest, a long list is truer than an invented heading.
+
+This is also what bounds the centre. A press draws one level (§ *Nodes and relationships*), so
+how far a level spreads is how tall a press is, and that is set here rather than in the layout.
+
 **It is written by a mind and never inferred by code.** No matching of titles, systems,
 refs, or episodes happens here or on the server. The path that was deleted — grouping by
 `systems` — failed on real data, not in principle: `systems` says which operational records
@@ -916,6 +945,11 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   new one, but icons already recorded were edits of the old picture and keep its look. Nothing
   forgets them: a set drawn across that change is two sets until a person asks for a redraw.
 
+- **The fan-out bound is counted by the writer, from statuses.** What is on Home under a heading
+  is `onHome`'s answer, and that runs in the view; the task-manager counts it from the ledger —
+  open rows plus finished rows in a line still open — which misses the notice grace and the
+  seven-day ceiling. If a manager is watched getting the count wrong, the fix is for
+  `hi_set_home_groups` to answer with each heading's count on Home, since only the host has it.
 - **Nothing tidies the grouping record, and something now reads what is left in it.** A task
   closes and its line stays in `groups.json` until a mind next rewrites the file; a group whose
   members have all finished draws nothing on a busy day, but is still written down. That was
