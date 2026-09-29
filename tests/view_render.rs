@@ -492,7 +492,7 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
                 id: "spending".to_string(),
                 op: hi_agent::types::ViewOp::Show,
                 module_url: Some(module_url.clone()),
-                view_ref: None,
+                view_ref: Some("notes/spending".to_string()),
             },
         })
         .await
@@ -523,12 +523,15 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
     .await
     .expect("a thumbnail should land within a minute");
 
+    // A view is a standing surface, so its picture is filed under the ref and re-taken as
+    // the board moves — which means a stamp on the URL, so a re-take defeats the year-long
+    // cache the `_shots/` route hands out.
+    let (file, stamp) =
+        shot_url.split_once("?v=").unwrap_or_else(|| panic!("stamped with its age, got {shot_url}"));
+    assert_eq!(file, "/views/_shots/ref/notes/spending.png", "filed under the ref");
+    assert!(stamp.parse::<u64>().unwrap() > 0, "the stamp is the file's mtime");
     assert!(
-        shot_url.starts_with("/views/_shots/"),
-        "served out of the shots cache, got {shot_url}"
-    );
-    assert!(
-        h.dir.join("views/_shots").join(shot_url.rsplit('/').next().unwrap()).exists(),
+        h.dir.join("views/_shots/ref/notes/spending.png").exists(),
         "the file is really on disk under the data dir"
     );
 
@@ -551,65 +554,4 @@ async fn a_raise_is_captured_and_the_picture_reaches_the_state() {
     // A tile is stored at the device pixels it is read at — `THUMB_WIDTH` in `view_shots.rs`,
     // 960 since shots stopped being upscaled on a retina screen.
     assert!(img.width() <= 960, "scaled down to a tile, got {}px wide", img.width());
-
-    // The same raise again, this time as a *named* view. A name makes it a standing
-    // surface rather than a one-off artifact, so its picture is filed under the ref and
-    // re-taken as the board moves — which means a different path, a stamp on the URL so
-    // a re-take defeats the year-long cache the `_shots/` route hands out, and the same
-    // requirement that the route really serves it. Deliberately the same module, so the
-    // entry starts out wearing the artifact picture this test already produced: a
-    // surface with no picture of its own yet must fall back rather than show a hole.
-    h.seams
-        .out_tx
-        .send(hi_agent::body::reaction::OutboundSignal::View {
-            keep: false,
-            envelope: hi_agent::types::ViewEnvelope {
-                id: "spending".to_string(),
-                op: hi_agent::types::ViewOp::Show,
-                module_url: Some(module_url.clone()),
-                view_ref: Some("notes/spending".to_string()),
-            },
-        })
-        .await
-        .expect("out_tx send");
-
-    let named = tokio::time::timeout(Duration::from_secs(60), async {
-        loop {
-            let state: serde_json::Value = client
-                .get(format!("{}/api/out/view?since={}", h.base_url, since.unwrap_or(0)))
-                .send()
-                .await
-                .expect("send")
-                .json()
-                .await
-                .expect("body");
-            since = state["version"].as_u64();
-            let entries = state["history"].as_array().cloned().unwrap_or_default();
-            let named = entries.iter().find(|e| e["view_ref"] == "notes/spending");
-            // Until the surface's own picture lands the entry carries the artifact's,
-            // which is the right thing to show and the wrong thing to assert on: this
-            // module already has one from the raise above.
-            match named.and_then(|e| e["shot_url"].as_str()) {
-                Some(url) if url.starts_with("/views/_shots/ref/") => return url.to_string(),
-                _ => {}
-            }
-        }
-    })
-    .await
-    .expect("a named view's thumbnail should land within a minute");
-
-    let (file, stamp) =
-        named.split_once("?v=").unwrap_or_else(|| panic!("stamped with its age, got {named}"));
-    assert_eq!(file, "/views/_shots/ref/notes/spending.png", "filed under the ref");
-    assert!(stamp.parse::<u64>().unwrap() > 0, "the stamp is the file's mtime");
-    assert!(
-        h.dir.join("views/_shots/ref/notes/spending.png").exists(),
-        "the file is really on disk under the data dir"
-    );
-    let png = client
-        .get(format!("{}{named}", h.base_url))
-        .send()
-        .await
-        .expect("fetch the shot");
-    assert!(png.status().is_success(), "the /views/ route serves it: {}", png.status());
 }

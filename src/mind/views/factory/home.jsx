@@ -1224,7 +1224,7 @@ export default function Home() {
   // What was put up while they were on another page and has not been opened since — the
   // screen's list says so, and a task that made one wears a dot until it is opened.
   const unopened = useMemo(
-    () => new Set((viewTrail || []).filter((entry) => entry.unopened && entry.view_ref).map((entry) => entry.view_ref)),
+    () => new Set((viewTrail || []).filter((entry) => entry.unopened).map((entry) => entry.view_ref)),
     [viewTrail],
   );
   const [source, setSource] = useState({ tasks: [], workers: [], groups: [] });

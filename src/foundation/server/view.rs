@@ -286,15 +286,9 @@ pub struct BookmarkRequest {
 
 /// `POST /api/views/bookmarks` — keep a named view in the bookmarks row, or drop it.
 ///
-/// **Only a named view can be bookmarked.** An inline view has no durable name; it is
-/// only ever the content-addressed artifact it compiled to, and the compiled tree is a
-/// disposable cache. A bookmark to one would be a bookmark to a hash that the next
-/// prune deletes, so the answer is 400 rather than a link that quietly rots — the same
-/// named/inline split that decides what re-opening means.
-///
-/// A system view is refused too, for the opposite reason: it is in the row by being a
-/// system view, so a stored bookmark for it would be a second, disagreeing source of
-/// truth about a row that is already showing it.
+/// A system view is refused: it is in the row by being a system view, so a stored
+/// bookmark for it would be a second, disagreeing source of truth about a row that is
+/// already showing it.
 pub async fn bookmark_view(
     State(state): State<Arc<AppState>>,
     AuthBearer(auth): AuthBearer,
@@ -305,7 +299,7 @@ pub async fn bookmark_view(
     if !crate::mind::views::valid_ref(&view_ref) {
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            "only a named view can be bookmarked".to_string(),
+            "that is not a view ref".to_string(),
         )
             .into_response();
     }
@@ -402,22 +396,14 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
     }
 }
 
-/// Where to put the screen. Exactly one of these says it: a named view by `ref`, a past
-/// inline artifact by `module`, or `live` for back to what the agent has up.
+/// Where to put the screen. Exactly one of these says it: a view by `ref`, or `live` for
+/// back to what the agent has up.
 #[derive(serde::Deserialize)]
 pub struct OpenViewRequest {
     /// The durable ref to open, e.g. `factory/drive`. Re-resolved and recompiled every
     /// time, which is what makes opening `factory/tasks` land on today's board.
     #[serde(default, rename = "ref")]
     pub view_ref: Option<String>,
-    /// The compiled module of a past inline view — a card in the trail with no durable
-    /// name. Nothing is compiled for one: it is only ever the artifact it already is.
-    #[serde(default)]
-    pub module: Option<String>,
-    /// What the view was shown as. Names an inline destination, whose module hash names
-    /// nothing.
-    #[serde(default)]
-    pub id: Option<String>,
     /// Back to what the agent has up. The cursor drops and every window falls through to
     /// the content slot.
     #[serde(default)]
@@ -440,12 +426,11 @@ pub struct OpenedView {
 /// It used to be deliberately *not* a writer of the appearance, which is what left a
 /// phone and a desktop looking at different things with no way to say so.
 ///
-/// A named view is re-resolved and recompiled every time, which is what makes opening
+/// A view is re-resolved and recompiled every time, which is what makes opening
 /// `factory/tasks` land on today's board rather than the module it happened to compile to
-/// when it was last shown. An inline view has no ref and is only ever the artifact it
-/// already is, so `module` names it and nothing is compiled.
+/// when it was last shown.
 ///
-/// It also re-takes a named surface's picture, which is how a view the agent never showed
+/// It also re-takes the view's picture, which is how a view the agent never showed
 /// gets a face in the band at all, and how the shipped surfaces stop showing the board
 /// they had the first time anyone looked. Bounded by the same staleness rule every other
 /// surface capture uses, so opening the same view five times is one render.
@@ -488,8 +473,7 @@ pub async fn open_view(
         crate::foundation::config::owner(&state.data_dir).as_deref(),
     );
     let view_ref = body.view_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let module = body.module.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    tracing::info!(auth = ?auth, face = ?face, view_ref = ?view_ref, module = ?module, live = body.live, "POST /api/views/open");
+    tracing::info!(auth = ?auth, face = ?face, view_ref = ?view_ref, live = body.live, "POST /api/views/open");
 
     // Back to live: nothing to resolve, and the content slot is always mountable.
     if body.live {
@@ -499,31 +483,12 @@ pub async fn open_view(
         return axum::http::StatusCode::ACCEPTED.into_response();
     }
 
-    // A past inline artifact. It compiles to nothing and resolves to nothing — the
-    // module *is* the view — so this is a cursor move and no more.
-    if view_ref.is_none() {
-        let Some(module) = module else {
-            // A move to nowhere is a client bug, and answering 202 to it would hide the
-            // bug behind a screen that silently never moves.
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "a move needs a ref or a module, unless it is back to live",
-            )
-                .into_response();
-        };
-        let id = body.id.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or(module);
-        let dest = view_bus::RetainedView {
-            id: id.to_owned(),
-            module_url: module.to_owned(),
-            view_ref: None,
-        };
-        if state.views.go_to(Some(dest)).await {
-            record_move(&state, &format!("went to \"{id}\""), sender).await;
-        }
-        return axum::http::StatusCode::ACCEPTED.into_response();
-    }
-
-    let view_ref = view_ref.unwrap_or_default().to_string();
+    let Some(view_ref) = view_ref.map(str::to_owned) else {
+        // A move to nowhere is a client bug, and answering 202 to it would hide the
+        // bug behind a screen that silently never moves.
+        return (axum::http::StatusCode::BAD_REQUEST, "a move needs a ref, unless it is back to live")
+            .into_response();
+    };
     let module_url = match compile_ref(&state, &view_ref).await {
         Ok(module_url) => module_url,
         Err(refused) => return refused,
@@ -531,7 +496,7 @@ pub async fn open_view(
     let dest = view_bus::RetainedView {
         id: view_ref.clone(),
         module_url: module_url.clone(),
-        view_ref: Some(view_ref.clone()),
+        view_ref: view_ref.clone(),
     };
     if state.views.go_to(Some(dest)).await {
         record_move(&state, &format!("went to \"{view_ref}\""), sender).await;

@@ -1385,7 +1385,6 @@ fn prepare_tool() -> Value {
                                         "ref": { "type": "string", "description": "show: a view ref a builder reported (e.g. `project/view`), or an attachment's `att:` id to put a picture or a clip up as itself." },
                                         "op": { "type": "string", "enum": ["show", "replace", "dismiss"], "description": "show: defaults to show. The screen holds one view; show replaces it, replace swaps the same id in place, dismiss clears it." },
                                         "id": { "type": "string", "description": "show: the on-screen slot, so replace can target it. A dismiss with none clears whatever is up." },
-                                        "source": { "type": "string", "description": "show: raw JSX for a trivial inline view, instead of a ref." },
                                         "to": { "type": "string", "description": "send_message: a session slug." },
                                         "message": { "type": "string", "description": "send_message: everything it needs to start." }
                                     },

@@ -1425,11 +1425,9 @@ deliberately is not:
   reach when the conversation goes quiet, and puts more on the screen rather than the right
   thing. Whether a view belongs up is answered once, in `reaction.md`; the block is recall.
 
-- **Not a history.** It carries only entries with a `view_ref`, because a `show` takes a
-  ref and there is no action that puts an inline artifact back. Listing something the agent
-  cannot act on only invites it to try — the same rule that keeps the condition layer out
-  of `on_screen`. What has been *shown* is the journal's record, and Cognition reads it
-  there.
+- **Not a history.** It is the bounded trail, and every entry in it is something a `show`
+  can put back, because every view went up by its ref. What has been *shown* is the
+  journal's record, and Cognition reads it there.
 - **Not the cursor.** The cursor is which entry the screen is on *now*; this is the list it
   points into. Since *One screen, and the cursor is on it* the person's own opens are in
   that list too, marked by whose hand moved the screen — so an entry the agent can put back
@@ -1616,11 +1614,20 @@ moves. That is real and it is accepted — it is the same thing a show already d
 by your own hand rather than the agent's. What it buys is a screen that agrees with itself
 when you are not touching it, which is most of the time.
 
-**Same destination, one entry** — the ref when there is one, the module when there isn't.
-Two shows of `factory/tasks` are one place, because both re-resolve to the same
-recompiled board; two different inline views are two artifacts and both stay. This is the
-same named/inline split `refresh_sources` turns on, and it decides what re-opening means:
-a named view comes back as what it *is now*, an inline one only ever as what it *was*.
+**Same ref, one entry.** The ref is the destination: what the cursor holds, what
+`POST /api/views/open` names, what a card is filed under. Two shows of `factory/tasks` are
+one place, because both re-resolve to the same recompiled board, and re-opening a view
+brings it back as what it *is now*.
+
+*Views without a name were deleted on September 29, 2026.* `show` used to take raw JSX
+as `source` in place of a ref, and the view that made had nothing but the artifact it
+compiled to — so it could not be shared, bookmarked, or reopened as what it is now, all
+for want of a name. The entry point was essentially unused: none of about 474 shows in
+the owner's wire logs. Removing it turned three special cases into none — a destination
+was "the ref, else the module", a card's picture "under the ref, else under the artifact",
+and bookmarking and sharing each needed a rule refusing the unnamed kind. Every view the
+agent shows is a `.jsx` file under `views/`; a snapshot written before carries its unnamed
+entries only as far as `ViewBus::load`, which leaves them out.
 
 **A named view follows its source while it is up** — added September 7, 2026, on a live
 core. "A named view comes back as what it *is now*" was true only of coming back. The
@@ -1686,11 +1693,6 @@ cursor is where they are right now, so it lives in the appearance and comes back
 snapshot; a version that came back on the wrong card is wrong only until the next thing
 anybody does.
 
-**Only a named view can be kept.** An inline view is only ever the content-addressed
-artifact it compiled to, in a cache that prunes; a bookmark to one would be a bookmark to
-a hash that stops resolving. This is the same named/inline split that decides what
-re-opening means, applied to the same question one step earlier.
-
 ## The tile is a picture
 
 Amended August 18, 2026, reversing *marks, not screenshots*. The history row's box was a
@@ -1707,10 +1709,9 @@ of the past; it is a second camera on the present.
 
 Three properties keep it affordable, and each is load-bearing:
 
-- **Content-addressed.** The key is the compiled module's own hash, so an artifact
-  renders once no matter how often it is shown, and a recompile is correctly a
-  different picture. `views/_shots/` sits beside `_compiled/` and is disposable in
-  exactly the same way.
+- **One picture per view.** It is filed under the view's ref (below), so a view renders
+  once however often it is shown, until that picture goes stale. `views/_shots/` sits
+  beside `_compiled/` and is disposable in exactly the same way.
 - **One at a time.** A `show, say, show, say` walk-through would otherwise put a browser
   per beat on the machine already running the agent.
 - **Off the write path, and silent.** `apply` has returned before the browser opens. A
@@ -1728,11 +1729,10 @@ view the person saw dark is a wrong record. `hi_review_view` still renders both 
 a review exists to catch the colour that resolves in one and not the other.
 
 **A named surface's picture is of today, not of its first morning** — amended August 19,
-2026. Content-addressing is right about an artifact and wrong about a surface, and the
-row holds both. An inline view *is* the artifact it compiled to: its picture is a record,
-written once. `factory/tasks` is not — the card leads to whatever the board says when it
+2026. Content-addressing is right about an artifact and wrong about a surface, and every
+card in the row is a surface: `factory/tasks` leads to whatever the board says when it
 is opened, because opening re-resolves the ref, so a tile of the tasks that were open the
-first time anyone looked is a wrong picture of the place the card goes. So a named view's
+first time anyone looked is a wrong picture of the place the card goes. So a view's
 picture is filed under its **ref** (`_shots/ref/<ref>.png`), and re-taken when someone
 opens it and the last one has gone stale — by the clock, or because the view's source has
 been written since, which is the one staleness that cannot wait for a clock: the agent

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { destinationOf } from "../core/trail";
 import { useViews } from "../core/views";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
@@ -184,11 +183,11 @@ export function Views({ onChose }: { onChose: () => void }) {
       ) : (
         <div className="hi-views-strip">
           {trail.map((entry) => {
-            const key = destinationOf(entry);
+            const key = entry.view_ref;
             const isLive = key === live;
                     // The inventory wins when it has one: it is re-read while the tab is up,
             // so it is the fresher of the two answers about a named surface's picture.
-            const listed = entry.view_ref ? known.get(entry.view_ref) : undefined;
+            const listed = known.get(entry.view_ref);
             const current = listed?.shot_url ?? entry.shot_url;
             const shot = current && !broken.has(current) ? current : null;
             // Only a named view that is still on disk, and isn't already in the row by

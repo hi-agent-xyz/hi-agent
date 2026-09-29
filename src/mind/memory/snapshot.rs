@@ -356,8 +356,9 @@ _What has actually gone up for them in the last {SHOWN_WINDOW_MIN} minutes — i
 ///
 /// The line is `showed "<id>" [<ref>] (<module>)` — see `render_view_line`. The ref is what
 /// this wants, because the ref is what a piece of work is known by everywhere else; the id
-/// is whatever Reaction called it in that moment. A dismissal is not a show, and an
-/// inline view with no ref is named by its id, which is all it has.
+/// is whatever Reaction called it in that moment. A dismissal is not a show, and a line
+/// with no bracket is one whose id already was its ref (`render_view_line` does not say it
+/// twice), so the id is the name.
 fn shown_name(body: &str) -> Option<String> {
     let rest = body
         .strip_prefix("showed ")
@@ -904,12 +905,12 @@ mod shown_tests {
         );
     }
 
-    /// An inline view has no ref, and its id is the only name it will ever have.
+    /// A view shown under its own ref carries no bracket, because the id already is the ref.
     #[test]
-    fn a_view_with_no_ref_falls_back_to_its_id() {
+    fn a_view_shown_by_its_ref_is_named_by_its_id() {
         assert_eq!(
-            shown_name(r#"showed "a-quick-sketch" (/views/_compiled/ef.mjs)"#),
-            Some("a-quick-sketch".to_owned())
+            shown_name(r#"showed "factory/tasks" (/views/_compiled/ef.mjs)"#),
+            Some("factory/tasks".to_owned())
         );
     }
 

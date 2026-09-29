@@ -71,8 +71,7 @@ pub enum Hand {
 /// One place the screen has been, and who put it there. See [`ViewBus::shown`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shown {
-    /// The durable ref, which is what a `show` takes. An entry without one is not in
-    /// this list at all, so this is never `None` here.
+    /// The durable ref, which is what a `show` takes.
     pub view_ref: String,
     /// The name the person meets this view under, on its card in the band and in the
     /// inventory — so agent and person are talking about the same thing by the same word.
@@ -94,8 +93,7 @@ pub struct Shown {
 /// Where the screen is parked, for the turn to read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cursor {
-    /// What to call the destination in a prompt — the ref when it has one, else the id
-    /// the inline view was shown as. The module hash names nothing.
+    /// What to call the destination in a prompt: its ref.
     pub name: String,
     /// Which hand put the screen here in the first place — read from the entry rather
     /// than assumed, because since a show can leave the screen where it is, a parked
@@ -161,7 +159,7 @@ struct Appearance {
     /// The one agent-shown view, filling the screen. `None` = the empty room.
     content: Option<RetainedView>,
     /// The host's condition layer over the content (e.g. a vendor outage).
-    condition: Option<RetainedView>,
+    condition: Option<ConditionView>,
     /// Where the screen has been, oldest first, each entry marked with the hand that
     /// put it there. See [`record_entry`].
     history: Vec<HistoryEntry>,
@@ -199,67 +197,145 @@ struct Appearance {
 const HISTORY_MAX: usize = 24;
 
 /// One place the screen went, when, and by whose hand.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 struct HistoryEntry {
     view: RetainedView,
     at: DateTime<Utc>,
-    /// Absent in every snapshot written while this list was the record of shows alone,
-    /// which is exactly what [`Hand::Show`] means — so the default is the migration.
-    #[serde(default)]
     by: Hand,
     /// Shown while they were reading something else and not opened since — the mark the
     /// trail card and the task on Home wear. Cleared the moment the screen is on it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     unopened: bool,
 }
 
 /// One view the screen has held. Public because [`ViewBus::go_to`] takes one: putting the
 /// screen somewhere it has never been has to be able to describe the place.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// **Every one has a ref.** A view goes up by name or not at all, so the ref is the
+/// destination — what the cursor holds, what `POST /api/views/open` names, what a card
+/// is filed under and what re-opening re-resolves. The host's own condition layer is the
+/// one view with no name, and it is a [`ConditionView`], not one of these.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RetainedView {
     pub id: String,
     pub module_url: String,
     /// The view's durable name — see [`ViewEnvelope::view_ref`]. A snapshot records
     /// it so [`ViewBus::refresh_sources`] can recompile the view on the next boot
-    /// instead of resurrecting the module it happened to compile to. `None` for an
-    /// inline-source view, and for every snapshot written before this field existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub view_ref: Option<String>,
+    /// instead of resurrecting the module it happened to compile to.
+    pub view_ref: String,
+}
+
+/// The host's condition layer: an id and the module it compiled to, and no ref, because
+/// it is re-derived from embedded source on every boot rather than restored from a name
+/// (see `reconcile_energy_view`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct ConditionView {
+    id: String,
+    module_url: String,
 }
 
 /// On-disk whole-state snapshot of the appearance at a moment, with `as_of` so
-/// the history reads as a step-function of what was on screen.
+/// the history reads as a step-function of what was on screen. Written by
+/// [`persist`]; read back as a [`StoredSnapshot`], which also accepts what older
+/// versions wrote.
+#[derive(Serialize)]
+struct Snapshot<'a> {
+    version: u64,
+    as_of: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<&'a RetainedView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    condition: Option<&'a ConditionView>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    history: &'a [HistoryEntry],
+    /// Where the screen was parked. Rides in the snapshot so a restart comes back where
+    /// the person left it — but a *move* never writes one (see [`ViewBus::go_to`]), so
+    /// what comes back is the cursor as of the last thing the agent did. Approximate,
+    /// and approximate towards the agent's own last show, which is the safe end.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<&'a str>,
+    /// Whether that cursor is where a show left the screen. See [`Appearance::kept`].
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    kept: bool,
+}
+
+/// A snapshot as read off disk, by any version that wrote one. Every field is as loose
+/// as the oldest file needs; [`ViewBus::load`] turns it into an [`Appearance`].
 ///
 /// `legacy_views` reads the flat z-ordered list snapshots carried before the two
 /// slots existed. Those states are exactly the pile-ups the slots abolished, so
 /// they restore as the top-most view alone — the one the person was actually
 /// looking at — rather than resurrecting a stack that can no longer be
 /// represented.
-#[derive(Serialize, Deserialize)]
-struct Snapshot {
+#[derive(Deserialize)]
+struct StoredSnapshot {
     version: u64,
-    as_of: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    content: Option<RetainedView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    condition: Option<RetainedView>,
+    #[serde(default)]
+    content: Option<StoredView>,
+    #[serde(default)]
+    condition: Option<StoredView>,
     /// The recent shows, oldest first. `#[serde(default)]` is the back-compat
     /// lever: a snapshot written before the history existed reloads with an empty
     /// one, which is exactly right — nothing is known to have been shown, so there
     /// is nowhere to go back to until the agent shows something.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    history: Vec<HistoryEntry>,
-    /// Where the screen was parked. Rides in the snapshot so a restart comes back where
-    /// the person left it — but a *move* never writes one (see [`ViewBus::go_to`]), so
-    /// what comes back is the cursor as of the last thing the agent did. Approximate,
-    /// and approximate towards the agent's own last show, which is the safe end.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    history: Vec<StoredEntry>,
+    #[serde(default)]
     cursor: Option<String>,
-    /// Whether that cursor is where a show left the screen. See [`Appearance::kept`].
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     kept: bool,
-    #[serde(default, rename = "views", skip_serializing_if = "Vec::is_empty")]
-    legacy_views: Vec<RetainedView>,
+    #[serde(default, rename = "views")]
+    legacy_views: Vec<StoredView>,
+}
+
+/// A view as older snapshots may have written it: with no `view_ref` at all before that
+/// field existed, and with none on purpose for a view shown as raw JSX, before every view
+/// had to have a name (2026-09-29).
+#[derive(Deserialize)]
+struct StoredView {
+    id: String,
+    module_url: String,
+    #[serde(default)]
+    view_ref: Option<String>,
+}
+
+/// A [`HistoryEntry`] as read off disk.
+#[derive(Deserialize)]
+struct StoredEntry {
+    view: StoredView,
+    at: DateTime<Utc>,
+    /// Absent in every snapshot written while this list was the record of shows alone,
+    /// which is exactly what [`Hand::Show`] means — so the default is the migration.
+    #[serde(default)]
+    by: Hand,
+    #[serde(default)]
+    unopened: bool,
+}
+
+impl StoredView {
+    /// The view with its name, or `None` for one that never had one.
+    ///
+    /// A snapshot written before `view_ref` existed recorded none even for a named view —
+    /// and the views most hurt by that are exactly the built-ins, because they are the ones
+    /// a binary update reseeds, so their pinned module goes stale with nobody having touched
+    /// a file. For those, the id is a sound bridge: `reaction.md` names the built-ins to the
+    /// agent as `factory/<name>` and it shows each one under that bare name, so an id that
+    /// matches a file the host itself seeded into `factory/` names that view. The file is
+    /// checked rather than assumed, and the next snapshot records a real ref — the guess
+    /// happens once per install and never again.
+    ///
+    /// Anything else with no ref was shown as raw JSX, back when a view could go up with no
+    /// name. It has nothing to be re-resolved from and nothing to be filed under, so it is
+    /// not restored.
+    fn named(self, data_dir: &Path) -> Option<RetainedView> {
+        let view_ref = self.view_ref.or_else(|| {
+            let candidate = format!("factory/{}", self.id.trim());
+            (crate::mind::views::valid_ref(&candidate)
+                && data_dir.join("views").join(format!("{candidate}.jsx")).is_file())
+            .then_some(candidate)
+        })?;
+        Some(RetainedView { id: self.id, module_url: self.module_url, view_ref })
+    }
 }
 
 /// Which slot a delivered layer came out of.
@@ -286,24 +362,20 @@ pub struct WireView {
 /// One past show as delivered to the browser.
 ///
 /// `label` is derived here rather than declared by the view, because a view declares
-/// nothing at all and inventing a title field would make every existing view untitled. The ref's last segment is the honest name — it is what the
-/// agent typed to show it and what the file is called — and an inline view falls back
-/// to its id, the way a browser falls back to a URL for a page with no `<title>`.
+/// nothing at all and inventing a title field would make every existing view untitled.
+/// The ref's last segment is the honest name — it is what the agent typed to show it
+/// and what the file is called.
 ///
-/// `view_ref` is the lever that decides what re-opening means: a named view is
-/// re-resolved from its current source (so `factory/tasks` reopens as today's board),
-/// while an inline view can only ever come back as the artifact it compiled to. The
-/// client sends the ref back when there is one, and mounts `module_url` when there
-/// isn't. This is the same named/inline split [`ViewBus::refresh_sources`] turns on.
+/// `view_ref` is what re-opening sends back, and a view is re-resolved from its current
+/// source when it is opened, so `factory/tasks` reopens as today's board.
 #[derive(Debug, Clone, Serialize)]
 pub struct WireHistoryEntry {
     pub id: String,
     pub module_url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub view_ref: Option<String>,
+    pub view_ref: String,
     pub label: String,
     pub at: DateTime<Utc>,
-    /// A picture of this show, served from `/views/_shots/<hash>.png` and **already
+    /// A picture of this show, served from `/views/_shots/ref/<ref>.png` and **already
     /// resolved against the base path this request arrived on**, so it can go straight
     /// into an `<img src>` — absent while the capture is still running, and for good on
     /// a view that did not render cleanly. The tile falls back to its mark either way, so this is decoration on
@@ -332,21 +404,18 @@ pub struct ViewState {
     /// Where the screen has been, oldest first — the agent's shows and the person's own
     /// moves in one list.
     pub history: Vec<WireHistoryEntry>,
-    /// The destination the screen is parked on, or absent when it is live. Every window
+    /// The ref the screen is parked on, or absent when it is live. Every window
     /// renders this, which is the whole of *one screen*: a window mounts the history
     /// entry it names in place of `views`' content layer, keeping the condition layer
     /// over it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
-    /// The destination the agent has up in the content slot, absent when the room is
+    /// The ref the agent has up in the content slot, absent when the room is
     /// empty. Sent rather than inferred from the newest history entry: since the person
     /// writes that list too, its head is no longer necessarily a show, and a dismiss
     /// leaves the room empty with the entry still in it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live: Option<String>,
-}
-
-impl ViewState {
 }
 
 impl ViewBus {
@@ -355,13 +424,27 @@ impl ViewBus {
     pub fn load(data_dir: &Path) -> Self {
         let app_dir = layout::raw_root(data_dir).join("appearance");
         let state = match newest_snapshot(&app_dir) {
-            // A legacy flat list restores as its top-most view only; see
-            // `Snapshot::legacy_views`.
             Some(snap) => {
+                // A legacy flat list restores as its top-most view only; see
+                // `StoredSnapshot::legacy_views`.
+                let content = snap.content.or_else(|| snap.legacy_views.into_iter().last());
+                let had = snap.history.len() + usize::from(content.is_some());
+                let content = content.and_then(|v| v.named(data_dir));
+                let history: Vec<HistoryEntry> = snap
+                    .history
+                    .into_iter()
+                    .filter_map(|h| {
+                        Some(HistoryEntry { view: h.view.named(data_dir)?, at: h.at, by: h.by, unopened: h.unopened })
+                    })
+                    .collect();
+                let dropped = had - history.len() - usize::from(content.is_some());
+                if dropped > 0 {
+                    tracing::info!(dropped, "restored screen: left out views shown with no name");
+                }
                 let mut restored = Appearance {
-                    content: snap.content.or_else(|| snap.legacy_views.last().cloned()),
-                    condition: snap.condition,
-                    history: snap.history,
+                    content,
+                    condition: snap.condition.map(|v| ConditionView { id: v.id, module_url: v.module_url }),
+                    history,
                     cursor: snap.cursor,
                     kept: snap.kept,
                     front_since: None,
@@ -409,12 +492,12 @@ impl ViewBus {
     pub async fn go_to(&self, dest: Option<RetainedView>) -> bool {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
-        let mut next = dest.as_ref().map(destination_of);
+        let mut next = dest.as_ref().map(|v| v.view_ref.clone());
         // Going to what the agent already has up is going live, not parking on a copy of
         // it. Settled here rather than by the caller, because "live" is a fact about the
         // content slot and this is the only place that holds it — a client deciding it
         // would be deciding it from a snapshot that may be one show out of date.
-        if next.is_some() && next == entry.content.as_ref().map(destination_of) {
+        if next.is_some() && next == entry.content.as_ref().map(|v| v.view_ref.clone()) {
             next = None;
         }
         let moved = entry.cursor != next;
@@ -422,7 +505,7 @@ impl ViewBus {
         let mut arrived = false;
         let known = next
             .as_ref()
-            .and_then(|key| entry.history.iter().position(|h| &destination_of(&h.view) == key));
+            .and_then(|key| entry.history.iter().position(|h| &h.view.view_ref == key));
         if let (Some(view), true) = (dest, next.is_some()) {
             match known {
                 // Already a card in the row: take the freshly compiled module — opening
@@ -468,12 +551,8 @@ impl ViewBus {
         let key = map.cursor.as_ref()?;
         map.history
             .iter()
-            .find(|h| &destination_of(&h.view) == key)
-            .map(|h| Cursor {
-                name: h.view.view_ref.clone().unwrap_or_else(|| h.view.id.clone()),
-                by: h.by,
-                kept: map.kept,
-            })
+            .find(|h| &h.view.view_ref == key)
+            .map(|h| Cursor { name: h.view.view_ref.clone(), by: h.by, kept: map.kept })
     }
 
     /// Decide what a show asked for now will do to the screen: take it, or leave the page
@@ -498,10 +577,9 @@ impl ViewBus {
     ) -> Claim {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
-        let front = in_front(entry).zip(entry.front_since).map(|((dest, id, name), since)| Front {
-            dest,
-            id,
-            name,
+        let front = in_front(entry).zip(entry.front_since).map(|(view, since)| Front {
+            dest: view.view_ref.clone(),
+            id: view.id.clone(),
             since,
         });
         let claim = decide(front.as_ref(), id, view_ref, from, entry.took, back_at, Utc::now());
@@ -549,19 +627,19 @@ impl ViewBus {
     async fn fold(&self, envelope: ViewEnvelope, keep: bool) {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
-        let Some(next) = resolve_slot(&entry.content, envelope) else {
+        let Some(next) = resolve_content(&entry.content, envelope) else {
             return;
         };
         if entry.content == next {
             return;
         }
-        let before = in_front(entry).map(|(dest, _, _)| dest);
+        let before = in_front(entry).map(|v| v.view_ref.clone());
         if let Some(shown) = &next {
-            let reading = before.clone().filter(|dest| keep && *dest != destination_of(shown));
+            let reading = before.clone().filter(|dest| keep && *dest != shown.view_ref);
             if let Some(reading) = reading {
                 // The page they are on has to be a card the cursor can point at. It is,
                 // unless the screen was restored from a snapshot older than the trail.
-                if !entry.history.iter().any(|h| destination_of(&h.view) == reading)
+                if !entry.history.iter().any(|h| h.view.view_ref == reading)
                     && let Some(current) = entry.content.clone()
                 {
                     record_entry(entry, current, Utc::now(), Hand::Show);
@@ -588,25 +666,16 @@ impl ViewBus {
             let done = move || {
                 tokio::spawn(async move { bus.note_shot().await });
             };
-            // A named view is a standing surface — its picture is filed under the ref
-            // and re-taken as the board moves; an inline view is only ever the artifact
-            // it compiled to, and its picture is written once. Same split the whole
-            // history turns on. See [`super::view_shots`].
-            match shown.view_ref.clone() {
-                // An attachment's picture is its preview, already made; there is no page to
-                // render a picture of.
-                Some(view_ref) if crate::foundation::attachments::ref_id(&view_ref).is_some() => {}
-                Some(view_ref) => super::view_shots::capture_ref(
+            // A view is a standing surface — its picture is filed under the ref and
+            // re-taken as the board moves. See [`super::view_shots`]. An attachment's
+            // picture is its preview, already made; there is no page to render one of.
+            if crate::foundation::attachments::ref_id(&shown.view_ref).is_none() {
+                super::view_shots::capture_ref(
                     self.data_dir.clone(),
-                    view_ref,
+                    shown.view_ref.clone(),
                     shown.module_url.clone(),
                     done,
-                ),
-                None => super::view_shots::capture(
-                    self.data_dir.clone(),
-                    shown.module_url.clone(),
-                    done,
-                ),
+                );
             }
         }
         entry.content = next;
@@ -617,7 +686,7 @@ impl ViewBus {
             entry.kept = false;
         }
         // The same page refined in place is the page they have been reading all along.
-        let after = in_front(entry).map(|(dest, _, _)| dest);
+        let after = in_front(entry).map(|v| v.view_ref.clone());
         if after != before {
             entry.front_since = after.map(|_| Utc::now());
         }
@@ -654,9 +723,7 @@ impl ViewBus {
         let Some(view) = restored else {
             return;
         };
-        let Some(view_ref) = restored_ref(&view, &self.data_dir).await else {
-            return;
-        };
+        let view_ref = view.view_ref.clone();
         // An attachment's module names its object and nothing else, so there is nothing that
         // could have moved on while the process was down.
         if crate::foundation::attachments::ref_id(&view_ref).is_some() {
@@ -684,11 +751,7 @@ impl ViewBus {
             }
         };
 
-        let next = RetainedView {
-            id: view.id.clone(),
-            module_url,
-            view_ref: Some(view_ref),
-        };
+        let next = RetainedView { id: view.id.clone(), module_url, view_ref };
 
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
@@ -699,7 +762,7 @@ impl ViewBus {
         }
         tracing::info!(
             id = %next.id,
-            view_ref = next.view_ref.as_deref().unwrap_or(""),
+            view_ref = %next.view_ref,
             was = %view.module_url,
             now = %next.module_url,
             "recompiled the restored view from source",
@@ -718,7 +781,7 @@ impl ViewBus {
     /// worth recompiling on a write are the two that are on a screen.
     pub async fn shows_ref(&self, view_ref: &str) -> bool {
         let map = self.inner.lock().await;
-        map.content.as_ref().and_then(|view| view.view_ref.as_deref()) == Some(view_ref)
+        map.content.as_ref().is_some_and(|view| view.view_ref == view_ref)
             || map.cursor.as_deref() == Some(view_ref)
     }
 
@@ -745,7 +808,7 @@ impl ViewBus {
         let entry = &mut *map;
         let mut content_moved = false;
         if let Some(content) = entry.content.as_mut()
-            && content.view_ref.as_deref() == Some(view_ref)
+            && content.view_ref == view_ref
             && content.module_url != module_url
         {
             content.module_url = module_url.to_owned();
@@ -756,7 +819,7 @@ impl ViewBus {
             && let Some(card) = entry
                 .history
                 .iter_mut()
-                .find(|card| destination_of(&card.view) == view_ref)
+                .find(|card| card.view.view_ref == view_ref)
             && card.view.module_url != module_url
         {
             card.view.module_url = module_url.to_owned();
@@ -786,7 +849,7 @@ impl ViewBus {
     pub async fn reconcile(&self, envelope: ViewEnvelope) {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
-        let Some(next) = resolve_slot(&entry.condition, envelope) else {
+        let Some(next) = resolve_condition(&entry.condition, envelope) else {
             return;
         };
         if entry.condition == next {
@@ -890,27 +953,22 @@ impl ViewBus {
     /// on a ref sitting somewhere back in its session, from the turn a builder happened to
     /// return it. That is the half of a conversation the screen was not following.
     ///
-    /// **Named views only.** A `show` takes a ref; an inline view is the content-addressed
-    /// artifact it compiled to and the agent has no call that puts one back. Listing an
-    /// entry it cannot act on would only invite it to try — the same reason
-    /// [`on_screen`](Self::on_screen) reports the content slot and not the condition
-    /// layer. So this is a list of what is *reachable*, not a record of what has been
-    /// shown; the record is the journal's, and Cognition reads it there.
+    /// A `show` takes a ref, and every entry has one, so each is something the agent can
+    /// put back. This is a list of what is *reachable* over a bounded trail, not a record
+    /// of what has been shown; the record is the journal's, and Cognition reads it there.
     pub async fn shown(&self) -> Vec<Shown> {
         let map = self.inner.lock().await;
-        let live = map.content.as_ref().map(destination_of);
+        let live = map.content.as_ref().map(|v| v.view_ref.as_str());
         map.history
             .iter()
             .rev()
-            .filter_map(|h| {
-                h.view.view_ref.as_ref().map(|view_ref| Shown {
-                    view_ref: view_ref.clone(),
-                    label: label_for(&self.data_dir, &h.view),
-                    at: h.at,
-                    live: live.as_deref() == Some(destination_of(&h.view).as_str()),
-                    by: h.by,
-                    unopened: h.unopened,
-                })
+            .map(|h| Shown {
+                view_ref: h.view.view_ref.clone(),
+                label: label_for(&self.data_dir, &h.view),
+                at: h.at,
+                live: live == Some(h.view.view_ref.as_str()),
+                by: h.by,
+                unopened: h.unopened,
             })
             .collect()
     }
@@ -928,14 +986,14 @@ impl ViewBus {
                     version: entry.version,
                     // z-order: content first, the condition layer over it.
                     views: [
-                        (WireSlot::Content, entry.content.as_ref()),
-                        (WireSlot::Condition, entry.condition.as_ref()),
+                        entry.content.as_ref().map(|v| (WireSlot::Content, &v.id, &v.module_url)),
+                        entry.condition.as_ref().map(|v| (WireSlot::Condition, &v.id, &v.module_url)),
                     ]
                     .into_iter()
-                    .filter_map(|(slot, v)| v.map(|v| (slot, v)))
-                    .map(|(slot, v)| WireView {
-                        id: v.id.clone(),
-                        module_url: v.module_url.clone(),
+                    .flatten()
+                    .map(|(slot, id, module_url)| WireView {
+                        id: id.clone(),
+                        module_url: module_url.clone(),
                         slot,
                     })
                     .collect(),
@@ -953,7 +1011,7 @@ impl ViewBus {
                         })
                         .collect(),
                     cursor: entry.cursor.clone(),
-                    live: entry.content.as_ref().map(destination_of),
+                    live: entry.content.as_ref().map(|v| v.view_ref.clone()),
                 };
             }
             // Enroll on the notify *while still holding the lock* so a
@@ -969,7 +1027,7 @@ impl ViewBus {
     }
 }
 
-/// What one slot should hold after `envelope` is folded into its `current`
+/// What the content slot should hold after `envelope` is folded into its `current`
 /// occupant. `None` means the envelope was malformed and should be dropped
 /// without touching the slot — distinct from `Some(None)`, which empties it.
 ///
@@ -977,28 +1035,39 @@ impl ViewBus {
 /// `replace` both simply put the new view there, and `dismiss` empties it only
 /// when it holds the id being dismissed (so a stale dismiss aimed at something
 /// already gone can't blank the screen out from under whatever replaced it).
-fn resolve_slot(
+fn resolve_content(
     current: &Option<RetainedView>,
     envelope: ViewEnvelope,
 ) -> Option<Option<RetainedView>> {
     match envelope.op {
-        ViewOp::Dismiss => {
-            if current.as_ref().is_some_and(|v| v.id == envelope.id) {
-                Some(None)
-            } else {
-                Some(current.clone())
-            }
-        }
+        ViewOp::Dismiss => Some(current.clone().filter(|v| v.id != envelope.id)),
         ViewOp::Show | ViewOp::Replace => {
             let Some(module_url) = envelope.module_url else {
                 tracing::warn!(id = %envelope.id, "view envelope without module_url; dropping");
                 return None;
             };
-            Some(Some(RetainedView {
-                id: envelope.id,
-                module_url,
-                view_ref: envelope.view_ref,
-            }))
+            let Some(view_ref) = envelope.view_ref else {
+                tracing::warn!(id = %envelope.id, "view envelope without a ref; dropping");
+                return None;
+            };
+            Some(Some(RetainedView { id: envelope.id, module_url, view_ref }))
+        }
+    }
+}
+
+/// [`resolve_content`] for the condition slot, whose one view has no ref.
+fn resolve_condition(
+    current: &Option<ConditionView>,
+    envelope: ViewEnvelope,
+) -> Option<Option<ConditionView>> {
+    match envelope.op {
+        ViewOp::Dismiss => Some(current.clone().filter(|v| v.id != envelope.id)),
+        ViewOp::Show | ViewOp::Replace => {
+            let Some(module_url) = envelope.module_url else {
+                tracing::warn!(id = %envelope.id, "view envelope without module_url; dropping");
+                return None;
+            };
+            Some(Some(ConditionView { id: envelope.id, module_url }))
         }
     }
 }
@@ -1014,58 +1083,46 @@ fn resolve_slot(
 /// would be indefensible. So neither hand ever truncates, and the cursor is just a
 /// pointer over the list — there is no branch to destroy.
 ///
-/// **Same destination, one entry.** A destination is the `view_ref` when there is one
-/// and the `module_url` when there isn't, which is precisely the identity that decides
-/// what re-opening will render: two shows of `factory/tasks` resolve to the same
-/// recompiled board, so two tiles would offer one place twice. Two *different* inline
-/// views have different content hashes and both stay. The surviving entry moves to the
+/// **Same ref, one entry.** The ref is precisely the identity that decides what
+/// re-opening will render: two shows of `factory/tasks` resolve to the same recompiled
+/// board, so two tiles would offer one place twice. The surviving entry moves to the
 /// end and takes the newer timestamp, because what matters about it is when the screen
 /// last showed it.
-/// The picture to hang on one past show.
-///
-/// A named view's tile is its **surface** picture, not a picture of the moment it went
-/// up: re-opening `factory/tasks` deliberately re-resolves to today's board, so a tile
-/// promising last Tuesday's would be a wrong picture of the place the card leads to.
-/// An inline view has no surface to be current about and keeps its artifact's shot —
-/// and so does a named entry whose surface picture has not been taken yet, which is
-/// how every show recorded before this split keeps the picture it already had.
-fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
-    // An attachment's picture is its preview, made when it was attached: nothing to render.
-    if let Some(id) = view.view_ref.as_deref().and_then(crate::foundation::attachments::ref_id) {
-        return Some(crate::foundation::attachments::preview_url(id));
-    }
-    view.view_ref
-        .as_deref()
-        .and_then(|r| super::view_shots::url_for_ref(data_dir, r))
-        .or_else(|| super::view_shots::url_for(data_dir, &view.module_url))
-}
-
 fn record_entry(entry: &mut Appearance, view: RetainedView, at: DateTime<Utc>, by: Hand) {
-    let key = destination_of(&view);
-    entry.history.retain(|h| destination_of(&h.view) != key);
+    entry.history.retain(|h| h.view.view_ref != view.view_ref);
     entry.history.push(HistoryEntry { view, at, by, unopened: false });
     let overflow = entry.history.len().saturating_sub(HISTORY_MAX);
     entry.history.drain(..overflow);
     drop_dangling_cursor(entry);
 }
 
-/// The page in front of them — the card the cursor is on, or what the agent has up —
-/// as `(destination, id, name)`, where the name is what a prompt calls it.
-fn in_front(entry: &Appearance) -> Option<(String, String, String)> {
-    let view = match entry.cursor.as_deref() {
-        Some(key) => &entry.history.iter().find(|h| destination_of(&h.view) == key)?.view,
-        None => entry.content.as_ref()?,
-    };
-    let name = view.view_ref.clone().unwrap_or_else(|| view.id.clone());
-    Some((destination_of(view), view.id.clone(), name))
+/// The picture to hang on one past show.
+///
+/// A view's tile is its **surface** picture, not a picture of the moment it went up:
+/// re-opening `factory/tasks` deliberately re-resolves to today's board, so a tile
+/// promising last Tuesday's would be a wrong picture of the place the card leads to.
+fn shot_for(data_dir: &Path, view: &RetainedView) -> Option<String> {
+    // An attachment's picture is its preview, made when it was attached: nothing to render.
+    if let Some(id) = crate::foundation::attachments::ref_id(&view.view_ref) {
+        return Some(crate::foundation::attachments::preview_url(id));
+    }
+    super::view_shots::url_for_ref(data_dir, &view.view_ref)
+}
+
+/// The page in front of them — the card the cursor is on, or what the agent has up.
+fn in_front(entry: &Appearance) -> Option<&RetainedView> {
+    match entry.cursor.as_deref() {
+        Some(key) => Some(&entry.history.iter().find(|h| h.view.view_ref == key)?.view),
+        None => entry.content.as_ref(),
+    }
 }
 
 /// Clear the unopened mark on the card the screen is now on. Returns whether one was set.
 fn mark_opened(entry: &mut Appearance) -> bool {
-    let Some((dest, _, _)) = in_front(entry) else {
+    let Some(dest) = in_front(entry).map(|v| v.view_ref.clone()) else {
         return false;
     };
-    match entry.history.iter_mut().find(|h| destination_of(&h.view) == dest && h.unopened) {
+    match entry.history.iter_mut().find(|h| h.view.view_ref == dest && h.unopened) {
         Some(card) => {
             card.unopened = false;
             true
@@ -1076,9 +1133,9 @@ fn mark_opened(entry: &mut Appearance) -> bool {
 
 /// The page in front of them, as [`decide`] reads it.
 struct Front {
+    /// Its ref, which is also what a prompt calls it.
     dest: String,
     id: String,
-    name: String,
     since: DateTime<Utc>,
 }
 
@@ -1122,7 +1179,7 @@ fn decide(
     if resting || from.answering || took == Some(from.turn) || same_page || !reading {
         return Claim::Takes;
     }
-    Claim::Keeps { reading: front.name.clone() }
+    Claim::Keeps { reading: front.dest.clone() }
 }
 
 /// A cursor is a pointer into a bounded list, so trimming can cut the ground from under
@@ -1132,26 +1189,15 @@ fn drop_dangling_cursor(entry: &mut Appearance) {
     let Some(key) = entry.cursor.as_deref() else {
         return;
     };
-    if !entry.history.iter().any(|h| destination_of(&h.view) == key) {
+    if !entry.history.iter().any(|h| h.view.view_ref == key) {
         entry.cursor = None;
     }
-}
-
-/// What identifies a *destination*: the durable ref when there is one, else the compiled
-/// module. Two shows of `factory/tasks` are one place because both re-resolve to the same
-/// recompiled board; two different inline views are two artifacts and both stay. It is what
-/// the cursor holds and what `POST /api/views/open` names, and the client reads the same
-/// rule off the wire (`destinationOf` in `core/trail.ts`), so everything agrees on what
-/// "the same place" means.
-fn destination_of(view: &RetainedView) -> String {
-    view.view_ref.clone().unwrap_or_else(|| view.module_url.clone())
 }
 
 /// A human label for one past show.
 ///
 /// The ref's last segment with its separators opened up and its first letter shown:
-/// `factory/people-review` → `People review`. An inline view has no ref and falls back
-/// to its id. Nothing here reads the view's source — the label is wanted for every
+/// `factory/people-review` → `People review`. Nothing here reads the view's source — the label is wanted for every
 /// entry in the state on every version bump, and a dozen file reads per long-poll
 /// response to recover a nicer string is the wrong trade. (The `// purpose:` line the
 /// factory views open with is the nicer string, if this ever proves too thin.)
@@ -1159,10 +1205,10 @@ fn destination_of(view: &RetainedView) -> String {
 /// An attachment's card says what it is — *Picture*, *Clip* — since its ref is a content hash
 /// that says nothing to anyone (`docs/arch/showing.md` § *On the stage*).
 fn label_for(data_dir: &Path, view: &RetainedView) -> String {
-    if let Some(id) = view.view_ref.as_deref().and_then(crate::foundation::attachments::ref_id) {
+    if let Some(id) = crate::foundation::attachments::ref_id(&view.view_ref) {
         return crate::foundation::attachments::label(data_dir, id);
     }
-    humanize_ref(view.view_ref.as_deref().unwrap_or(&view.id))
+    humanize_ref(&view.view_ref)
 }
 
 /// `factory/people-review` → `People review`. Shared with the view inventory
@@ -1177,38 +1223,10 @@ pub(crate) fn humanize_ref(view_ref: &str) -> String {
     }
 }
 
-/// The ref to recompile a restored view from, or `None` to keep it as it is.
-///
-/// Normally the snapshot recorded one. Snapshots written before `view_ref` existed
-/// did not — and the views most hurt by that are exactly the built-ins, because they
-/// are the ones a binary update reseeds, so their pinned module goes stale with
-/// nobody having touched a file.
-///
-/// For those, the id is a sound bridge: `reaction.md` names the built-ins to the
-/// agent as `factory/<name>` and it shows each one under that bare name, so an id
-/// that matches a file the host itself just seeded into `factory/` names that view.
-/// The file is checked rather than assumed, so an id that means nothing there is
-/// simply left alone, and the refreshed snapshot records a real ref — the guess
-/// happens once per install and never again.
-///
-/// An inline-source view legitimately has no ref and never gains one; it can only
-/// ever be restored as the artifact it compiled to.
-async fn restored_ref(view: &RetainedView, data_dir: &Path) -> Option<String> {
-    if let Some(view_ref) = &view.view_ref {
-        return Some(view_ref.clone());
-    }
-    let candidate = format!("factory/{}", view.id.trim());
-    if !crate::mind::views::valid_ref(&candidate) {
-        return None;
-    }
-    let source = data_dir.join("views").join(format!("{candidate}.jsx"));
-    tokio::fs::try_exists(&source).await.unwrap_or(false).then_some(candidate)
-}
-
 /// The newest parseable snapshot under the `appearance/` dir, or `None`.
 /// Walks day-folders newest-first, then `appearance-*.json` newest-first, so a
 /// torn final write falls back to the prior snapshot.
-fn newest_snapshot(appearance_dir: &Path) -> Option<Snapshot> {
+fn newest_snapshot(appearance_dir: &Path) -> Option<StoredSnapshot> {
     let mut days: Vec<String> = std::fs::read_dir(appearance_dir)
         .ok()?
         .flatten()
@@ -1228,7 +1246,7 @@ fn newest_snapshot(appearance_dir: &Path) -> Option<Snapshot> {
         files.sort();
         for f in files.iter().rev() {
             if let Ok(bytes) = std::fs::read(day_dir.join(f)) {
-                if let Ok(snap) = serde_json::from_slice::<Snapshot>(&bytes) {
+                if let Ok(snap) = serde_json::from_slice::<StoredSnapshot>(&bytes) {
                     return Some(snap);
                 }
             }
@@ -1247,12 +1265,11 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
     let snap = Snapshot {
         version: entry.version,
         as_of: now,
-        content: entry.content.clone(),
-        condition: entry.condition.clone(),
-        history: entry.history.clone(),
-        cursor: entry.cursor.clone(),
+        content: entry.content.as_ref(),
+        condition: entry.condition.as_ref(),
+        history: &entry.history,
+        cursor: entry.cursor.as_deref(),
         kept: entry.kept,
-        legacy_views: Vec::new(),
     };
     let bytes = match serde_json::to_vec_pretty(&snap) {
         Ok(bytes) => bytes,
@@ -1293,13 +1310,11 @@ async fn persist(data_dir: &Path, entry: &Appearance) {
 mod tests {
     use super::*;
 
-    /// **`module_url` is an identity, not just an address.** A history entry with no
-    /// `view_ref` is matched against `live` by it (`destination_of` here, `destinationOf`
-    /// in `trail.ts`), so anything that rewrote that field would give one show two names
-    /// and the trail would stop marking the live one. Every path here is the core's own
-    /// and is served as written — the state carries no second, resolved spelling.
+    /// A history entry is matched against `live` by its ref (`destinationOf` in
+    /// `trail.ts`), and the module path is served as written — the state carries no
+    /// second, resolved spelling of either.
     #[test]
-    fn a_shows_module_url_is_the_name_its_history_entry_is_matched_by() {
+    fn a_show_is_matched_to_its_history_entry_by_its_ref() {
         let state = ViewState {
             version: 1,
             views: vec![WireView {
@@ -1310,37 +1325,28 @@ mod tests {
             history: vec![WireHistoryEntry {
                 id: "v1".into(),
                 module_url: "/views/_compiled/abc.mjs".into(),
-                view_ref: None,
+                view_ref: "p/something".into(),
                 label: "Something".into(),
                 at: Utc::now(),
-                shot_url: Some("/views/_shots/abc.png".into()),
+                shot_url: Some("/views/_shots/ref/p/something.png".into()),
                 unopened: false,
             }],
             cursor: None,
-            live: Some("/views/_compiled/abc.mjs".into()),
+            live: Some("p/something".into()),
         };
-        assert_eq!(state.history[0].shot_url.as_deref(), Some("/views/_shots/abc.png"));
         assert_eq!(state.history[0].module_url, "/views/_compiled/abc.mjs");
         assert_eq!(state.views[0].module_url, "/views/_compiled/abc.mjs");
         assert_eq!(
             state.live.as_deref(),
-            Some(destination_of_wire(&state.history[0])),
+            Some(state.history[0].view_ref.as_str()),
             "the live show still matches its own history entry"
         );
     }
 
-    /// `destinationOf` in `trail.ts`, on the wire shape the browser actually receives.
-    fn destination_of_wire(entry: &WireHistoryEntry) -> &str {
-        entry.view_ref.as_deref().unwrap_or(&entry.module_url)
-    }
-
+    /// A view shown under a ref that is its own id — enough for every test here that is
+    /// not about what a ref and an id each mean.
     fn show(id: &str, url: &str) -> ViewEnvelope {
-        ViewEnvelope {
-            id: id.into(),
-            op: ViewOp::Show,
-            module_url: Some(url.into()),
-                view_ref: None,
-        }
+        show_ref(id, url, id)
     }
 
     fn dismiss(id: &str) -> ViewEnvelope {
@@ -1348,7 +1354,7 @@ mod tests {
             id: id.into(),
             op: ViewOp::Dismiss,
             module_url: None,
-                view_ref: None,
+            view_ref: None,
         }
     }
 
@@ -1362,12 +1368,8 @@ mod tests {
 
     /// A destination for [`ViewBus::go_to`] — what the person's own path onto the screen
     /// hands over.
-    fn dest(id: &str, url: &str, view_ref: Option<&str>) -> RetainedView {
-        RetainedView {
-            id: id.into(),
-            module_url: url.into(),
-            view_ref: view_ref.map(str::to_owned),
-        }
+    fn dest(id: &str, url: &str, view_ref: &str) -> RetainedView {
+        RetainedView { id: id.into(), module_url: url.into(), view_ref: view_ref.into() }
     }
 
     /// How many whole-state snapshots are on disk — the archive a move must not grow.
@@ -1391,12 +1393,12 @@ mod tests {
         bus.apply(show("a", "/m/a.mjs")).await;
         let before = bus.wait_state(None).await;
 
-        assert!(bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await);
+        assert!(bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await);
 
         let after = bus.wait_state(None).await;
         assert!(after.version > before.version, "a move is a state change");
         assert_eq!(after.cursor.as_deref(), Some("factory/drive"));
-        assert_eq!(after.live.as_deref(), Some("/m/a.mjs"), "the slot is still the agent's");
+        assert_eq!(after.live.as_deref(), Some("a"), "the slot is still the agent's");
         assert_eq!(ids(&after), vec!["a"], "and what it holds is unchanged");
     }
 
@@ -1410,13 +1412,13 @@ mod tests {
         bus.apply(show_ref("drive", "/m/drive.mjs", "factory/drive")).await;
 
         // Never been here: a card, marked as the person's.
-        bus.go_to(Some(dest("mem", "/m/mem.mjs", Some("factory/memories")))).await;
+        bus.go_to(Some(dest("mem", "/m/mem.mjs", "factory/memories"))).await;
         let state = bus.wait_state(None).await;
         assert_eq!(history_ids(&state), vec!["tasks", "drive", "mem"]);
         assert_eq!(state.cursor.as_deref(), Some("factory/memories"));
 
         // Back to a card already in the row: the cursor moves, the row does not.
-        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", Some("factory/tasks")))).await;
+        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", "factory/tasks"))).await;
         let state = bus.wait_state(None).await;
         assert_eq!(
             history_ids(&state),
@@ -1438,13 +1440,13 @@ mod tests {
         bus.apply(show("a", "/m/a.mjs")).await;
 
         let before = snapshot_count(tmp.path());
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
         assert!(snapshot_count(tmp.path()) > before, "a new card changed the row");
 
         let after_arrival = snapshot_count(tmp.path());
         let version = bus.wait_state(None).await.version;
         bus.go_to(None).await;
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
         assert!(bus.wait_state(None).await.version > version, "parked readers still wake");
         assert_eq!(
             snapshot_count(tmp.path()),
@@ -1461,8 +1463,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         {
             let bus = ViewBus::load(tmp.path());
-            bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
-            bus.go_to(Some(dest("tasks", "/m/tasks.mjs", Some("factory/tasks")))).await;
+            bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
+            bus.go_to(Some(dest("tasks", "/m/tasks.mjs", "factory/tasks"))).await;
         }
 
         let state = ViewBus::load(tmp.path()).wait_state(None).await;
@@ -1476,7 +1478,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
 
-        let drive = || Some(dest("drive", "/m/drive.mjs", Some("factory/drive")));
+        let drive = || Some(dest("drive", "/m/drive.mjs", "factory/drive"));
         assert!(bus.go_to(drive()).await);
         assert!(!bus.go_to(drive()).await);
         assert!(bus.go_to(None).await, "and going live from somewhere is a move");
@@ -1491,7 +1493,7 @@ mod tests {
         let bus = ViewBus::load(tmp.path());
         bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
 
-        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", Some("factory/tasks")))).await;
+        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", "factory/tasks"))).await;
         assert!(bus.wait_state(None).await.cursor.is_none());
     }
 
@@ -1500,7 +1502,7 @@ mod tests {
     async fn any_show_takes_them_along() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", None))).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", "drive"))).await;
 
         // Somewhere else entirely: they are taken there, so the cursor goes.
         bus.apply(show("tasks", "/m/tasks.mjs")).await;
@@ -1531,7 +1533,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show_ref("home", "/m/home.mjs", "factory/home")).await;
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
 
         assert!(bus.shows_ref("factory/drive").await);
         assert!(bus.follow_source("factory/drive", "/m/drive-v2.mjs").await);
@@ -1577,10 +1579,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show("tasks", "/m/tasks.mjs")).await;
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", None))).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", "drive"))).await;
 
         bus.apply(dismiss("tasks")).await;
-        assert_eq!(bus.wait_state(None).await.cursor.as_deref(), Some("/m/drive.mjs"));
+        assert_eq!(bus.wait_state(None).await.cursor.as_deref(), Some("drive"));
     }
 
     /// Reclaiming the screen is the way home: the slot and the cursor go together, or the
@@ -1589,7 +1591,7 @@ mod tests {
     async fn clearing_the_screen_drops_the_cursor_too() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+        bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
 
         bus.clear().await;
         let state = bus.wait_state(None).await;
@@ -1603,7 +1605,7 @@ mod tests {
     async fn a_cursor_trimmed_out_of_the_history_goes_live() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.go_to(Some(dest("first", "/m/first.mjs", None))).await;
+        bus.go_to(Some(dest("first", "/m/first.mjs", "first"))).await;
         for n in 0..HISTORY_MAX {
             bus.apply(show(&format!("v{n}"), &format!("/m/v{n}.mjs"))).await;
         }
@@ -1620,7 +1622,7 @@ mod tests {
         {
             let bus = ViewBus::load(tmp.path());
             bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
-            bus.go_to(Some(dest("drive", "/m/drive.mjs", Some("factory/drive")))).await;
+            bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
             bus.reconcile(show("vendor-outage", "/m/energy.mjs")).await;
         }
 
@@ -1761,23 +1763,19 @@ mod tests {
         assert_eq!(state.history[1].module_url, "/m/tasks-v2.mjs");
     }
 
+    /// A view goes up by name or not at all: an envelope with no ref has nothing to be
+    /// filed under or re-opened as, so the content slot drops it like any malformed write.
     #[tokio::test]
-    async fn two_different_inline_views_both_stay() {
+    async fn a_show_with_no_ref_is_dropped() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.apply(show("a", "/m/aaa.mjs")).await;
-        bus.apply(show("b", "/m/bbb.mjs")).await;
+        bus.apply(show("a", "/m/a.mjs")).await;
+        bus.apply(ViewEnvelope { id: "b".into(), op: ViewOp::Show, module_url: Some("/m/b.mjs".into()), view_ref: None })
+            .await;
 
         let state = bus.wait_state(None).await;
-        assert_eq!(
-            history_ids(&state),
-            vec!["a", "b"],
-            "distinct artifacts are distinct destinations"
-        );
-        assert!(
-            state.history.iter().all(|h| h.view_ref.is_none()),
-            "an inline view never gains a ref, so it reopens as the artifact it was"
-        );
+        assert_eq!(ids(&state), vec!["a"]);
+        assert_eq!(history_ids(&state), vec!["a"]);
     }
 
     #[tokio::test]
@@ -1818,11 +1816,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show_ref("pr", "/m/pr.mjs", "factory/people-review")).await;
-        bus.apply(show("bj01-final", "/m/x.mjs")).await;
+        bus.apply(show_ref("x", "/m/x.mjs", "trip/bj01-final")).await;
 
         let state = bus.wait_state(None).await;
         assert_eq!(state.history[0].label, "People review");
-        assert_eq!(state.history[1].label, "Bj01 final", "an inline view falls back to its id");
+        assert_eq!(state.history[1].label, "Bj01 final", "not the id it was shown under");
     }
 
     #[tokio::test]
@@ -1841,7 +1839,7 @@ mod tests {
             vec!["tasks", "bj01"],
             "the way back is part of the state, so it comes back with it"
         );
-        assert_eq!(state.history[0].view_ref.as_deref(), Some("factory/tasks"));
+        assert_eq!(state.history[0].view_ref, "factory/tasks");
     }
 
     #[tokio::test]
@@ -1886,7 +1884,7 @@ mod tests {
                 id: "deck".into(),
                 op: ViewOp::Replace,
                 module_url: Some("/m/v2.mjs".into()),
-                        view_ref: None,
+                view_ref: Some("deck".into()),
             },
         )
         .await;
@@ -2091,11 +2089,12 @@ mod tests {
     #[tokio::test]
     async fn loads_legacy_stacked_snapshot_as_its_topmost_view() {
         let tmp = tempfile::tempdir().unwrap();
+        seed_view(tmp.path(), "factory/tasks", "export default () => 'tasks'").await;
         let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
         std::fs::create_dir_all(&dir).unwrap();
         let old = r#"{"version":3423,"as_of":"2026-08-07T09:05:30Z","views":[
-            {"id":"tasks","module_url":"/m/tasks.mjs","geometry":{"region":"center","size":"wide"}},
-            {"id":"bj01","module_url":"/m/bj01.mjs","geometry":{"region":"center","size":"auto"}}
+            {"id":"bj01","module_url":"/m/bj01.mjs","geometry":{"region":"center","size":"auto"}},
+            {"id":"tasks","module_url":"/m/tasks.mjs","geometry":{"region":"center","size":"wide"}}
         ]}"#;
         std::fs::write(dir.join("appearance-090530Z.json"), old).unwrap();
 
@@ -2104,7 +2103,36 @@ mod tests {
         assert_eq!(state.version, 3423);
         // The retired `geometry` keys are simply unknown fields now, and a view
         // declares nothing at all — see the trait's deletion in `docs/arch/stage.md`.
-        assert_eq!(ids(&state), vec!["bj01"]);
+        assert_eq!(ids(&state), vec!["tasks"]);
+        assert_eq!(state.live.as_deref(), Some("factory/tasks"), "named through the built-in bridge");
+    }
+
+    /// A snapshot from before every view had to have a name can hold views shown as raw
+    /// JSX. They have nothing to be re-resolved from and nothing to be filed under, so
+    /// they are left out of the restored screen — and a cursor parked on one goes live —
+    /// while a ref-less built-in is still named through its `factory/` file.
+    #[tokio::test]
+    async fn a_snapshot_with_views_shown_without_a_name_loads_without_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_view(tmp.path(), "factory/tasks", "export default () => 'tasks'").await;
+        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = r#"{"version":40,"as_of":"2026-09-20T09:05:30Z",
+            "content":{"id":"sketch","module_url":"/m/sketch.mjs"},
+            "history":[
+                {"view":{"id":"tasks","module_url":"/m/tasks.mjs"},"at":"2026-09-20T09:00:00Z"},
+                {"view":{"id":"trip","module_url":"/m/trip.mjs","view_ref":"trip/plan"},"at":"2026-09-20T09:01:00Z"},
+                {"view":{"id":"sketch","module_url":"/m/sketch.mjs"},"at":"2026-09-20T09:02:00Z"}
+            ],
+            "cursor":"/m/sketch.mjs"}"#;
+        std::fs::write(dir.join("appearance-090530Z.json"), old).unwrap();
+
+        let bus = ViewBus::load(tmp.path());
+        let state = bus.wait_state(None).await;
+        assert!(state.views.is_empty(), "the unnamed view that was up is not restored");
+        assert_eq!(history_ids(&state), vec!["tasks", "trip"]);
+        assert_eq!(state.history[0].view_ref, "factory/tasks", "the built-in bridge still names it");
+        assert_eq!(state.cursor, None, "a cursor on a dropped card goes live");
     }
 
     #[tokio::test]
@@ -2130,14 +2158,13 @@ mod tests {
         assert!(bus.shown().await.is_empty(), "nothing has been up yet");
 
         bus.apply(show_ref("s1", "/m/a.mjs", "spend/august")).await;
-        bus.apply(show("s2", "/m/inline.mjs")).await;
         bus.apply(show_ref("s3", "/m/t.mjs", "trip/itinerary")).await;
 
         let trail = bus.shown().await;
         assert_eq!(
             trail.iter().map(|s| s.view_ref.as_str()).collect::<Vec<_>>(),
             vec!["trip/itinerary", "spend/august"],
-            "newest first, and the inline show is not offered — a `show` cannot put it back"
+            "newest first"
         );
         assert_eq!(trail[0].label, "Itinerary", "the name the person's card carries");
         assert!(trail[0].live, "the newest show is what is up");
@@ -2200,7 +2227,7 @@ mod tests {
             id: id.into(),
             op: ViewOp::Show,
             module_url: Some(url.into()),
-                view_ref: Some(view_ref.into()),
+            view_ref: Some(view_ref.into()),
         }
     }
 
@@ -2243,11 +2270,15 @@ mod tests {
     async fn refresh_adopts_the_builtin_ref_for_a_snapshot_written_without_one() {
         let tmp = tempfile::tempdir().unwrap();
         seed_view(tmp.path(), "factory/tasks", "export default () => 'old'").await;
-        {
-            let bus = ViewBus::load(tmp.path());
-            // No ref — exactly what a pre-`view_ref` snapshot restores as.
-            bus.apply(show("tasks", "/views/_compiled/deadbeef.mjs")).await;
-        }
+        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
+        std::fs::create_dir_all(&dir).unwrap();
+        // No ref — exactly what a pre-`view_ref` snapshot holds.
+        std::fs::write(
+            dir.join("appearance-000000Z.json"),
+            br#"{"version":3,"as_of":"2026-08-01T00:00:00Z",
+                "content":{"id":"tasks","module_url":"/views/_compiled/deadbeef.mjs"}}"#,
+        )
+        .unwrap();
 
         let current = seed_view(tmp.path(), "factory/tasks", "export default () => 'new'").await;
         let bus = ViewBus::load(tmp.path());
@@ -2257,24 +2288,7 @@ mod tests {
         // …and the ref is now on disk, so the next boot resolves it outright.
         let reloaded = ViewBus::load(tmp.path());
         let restored = reloaded.inner.lock().await.content.clone().unwrap();
-        assert_eq!(restored.view_ref.as_deref(), Some("factory/tasks"));
-    }
-
-    /// An inline-source view has no durable name and no `factory/` file behind its
-    /// id. It must be left exactly as it was rather than blanked.
-    #[tokio::test]
-    async fn refresh_leaves_a_view_it_cannot_name_alone() {
-        let tmp = tempfile::tempdir().unwrap();
-        {
-            let bus = ViewBus::load(tmp.path());
-            bus.apply(show("one-off", "/views/_compiled/abc123.mjs")).await;
-        }
-
-        let bus = ViewBus::load(tmp.path());
-        bus.refresh_sources(&offline_compiler(tmp.path())).await;
-        let state = bus.wait_state(None).await;
-        assert_eq!(state.views[0].module_url, "/views/_compiled/abc123.mjs");
-        assert_eq!(state.views[0].id, "one-off");
+        assert_eq!(restored.view_ref, "factory/tasks");
     }
 
     /// A ref whose source has since been deleted keeps the module it was shown as.
@@ -2319,7 +2333,6 @@ mod tests {
         Front {
             dest: dest.into(),
             id: dest.rsplit('/').next().unwrap().into(),
-            name: dest.into(),
             since: Utc::now() - Duration::minutes(minutes_ago),
         }
     }
@@ -2382,7 +2395,7 @@ mod tests {
         let state = bus.wait_state(None).await;
         assert_eq!(state.live.as_deref(), Some("fp/libs"));
         assert_eq!(state.cursor.as_deref(), Some("reid/compare"), "the screen stayed");
-        let card = state.history.iter().find(|h| h.view_ref.as_deref() == Some("fp/libs")).unwrap();
+        let card = state.history.iter().find(|h| h.view_ref == "fp/libs").unwrap();
         assert!(card.unopened);
         let cursor = bus.cursor().await.unwrap();
         assert!(cursor.kept && cursor.name == "reid/compare");
@@ -2396,7 +2409,7 @@ mod tests {
         let bus = ViewBus::load(tmp.path());
         bus.apply(show_ref("compare", "/m/reid.mjs", "reid/compare")).await;
         bus.apply_kept(show_ref("libs", "/m/fp.mjs", "fp/libs")).await;
-        assert!(bus.go_to(Some(dest("libs", "/m/fp.mjs", Some("fp/libs")))).await);
+        assert!(bus.go_to(Some(dest("libs", "/m/fp.mjs", "fp/libs"))).await);
 
         let state = bus.wait_state(None).await;
         assert_eq!(state.cursor, None, "going to what the agent has up is going live");

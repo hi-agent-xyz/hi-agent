@@ -14,7 +14,7 @@ import {
   goToView,
   type WireHistoryEntry,
 } from "../channels/out/view";
-import { destinationOf, trailOf } from "./trail";
+import { trailOf } from "./trail";
 import { usePresence, useWake } from "./session";
 
 // How long a newly appearing view waits for the voice before showing anyway.
@@ -195,11 +195,9 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
   const goTo = useCallback((entry: WireHistoryEntry) => {
     void goToView({
       viewRef: entry.view_ref,
-      moduleUrl: entry.module_url,
-      id: entry.id,
       // Nothing the person can act on, and blanking the screen would be worse than
-      // leaving them where they are. A named view whose source is gone keeps its card:
-      // the artifact it was shown as is still on disk, which is the same call
+      // leaving them where they are. A view whose source is gone keeps its card: the
+      // artifact it was shown as is still on disk, which is the same call
       // `ViewBus::refresh_sources` makes on the server.
     }).catch((error) => console.warn("going to a view failed", error));
   }, []);
@@ -216,7 +214,7 @@ export function ViewsProvider({ children }: { children: ReactNode }) {
     // Parked: the cursor's card takes the content layer's place, and the condition layer
     // stays over it — an outage must still cover whatever the screen went back to.
     const parkedOn = cursor
-      ? history.find((entry) => destinationOf(entry) === cursor)
+      ? history.find((entry) => entry.view_ref === cursor)
       : undefined;
     const views = parkedOn
       ? [

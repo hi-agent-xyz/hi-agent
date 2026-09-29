@@ -27,24 +27,22 @@ export interface WireView {
 /** One place the screen has been, as the server recorded it — the agent's shows and the
  * person's own moves, in one list.
  *
- * `view_ref` decides what re-opening means. A named view is re-resolved from its
- * current source, so `factory/tasks` comes back as today's board — go there through
- * `goToView({viewRef})`. An inline view has no ref and can only come back as the
- * artifact it compiled to, named by `module_url`. */
+ * `view_ref` is the entry's identity — the server holds one entry per ref, and the cursor
+ * and `live` are refs — and what re-opening sends back through `goToView({viewRef})`. A
+ * view is re-resolved from its current source, so `factory/tasks` comes back as today's
+ * board. */
 export interface WireHistoryEntry {
   id: string;
   module_url: string;
-  view_ref?: string;
-  /** Derived server-side from the ref's last segment, or the id for an inline view. */
+  view_ref: string;
+  /** Derived server-side from the ref's last segment. */
   label: string;
   /** ISO timestamp of the show. */
   at: string;
-  /** A picture of this entry, served from `/views/_shots/`. For a named view it is a
-   * picture of the surface as it currently stands — the card leads to today's board, so
-   * the tile is of today's board — and for an inline view it is the artifact's own,
-   * captured the moment it went up. Absent while the capture is still running, and for
-   * good on a view that did not render cleanly; the tile falls back to its mark either
-   * way. */
+  /** A picture of this entry, served from `/views/_shots/`: the surface as it currently
+   * stands — the card leads to today's board, so the tile is of today's board. Absent
+   * while the capture is still running, and for good on a view that did not render
+   * cleanly; the tile falls back to its mark either way. */
   shot_url?: string;
   /** Shown while they were reading something else, so the screen stayed where it was and
    * this went into the list instead; not opened since. The card and the task on Home that
@@ -60,12 +58,12 @@ export interface ViewState {
    * — read as empty, which reads as "nowhere to go back to", which is the truthful
    * answer from a server that isn't recording. */
   history?: WireHistoryEntry[];
-  /** The destination the screen is parked on, absent when it is live. **This is the
+  /** The ref the screen is parked on, absent when it is live. **This is the
    * whole of one screen**: every window mounts the history entry it names in place of
    * `views`' content layer, so going back on the phone is going back on the desktop.
    * Absent on a server that keeps the cursor per window, where every window is live. */
   cursor?: string;
-  /** The destination the agent has up in the content slot, absent when the room is
+  /** The ref the agent has up in the content slot, absent when the room is
    * empty. Sent rather than inferred from the newest history entry, which is no longer
    * necessarily a show. */
   live?: string;
@@ -87,8 +85,7 @@ export interface ListedView {
    * as a parse error. */
   shared?: boolean;
   /** A picture of this surface as it currently stands, or absent until one has been
-   * taken. Named views only — an inline view has no ref to file a picture under. This
-   * is the fresher of the two answers about a named view's tile, because the band
+   * taken. This is the fresher of the two answers about a view's tile, because the band
    * re-reads the inventory while it is open. */
   shot_url?: string;
 }
@@ -107,14 +104,10 @@ export async function listViews(): Promise<ListedView[]> {
   return (await res.json()) as ListedView[];
 }
 
-/** Where to put the screen: a named view, a past inline artifact, or back to live. */
+/** Where to put the screen: a view, or back to live. */
 export interface Destination {
-  /** A named view, re-resolved and recompiled so it lands on today's board. */
+  /** A view, re-resolved and recompiled so it lands on today's board. */
   viewRef?: string;
-  /** The compiled module of a past inline view, which is only ever the artifact it is. */
-  moduleUrl?: string;
-  /** What that inline view was shown as — its module hash names nothing. */
-  id?: string;
   /** Back to what the agent has up. */
   live?: boolean;
 }
@@ -128,8 +121,8 @@ export interface Destination {
  * other. It used to compile a view for *this* window alone and leave every other one
  * where it was.
  *
- * Rejects on a ref that no longer resolves or no longer compiles. Nothing else here
- * throws: going back to an artifact and going live cannot fail. */
+ * Rejects on a ref that no longer resolves or no longer compiles. Going live cannot
+ * fail. */
 export async function goToView(dest: Destination): Promise<void> {
   const res = await fetch("/api/views/open", {
     method: "POST",
@@ -143,8 +136,6 @@ export async function goToView(dest: Destination): Promise<void> {
     },
     body: JSON.stringify({
       ref: dest.viewRef,
-      module: dest.moduleUrl,
-      id: dest.id,
       live: dest.live ?? false,
     }),
   });
@@ -156,9 +147,7 @@ export async function goToView(dest: Destination): Promise<void> {
  * Server-side because a bookmark has to be the same on the desktop and the phone — like
  * the cursor, and unlike it in what it outlives: a bookmark is a decision that has to
  * survive an upgrade, so it is kept in the config store rather than in the appearance.
- * Only a named, non-system view can be
- * bookmarked: an inline view is only ever the disposable artifact it compiled to, and
- * a system view is in the row already. */
+ * A system view cannot be bookmarked: it is in the row already. */
 export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
   const res = await fetch("/api/views/bookmarks", {
     method: "POST",

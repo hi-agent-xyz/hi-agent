@@ -44,7 +44,8 @@ async fn spawn_server_at(dir: &Path) -> (String, ServerSeams) {
 }
 
 /// Drive a view through the reaction's outbound seam — binder → bus — exactly
-/// as the mind emits it.
+/// as the mind emits it: every view the agent shows goes up by its ref, here
+/// `notes/<id>`.
 async fn emit_view(
     seams: &ServerSeams, id: &str, op: ViewOp, url: Option<&str>) {
     seams
@@ -55,7 +56,7 @@ async fn emit_view(
                 id: id.to_string(),
                 op,
                 module_url: url.map(str::to_string),
-                view_ref: None,
+                view_ref: Some(format!("notes/{id}")),
             },
         })
         .await
@@ -83,6 +84,19 @@ async fn get_state(
     })
     .await
     .map_err(|_| ())
+}
+
+/// Somewhere the person can move the screen that needs no view compiler, which this
+/// server never publishes: a picture goes up as the host's own stage module.
+async fn a_picture(dir: &Path) -> String {
+    let mut png = Vec::new();
+    image::DynamicImage::new_rgb8(16, 9)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("encode");
+    let placed = hi_agent::foundation::attachments::place_bytes(dir, &png, "drive.png")
+        .await
+        .expect("attached");
+    format!("{}{}", hi_agent::foundation::attachments::PREFIX, placed.id)
 }
 
 fn ids(state: &serde_json::Value) -> Vec<&str> {
@@ -202,6 +216,7 @@ async fn a_move_takes_every_window_with_it() {
     let (base, seams) = spawn_server_at(dir.path()).await;
     emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
 
+    let picture = a_picture(dir.path()).await;
     let before = get_state(&base, None, Duration::from_millis(500))
         .await
         .expect("state");
@@ -218,17 +233,17 @@ async fn a_move_takes_every_window_with_it() {
     let moved = client
         .post(format!("{base}/api/views/open"))
         .header("X-HI-Face", "desk")
-        .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
+        .json(&serde_json::json!({ "ref": picture }))
         .send()
         .await
         .expect("send");
-    assert_eq!(moved.status(), 202);
+    assert!(moved.status().is_success(), "moved: {}", moved.status());
 
     let after = waiting.await.expect("join").expect("the parked window woke");
-    assert_eq!(after["cursor"], "/m/drive.mjs", "the other window follows");
+    assert_eq!(after["cursor"], picture.as_str(), "the other window follows");
     // The slot is still the agent's: what it showed is what it will refer to out loud.
     assert_eq!(ids(&after), vec!["card"]);
-    assert_eq!(after["live"], "/m/card.mjs");
+    assert_eq!(after["live"], "notes/card");
 
     // And going live drops the cursor rather than clearing the screen.
     let live = client
@@ -251,13 +266,15 @@ async fn a_show_catches_up_with_a_parked_screen() {
     let (base, seams) = spawn_server_at(dir.path()).await;
     emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
 
-    reqwest::Client::new()
+    let picture = a_picture(dir.path()).await;
+    let moved = reqwest::Client::new()
         .post(format!("{base}/api/views/open"))
         .header("X-HI-Face", "desk")
-        .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
+        .json(&serde_json::json!({ "ref": picture }))
         .send()
         .await
         .expect("send");
+    assert!(moved.status().is_success(), "moved: {}", moved.status());
 
     emit_view(&seams, "next", ViewOp::Show, Some("/m/next.mjs")).await;
     let state = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
@@ -295,7 +312,7 @@ async fn a_move_no_face_made_is_refused_and_moves_nothing() {
 
     let faceless = reqwest::Client::new()
         .post(format!("{base}/api/views/open"))
-        .json(&serde_json::json!({ "module": "/m/drive.mjs", "id": "drive" }))
+        .json(&serde_json::json!({ "ref": "factory/drive" }))
         .send()
         .await
         .expect("send");

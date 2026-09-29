@@ -130,7 +130,7 @@ fn shown_line(arguments: &Value) -> String {
     let what = ["ref", "id"]
         .iter()
         .find_map(|k| arguments.get(*k).and_then(Value::as_str))
-        .unwrap_or("an inline view");
+        .unwrap_or("the screen");
     format!("{op} {what}")
 }
 

@@ -4144,11 +4144,11 @@ mod view_line_tests {
         );
     }
 
-    /// No ref, and nothing invented: an inline view is known by its id and that is all.
+    /// A dismiss names no view, and nothing is invented for it: the slot's id is all it says.
     #[test]
-    fn an_inline_view_reads_exactly_as_it_always_did() {
-        let line = render_view_line("sketch", ViewOp::Show, Some("/views/_compiled/cd.mjs"), None);
-        assert_eq!(line, r#"showed "sketch" (/views/_compiled/cd.mjs)"#);
+    fn a_dismiss_is_known_by_its_slot_alone() {
+        let line = render_view_line("sketch", ViewOp::Dismiss, None, None);
+        assert_eq!(line, r#"dismissed "sketch""#);
     }
 
     /// When the agent named the view by its ref there is nothing to add, and repeating it

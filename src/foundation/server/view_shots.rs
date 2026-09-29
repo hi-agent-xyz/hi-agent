@@ -15,10 +15,10 @@
 //!
 //! Three properties make it affordable:
 //!
-//! **Content-addressed, so each artifact renders once.** The key is the compiled
-//! module's own hash. Re-showing `factory/tasks` reuses the shot; recompiling it
-//! produces a new module and therefore a new one. `<data>/views/_shots/<hash>.png`
-//! sits beside `_compiled/` and is disposable in exactly the same way.
+//! **Keyed by the view's name, so each view has one picture.** Re-showing
+//! `factory/tasks` reuses the shot until it goes stale (below);
+//! `<data>/views/_shots/ref/<ref>.png` sits beside `_compiled/` and is disposable in
+//! exactly the same way.
 //!
 //! **One at a time.** A `show, say, show, say` walk-through would otherwise put
 //! three Chromiums on a machine that is also running the agent. Captures queue on
@@ -50,16 +50,18 @@
 //! [`note_shot`](super::view_bus::ViewBus::note_shot). A constant cannot be argued with,
 //! so with one it converges: whoever renders, the answer is the same picture.
 //!
-//! **A named surface's picture is keyed by its ref, and a record's by its artifact.**
-//! Content-addressing alone froze the wrong half of this: `factory/tasks` renders once
-//! and then shows that morning's board forever, while re-opening it deliberately
-//! re-resolves to *today's*. So the two kinds of picture are stored apart —
-//! `_shots/<artifact>.png` for an inline view, which is only ever the artifact it
-//! compiled to and so is written once; `_shots/ref/<ref>.png` for a named view, which
-//! is a standing surface and is re-taken when the person opens it and the last one has
-//! gone stale — older than [`REFRESH_AFTER`], or older than the view's own source, which
-//! the agent rewrites. The URL carries the file's mtime so the year-long cache the
-//! `_shots/` route hands out still expires on a re-take.
+//! **A picture is keyed by the ref, not by the artifact.** Keying by the compiled
+//! module's hash froze the wrong thing: `factory/tasks` rendered once and then showed
+//! that morning's board forever, while re-opening it deliberately re-resolves to
+//! *today's*. A view is a standing surface, so its picture is re-taken when the person
+//! opens it and the last one has gone stale — older than [`REFRESH_AFTER`], or older than
+//! the view's own source, which the agent rewrites. The URL carries the file's mtime so
+//! the year-long cache the `_shots/` route hands out still expires on a re-take.
+//!
+//! *There used to be a second key.* A view shown as raw JSX with no ref had only its
+//! artifact to be a picture of, and was filed once under `_shots/<hash>.png`. Views
+//! without a name were deleted on 2026-09-29 (`docs/arch/stage.md`), and that key, its
+//! write-once rule and the pruning its unbounded growth needed went with them.
 //!
 //! The one honest limitation: a view that reads live data renders with the data it
 //! has a second later, not a frozen copy. At 118×76 that is a distinction without a
@@ -79,16 +81,10 @@ use crate::body::capabilities::view_render;
 /// reaches in *for* — the one act guaranteed to blur it.
 ///
 /// The cost is bytes, measured on a real capture of the same views: `factory/tasks` 8 KB →
-/// 32 KB, `factory/home` 24 KB → 124 KB, a dense research view 96 KB → 247 KB. A full cache
-/// goes from roughly 100 MB to 300 MB — 0.4% of a data dir whose journal and codex home are
-/// tens of gigabytes, which is why it does not buy a second format or a tighter [`KEEP`].
+/// 32 KB, `factory/home` 24 KB → 124 KB, a dense research view 96 KB → 247 KB — one picture
+/// per named view, on a data dir whose journal and codex home are tens of gigabytes, which is
+/// why it does not buy a second format.
 const THUMB_WIDTH: u32 = 960;
-
-/// How many shots to keep. The history is bounded at 24 entries, but the *cache* is
-/// keyed by artifact and would otherwise grow with every view ever recompiled. This
-/// is roughly ten histories' worth — enough that going back to something from this
-/// morning still has its picture.
-const KEEP: usize = 200;
 
 /// How old a named surface's picture may be before opening it takes a new one. A
 /// surface is a live board, so its tile is a claim about what is on it now; an hour-old
@@ -127,28 +123,6 @@ fn shots_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("views").join("_shots")
 }
 
-/// The file name a module's shot is stored under.
-///
-/// A compiled module URL is already `/views/_compiled/<hash>.mjs`, and that hash is the
-/// SHA-256 of the source — exactly the identity a picture of it should have. Anything
-/// else (a module served from somewhere this doesn't recognise) is keyed by the SHA-256
-/// of its URL, so the function is still total and no name here comes from a hash a
-/// toolchain may redefine.
-fn shot_name(module_url: &str) -> String {
-    let stem = module_url
-        .rsplit('/')
-        .next()
-        .and_then(|f| f.strip_suffix(".mjs"))
-        .unwrap_or_default();
-    if !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return format!("{stem}.png");
-    }
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(module_url.as_bytes());
-    let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
-    format!("u{hex}.png")
-}
-
 /// Where a named surface's picture lives — `_shots/ref/<ref>.png`, mirroring the ref's
 /// own path. A ref is validated to names and `/` (see [`crate::mind::views::valid_ref`]),
 /// so it is already a safe relative path and a safe URL; anything else has no picture.
@@ -157,16 +131,10 @@ fn ref_shot_path(data_dir: &Path, view_ref: &str) -> Option<PathBuf> {
         .then(|| shots_dir(data_dir).join("ref").join(format!("{view_ref}.png")))
 }
 
-/// The URL a captured shot is served at, or `None` while none has been taken.
+/// The URL of a view's current picture, or `None` while none has been taken.
 ///
 /// Called once per history entry when the appearance state is built — a couple of
 /// dozen `stat`s on a response that is only produced on a version bump.
-pub fn url_for(data_dir: &Path, module_url: &str) -> Option<String> {
-    let name = shot_name(module_url);
-    shots_dir(data_dir).join(&name).exists().then(|| format!("/views/_shots/{name}"))
-}
-
-/// The URL of a named surface's current picture, or `None` while none has been taken.
 ///
 /// **Carries the file's mtime.** The `_shots/` route serves a year-long
 /// `Cache-Control`, which is right for a picture that is never re-taken and wrong for a
@@ -200,24 +168,13 @@ pub fn wants_shot(data_dir: &Path, view_ref: &str) -> bool {
     !path.exists() || !fills_the_tile(&path)
 }
 
-/// Capture `module_url` in the background, then call `done` if a new shot landed.
+/// Capture the picture behind `view_ref` in the background, then call `done` if a new
+/// shot landed.
 ///
 /// Returns immediately. `done` is how the picture reaches the people already
 /// watching: the appearance state that carried this show was built before the shot
-/// existed, so something has to bump the version once it does.
-pub fn capture(data_dir: PathBuf, module_url: String, done: impl FnOnce() + Send + 'static) {
-    let path = shots_dir(&data_dir).join(shot_name(&module_url));
-    // Write-once: the artifact this is a picture of cannot change, so neither can the
-    // right picture of it.
-    spawn_capture(path, module_url, Keep::write_once(), done);
-}
-
-/// Capture a *named* surface — the picture behind `factory/tasks` rather than behind
-/// the artifact it happens to have compiled to.
-///
-/// Unlike a record shot this one is re-taken once it has gone stale — see [`take_ref`]
-/// — because the thing it is a picture of has moved on. Same browser, same lock, same
-/// silence on failure, same [`TILE`] frame.
+/// existed, so something has to bump the version once it does. Re-taken once it has
+/// gone stale — see [`take_ref`] — because the thing it is a picture of moves on.
 pub fn capture_ref(
     data_dir: PathBuf,
     view_ref: String,
@@ -243,10 +200,12 @@ pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool
     // current. This is the one staleness that cannot wait for the clock.
     let source = data_dir.join("views").join(format!("{view_ref}.jsx"));
     let written = std::fs::metadata(&source).ok().and_then(|m| m.modified().ok());
-    let keep = Keep { stale_after: Some(REFRESH_AFTER), newer_than: written };
+    let keep = Keep { stale_after: REFRESH_AFTER, newer_than: written };
     match run(&path, module_url, keep).await {
         Ok(landed) => landed,
-        // A thumbnail is decoration on a row that works without it — see `spawn_capture`.
+        // A thumbnail is decoration on a row that works without it, so a failure is
+        // logged at debug and never surfaces. `hi_review_view` is where a view's render
+        // problems are meant to be read.
         Err(error) => {
             tracing::debug!(view_ref = %view_ref, %error, "capturing a view thumbnail failed");
             false
@@ -255,28 +214,17 @@ pub async fn take_ref(data_dir: &Path, view_ref: &str, module_url: &str) -> bool
 }
 
 /// When a picture already at a key may be kept rather than re-taken.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 struct Keep {
-    /// `None` is write-once — any file there will do, which is what a record of a show
-    /// wants. `Some(ttl)` also requires it to be younger than `ttl`.
-    stale_after: Option<std::time::Duration>,
+    /// It must be younger than this.
+    stale_after: std::time::Duration,
     /// The picture must postdate the source it claims to be a picture of.
     newer_than: Option<std::time::SystemTime>,
 }
 
-impl Keep {
-    /// No clock and no source to postdate — what a record of a show wants: the artifact it
-    /// is a picture of cannot change, so neither can the right picture of it. It still has
-    /// to be the tile's shape; that rule is about the version that wrote the file, not
-    /// about the key, so it applies to every picture here.
-    fn write_once() -> Self {
-        Self::default()
-    }
-}
-
 /// Is `path` a picture we are content to keep?
 ///
-/// The shape-and-size check is unconditional — a record shot's too. It is not a judgement
+/// The shape-and-size check comes first and is unconditional. It is not a judgement
 /// about the reader (there is no reader here any more) but about the writer: anything not
 /// [`TILE`]-shaped or short of [`THUMB_WIDTH`] was rendered by a version that aimed at a
 /// different frame or a lower density, and the tile it goes into is 16:9 at 960 device pixels
@@ -289,17 +237,12 @@ fn good_enough(path: &Path, keep: Keep) -> bool {
         return false;
     }
     let Ok(taken) = meta.modified() else {
-        // A filesystem that cannot say when the file was written can still say it is
-        // there, which is all a write-once key needs.
-        return keep.stale_after.is_none() && keep.newer_than.is_none();
+        return false;
     };
     if keep.newer_than.is_some_and(|written| taken < written) {
         return false;
     }
-    match keep.stale_after {
-        None => true,
-        Some(ttl) => taken.elapsed().is_ok_and(|age| age < ttl),
-    }
+    taken.elapsed().is_ok_and(|age| age < keep.stale_after)
 }
 
 /// Does the picture at `path` fill the tile it is going into — in shape, and in pixels?
@@ -326,26 +269,6 @@ fn fills_the_tile(path: &Path) -> bool {
         return false;
     }
     (1.0 / TILE_TOLERANCE..=TILE_TOLERANCE).contains(&(have / want))
-}
-
-fn spawn_capture(
-    path: PathBuf,
-    module_url: String,
-    keep: Keep,
-    done: impl FnOnce() + Send + 'static,
-) {
-    tokio::spawn(async move {
-        match run(&path, &module_url, keep).await {
-            Ok(true) => done(),
-            Ok(false) => {}
-            // A thumbnail is decoration on a record that is complete without it, so a
-            // failure is logged at debug and never surfaces. `hi_review_view` is where
-            // a view's render problems are meant to be read.
-            Err(error) => {
-                tracing::debug!(module_url = %module_url, %error, "capturing a view thumbnail failed")
-            }
-        }
-    });
 }
 
 /// Render, downscale, write. `Ok(false)` means there was nothing to do or nothing
@@ -385,8 +308,8 @@ async fn run(path: &Path, module_url: &str, keep: Keep) -> anyhow::Result<bool> 
 
     let rendered = view_render::render(&req).await?;
     // A view that failed to mount, threw, or painted one flat colour has no picture
-    // worth keeping — and writing one would pin that emptiness for the artifact's
-    // whole life, since the cache never re-renders a key it already has.
+    // worth keeping — and writing one would pin that emptiness on its tile until the
+    // picture next goes stale.
     if !rendered.ok() {
         tracing::debug!(
             module_url = %module_url,
@@ -401,7 +324,6 @@ async fn run(path: &Path, module_url: &str, keep: Keep) -> anyhow::Result<bool> 
     tokio::fs::create_dir_all(dir).await?;
     tokio::fs::write(path, &thumb).await?;
     tracing::debug!(module_url = %module_url, bytes = thumb.len(), "captured a view thumbnail");
-    prune(dir).await;
     Ok(true)
 }
 
@@ -420,53 +342,9 @@ fn downscale(png: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Drop the oldest shots past [`KEEP`]. Bites the artifact cache, which grows with
-/// every recompile; `ref/` is bounded by the number of named views in the tree and so
-/// never reaches it. Best-effort: a directory that cannot be read
-/// or a file that cannot be removed leaves the cache larger than intended, which is
-/// not a condition worth reporting.
-async fn prune(dir: &Path) {
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
-        return;
-    };
-    let mut shots: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("png") {
-            continue;
-        }
-        let at = entry
-            .metadata()
-            .await
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        shots.push((at, path));
-    }
-    if shots.len() <= KEEP {
-        return;
-    }
-    shots.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_, path) in shots.into_iter().skip(KEEP) {
-        let _ = tokio::fs::remove_file(path).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_compiled_module_is_keyed_by_its_own_hash() {
-        assert_eq!(shot_name("/views/_compiled/ab12cd34.mjs"), "ab12cd34.png");
-    }
-
-    #[test]
-    fn anything_else_is_keyed_by_a_hash_of_the_url() {
-        let name = shot_name("/views/hand-written.js");
-        assert!(name.starts_with('u') && name.ends_with(".png"), "{name}");
-        assert_eq!(name, shot_name("/views/hand-written.js"), "and it is stable");
-        assert_ne!(name, shot_name("/views/other.js"));
-    }
 
     #[test]
     fn a_named_surface_is_keyed_by_its_ref_and_stamped_with_its_age() {
@@ -493,7 +371,7 @@ mod tests {
         }
     }
 
-    fn aged(stale_after: Option<std::time::Duration>) -> Keep {
+    fn aged(stale_after: std::time::Duration) -> Keep {
         Keep { stale_after, newer_than: None }
     }
 
@@ -508,20 +386,16 @@ mod tests {
         write_png(path, THUMB_WIDTH, THUMB_WIDTH * TILE.height / TILE.width);
     }
 
-    /// A record shot is written once; a surface shot is written again once it is old.
+    /// A picture is written again once it is old.
     #[test]
-    fn a_surface_picture_goes_stale_and_a_record_does_not() {
+    fn a_picture_goes_stale() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shot.png");
-        assert!(!good_enough(&path, Keep::write_once()), "nothing there yet");
+        assert!(!good_enough(&path, aged(REFRESH_AFTER)), "nothing there yet");
         write_tile(&path);
 
-        assert!(good_enough(&path, Keep::write_once()), "a record is any picture at the key");
-        assert!(good_enough(&path, aged(Some(REFRESH_AFTER))), "a fresh surface stands");
-        assert!(
-            !good_enough(&path, aged(Some(std::time::Duration::ZERO))),
-            "an aged-out surface is re-taken",
-        );
+        assert!(good_enough(&path, aged(REFRESH_AFTER)), "a fresh picture stands");
+        assert!(!good_enough(&path, aged(std::time::Duration::ZERO)), "an aged-out one is re-taken");
     }
 
     /// **The rule is about the writer, not the reader**, which is what makes it settle.
@@ -534,7 +408,7 @@ mod tests {
     fn a_picture_of_any_other_shape_is_re_taken_once() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shot.png");
-        let keep = Keep { stale_after: Some(REFRESH_AFTER), newer_than: None };
+        let keep = aged(REFRESH_AFTER);
 
         write_png(&path, 393, 852);
         assert!(!good_enough(&path, keep), "a portrait phone picture");
@@ -544,10 +418,6 @@ mod tests {
         write_tile(&path);
         assert!(good_enough(&path, keep), "what the renderer now writes stands");
         assert!(good_enough(&path, keep), "and stands again — nothing here to argue with");
-        assert!(
-            good_enough(&path, Keep::write_once()),
-            "a record shot is measured the same way: its tile is 16:9 too",
-        );
         assert!(fills_the_tile(&path));
 
         write_png(&path, 963, 540);
@@ -564,7 +434,7 @@ mod tests {
 
         write_png(&path, 480, 270);
         assert!(!fills_the_tile(&path), "16:9, and half the width the tile is read at");
-        assert!(!good_enough(&path, Keep::write_once()), "a record shot heals too");
+        assert!(!good_enough(&path, aged(REFRESH_AFTER)), "and so it is re-taken");
 
         write_tile(&path);
         assert!(fills_the_tile(&path));
@@ -581,19 +451,9 @@ mod tests {
 
         let before = taken - std::time::Duration::from_secs(60);
         let after = taken + std::time::Duration::from_secs(60);
-        let rewritten = |at| Keep { stale_after: Some(REFRESH_AFTER), newer_than: Some(at) };
+        let rewritten = |at| Keep { stale_after: REFRESH_AFTER, newer_than: Some(at) };
         assert!(good_enough(&path, rewritten(before)), "source is older");
         assert!(!good_enough(&path, rewritten(after)), "source is newer");
-    }
-
-    #[test]
-    fn a_shot_url_is_only_reported_once_the_file_is_there() {
-        let dir = tempfile::tempdir().unwrap();
-        let module = "/views/_compiled/feed01.mjs";
-        assert_eq!(url_for(dir.path(), module), None);
-        std::fs::create_dir_all(shots_dir(dir.path())).unwrap();
-        std::fs::write(shots_dir(dir.path()).join("feed01.png"), b"x").unwrap();
-        assert_eq!(url_for(dir.path(), module).as_deref(), Some("/views/_shots/feed01.png"));
     }
 
     #[test]

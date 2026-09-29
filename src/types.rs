@@ -576,8 +576,9 @@ pub struct ViewEnvelope {
     /// thing to restore a screen from: edit the source (or ship a new binary that
     /// reseeds `factory/`) and the pinned hash keeps resolving — to the old view,
     /// forever. Carrying the ref lets the restore recompile what the view *is*
-    /// now. `None` for an inline `source` view, which has no durable name and so
-    /// can only ever be restored as the artifact it compiled to.
+    /// now. Every view the agent shows has one; `None` only on a dismiss, which puts
+    /// nothing up, and on the host's own out-of-energy condition view, which is
+    /// re-derived from embedded source on every boot and never restored from a ref.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_ref: Option<String>,
 }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { destinationOf, trailOf } from "./trail";
+import { trailOf } from "./trail";
 import type { WireHistoryEntry } from "../channels/out/view";
 
-function entry(over: Partial<WireHistoryEntry> & { at: string }): WireHistoryEntry {
+function entry(over: Partial<WireHistoryEntry> & { view_ref: string; at: string }): WireHistoryEntry {
   return {
-    id: over.view_ref ?? "inline",
+    id: over.view_ref,
     module_url: "/views/_compiled/abc.mjs",
     label: "Tasks",
     ...over,
@@ -25,15 +25,11 @@ describe("trailOf", () => {
   // fold in. What arrives is the row.
   it("is the server's list and does not dedupe it a second time", () => {
     const trail = trailOf([
-      entry({ module_url: "/views/_compiled/one.mjs", at: "2026-08-19T09:00:00Z" }),
-      entry({ module_url: "/views/_compiled/two.mjs", at: "2026-08-19T10:00:00Z" }),
+      entry({ view_ref: "trip/plan", at: "2026-08-19T09:00:00Z" }),
+      entry({ view_ref: "spend/august", at: "2026-08-19T10:00:00Z" }),
       entry({ view_ref: "factory/tasks", at: "2026-08-19T12:00:00Z" }),
     ]);
-    expect(trail.map(destinationOf)).toEqual([
-      "factory/tasks",
-      "/views/_compiled/two.mjs",
-      "/views/_compiled/one.mjs",
-    ]);
+    expect(trail.map((e) => e.view_ref)).toEqual(["factory/tasks", "spend/august", "trip/plan"]);
   });
 
   it("leaves the list it was handed alone", () => {
@@ -41,12 +37,5 @@ describe("trailOf", () => {
     trailOf(history);
     expect(history[0]!.view_ref).toBe("factory/tasks");
     expect(history).toHaveLength(1);
-  });
-});
-
-describe("destinationOf", () => {
-  it("is the ref when there is one and the module when there isn't", () => {
-    expect(destinationOf(entry({ view_ref: "factory/tasks", at: "x" }))).toBe("factory/tasks");
-    expect(destinationOf(entry({ module_url: "/m/a.mjs", at: "x" }))).toBe("/m/a.mjs");
   });
 });

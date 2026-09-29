@@ -13,13 +13,6 @@ import type { WireHistoryEntry } from "../channels/out/view";
  * An entry carrying the hand that moved the screen answers that without a second list.
  */
 
-/** The same destination identity the server dedupes history by and keys the cursor on:
- * two shows of `factory/tasks` are one place, because both re-resolve to the same
- * recompiled board; two different inline views are two artifacts and both stay. */
-export function destinationOf(entry: { view_ref?: string; module_url: string }): string {
-  return entry.view_ref ?? entry.module_url;
-}
-
 /**
  * One card per destination, **newest first**.
  *

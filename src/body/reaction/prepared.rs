@@ -227,8 +227,9 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hands: Vec<FileRef>,
     },
-    /// A view by ref, an attachment by its `att:` id, or a trivial inline one.
-    Show { id: Option<String>, op: String, view_ref: Option<String>, source: String },
+    /// A view by ref, or an attachment by its `att:` id. `view_ref` is `None` only for a
+    /// dismiss, which names nothing to put up.
+    Show { id: Option<String>, op: String, view_ref: Option<String> },
     #[serde(rename = "send_message")]
     Send { to: SessionSlug, message: String },
 }
@@ -245,7 +246,7 @@ impl Action {
             ),
             Action::Show { id, op, view_ref, .. } => format!(
                 "show {op} {}",
-                view_ref.as_deref().or(id.as_deref()).unwrap_or("an inline view")
+                view_ref.as_deref().or(id.as_deref()).unwrap_or("the screen")
             ),
             Action::Send { to, message } => format!("send_message → {to}: \"{}\"", clip(message, 120)),
         }
@@ -370,27 +371,26 @@ async fn parse_action(a: &Value, data_dir: &Path, say_max: usize) -> Result<Acti
             if !matches!(op.as_str(), "show" | "replace" | "dismiss") {
                 return Err(format!("`op` is show, replace or dismiss, not `{op}`"));
             }
-            let (id, view_ref, source) = (arg("id"), arg("ref"), arg("source"));
-            let view_ref = match (&view_ref, &source) {
+            let (id, view_ref) = (arg("id"), arg("ref"));
+            let view_ref = match &view_ref {
                 // An attachment goes up as itself: no source, no compile — the stage mounts the
                 // host's own viewer for it (`docs/arch/showing.md` § *On the stage*).
-                (Some(r), _) if crate::foundation::attachments::ref_id(r).is_some() => {
+                Some(r) if crate::foundation::attachments::ref_id(r).is_some() => {
                     let id = crate::foundation::attachments::ref_id(r).unwrap_or_default();
                     if crate::foundation::attachments::probe(data_dir, id).await.is_none() {
                         return Err(crate::foundation::attachments::Refusal::UnknownId(id.to_owned()).to_string());
                     }
                     Some(format!("{}{id}", crate::foundation::attachments::PREFIX))
                 }
-                (Some(r), _) => {
+                Some(r) => {
                     crate::mind::views::resolve_ref(data_dir, r).await.map_err(|e| format!("`ref` {r}: {e}"))?;
                     Some(r.clone())
                 }
-                (None, Some(_)) => None,
                 // A dismiss clears the screen; with no id it clears whatever is up.
-                (None, None) if op == "dismiss" => None,
-                (None, None) => return Err("show needs a `ref`".into()),
+                None if op == "dismiss" => None,
+                None => return Err("show needs a `ref`".into()),
             };
-            Ok(Action::Show { id, op, view_ref, source: source.unwrap_or_default() })
+            Ok(Action::Show { id, op, view_ref })
         }
         Some("send_message") => {
             let to = arg("to").ok_or("send_message needs `to`")?;
@@ -1929,15 +1929,18 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                     }
                 }
             },
-            Action::Show { id, op, view_ref, source } => {
+            Action::Show { id, op, view_ref } => {
                 // Resolved again now rather than trusted from when it was prepared: a view is
-                // live, and what it was is not what it is. An attachment has no source.
+                // live, and what it was is not what it is. An attachment has no source, and
+                // neither does a dismiss.
                 let source = match view_ref {
                     Some(r) if crate::foundation::attachments::ref_id(r).is_some() => Ok(String::new()),
                     Some(r) => crate::mind::views::resolve_ref(&data_dir, r)
                         .await
                         .map_err(|e| Failed::because(format!("not shown — `ref` {r}: {e}"))),
-                    None => Ok(source.clone()),
+                    None if op == "dismiss" => Ok(String::new()),
+                    // Only a set written before a show had to name its view gets here.
+                    None => Err(Failed::because("not shown — nothing was named to show".into())),
                 };
                 match source {
                     Err(why) => Err(why),
@@ -1948,7 +1951,7 @@ async fn run(reaction: &Reaction, runner: &Runner, answering: bool, branch: &Bra
                             let back_at = reaction.inner.attachments.back_from_away(AWAY_FOR);
                             reaction.inner.views.claim(id.as_deref(), view_ref.as_deref(), ShowFrom { turn, answering }, back_at).await
                         };
-                        let named = view_ref.as_deref().or(id.as_deref()).unwrap_or("an inline view").to_owned();
+                        let named = view_ref.as_deref().or(id.as_deref()).unwrap_or("the screen").to_owned();
                         let keep = matches!(claim, Claim::Keeps { .. });
                         let beat = Beat::Show { id: id.clone(), op: op.clone(), source, view_ref: view_ref.clone(), keep };
                         if runner.beats.send(beat).await.is_err() {
@@ -2220,6 +2223,8 @@ mod tests {
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "shell"}]}]})).await.contains("not an action"));
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"tool": "hi_say"}]}]})).await.contains("`do`"));
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "show"}]}]})).await.contains("needs a `ref`"));
+        let unnamed = json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "show", "source": "<p>hi</p>"}]}]});
+        assert!(refused(unnamed).await.contains("needs a `ref`"), "a view goes up by name, never as raw JSX");
         let (_, clear) = parse(&json!({"matter": "x", "branches": [{"when": "finished", "actions": [{"do": "show", "op": "dismiss"}]}]}), &dir, 400).await.unwrap();
         assert!(matches!(&clear[0].actions[0], Action::Show { id: None, view_ref: None, op, .. } if op == "dismiss"), "a dismiss needs nothing named");
         assert!(refused(json!({"matter": "x", "branches": [{"when": "x", "actions": [{"do": "send_message", "to": "nobody-here", "message": "go"}]}]})).await.contains("nothing live"));

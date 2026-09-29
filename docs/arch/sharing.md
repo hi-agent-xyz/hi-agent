@@ -23,7 +23,6 @@ receives is a page, not a guest seat.
 | **The page carries its content as HTML, and the live view mounts over it** | A compiled view is an ESM module: `curl` on a React mount point returns an empty `<div>`, which fails the audience above by more than half. The rendered DOM is already produced by the check every share has to pass, so serving it costs nothing and is thrown away otherwise |
 | **A share grants reading one view, never the API** | The allow-list is computable from the ref without running anything, because the builder is already told to keep a view's files in its own folder. `/api/*` is the whole of the core; nothing about "look at this chart" needs it. The one part of it a view draws rather than reads — the attachments it embeds — is granted one id at a time, as the check saw them requested |
 | **A view is checked before it may be shared, with the API blocked** | A view that fetches its data renders half-empty under that scope, and the owner does not find out — the person they sent it to does. The check is the only thing standing between "share" and a silent bad impression |
-| **Only a named view may be shared** | The same rule bookmarks already keep. An inline view is the disposable artifact a turn compiled; it has no name to put in a URL and nothing to come back to |
 | **An attachment may be shared too, and needs no check** | A picture or a clip is its bytes and a page that is the host's own viewer, with its preview as `og:image`. It fetches nothing, so there is nothing to render half-empty; a view's scope grows by exactly the attachments its check saw it request ([showing.md](showing.md#on-a-share)) |
 | **Sharing is per-view and opt-in, and the default is unshared** | A share is a decision about one artifact, so it is stored beside the view and made once. Nothing becomes shareable by being shown |
 | **Revocation is not instant** | A shared page is served to callers with no credential, so it is cacheable, and an edge holds it. Short `max-age` and honesty in the UI beat a mechanism that pretends otherwise |
@@ -184,8 +183,8 @@ Named here so they are decisions rather than omissions:
    in that list are the ones the share is of or its check saw drawn.
 2. **No view is shared that has not rendered.** The check is the only path to a view's share
    record.
-3. **Only a named view or an attachment is shareable**, and a view's name never collides with a
-   core route.
+3. **A view is shared by its ref, an attachment by its id**, and a view's name never collides
+   with a core route.
 4. **A share cookie is not a session.** It authorizes paths, never the person, and cannot be
    exchanged upward.
 5. **The page's content is in its HTML.** A shared view that only exists once JavaScript runs is

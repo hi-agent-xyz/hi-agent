@@ -24,7 +24,7 @@ describe("taking the screen somewhere", () => {
     const fetchMock = accepted();
     vi.stubGlobal("fetch", fetchMock);
 
-    await goToView({ viewRef: "factory/drive", id: "drive" });
+    await goToView({ viewRef: "factory/drive" });
 
     const { target, body } = sent(fetchMock);
     // The person's write of the appearance, which is the same route the inventory
@@ -43,19 +43,6 @@ describe("taking the screen somewhere", () => {
     await goToView({ viewRef: "factory/drive" });
 
     expect(sent(fetchMock).headers["X-HI-Face"]).toMatch(/\S/);
-  });
-
-  it("falls back to the module for an inline view, and still carries a name", async () => {
-    const fetchMock = accepted();
-    vi.stubGlobal("fetch", fetchMock);
-
-    await goToView({ moduleUrl: "/views/_compiled/abc.mjs", id: "trip" });
-
-    const { body } = sent(fetchMock);
-    expect(body.ref).toBeUndefined();
-    expect(body.module).toBe("/views/_compiled/abc.mjs");
-    // The hash names nothing; the id is what a prompt can say out loud.
-    expect(body.id).toBe("trip");
   });
 
   it("coming back to live needs no destination", async () => {
