@@ -702,8 +702,12 @@ pub fn build(
         // the task board's own panel. Moves nothing; see `view::view_module`.
         .route("/api/views/module", get(view::view_module))
         .route("/api/views/bookmarks", post(view::bookmark_view))
-        // Publish a view or an attachment as a page somebody with no credential can open.
-        .route("/api/shares", post(share::post_share))
+        // The person deleting a view from its card: into the views trash, and its cards
+        // out of the trail. See `view::delete_view`.
+        .route("/api/views/delete", post(view::delete_view))
+        // Publish a view or an attachment as a page somebody with no credential can open,
+        // and ask whether one is.
+        .route("/api/shares", post(share::post_share).get(share::get_share))
         // Vision is an input channel that is also observable: the camera streams
         // WebM over the WS, GET plays the live video; POST persists a still frame.
         .route("/api/in/vision", post(vision::post_vision).get(vision::get_vision))

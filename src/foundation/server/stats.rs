@@ -1659,7 +1659,7 @@ async fn count_custom_views(data_dir: &Path) -> u64 {
                 continue;
             };
             if kind.is_dir() {
-                if rel == "factory" || rel == "_compiled" {
+                if rel == "factory" || rel == "_compiled" || rel == crate::mind::views::TRASH_DIR {
                     continue;
                 }
                 stack.push((entry.path(), rel));

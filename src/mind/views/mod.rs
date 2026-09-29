@@ -68,13 +68,115 @@ pub fn render_context() -> Option<&'static RenderContext> {
 /// traverse out. The build sub-agent writes `<ref>.jsx` with its own file tools (no
 /// MCP tool needed); this reads it back server-side, so the JSX never enters the
 /// mind's context.
+///
+/// **No ref names anything under [`TRASH_DIR`].** A deleted view's source is still a
+/// `.jsx` on disk, and a ref that could reach it would put a view the person deleted
+/// back on the screen by name.
 pub fn valid_ref(view_ref: &str) -> bool {
     !view_ref.is_empty()
         && view_ref.len() <= 128
+        && view_ref.split('/').next() != Some(TRASH_DIR)
         && view_ref.split('/').all(|seg| {
             !seg.is_empty()
                 && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
+}
+
+/// Where deleted views go — a tool dir inside the views tree, beside `_compiled/` and
+/// `_shots/`, and skipped by everything that walks the tree for the same reason: its
+/// leading `_`.
+///
+/// **Nothing empties it.** A person deleting a view from its card means *I don't want
+/// this in front of me*, and the view is often the only copy of something the agent
+/// spent a working session on, so it is moved rather than removed. Getting one back is a
+/// move by hand, out of the entry and back to where the entry's name says it was.
+pub const TRASH_DIR: &str = "_trash";
+
+/// What [`trash`] moved, and where to.
+#[derive(Debug)]
+pub struct Trashed {
+    /// The trash entry, `views/_trash/<UTC stamp>-<ref with / as -->/`.
+    pub entry: PathBuf,
+    /// The whole project folder went with the view, because nothing else lived in it.
+    pub with_folder: bool,
+}
+
+/// Why a view could not be moved to the trash.
+#[derive(Debug)]
+pub enum NotTrashed {
+    /// There is no `<ref>.jsx` to move.
+    Missing,
+    /// The move itself failed.
+    Io(std::io::Error),
+}
+
+/// Move the view at `view_ref` into the trash. The caller has already decided it may be
+/// deleted — that is a question about the ref (a system view, an attachment), and this
+/// is only the file half.
+///
+/// **A view's folder is the view's when it is the only view in it.** A two-segment ref
+/// owns `views/<project>/` — that is the share scope's rule — and the images and data
+/// files in there are what it draws. So when no other `.jsx` is left under the folder,
+/// the folder goes into the trash entry whole; when siblings remain, only the source
+/// moves, because the folder's files may be theirs too. A `_`-led folder is never
+/// moved: that is tooling, and a view dropped into it by hand does not make it a
+/// project.
+pub async fn trash(data_dir: &Path, view_ref: &str) -> Result<Trashed, NotTrashed> {
+    let views = data_dir.join("views");
+    let source = views.join(format!("{view_ref}.jsx"));
+    if !tokio::fs::try_exists(&source).await.unwrap_or(false) {
+        return Err(NotTrashed::Missing);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let base = format!("{stamp}-{}", view_ref.replace('/', "--"));
+    let root = views.join(TRASH_DIR);
+    let mut entry = root.join(&base);
+    let mut n = 2;
+    while tokio::fs::try_exists(&entry).await.unwrap_or(false) {
+        entry = root.join(format!("{base}-{n}"));
+        n += 1;
+    }
+    tokio::fs::create_dir_all(&entry).await.map_err(NotTrashed::Io)?;
+
+    let folder = view_ref
+        .rsplit_once('/')
+        .map(|(project, _)| views.join(project))
+        .filter(|dir| {
+            !dir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('_'))
+        });
+    let with_folder = match &folder {
+        Some(dir) => !has_other_views(dir, &source),
+        None => false,
+    };
+    let moved = match (&folder, with_folder) {
+        (Some(dir), true) => {
+            let name = dir.file_name().map(PathBuf::from).unwrap_or_default();
+            tokio::fs::rename(dir, entry.join(name)).await
+        }
+        _ => {
+            let name = source.file_name().map(PathBuf::from).unwrap_or_default();
+            tokio::fs::rename(&source, entry.join(name)).await
+        }
+    };
+    moved.map_err(NotTrashed::Io)?;
+    Ok(Trashed { entry, with_folder })
+}
+
+/// Whether any `.jsx` other than `except` lives anywhere under `dir`.
+fn has_other_views(dir: &Path, except: &Path) -> bool {
+    let mut queue = vec![dir.to_path_buf()];
+    while let Some(at) = queue.pop() {
+        let Ok(entries) = std::fs::read_dir(&at) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                queue.push(path);
+            } else if path.extension().is_some_and(|e| e == "jsx") && path != except {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Whether a ref names something a task can have made.
@@ -306,6 +408,81 @@ mod view_ref_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_ref_reaches_into_the_trash() {
+        assert!(!valid_ref("_trash/20260929T000000Z-notes--board/board"));
+        assert!(!valid_ref("_trash"));
+        assert!(valid_ref("notes/_trash"), "only the tree's own trash is out of reach");
+        assert!(valid_ref("_qa-shoes-wide"), "a builder's probe is still a ref");
+    }
+
+    fn write(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
+    }
+
+    fn entries(views: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(views.join(TRASH_DIR)).unwrap().flatten().map(|e| e.path()).collect()
+    }
+
+    /// The only view in its folder takes the folder with it: the pictures and data in
+    /// there are what it draws, and left behind they would be nobody's.
+    #[tokio::test]
+    async fn the_last_view_in_a_folder_takes_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let views = dir.path().join("views");
+        write(&views.join("trip/plan.jsx"));
+        write(&views.join("trip/map.png"));
+
+        let trashed = trash(dir.path(), "trip/plan").await.unwrap();
+        assert!(trashed.with_folder);
+        assert!(!views.join("trip").exists());
+        assert_eq!(entries(&views), vec![trashed.entry.clone()]);
+        assert!(trashed.entry.join("trip/plan.jsx").is_file());
+        assert!(trashed.entry.join("trip/map.png").is_file());
+        let name = trashed.entry.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.ends_with("-trip--plan"), "{name}");
+    }
+
+    /// A folder with other views in it is theirs too, so only the source moves.
+    #[tokio::test]
+    async fn a_view_with_siblings_leaves_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let views = dir.path().join("views");
+        write(&views.join("trip/plan.jsx"));
+        write(&views.join("trip/budget.jsx"));
+        write(&views.join("trip/map.png"));
+
+        let trashed = trash(dir.path(), "trip/plan").await.unwrap();
+        assert!(!trashed.with_folder);
+        assert!(!views.join("trip/plan.jsx").exists());
+        assert!(views.join("trip/budget.jsx").is_file());
+        assert!(views.join("trip/map.png").is_file());
+        assert!(trashed.entry.join("plan.jsx").is_file());
+    }
+
+    #[tokio::test]
+    async fn a_view_that_is_not_there_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(trash(dir.path(), "trip/plan").await, Err(NotTrashed::Missing)));
+        assert!(!dir.path().join("views").join(TRASH_DIR).exists(), "and nothing was made");
+    }
+
+    /// Deleting a view and then its namesake in the same second must not overwrite the
+    /// first one's entry.
+    #[tokio::test]
+    async fn two_deletes_of_one_name_keep_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let views = dir.path().join("views");
+        write(&views.join("board.jsx"));
+        let first = trash(dir.path(), "board").await.unwrap();
+        write(&views.join("board.jsx"));
+        let second = trash(dir.path(), "board").await.unwrap();
+        assert_ne!(first.entry, second.entry);
+        assert!(first.entry.join("board.jsx").is_file());
+        assert!(second.entry.join("board.jsx").is_file());
+    }
 
     #[test]
     fn module_ref_is_deterministic_and_hex() {

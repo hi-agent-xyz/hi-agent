@@ -323,3 +323,137 @@ async fn a_move_no_face_made_is_refused_and_moves_nothing() {
     let after = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
     assert_eq!(after, before, "nothing moved");
 }
+
+/// Seed a view's source into the tree the server reads, as a builder would have written it.
+fn seed_view(dir: &Path, view_ref: &str) {
+    let path = dir.join("views").join(format!("{view_ref}.jsx"));
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    std::fs::write(path, "export default () => null").expect("write");
+}
+
+async fn delete(base: &str, view_ref: &str, face: bool) -> reqwest::Response {
+    let mut request = reqwest::Client::new().post(format!("{base}/api/views/delete"));
+    if face {
+        request = request.header("X-HI-Face", "desk");
+    }
+    request.json(&serde_json::json!({ "ref": view_ref })).send().await.expect("send")
+}
+
+/// Deleting a view from its card deletes the view: the source goes to the trash, its card
+/// leaves the trail on every window, and the agent's slot empties if it had it up.
+#[tokio::test]
+async fn a_deleted_view_goes_to_the_trash_and_its_card_goes_with_it() {
+    let dir = tempdir().expect("tempdir");
+    let (base, seams) = spawn_server_at(dir.path()).await;
+    seed_view(dir.path(), "notes/card");
+    std::fs::write(dir.path().join("views/notes/data.json"), "{}").expect("write");
+    emit_view(&seams, "card", ViewOp::Show, Some("/m/card.mjs")).await;
+    let before = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
+    assert_eq!(before["live"], "notes/card");
+
+    let deleted = delete(&base, "notes/card", true).await;
+    assert_eq!(deleted.status(), 204);
+
+    let after = get_state(&base, None, Duration::from_millis(500)).await.expect("state");
+    assert!(after["history"].as_array().expect("history").is_empty(), "{after:?}");
+    assert!(ids(&after).is_empty());
+    assert!(after["live"].is_null());
+
+    // The only view in its folder took the folder, data and all, into one trash entry.
+    assert!(!dir.path().join("views/notes").exists());
+    let trash = dir.path().join("views/_trash");
+    let entries: Vec<_> = std::fs::read_dir(&trash).expect("trash").flatten().collect();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].path().join("notes/card.jsx").is_file());
+    assert!(entries[0].path().join("notes/data.json").is_file());
+
+    // And a deleted view is not a place any more, nor something to delete again.
+    let listed: serde_json::Value = reqwest::get(format!("{base}/api/views"))
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    assert!(listed.as_array().expect("list").iter().all(|v| v["view_ref"] != "notes/card"));
+    assert_eq!(delete(&base, "notes/card", true).await.status(), 404);
+}
+
+/// What is not a view in the tree cannot be deleted from here: a system view is re-seeded
+/// on every boot, an attachment is not in the tree at all, and a ref cannot reach into the
+/// trash. And like a move, it is made from a face.
+#[tokio::test]
+async fn only_a_view_in_the_tree_can_be_deleted_and_only_from_a_face() {
+    let dir = tempdir().expect("tempdir");
+    let (base, _seams) = spawn_server_at(dir.path()).await;
+    seed_view(dir.path(), "factory/tasks");
+    seed_view(dir.path(), "notes/card");
+
+    assert_eq!(delete(&base, "factory/tasks", true).await.status(), 400);
+    assert_eq!(delete(&base, "att:3f9a0c11d2e4b5a6", true).await.status(), 400);
+    assert_eq!(delete(&base, "_trash/x", true).await.status(), 400);
+    assert_eq!(delete(&base, "../etc", true).await.status(), 400);
+    assert_eq!(delete(&base, "notes/card", false).await.status(), 400);
+    assert!(dir.path().join("views/notes/card.jsx").is_file(), "nothing was moved");
+    assert!(dir.path().join("views/factory/tasks.jsx").is_file());
+}
+
+/// The owner is handed the link to give out, by the same rule the agent is: a core with no
+/// name has only a path on this machine, and says so. Sharing again replaces the record, so
+/// an unlisted link that was re-issued stops opening under its old key.
+#[tokio::test]
+async fn a_share_answers_with_its_link_and_a_new_one_retires_the_old_key() {
+    let dir = tempdir().expect("tempdir");
+    let (base, _seams) = spawn_server_at(dir.path()).await;
+    let picture = a_picture(dir.path()).await;
+    let client = reqwest::Client::new();
+    let share = |unlisted: bool| {
+        client
+            .post(format!("{base}/api/shares"))
+            .json(&serde_json::json!({ "ref": picture, "on": true, "unlisted": unlisted }))
+            .send()
+    };
+
+    let first: serde_json::Value = share(true).await.expect("send").json().await.expect("json");
+    let key = first["key"].as_str().expect("an unlisted share has a key").to_string();
+    let path = first["path"].as_str().expect("path").to_string();
+    assert_eq!(first["reachable"], "this_machine");
+    assert_eq!(first["link"], format!("{path}?key={key}"));
+
+    let asked: serde_json::Value = client
+        .get(format!("{base}/api/shares"))
+        .query(&[("ref", picture.as_str())])
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(asked["kind"], "unlisted");
+    assert!(asked["link"].is_null(), "an unlisted key is kept only as a hash");
+
+    let second: serde_json::Value = share(true).await.expect("send").json().await.expect("json");
+    assert_ne!(second["key"], first["key"]);
+    // Asked with no credential, which is how a share is opened.
+    let opened = |key: String| {
+        let url = format!("{base}{path}?key={key}");
+        async move { reqwest::get(url).await.expect("send").status() }
+    };
+    assert_eq!(opened(key).await, 404, "the old link stops opening");
+    // Past the key, which is all this asks: a build with no web bundle has no render page
+    // to draw the attachment on, and answers `503` for that rather than `404`.
+    assert_ne!(opened(second["key"].as_str().expect("key").to_string()).await, 404, "the new one does");
+
+    let public: serde_json::Value = share(false).await.expect("send").json().await.expect("json");
+    assert!(public["key"].is_null());
+    let asked: serde_json::Value = client
+        .get(format!("{base}/api/shares"))
+        .query(&[("ref", picture.as_str())])
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(asked["kind"], "public");
+    assert_eq!(asked["link"], path, "a public link can be handed out again");
+}

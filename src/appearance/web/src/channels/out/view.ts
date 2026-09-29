@@ -79,11 +79,10 @@ export interface ListedView {
   /** The person put this one in the row. Never true for a system view, which is in
    * the row by being system. */
   bookmarked: boolean;
-  /** This view is published as a page somebody outside can open. The one state in this
-   * list with consequences off this machine, which is why it is reported rather than
-   * left to be looked up. Optional so an older core reads as "none shared" rather than
-   * as a parse error. */
-  shared?: boolean;
+  /** Published as a page somebody outside can open, and as which kind — absent when it
+   * is not. The one state in this list with consequences off this machine, which is why
+   * it is reported rather than left to be looked up. */
+  shared?: ShareKind;
   /** A picture of this surface as it currently stands, or absent until one has been
    * taken. This is the fresher of the two answers about a view's tile, because the band
    * re-reads the inventory while it is open. */
@@ -155,6 +154,101 @@ export async function setBookmark(viewRef: string, on: boolean): Promise<void> {
     body: JSON.stringify({ ref: viewRef, on }),
   });
   if (!res.ok) throw new Error(`/api/views/bookmarks failed: ${res.status} ${res.statusText}`);
+}
+
+/** Take a view out of the tree — into the views trash, where it can be recovered by
+ * hand and where nothing empties it — and so take its cards out of every window's trail.
+ * Its share is withdrawn and its bookmark dropped with it. Nothing here edits the trail:
+ * the long-poll delivers that, to this window like any other.
+ *
+ * A face header, like a move: the server journals it as the person's own act. */
+export async function deleteView(viewRef: string): Promise<void> {
+  const res = await fetch("/api/views/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-HI-Surface": "1",
+      "X-HI-Face": surfaceId(),
+    },
+    body: JSON.stringify({ ref: viewRef }),
+  });
+  if (!res.ok) throw new Error(`/api/views/delete failed: ${res.status} ${res.statusText}`);
+}
+
+/** The two kinds of share (`docs/arch/sharing.md` § *Two kinds of share*). Unlisted is not
+ * private: whoever holds the link holds the access. */
+export type ShareKind = "public" | "unlisted";
+
+/** Who a link reaches: anybody, under this core's claimed name, or only this machine, when
+ * it has none yet and the link is a bare path. */
+export type Reach = "anywhere" | "this_machine";
+
+/** A share just made. `link` is what to hand out, built by the server by the same rule it
+ * tells the agent — this client never assembles an address itself. */
+export interface Published {
+  link: string;
+  reachable: Reach;
+  /** The plaintext key of an unlisted share. It exists here and nowhere else: the core
+   * keeps only its hash, so this link cannot be shown again. */
+  key?: string | null;
+}
+
+/** A share as it stands. `link` only for a public one — an unlisted link cannot be rebuilt
+ * from what the core keeps, and the way to one that can be copied is a new one. */
+export interface ShareState {
+  kind: ShareKind;
+  link: string | null;
+  reachable: Reach;
+}
+
+/** Sharing was refused for reasons the server worded for the owner: the check found the
+ * view reads what a stranger is never given, or the name is one the core serves itself. */
+export class ShareRefused extends Error {
+  constructor(readonly refusals: string[]) {
+    super(refusals.join("; "));
+  }
+}
+
+/** Publish a view or an attachment. A view is rendered first the way a stranger will see
+ * it, so this can take seconds, and rejects with {@link ShareRefused} when it would render
+ * half-empty to them. Sharing something already shared replaces it: an unlisted share gets
+ * a new key, and the old link stops opening. */
+export async function shareView(ref: string, opts: { unlisted: boolean }): Promise<Published> {
+  const res = await fetch("/api/shares", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref, on: true, unlisted: opts.unlisted }),
+  });
+  if (res.status === 422) {
+    const body = (await res.json()) as { refusals?: string[] };
+    throw new ShareRefused(body.refusals ?? []);
+  }
+  // A name the core serves itself: the reason is a sentence, and it is the owner's to read.
+  if (res.status === 409) throw new ShareRefused([await res.text()]);
+  if (!res.ok) throw new Error(`/api/shares failed: ${res.status} ${res.statusText}`);
+  return (await res.json()) as Published;
+}
+
+/** Stop publishing it. A copy an edge already holds can answer for about a minute more. */
+export async function unshareView(ref: string): Promise<void> {
+  const res = await fetch("/api/shares", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref, on: false }),
+  });
+  if (!res.ok) throw new Error(`/api/shares failed: ${res.status} ${res.statusText}`);
+}
+
+/** Whether it is shared, and how; `null` when it is not. */
+export async function shareState(ref: string): Promise<ShareState | null> {
+  const res = await fetch(`/api/shares?ref=${encodeURIComponent(ref)}`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`/api/shares failed: ${res.status} ${res.statusText}`);
+  return (await res.json()) as ShareState;
 }
 
 export interface SubscribeViewOpts {

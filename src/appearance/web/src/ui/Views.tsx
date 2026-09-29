@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { held } from "../core/trail";
 import { useViews } from "../core/views";
-import { listViews, setBookmark, type ListedView } from "../channels/out/view";
+import { deleteView, listViews, setBookmark, type ListedView, type ShareKind } from "../channels/out/view";
+import { LongPress } from "../lib/longPress";
+import { ShareSheet, ViewMenu, type MenuTarget } from "./ViewMenu";
 
 /**
  * The views tab — what has been shown, and where a person can go.
@@ -93,6 +105,15 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * page: the bookmarks take the height their chips need at the foot, and the trail
  * scrolls in what is left above them (`ui/global.css`). Nothing in this file arranges
  * that; it is worth knowing here only because it is why each row scrolls on its own.
+ *
+ * **Every card has a menu: share, bookmark, delete** — right-click, a held press on a
+ * touch screen (`lib/longPress.ts`), or the context-menu key on a focused card. It is
+ * the one place the person, rather than the agent, shares a view, and the one place a
+ * view is deleted. Delete takes the view itself, not the card, and the card goes because
+ * the view did (`docs/arch/stage.md` § *The card's menu*). A system view has no menu:
+ * it cannot be shared, deleted or un-kept, so there is nothing to offer. An attachment on
+ * the trail offers only share — it is not a view in the tree, so it is neither kept nor
+ * deleted from here.
  */
 export function Views({ onChose }: { onChose: () => void }) {
   const { trail: latest, live, parked, goTo, openRef } = useViews();
@@ -125,6 +146,11 @@ export function Views({ onChose }: { onChose: () => void }) {
     show(hereChip.current, placedChips);
   });
 
+  /** Views deleted from here, and when. A re-read already in flight when the delete was
+   * sent answers with the view still in it; this keeps it off the row until the tree has
+   * had time to say it is gone. */
+  const deleted = useRef(new Map<string, number>());
+
   /** Stars clicked whose write has not come back yet. A re-read that was already in
    * flight when the click happened answers with the old row, and applying it would
    * flick the star off under the finger and on again a poll later. */
@@ -137,10 +163,12 @@ export function Views({ onChose }: { onChose: () => void }) {
         (found) =>
           alive &&
           setInventory(
-            found.map((v) => {
-              const pending = inFlight.current.get(v.view_ref);
-              return pending === undefined ? v : { ...v, bookmarked: pending };
-            }),
+            found
+              .filter((v) => (deleted.current.get(v.view_ref) ?? 0) < Date.now() - DELETE_SETTLES_MS)
+              .map((v) => {
+                const pending = inFlight.current.get(v.view_ref);
+                return pending === undefined ? v : { ...v, bookmarked: pending };
+              }),
           ),
         // An inventory that cannot be read leaves the row empty; the trail still works,
         // and the person is no worse off than before the tab existed.
@@ -182,6 +210,86 @@ export function Views({ onChose }: { onChose: () => void }) {
       .finally(() => inFlight.current.delete(viewRef));
   }, []);
 
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const [sheet, setSheet] = useState<MenuTarget | null>(null);
+  /** The card the menu was opened from, so the focus goes back to it when the menu or the
+   *  sheet is done — the keyboard is not left on the body, where Escape means the panel. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToCard = useCallback(() => opener.current?.focus({ preventScroll: true }), []);
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    backToCard();
+  }, [backToCard]);
+
+  /** What a card's menu is about, or `null` for one that has none. */
+  const targetFor = (
+    ref: string,
+    label: string,
+    shot: string | null,
+    x: number,
+    y: number,
+  ): MenuTarget | null => {
+    if (ref.startsWith(ATTACHMENT)) {
+      return { ref, label, shot, x, y, kind: "attachment", bookmarked: false };
+    }
+    const listed = known.get(ref);
+    if (!listed || listed.system) return null;
+    return { ref, label, shot, x, y, kind: "view", bookmarked: listed.bookmarked, shared: listed.shared };
+  };
+
+  // One pointer at a time, so one timer for the whole tab; `pressing` is what a held press
+  // on the card it went down on would open.
+  const pressing = useRef<((x: number, y: number) => void) | null>(null);
+  const press = useRef(new LongPress((x, y) => pressing.current?.(x, y)));
+
+  /** The handlers that open a card's menu, spread onto the button that fills the card.
+   *  `target` says what the menu is about, or `null` for a card that has none. */
+  const menuHandlers = (target: (x: number, y: number) => MenuTarget | null) => {
+    const openAt = (el: HTMLElement, x: number, y: number) => {
+      const found = target(x, y);
+      if (!found) return false;
+      opener.current = el;
+      setMenu(found);
+      return true;
+    };
+    return {
+      // The browser's own menu is already cancelled at the document (`lib/nativeFeel.ts`).
+      onContextMenu: (event: MouseEvent<HTMLElement>) => {
+        openAt(event.currentTarget, event.clientX, event.clientY);
+      },
+      onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        const box = event.currentTarget.getBoundingClientRect();
+        if (openAt(event.currentTarget, box.left + 12, box.top + 12)) event.preventDefault();
+      },
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        const el = event.currentTarget;
+        pressing.current = (x, y) => void openAt(el, x, y);
+        press.current.down(event);
+      },
+      onPointerMove: (event: PointerEvent<HTMLElement>) => press.current.move(event),
+      onPointerUp: () => press.current.up(),
+      onPointerCancel: () => press.current.up(),
+      onPointerLeave: () => press.current.up(),
+    };
+  };
+
+  /** Take a view out of the tree. Off the row at once, like a star: the delete is the
+   *  person's decision and it has been confirmed. The trail follows by the long-poll. */
+  const remove = useCallback((viewRef: string) => {
+    deleted.current.set(viewRef, Date.now());
+    setInventory((current) => current.filter((v) => v.view_ref !== viewRef));
+    void deleteView(viewRef).catch((error) => {
+      // Back on the next read: the view is still in the tree.
+      console.warn("deleting the view failed", error);
+      deleted.current.delete(viewRef);
+    });
+  }, []);
+
+  const noteShared = useCallback((viewRef: string, shared: ShareKind | undefined) => {
+    setInventory((current) => current.map((v) => (v.view_ref === viewRef ? { ...v, shared } : v)));
+  }, []);
+
   const here = parked ?? live;
   const bookmarks = inventory.filter((view) => view.system || view.bookmarked);
 
@@ -216,10 +324,13 @@ export function Views({ onChose }: { onChose: () => void }) {
                   type="button"
                   className="hi-views-open"
                   onClick={() => {
+                    // The finger that held the card still for its menu lifts into a click.
+                    if (press.current.takeClick()) return;
                     goTo(entry);
                     onChose();
                   }}
                   aria-current={key === here ? "true" : undefined}
+                  {...menuHandlers((x, y) => targetFor(key, entry.label, shot, x, y))}
                 >
                   {/* The mark is painted whether or not there is a picture: it is the
                       ground a shot loads over, so a tile is never a hole in the row. The
@@ -294,9 +405,13 @@ export function Views({ onChose }: { onChose: () => void }) {
               type="button"
               className="hi-views-go"
               onClick={() => {
+                if (press.current.takeClick()) return;
                 openRef(view.view_ref);
                 onChose();
               }}
+              {...menuHandlers((x, y) =>
+                targetFor(view.view_ref, view.label, view.shot_url ?? null, x, y),
+              )}
             >
               <span className="hi-views-ico" style={markStyle(view.view_ref)} aria-hidden="true">
                 {initial(view.label)}
@@ -317,9 +432,46 @@ export function Views({ onChose }: { onChose: () => void }) {
           </span>
         ))}
       </div>
+
+      {menu && (
+        <ViewMenu
+          target={menu}
+          onClose={closeMenu}
+          onShare={() => {
+            setMenu(null);
+            setSheet(menu);
+          }}
+          onBookmark={(on) => {
+            keep(menu.ref, on);
+            closeMenu();
+          }}
+          onDelete={() => {
+            remove(menu.ref);
+            setMenu(null);
+          }}
+        />
+      )}
+      {sheet && (
+        <ShareSheet
+          target={sheet}
+          onClose={() => {
+            setSheet(null);
+            backToCard();
+          }}
+          onChanged={(shared) => noteShared(sheet.ref, shared)}
+        />
+      )}
     </div>
   );
 }
+
+/** How long a deleted view is kept off the row whatever a re-read says: long enough for
+ *  every read that was already in flight to have come back. */
+const DELETE_SETTLES_MS = 10_000;
+
+/** An attachment's ref on the trail. It is not a view in the tree, so its card can be
+ *  shared and nothing else. */
+const ATTACHMENT = "att:";
 
 /** Bring the item marked *here* onto the screen, once, by scrolling the tab's body
  * down to it. `center` rather than `start`, because an item at the very top of the

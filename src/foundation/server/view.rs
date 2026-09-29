@@ -79,10 +79,14 @@ pub struct ListedView {
     /// The person put this one in the row. Always false for a system view, which is
     /// in the row by being system.
     pub bookmarked: bool,
-    /// This view is published as a page somebody outside can open. Reported here so a
-    /// person can see at a glance which of their views are out in the world — the one
-    /// state in this list that has consequences off this machine.
-    pub shared: bool,
+    /// Whether this view is published as a page somebody outside can open, and which of
+    /// the two kinds — absent when it is not. Reported here so a person can see at a
+    /// glance which of their views are out in the world, the one state in this list that
+    /// has consequences off this machine; the kind rides with it because the card's menu
+    /// offers different things for each (a public link can be copied again, an unlisted
+    /// one only replaced).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared: Option<super::share::Kind>,
     /// A picture of this surface as it currently stands, served from
     /// `/views/_shots/ref/<ref>.png`, **already resolved against the base path this
     /// request arrived on** — so it can go straight into an `<img src>`, which is the
@@ -128,6 +132,12 @@ fn read_bookmarks(data_dir: &std::path::Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Replace the person's bookmarked refs.
+fn write_bookmarks(data_dir: &std::path::Path, saved: &[String]) -> anyhow::Result<()> {
+    let encoded = serde_json::to_string(saved)?;
+    crate::foundation::credentials::set_setting(data_dir, BOOKMARKS_KEY, &encoded)
+}
+
 /// `GET /api/views` — every named view in the views tree, alphabetically, each saying
 /// whether it is a system surface and whether the person bookmarked it.
 ///
@@ -144,7 +154,7 @@ fn read_bookmarks(data_dir: &std::path::Path) -> Vec<String> {
 /// the endpoint still reports everything (the inventory is the truth about the tree)
 /// and marks what belongs in the row: the system views, plus what the person kept.
 ///
-/// `_compiled/` and `_shots/` are skipped — tool dirs inside the tree, like
+/// `_compiled/`, `_shots/` and `_trash/` are skipped — tool dirs inside the tree, like
 /// `node_modules`, not views. So is the condition view: it is the host's, put up and
 /// taken down by [`ViewBus::reconcile`](super::ViewBus::reconcile) against a live
 /// process level, and offering it as a place a person can go would let them summon a
@@ -171,7 +181,8 @@ pub async fn list_views(
         view.bookmarked = !view.system && saved.iter().any(|r| r == &view.view_ref);
         view.shared = published
             .iter()
-            .any(|s| s.shared() == Some(super::share::Shared::View(view.view_ref.clone())));
+            .find(|s| s.shared() == Some(super::share::Shared::View(view.view_ref.clone())))
+            .map(super::share::Share::kind);
         view.shot_url = super::view_shots::url_for_ref(&state.data_dir, &view.view_ref);
     }
     found.sort_by(|a: &ListedView, b: &ListedView| a.view_ref.cmp(&b.view_ref));
@@ -318,10 +329,7 @@ pub async fn bookmark_view(
     } else {
         saved.retain(|r| r != &view_ref);
     }
-    let encoded = serde_json::to_string(&saved).unwrap_or_else(|_| "[]".to_string());
-    if let Err(error) =
-        crate::foundation::credentials::set_setting(&state.data_dir, BOOKMARKS_KEY, &encoded)
-    {
+    if let Err(error) = write_bookmarks(&state.data_dir, &saved) {
         tracing::warn!(%error, "storing the bookmarks failed");
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -356,8 +364,8 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
-                // `_compiled/` and `_shots/` are the tool dirs; leading `_` is the rule
-                // rather than a list, so the next one does not have to be remembered here.
+                // `_compiled/`, `_shots/`, `_trash/` are the tool dirs; leading `_` is the
+                // rule rather than a list, so the next one does not have to be remembered here.
                 if !name.starts_with('_') {
                     queue.push(path);
                 }
@@ -389,7 +397,7 @@ async fn collect_views(root: &std::path::Path, start: &std::path::Path, out: &mu
                 label,
                 system: false,
                 bookmarked: false,
-                shared: false,
+                shared: None,
                 shot_url: None,
             });
         }
@@ -478,7 +486,7 @@ pub async fn open_view(
     // Back to live: nothing to resolve, and the content slot is always mountable.
     if body.live {
         if state.views.go_to(None).await {
-            record_move(&state, "came back to the live view", sender).await;
+            record_act(&state, "came back to the live view", sender).await;
         }
         return axum::http::StatusCode::ACCEPTED.into_response();
     }
@@ -499,7 +507,7 @@ pub async fn open_view(
         view_ref: view_ref.clone(),
     };
     if state.views.go_to(Some(dest)).await {
-        record_move(&state, &format!("went to \"{view_ref}\""), sender).await;
+        record_act(&state, &format!("went to \"{view_ref}\""), sender).await;
     }
     // Going somewhere is the moment its picture is worth re-taking: the person
     // is looking at the board right now, so whatever the browser sees a second
@@ -515,6 +523,108 @@ pub async fn open_view(
         },
     );
     axum::Json(OpenedView { id: view_ref, module_url }).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct DeleteRequest {
+    #[serde(rename = "ref")]
+    pub view_ref: String,
+}
+
+/// `POST /api/views/delete` — the person deleting a view from its card.
+///
+/// **It deletes the view, not the card.** A card leads to a view by name, so a card whose
+/// view is gone leads nowhere; taking the view away takes its cards with it, in the trail
+/// on every window. It is recoverable because the source is moved rather than removed —
+/// into `views/_trash/`, which nothing empties ([`crate::mind::views::trash`]).
+///
+/// Everything else that hangs off the name goes with it: its share is withdrawn, so a link
+/// already handed out stops opening (within the minute an edge may hold it —
+/// `docs/arch/sharing.md` § *Revocation is not instant*), its bookmark is dropped, and its
+/// picture is thrown away. The compiled module stays in `_compiled/`, which is a content
+/// cache and not the view.
+///
+/// A system view is refused — it is re-seeded on every boot, so deleting one would only
+/// be undone — and so is an attachment, which is content-addressed and belongs to whatever
+/// conversation handed it over, not to the views tree.
+///
+/// **Made from a face, like a move**, and for the same reason: it is journalled as the
+/// person's own act, and loopback carries nothing else that tells a window from a script.
+pub async fn delete_view(
+    State(state): State<Arc<AppState>>,
+    AuthBearer(auth): AuthBearer,
+    FaceHeader(face): FaceHeader,
+    surface: Option<axum::Extension<crate::foundation::surfaces::SurfaceId>>,
+    axum::Json(body): axum::Json<DeleteRequest>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+
+    let view_ref = body.view_ref.trim().to_string();
+    tracing::info!(auth = ?auth, face = ?face, view_ref = %view_ref, "POST /api/views/delete");
+    if face.is_none() {
+        return (StatusCode::BAD_REQUEST, "a view is deleted from a face (X-HI-Face)".to_string())
+            .into_response();
+    }
+    if crate::foundation::attachments::ref_id(&view_ref).is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "an attachment is not a view in the tree, so it cannot be deleted from here".to_string(),
+        )
+            .into_response();
+    }
+    if !crate::mind::views::valid_ref(&view_ref) {
+        return (StatusCode::BAD_REQUEST, "that is not a view ref".to_string()).into_response();
+    }
+    if view_ref.starts_with(SYSTEM_PREFIX) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "a system view ships with the app and cannot be deleted".to_string(),
+        )
+            .into_response();
+    }
+
+    let trashed = match crate::mind::views::trash(&state.data_dir, &view_ref).await {
+        Ok(trashed) => trashed,
+        Err(crate::mind::views::NotTrashed::Missing) => {
+            return (StatusCode::NOT_FOUND, "no such view".to_string()).into_response();
+        }
+        Err(crate::mind::views::NotTrashed::Io(error)) => {
+            tracing::warn!(%error, view_ref, "moving a view to the trash failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "could not move the view to the trash".to_string())
+                .into_response();
+        }
+    };
+
+    // The view is gone from here on; each of these is the name's other state, and a
+    // failure in one is logged rather than answered, because the view cannot be un-deleted
+    // by the response and the person would only be told something they cannot act on.
+    if super::share::find(&state.data_dir, &view_ref).is_some() {
+        if let Err(error) = super::share::close(&state.data_dir, &view_ref).await {
+            tracing::warn!(error = %format!("{error:#}"), view_ref, "withdrawing a deleted view's share failed");
+        }
+    }
+    let mut saved = read_bookmarks(&state.data_dir);
+    if saved.iter().any(|r| r == &view_ref) {
+        saved.retain(|r| r != &view_ref);
+        if let Err(error) = write_bookmarks(&state.data_dir, &saved) {
+            tracing::warn!(%error, view_ref, "dropping a deleted view's bookmark failed");
+        }
+    }
+    super::view_shots::forget_ref(&state.data_dir, &view_ref).await;
+    state.views.forget(&view_ref).await;
+
+    let sender = Sender::stated_or_owner(
+        crate::foundation::surfaces::registered_to(&state.data_dir, surface.as_deref()).as_deref(),
+        crate::foundation::config::owner(&state.data_dir).as_deref(),
+    );
+    let entry = trashed
+        .entry
+        .strip_prefix(&state.data_dir)
+        .unwrap_or(&trashed.entry)
+        .display()
+        .to_string();
+    record_act(&state, &format!("deleted the view \"{view_ref}\" (moved to {entry}/)"), sender).await;
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -585,13 +695,14 @@ async fn compile_ref(
     })
 }
 
-/// Journal one move of the screen, and echo it to the channel inspector.
+/// Journal one thing the person did to the agent's views — a move of the screen, or a
+/// view deleted — and echo it to the channel inspector.
 ///
 /// The person acting on the agent's own surface is something the agent noticed them do —
 /// a perception, read into the next turn's context rather than answered. It rides here,
-/// on the write that moves the screen, rather than on an inbound channel of its own: a
+/// on the write that makes the change, rather than on an inbound channel of its own: a
 /// second path would be a second thing to keep in step with the first.
-async fn record_move(state: &Arc<AppState>, line: &str, sender: Sender) {
+async fn record_act(state: &Arc<AppState>, line: &str, sender: Sender) {
     let ts = Utc::now();
     crate::foundation::channel_log::inbound(Channel::View, line);
 
@@ -605,7 +716,7 @@ async fn record_move(state: &Arc<AppState>, line: &str, sender: Sender) {
         sender: Some(sender),
     };
     if let Err(err) = state.memory.journal.append(entry).await {
-        tracing::warn!(error = %format!("{err:#}"), "view move: journal append failed");
+        tracing::warn!(error = %format!("{err:#}"), "view act: journal append failed");
     }
 
     // The inspector's live tap sees both halves of the channel. Not the conversation:
@@ -655,7 +766,7 @@ mod tests {
     async fn the_tool_dirs_are_not_places_a_person_can_go() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("views");
-        for rel in ["factory", "_compiled", "_shots", "notes"] {
+        for rel in ["factory", "_compiled", "_shots", "_trash/20260929T000000Z-notes--old", "notes"] {
             std::fs::create_dir_all(root.join(rel)).unwrap();
         }
         std::fs::write(root.join("factory/tasks.jsx"), "x").unwrap();
@@ -665,6 +776,8 @@ mod tests {
         // extension that happens to live in it today.
         std::fs::write(root.join("_compiled/deadbeef.jsx"), "x").unwrap();
         std::fs::write(root.join("_shots/deadbeef.jsx"), "x").unwrap();
+        // A deleted view is still a `.jsx`, and still not a place.
+        std::fs::write(root.join("_trash/20260929T000000Z-notes--old/old.jsx"), "x").unwrap();
 
         let mut found = Vec::new();
         collect_views(&root, &root, &mut found).await;

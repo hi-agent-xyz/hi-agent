@@ -81,6 +81,25 @@ so the grant has to live somewhere the browser sends by itself. It is the same s
 different scope: a session says *this surface may reach me*, a share cookie says *this caller
 may read these paths*.
 
+## Where the owner shares from
+
+Two places, one mechanism. The agent shares with `hi_share` when asked to; the person shares
+from **the card's menu** in the views tab ([stage.md](stage.md)) — a view's card, or an
+attachment's. Both call the same check and are handed the link by the same rule: under the
+core's claimed name, or, with none, a bare path that only works on this machine and says so.
+
+The sheet the menu opens:
+
+- heads with the view's picture — what is about to go out;
+- says, before anything is made, that **anyone with the link can open it**;
+- offers unlisted or public, **unlisted by default**;
+- shows progress while the check renders, then the link with a copy button — or the check's
+  refusals, as the core worded them;
+- for something already shared, offers *copy link* on a public share, *new link* on an
+  unlisted one — its key is kept only as a hash, so the link cannot be shown again, and a
+  new one retires the old key — and *stop sharing*, noting that a stopped link can keep
+  working for about a minute.
+
 ## The scope
 
 A share grants exactly:

@@ -154,6 +154,15 @@ pub fn url_for_ref(data_dir: &Path, view_ref: &str) -> Option<String> {
     Some(format!("/views/_shots/ref/{view_ref}.png?v={stamp}"))
 }
 
+/// Throw away the picture of a view that no longer exists. A deleted view's card is gone
+/// and its name may be written again by a builder, and a tile would then open on a
+/// picture of the view that was deleted until the first re-take.
+pub async fn forget_ref(data_dir: &Path, view_ref: &str) {
+    if let Some(path) = ref_shot_path(data_dir, view_ref) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
 /// Does the picture behind `view_ref` need taking — is there none at all, or is the one
 /// on disk of some frame or density other than [`TILE`]'s?
 ///

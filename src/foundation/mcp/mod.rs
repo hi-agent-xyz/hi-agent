@@ -2432,18 +2432,9 @@ async fn do_share(data_dir: &std::path::Path, args: &Value) -> Value {
         Ok(opened) => {
             // A core with no name is reachable only from the machine it runs on, so say
             // that rather than handing back a localhost URL somebody will send to a
-            // friend.
-            let base = crate::foundation::server::surfaces::named_base_url(data_dir).await;
-            // The key rides the path even when there is no name to put in front of it: it
-            // exists in plaintext exactly here, and a core that has not claimed a handle yet
-            // would otherwise publish something nobody — including this agent — can ever open.
-            let link = match (&base, &opened.key) {
-                (Some(base), Some(key)) => format!("{base}{}?key={key}", opened.path),
-                (Some(base), None) => format!("{base}{}", opened.path),
-                (None, Some(key)) => format!("{}?key={key}", opened.path),
-                (None, None) => opened.path.clone(),
-            };
-            let where_it_is = if base.is_some() {
+            // friend. The same rule the owner's own share sheet is answered by.
+            let (link, reach) = share::link(data_dir, &opened.path, opened.key.as_deref()).await;
+            let where_it_is = if reach == share::Reach::Anywhere {
                 format!("It is at {link}")
             } else {
                 format!(

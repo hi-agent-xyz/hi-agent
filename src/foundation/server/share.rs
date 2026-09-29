@@ -360,6 +360,50 @@ pub fn find(data_dir: &std::path::Path, name: &str) -> Option<Share> {
     read_shares(data_dir).into_iter().find(|s| s.name().as_deref() == Some(name))
 }
 
+/// Which of the [two kinds of share](../../../docs/arch/sharing.md#two-kinds-of-share) a
+/// record is. Serialized as the word the owner's UI puts on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Public,
+    Unlisted,
+}
+
+impl Share {
+    pub fn kind(&self) -> Kind {
+        if self.key_hash.is_some() { Kind::Unlisted } else { Kind::Public }
+    }
+}
+
+/// Who can reach a link: anybody it is handed to, or only something on this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reach {
+    /// The core serves a claimed name, and the link is under it.
+    Anywhere,
+    /// The core has no name yet: the link is a path on this machine's own address.
+    ThisMachine,
+}
+
+/// The link to hand out for a share at `path`, and who it reaches.
+///
+/// **One rule, for every place that hands a link to somebody** — `hi_share` telling the
+/// agent and `POST /api/shares` telling the owner's window. The claimed name when there
+/// is one; otherwise the bare path, never a `localhost` URL somebody would send to a
+/// friend. The key rides the path either way: it exists in plaintext exactly once, and a
+/// core with no name would otherwise publish something nobody could ever open.
+pub async fn link(data_dir: &std::path::Path, path: &str, key: Option<&str>) -> (String, Reach) {
+    let base = super::surfaces::named_base_url(data_dir).await;
+    let keyed = match key {
+        Some(key) => format!("{path}?key={key}"),
+        None => path.to_string(),
+    };
+    match base {
+        Some(base) => (format!("{base}{keyed}"), Reach::Anywhere),
+        None => (keyed, Reach::ThisMachine),
+    }
+}
+
 /// First path segments this core serves itself, and which a share therefore cannot
 /// take. The username-versus-route trap for the third time in this system — handles
 /// against community routes, handles against DNS, and now a view's name against the
@@ -852,11 +896,19 @@ pub async fn post_share(
     }
 
     match open(&state.data_dir, &named, body.unlisted, &body.description).await {
-        Ok(opened) => (
-            StatusCode::OK,
-            axum::Json(serde_json::json!({ "path": opened.path, "key": opened.key })),
-        )
-            .into_response(),
+        Ok(opened) => {
+            let (link, reachable) = link(&state.data_dir, &opened.path, opened.key.as_deref()).await;
+            (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "path": opened.path,
+                    "key": opened.key,
+                    "link": link,
+                    "reachable": reachable,
+                })),
+            )
+                .into_response()
+        }
         Err(Refused::Name(why)) => (StatusCode::CONFLICT, why).into_response(),
         Err(Refused::Unknown(why)) => (StatusCode::NOT_FOUND, why).into_response(),
         Err(Refused::Check(reasons)) => (
@@ -869,6 +921,47 @@ pub async fn post_share(
             (StatusCode::INTERNAL_SERVER_ERROR, why).into_response()
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ShareQuery {
+    #[serde(rename = "ref")]
+    named: String,
+}
+
+/// `GET /api/shares?ref=` — whether a view or an attachment is published, and how.
+///
+/// `404` when it is not. A public share answers with its link, because a public link is
+/// only its path and can be handed out again; an unlisted one answers with none, because
+/// its key is kept only as a hash and the link it was in cannot be rebuilt — the owner's
+/// way to a link they can copy is a new one, which retires the old key.
+///
+/// Asks the community for this core's name, which is a network round trip, so it is read
+/// when an owner opens a share sheet and not on every inventory poll.
+pub async fn get_share(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<super::AppState>>,
+    super::headers::AuthBearer(auth): super::headers::AuthBearer,
+    axum::extract::Query(query): axum::extract::Query<ShareQuery>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    tracing::debug!(auth = ?auth, named = %query.named, "GET /api/shares");
+    let name = match Shared::parse(&query.named) {
+        Ok(shared) => shared.name(),
+        Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
+    };
+    let Some(share) = find(&state.data_dir, &name) else {
+        return (StatusCode::NOT_FOUND, "not shared").into_response();
+    };
+    let (public_link, reachable) = link(&state.data_dir, &format!("/{name}"), None).await;
+    let kind = share.kind();
+    axum::Json(serde_json::json!({
+        "kind": kind,
+        "link": (kind == Kind::Public).then_some(public_link),
+        "reachable": reachable,
+    }))
+    .into_response()
 }
 
 #[cfg(test)]

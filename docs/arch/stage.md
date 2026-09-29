@@ -1271,8 +1271,8 @@ The first is the order. The row overflows within an afternoon and a strip only e
 scrolls from its start, so oldest-first put the live view — the single entry certain to
 be wanted, and the one the cursor is on — reliably off the right-hand edge, and made
 "a re-show moves the view to the newest end" mean "a re-show moves it out of sight".
-The list is still stored oldest-first, because appending is the only thing that happens
-to it; the row renders it head-first.
+The list is still stored oldest-first, because navigating only ever appends to it; the
+row renders it head-first.
 
 The second is what counts as a place the person has been. Opening a bookmark is arriving
 somewhere, but it left no card, so a surface the person went to had no timestamp, no
@@ -1317,12 +1317,13 @@ not two lists but one field: an entry records **whose hand moved the screen**, a
 move, so the desktop can be taken along without being told a show happened. The window
 merges nothing and forgets nothing when it closes.
 
-**One list, and appending is the only thing that happens to it.** A browser's back stack
-destroys its forward entries when you navigate from a back position, and can afford to
-because you are its only navigator. Here the agent shows views too, so losing the entry
-someone was on their way back to because the agent spoke would be indefensible. The agent
-appends; the person moves a cursor. There is no branch, so nothing can be truncated, and
-the stack and the history are the same object.
+**One list, and navigating only ever appends to it.** A browser's back stack destroys its
+forward entries when you navigate from a back position, and can afford to because you are
+its only navigator. Here the agent shows views too, so losing the entry someone was on
+their way back to because the agent spoke would be indefensible. The agent appends; the
+person moves a cursor. There is no branch, so nothing can be truncated, and the stack and
+the history are the same object. The one removal is not navigation: a view the person
+deletes takes its card with it (*The card's menu*, below).
 
 **The cursor is the stage's, and there is one of it.** *Reversed September 1, 2026 — it
 read "the cursor is the window's, and is never reported", on the ground that a phone that
@@ -1584,8 +1585,9 @@ that wanted a module and took the nearest call that returns one.
 show does, marked as a move rather than a show, and the cursor is a pointer into that
 list. That mark is what lets the desktop follow the phone without being told the agent
 showed something — the hazard the old design answered by keeping two lists and merging
-them per window (`trail.ts`). The list keeps every property it had: append-only, no
-branch, one entry per destination, oldest first on disk and newest first in the row.
+them per window (`trail.ts`). The list keeps every property it had: appended to by
+navigation, no branch, one entry per destination, oldest first on disk and newest first
+in the row.
 
 **A show still takes the window with it, and now that is one sentence instead of two.**
 The show appends and moves the cursor; the person's open appends and moves the cursor.
@@ -1715,6 +1717,20 @@ store rather than the views tree, which is disposable and re-seeded on every boo
 upgrade replaces `factory/` wholesale and must not take the person's row with it. The
 cursor is where they are right now, so it lives in the appearance and comes back with it
 on a restart.
+
+**The card's menu: share, bookmark, delete** — added September 29, 2026. Right-click on
+a card or a chip, a held press on a touch screen, or the context-menu key on a focused
+one. *Bookmark* is the star's verb said again. *Share* is where the person, rather than
+the agent, publishes a view ([sharing.md](sharing.md#where-the-owner-shares-from)).
+*Delete* deletes **the view**, not the card: its source goes to `views/_trash/`, its share
+is withdrawn, its bookmark dropped, and its cards leave the trail on every window. That is
+the one removal from a list that is otherwise only appended to, and it is not a hand
+taking a card away — a card for a view that no longer exists leads nowhere, because
+opening it re-resolves a ref with nothing behind it. Nothing empties the trash: a view is
+often the only copy of a working session's result, and getting one back is a move by hand.
+The delete is journalled like a move, with where the view went, so the agent knows it is
+gone and where it is. A system view has no menu — it cannot be shared, deleted or
+un-kept — and an attachment on the trail offers only share: it is not a view in the tree.
 
 ## The tile is a picture
 

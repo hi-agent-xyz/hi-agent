@@ -33,7 +33,7 @@
 //! by showing, the person by going somewhere, each entry marked with which. There is
 //! **one** cursor for the install, not one per window, so going back on the phone is
 //! going back on the desktop; a window keeps nothing but its scroll position. Because
-//! appending is the only thing that ever happens to the list, no navigation can be
+//! navigating only ever appends to the list, no navigation can be
 //! truncated by a show arriving. See `docs/arch/stage.md#one-screen-and-the-cursor-is-on-it`.
 
 use std::path::{Path, PathBuf};
@@ -885,6 +885,46 @@ impl ViewBus {
         persist(&self.data_dir, entry).await;
     }
 
+    /// Forget a view that no longer exists: its card leaves the history, and if the agent
+    /// has it up the content slot empties the way [`clear`](Self::clear) empties it.
+    /// Returns whether anything here held it.
+    ///
+    /// **The one removal from the history**, and it is not a hand taking a card away:
+    /// a person deleted the view itself (`view::delete_view`), and a card for a view that
+    /// is not on disk leads nowhere — opening it re-resolves the ref and finds nothing.
+    /// Neither the agent nor the person can take a card out of the list for any other
+    /// reason, which is what [`record_entry`]'s rule is actually protecting.
+    ///
+    /// A cursor on it goes live, as it does when the card is trimmed away. Persisted,
+    /// because this changes where the screen has *been* — a restart must not bring the
+    /// card back.
+    pub async fn forget(&self, view_ref: &str) -> bool {
+        let mut map = self.inner.lock().await;
+        let entry = &mut *map;
+        let before = entry.history.len();
+        entry.history.retain(|h| h.view.view_ref != view_ref);
+        let was_live = entry.content.as_ref().is_some_and(|v| v.view_ref == view_ref);
+        if entry.history.len() == before && !was_live {
+            return false;
+        }
+        if was_live {
+            entry.content = None;
+            entry.took = None;
+        }
+        let parked = entry.cursor.is_some();
+        drop_dangling_cursor(entry);
+        if parked && entry.cursor.is_none() {
+            entry.kept = false;
+        }
+        if in_front(entry).is_none() {
+            entry.front_since = None;
+        }
+        entry.version += 1;
+        entry.notify.notify_waiters();
+        persist(&self.data_dir, entry).await;
+        true
+    }
+
     /// A thumbnail finished rendering: wake the long-polls so they collect the
     /// `shot_url` the response before them was built without.
     ///
@@ -1053,13 +1093,15 @@ fn resolve_condition(
 /// Record one arrival at the end of `history`, dropping any earlier entry for the same
 /// destination and trimming the oldest away past [`HISTORY_MAX`].
 ///
-/// **Appending is the only thing that ever happens to this list**, and that is what
-/// makes it safe for the agent and the person to share one of them. A browser's back
-/// stack destroys its forward entries when you navigate from a back position, and it
-/// can afford to because you are its only navigator; here the agent shows views too,
-/// and losing the entry a person was on their way back to because the agent spoke
-/// would be indefensible. So neither hand ever truncates, and the cursor is just a
-/// pointer over the list — there is no branch to destroy.
+/// **Navigating only ever appends to this list**, and that is what makes it safe for the
+/// agent and the person to share one of them. A browser's back stack destroys its
+/// forward entries when you navigate from a back position, and it can afford to because
+/// you are its only navigator; here the agent shows views too, and losing the entry a
+/// person was on their way back to because the agent spoke would be indefensible. So
+/// neither hand ever truncates, and the cursor is just a pointer over the list — there
+/// is no branch to destroy. The one removal is not navigation at all: a view the person
+/// deleted takes its card with it ([`ViewBus::forget`]), because a card for a view that
+/// no longer exists leads nowhere.
 ///
 /// **Same ref, one entry.** The ref is precisely the identity that decides what
 /// re-opening will render: two shows of `factory/tasks` resolve to the same recompiled
@@ -1638,6 +1680,41 @@ mod tests {
         let state = bus.wait_state(None).await;
         assert!(state.cursor.is_none(), "and from a bookmark with nothing live to tap");
         assert!(state.views.is_empty());
+    }
+
+    /// A deleted view takes its card with it, wherever the screen was: out of the history,
+    /// out of the content slot if the agent had it up, and a cursor on it goes live. The
+    /// rest of the row is untouched, and a restart does not bring the card back.
+    #[tokio::test]
+    async fn a_deleted_view_leaves_the_history_and_the_screen() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("plan", "/m/plan.mjs", "trip/plan")).await;
+            bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+            bus.go_to(Some(dest("plan", "/m/plan.mjs", "trip/plan"))).await;
+            let before = bus.wait_state(None).await;
+            assert_eq!(before.cursor.as_deref(), Some("trip/plan"));
+
+            assert!(bus.forget("trip/plan").await);
+            let after = bus.wait_state(None).await;
+            assert!(after.version > before.version, "every window hears it");
+            assert_eq!(history_ids(&after), vec!["tasks"]);
+            assert!(after.cursor.is_none(), "the screen goes live rather than nowhere");
+            assert_eq!(after.live.as_deref(), Some("factory/tasks"));
+
+            // What the agent has up goes the way a clear takes it.
+            assert!(bus.forget("factory/tasks").await);
+            let emptied = bus.wait_state(None).await;
+            assert!(emptied.views.is_empty());
+            assert!(emptied.live.is_none());
+            assert!(emptied.history.is_empty());
+
+            assert!(!bus.forget("trip/plan").await, "forgetting twice changes nothing");
+            assert_eq!(bus.wait_state(None).await.version, emptied.version);
+        }
+        let reloaded = ViewBus::load(tmp.path());
+        assert!(reloaded.wait_state(None).await.history.is_empty(), "and it stays gone");
     }
 
     /// The cursor points into a bounded list, so trimming can cut the ground from under
