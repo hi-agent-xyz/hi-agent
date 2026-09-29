@@ -80,8 +80,8 @@ describe("where a stop puts the panel's left edge", () => {
   });
 
   it("never puts the edge off the left of the window", () => {
-    // A panel measured wider than the window it is in — the menu-bar popover, a
-    // dragged-narrow window — is `full`, not a negative offset that tears a gap
+    // A panel measured wider than the window it is in — a dragged-narrow
+    // window — is `full`, not a negative offset that tears a gap
     // open on the right.
     expect(leftOf("panel", 380, MEASURE)).toBe(0);
   });

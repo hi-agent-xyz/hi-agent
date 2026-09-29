@@ -217,19 +217,18 @@ note over the tools that machine already has
 this seam*). So a Windows install has no hands, which is a normal state rather
 than a broken one.
 
-**The attention gesture is not on that list any more, and only two thirds of it
+**The attention gesture is not on that list any more, and half of it
 works.** The key tap and the microphone are in the engine — `WH_KEYBOARD_LL` on
 the right Ctrl, cpal on WASAPI — so **press-and-hold listens on Windows today**,
-and the tray says so. What does not work is the other two gestures, because both
-end in something only this shell holds:
+and the tray says so. What does not work is the double tap, because it ends in
+something only this shell holds:
 
 | Gesture | On Windows | Waiting on |
 |---|---|---|
 | press-and-hold → listen | works | — |
-| single tap → open the chat | recognized, lands on nothing | raising a window is the shell's |
 | double tap → hand over a screenshot | recognized, logged, lands on nothing | a screen grab is the shell's |
 
-Both are one connection away — `WS /api/mechanisms`, dialed by the app — and when
+It is one connection away — `WS /api/mechanisms`, dialed by the app — and when
 it exists this shell is the natural first client, because it already owns the
 process, the window and the window server. The key tap moving here with them is a
 question rather than a plan: it needs no grant on Windows, which is the whole

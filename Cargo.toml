@@ -153,7 +153,7 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
     "NSString",
     "NSThread",
-    # Popover (`crate::vendors::macos_popover`): build the WKWebView's request.
+    # Face window (`crate::vendors::macos_window`): build the WKWebView's request.
     "NSURL",
     "NSURLRequest",
 ] }
@@ -169,12 +169,9 @@ objc2-app-kit = { version = "0.3", features = [
     "NSMenu",
     "NSMenuItem",
     "NSImage",
-    # Face popover (`crate::vendors::macos_popover`) + tray click routing: an NSPopover
-    # hosting a WKWebView in a bare NSViewController, anchored to the status button
-    # (NSView), toggled vs. menu by inspecting the click NSEvent.
+    # Face window content view (NSView) + tray click routing: window vs. menu, by
+    # inspecting the click NSEvent.
     "NSView",
-    "NSViewController",
-    "NSPopover",
     "NSEvent",
     # Face window (`crate::vendors::macos_window`): a titled window whose native title is
     # hidden in favour of a centered NSTextField label sitting in the title-bar strip,
@@ -191,8 +188,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSSavePanel",
     "NSPanel",
 ] }
-# WebKit for the face popover (`crate::vendors::macos_popover`): a WKWebView renders the
-# face inside the NSPopover, with a WKUIDelegate that auto-grants mic/camera (the
+# WebKit for the face window (`crate::vendors::macos_window`): a WKWebView renders the
+# face, with a WKUIDelegate that auto-grants mic/camera (the
 # decision block comes through as a `block2` block).
 objc2-web-kit = { version = "0.3", features = [
     "WKWebView",

@@ -536,8 +536,8 @@ of the frame, `clamp()`ed type — so a different size makes your composition br
 rather than collide.
 
 **And the frame is your slot, which is not the window.** `@media` and `vw` answer about
-the browser window; your slot is only sometimes the same thing. It is about 380px wide in
-the menu-bar popover, and on a phone turned sideways the host deliberately hands you a
+the browser window; your slot is only sometimes the same thing. It is narrower than the window
+whenever the host's panel stands beside you, and on a phone turned sideways the host deliberately hands you a
 room *wider* than the glass and draws it scaled down, so the layout is the one you
 composed rather than one guessed from 852 raw pixels. Ask the slot. It is a named
 container and it is always there:
@@ -608,8 +608,8 @@ what you need as bare modules:
   renders a PDF, a Word or Excel document, an image, a note or a scan into a `<div>` you
   own. Pass `locale` and `theme` so it matches the page, and keep `fallbackPlugin()` last
   — it accepts everything, so anything after it is unreachable. Reach for it whenever a
-  view would otherwise link *at* a file and hope: a link opens nothing in the popover or
-  on a phone. `factory/drive.jsx` is the worked example — import it with `await import()`
+  view would otherwise link *at* a file and hope: a link opens nothing on a
+  phone. `factory/drive.jsx` is the worked example — import it with `await import()`
   inside the effect rather than at the top of the file, and tear the viewer down with
   `destroy()` in the cleanup.
 - `react` itself.

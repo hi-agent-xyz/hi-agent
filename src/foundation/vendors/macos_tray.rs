@@ -26,8 +26,8 @@
 //!   more than a 22pt icon: its length can be **variable** (auto-sizes to content)
 //!   and its `button` can carry **text and/or a custom `NSView`**, not just an image.
 //!   The "now playing / lyrics" tickers some apps show in the bar are exactly this —
-//!   a wide status item rendering text. So we *can* show the attention transcript
-//!   right here (icon + title), which is what `set_text` below does.
+//!   a wide status item rendering text. So we *can* show text right here (icon +
+//!   title), which is what `set_text` below does — for a startup failure only.
 //!
 //! **Pixels *over* the bar are not restricted either.** You can float a borderless
 //! window over *any* part of the menu bar (left included) — that's how menu-bar
@@ -200,8 +200,8 @@ define_class!(
             self.ivars().button.setImage(Some(&self.ivars().idle));
         }
 
-        /// Set the status item's text (the title beside the icon) — the live
-        /// attention transcript, then the reply. A non-empty string widens the
+        /// Set the status item's text (the title beside the icon) — a startup
+        /// failure the person has to act on. A non-empty string widens the
         /// item to show `icon + text`; an empty string collapses back to icon-only.
         #[unsafe(method(setText:))]
         fn set_text(&self, text: Option<&NSString>) {
@@ -395,7 +395,7 @@ struct ClickIvars {
 }
 
 define_class!(
-    // The status-item button's click target. Left-click toggles the chat popover;
+    // The status-item button's click target. Left-click opens the face window;
     // right-/control-click shows the Open/Quit menu. Lives on the main thread.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -582,7 +582,7 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
         // The button carries the icon. The resting icon is the hi mark as a
         // *template* image (the menu bar auto-tints it for light/dark); fall back
         // to a short title if the embedded PNG ever fails to decode. Held in an
-        // `Option` (not consumed inline) so the click wiring + popover anchor below
+        // `Option` (not consumed inline) so the click wiring below
         // can share it with the blinker.
         let button = status_item.button(mtm);
         if let Some(button) = &button {
@@ -630,8 +630,8 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
                         width: 18.0,
                         height: 18.0,
                     });
-                    // Build the blinker on a clone of the button (the click wiring +
-                    // popover anchor below keep the original), leak it, and publish a
+                    // Build the blinker on a clone of the button (the click wiring
+                    // below keeps the original), leak it, and publish a
                     // pointer so the gesture can drive it from its thread.
                     let blinker = Blinker::new(mtm, button.clone(), idle, active, blank);
                     let ptr: *const Blinker = &*blinker;
@@ -683,13 +683,11 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
         // the menu permanently (a permanent menu would route *every* click to the menu
         // and the button action would never fire).
         if let Some(button) = &button {
-            // The face window is button-independent (it's not anchored to the tray), so
-            // it's installed unconditionally; the single right-⌘ tap still opens the
-            // menu-bar popover, so that's installed too (anchored to the button). The
-            // SwiftUI settings window is built lazily on first "Settings…"; here we just
+            // The face window is button-independent (it's not anchored to the tray); the
+            // left-click below raises it. The SwiftUI
+            // settings window is built lazily on first "Settings…"; here we just
             // hand its bridge the data dir so it can resolve the server port.
             crate::foundation::vendors::macos_window::install(mtm, &window_url, data_dir.clone());
-            crate::foundation::vendors::macos_popover::install(mtm, button.clone(), &window_url);
             crate::foundation::vendors::macos_swift_settings::init(data_dir.clone());
 
             let click = TrayClick::new(mtm, status_item.clone(), button.clone(), menu.clone());

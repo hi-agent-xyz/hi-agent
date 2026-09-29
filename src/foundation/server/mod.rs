@@ -901,7 +901,7 @@ pub fn build(
     // The gate, outside every route including the appearance router and the
     // owner sign-in mount: an off-box request is answered only with a credential.
     // Loopback passes untouched, which is why `make dev`, the curl journeys, the
-    // popover and the codex subprocesses on `/mcp` are unaffected.
+    // face window and the codex subprocesses on `/mcp` are unaffected.
     //
     // It goes *inside* the trace layer so a rejected request is still logged, and
     // *outside* everything else so no route can be reached around it. Which

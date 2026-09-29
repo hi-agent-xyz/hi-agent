@@ -2,20 +2,19 @@ import { useSyncExternalStore } from "react";
 
 // What shape of screen this is, as far as *presentation* has to care.
 //
-// The face is one build running in four places: the desktop window, the ~380px
-// menu-bar popover, a browser tab, and the iPhone client's web view
-// (`CoreWebView.swift`). Three of them are pointed at with a mouse and one is
+// The face is one build running in three places: the desktop window, a browser
+// tab, and the iPhone client's web view (`CoreWebView.swift`). Two of them are pointed at with a mouse and one is
 // held in a hand, and only the held one wants the host's surfaces to be pages
 // pushed onto a stack that a thumb swipes back out of, rather than panels
 // floating in a corner of a window.
 //
 // **Width alone cannot tell those two groups apart, and assuming it could is what
-// shrank the controls on the phone.** The menu-bar popover is about 380x540, so a
+// shrank the controls on the phone.** The menu-bar popover (since deleted) was about 380x540, so a
 // `max-width: 420px` block written for it — tighten everything, the whole face has
 // to fit — was also the block a 393px iPhone matched, and it took the channel
 // discs from 38px down to 32 on the one host where the pointer is a finger and
 // 44 is the floor. Pointer type is the half of the question that width does not
-// answer: the popover hovers, a phone does not.
+// answer: the popover hovered, a phone does not.
 //
 // So the phone is `narrow AND coarse`, and it is published as
 // `<html data-shape="phone">` rather than left as a media query each rule repeats.
@@ -23,7 +22,7 @@ import { useSyncExternalStore } from "react";
 // one has on its own: **the gesture that goes with the shape is JavaScript**
 // (`ui/PanelGesture.tsx`), and a query written once in CSS and again in `matchMedia`
 // is two answers waiting to disagree — a page that swipes back on a screen the
-// stylesheet is still drawing as a popover.
+// stylesheet is still drawing as a desktop.
 export const PHONE = "(max-width: 640px) and (pointer: coarse)";
 
 // The other half on its own. Some of what a finger changes is not about the

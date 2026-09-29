@@ -15,12 +15,6 @@
 // for one of them has to be told which. The store keeps an entry per surface and a
 // review renders the one that reported most recently.
 //
-// The single exception is the **menu-bar popover** (380×540, portrait). It is a chat
-// panel; a review rendered at its frame would be a review of a frame nobody reads a
-// view on. It declares itself with `?chrome=popover`, which `applyHostChrome` has
-// hoisted onto `<html data-chrome>` before we run — so the flag gates this, with no
-// second notion of "which host am I".
-//
 // Fire-and-forget, like the attention lane: a dropped report just means the next
 // review uses the previous frame.
 
@@ -99,12 +93,9 @@ async function send(frame: StageFrame): Promise<void> {
 
 /**
  * Start reporting this face's frame: once now, then whenever a resize settles.
- * No-op in the popover, which is not a surface anyone reads a view on. Returns a
- * teardown.
+ * Returns a teardown.
  */
 export function installStageReport(): () => void {
-  if (document.documentElement.dataset.chrome === "popover") return () => {};
-
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Don't re-post a frame we already reported: a `resize` also fires for things
   // that don't change our box (a display switch at the same size), and the

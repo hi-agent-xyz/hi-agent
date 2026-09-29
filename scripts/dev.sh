@@ -156,11 +156,11 @@ pids="$pids $!"
 ( cd src/appearance/web && exec npm run dev ) &
 pids="$pids $!"
 
-# Keep the binary's embedded web fresh in dev. The menu-bar popover's WKWebView loads
+# Keep the binary's embedded web fresh in dev. The face window's WKWebView loads
 # the binary's own port (:12358), which serves `dist/` from disk — NOT the Vite dev
 # server (:12359 is HTTPS with a self-signed cert the WKWebView won't trust). So rebuild
-# `dist/` on web changes; the debug binary reads it per request, so the popover shows the
-# latest on reopen. The browser still gets HMR from the :12359 dev server.
+# `dist/` on web changes; the debug binary reads it per request, so the window shows the
+# latest on reload. The browser still gets HMR from the :12359 dev server.
 ( cd src/appearance/web && exec npm run build -- --watch ) &
 pids="$pids $!"
 

@@ -5,10 +5,6 @@
 //! ([`crate::body::capabilities::hotkey`]). This file says what a gesture *means*, and
 //! that is the same everywhere:
 //!
-//! - **Single tap → open the chat popup:** a lone quick tap opens the menu-bar
-//!   conversation popover ([`crate::body::capabilities::tray::open_chat`]).
-//!   It is confirmed only after the double-tap window passes unpaired, so it never
-//!   fires as the first half of a double-tap.
 //! - **Double tap → "come and see this":** hands the agent a screenshot of
 //!   the current screen. It is *not a new sense* — the screenshot lands exactly like a
 //!   drag-dropped image (a handed file on the `file` channel) and wakes the mind
@@ -25,11 +21,10 @@
 //!   held speech rides the normal pipeline, carrying only a context note that it came
 //!   from this headless gesture.
 //!
-//! **Two of the three reach further than their actions do.** Every recognizer runs on
-//! every platform with a key tap, but the chat popup is an `NSPopover` and the
-//! screenshot is a macOS grab, so on Windows a single tap and a double tap are
-//! recognized and then land on nothing. Both wait on the same thing — a way for the
-//! core to ask the shell that owns the window and the window server, which is
+//! **The double tap reaches further than its action does.** Both recognizers run on
+//! every platform with a key tap, but the screenshot is a macOS grab, so on Windows a
+//! double tap is recognized and then lands on nothing. It waits on a way for the
+//! core to ask the shell that owns the window server, which is
 //! `WS /api/mechanisms` (`docs/arch/mechanisms.md`), dialed by no shell yet. The hold
 //! needs no such thing: the mic is cpal in this process and the ear's open/shut state
 //! is read back off `GET /api/listening`, so it works on Windows today.
@@ -74,8 +69,7 @@ pub fn install(state: Arc<AppState>) {
     // and the hold threshold share one clock with the timer below).
     let (edge_tx, edge_rx) = tokio::sync::mpsc::unbounded_channel::<hotkey::Edge>();
     // The follower carries a held session's state to whoever draws it: the menu-bar
-    // item's single text field here, and `GET /api/listening` for a tray in another
-    // process.
+    // icon here, and `GET /api/listening` for a tray in another process.
     let (attn_tx, attn_rx) = tokio::sync::mpsc::unbounded_channel::<AttnEvent>();
     handle.spawn(attention_follower(state.clone(), attn_rx));
     handle.spawn(recognizer_loop(state, edge_rx, attn_tx));
@@ -98,7 +92,7 @@ pub fn install(state: Arc<AppState>) {
         Ok(_) => tracing::info!(
             key = %hotkey::key_label(),
             conversation = %"the conversation",
-            "attention gestures armed (single-tap → chat, double-tap → screenshot, press-hold → attention)"
+            "attention gestures armed (double-tap → screenshot, press-hold → attention)"
         ),
         Err(e) => tracing::warn!(error = %e, "gesture: could not spawn listener thread; gestures disabled"),
     }
@@ -112,116 +106,21 @@ enum AttnEvent {
     ListenStop,
 }
 
-/// Carry a held-attention session to everything that draws it.
-///
-/// Two things, on **two different clocks**, and the difference is the point:
-///
-/// - **The ear** ([`AppState::listening`]) is open exactly while the mic is — it opens
-///   on `ListenStart` and shuts on `ListenStop`, the moment the key comes up. That is
-///   what `GET /api/listening` reports, so a tray in another process draws the truth
-///   about the microphone and nothing else.
-/// - **The menu-bar strip** is a place to read, so it lingers. macOS has one text field
-///   beside the status item, and this puts the live transcript in it while the user
-///   speaks and then the agent's reply — in sequence, because there is only the one
-///   field. The reply usually lands *after* release, so `ListenStop` starts a short
-///   dwell that each reply chunk extends, and only then does the item collapse back to
-///   icon-only.
-///
-/// Reading a reply for three seconds is not the mic still being open, and a tray that
-/// said so would be lying about the one thing it is there to say. Windows has no text
-/// beside a notification icon and so has nothing to linger for.
-///
-/// Spawned once and fed `AttnEvent`s by the recognizer; the text comes off the same
-/// non-draining echoes the channel inspector uses ([`AppState::input_echo`] /
-/// [`AppState::output_echo`]).
+/// Carry a held-attention session to everything that draws it: the ear
+/// ([`AppState::listening`], which `GET /api/listening` reports to a tray in another
+/// process) and the macOS menu-bar icon, which holds at full colour. Both open on
+/// `ListenStart` and shut on `ListenStop`, the moment the key comes up — one clock,
+/// the microphone's.
 async fn attention_follower(
     state: Arc<AppState>,
     mut events: tokio::sync::mpsc::UnboundedReceiver<AttnEvent>,
 ) {
     use crate::body::capabilities::tray;
-    use crate::types::Channel;
-    use tokio::sync::broadcast::error::RecvError;
 
-    // How long the strip lingers after release so the reply can show; each reply
-    // chunk pushes it out again.
-    const DWELL: Duration = Duration::from_millis(3500);
-    // Keep the menu-bar item from ballooning past the notch — show only the tail.
-    const MAX_CHARS: usize = 48;
-    fn tail(s: &str) -> String {
-        let chars: Vec<char> = s.chars().collect();
-        if chars.len() <= MAX_CHARS {
-            s.to_string()
-        } else {
-            let cut: String = chars[chars.len() - MAX_CHARS..].iter().collect();
-            format!("…{cut}")
-        }
-    }
-
-    let mut input_rx = state.input_echo.subscribe();
-    let mut output_rx = state.output_echo.subscribe();
-    let mut active = false;
-    let mut reply = String::new();
-    let mut deadline: Option<Instant> = None;
-
-    loop {
-        let dwell = async {
-            match deadline {
-                Some(d) => tokio::time::sleep_until(tokio::time::Instant::from_std(d)).await,
-                None => std::future::pending::<()>().await,
-            }
-        };
-        tokio::select! {
-            ev = events.recv() => match ev {
-                None => break, // recognizer gone
-                Some(AttnEvent::ListenStart) => {
-                    active = true;
-                    reply.clear();
-                    deadline = None;
-                    // Re-subscribe so we start from the live edge (no stale lines).
-                    input_rx = state.input_echo.subscribe();
-                    output_rx = state.output_echo.subscribe();
-                    state.listening.set(true);
-                    tray::set_listening(true);
-                    tray::set_text("聆听…");
-                }
-                Some(AttnEvent::ListenStop) => {
-                    // The ear shuts now; the strip stays up long enough to read.
-                    state.listening.set(false);
-                    if active {
-                        deadline = Some(Instant::now() + DWELL);
-                    }
-                }
-            },
-            r = input_rx.recv(), if active => match r {
-                Ok(echo) => {
-                    if echo.channel == Channel::Text {
-                        tray::set_text(&tail(&echo.text)); // listen phase
-                    }
-                }
-                Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => {}
-            },
-            r = output_rx.recv(), if active => match r {
-                Ok(echo) => {
-                    if echo.channel == Channel::Text {
-                        reply.push_str(&echo.text); // speak phase
-                        tray::set_text(&tail(&reply));
-                        if deadline.is_some() {
-                            deadline = Some(Instant::now() + DWELL);
-                        }
-                    }
-                }
-                Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => {}
-            },
-            _ = dwell, if deadline.is_some() => {
-                active = false;
-                reply.clear();
-                deadline = None;
-                tray::set_text("");
-                tray::set_listening(false);
-            }
-        }
+    while let Some(ev) = events.recv().await {
+        let on = matches!(ev, AttnEvent::ListenStart);
+        state.listening.set(on);
+        tray::set_listening(on);
     }
 }
 
@@ -242,27 +141,13 @@ async fn recognizer_loop(
     let start = Instant::now();
     let mut dt = hotkey::DoubleTap::new(hotkey::DEFAULT_WINDOW);
     let mut hold = hotkey::Hold::new(hotkey::DEFAULT_CAPTURE, hotkey::DEFAULT_HOLD);
-    let mut tap = hotkey::SingleTap::new(hotkey::DEFAULT_WINDOW);
     let mut session: Option<MicSession> = None;
 
-    // Per-press bookkeeping for the single-tap recognizer: the current press's
-    // down-time, and whether — since it went down — the mic opened (a hold, not a
-    // tap), a chord broke it, or it completed a double-tap. A release is a *clean
-    // quick tap* (the single-tap candidate) only when none of these is true.
-    let mut down_at: u64 = 0;
-    let mut captured_since_down = false;
-    let mut chorded_since_down = false;
-    let mut glanced_since_down = false;
-
     loop {
-        // Sleep until the earliest pending threshold elapses — a hold's capture/hold
-        // threshold, or a single-tap's confirmation window; if none is pending, wait
+        // Sleep until a hold's capture/hold threshold elapses; if none is pending, wait
         // forever (only an edge can wake us). Rebuilt each iteration so it tracks the
         // current pending press.
-        let deadline = match (hold.next_deadline(), tap.next_deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        let deadline = hold.next_deadline();
         let tick = async {
             match deadline {
                 Some(d) => {
@@ -279,20 +164,12 @@ async fn recognizer_loop(
                 let t = start.elapsed().as_millis() as u64;
                 match edge {
                     Edge::Down => {
-                        down_at = t;
-                        captured_since_down = false;
-                        chorded_since_down = false;
-                        glanced_since_down = false;
-                        // A new press is either a fresh tap or the second half of a
-                        // double-tap — either way an earlier tap is no longer "lone".
-                        tap.cancel();
                         hold.on_down(t);
                         if dt.on_down(t) {
                             // A completed double-tap: glance, and make sure this same
                             // press can't also become a hold.
                             dt.on_other_input();
                             hold.cancel();
-                            glanced_since_down = true;
                             glance(&state);
                         }
                     }
@@ -302,13 +179,6 @@ async fn recognizer_loop(
                         // clears the recognizer's pending press either way.
                         let _ = hold.on_up(t);
                         stop_attention(&attn_tx, &mut session);
-                        // A clean quick tap — released before the mic ever opened, no
-                        // chord, and not a double-tap's second press — is a single-tap
-                        // candidate: confirm it after the double-tap window (so it can't
-                        // be the first half of a double-tap) before it opens the chat.
-                        if !captured_since_down && !chorded_since_down && !glanced_since_down {
-                            tap.arm(down_at);
-                        }
                     }
                     Edge::Other => {
                         dt.on_other_input();
@@ -316,8 +186,6 @@ async fn recognizer_loop(
                         // A chord (⌘C, Ctrl+C) breaks a half-formed hold: drop a buffering
                         // pre-roll, but leave an already-committed attention running.
                         discard_capture(&mut session);
-                        chorded_since_down = true;
-                        tap.cancel();
                     }
                 }
             }
@@ -326,7 +194,6 @@ async fn recognizer_loop(
                 match hold.poll(t) {
                     // Stage 1: open the mic and start buffering, no processing yet.
                     Some(GestureEvent::CaptureStart) => {
-                        captured_since_down = true;
                         arm_capture(&state, &mut session);
                     }
                     // Stage 2: commit the pre-roll to live processing. Cancels a
@@ -336,13 +203,6 @@ async fn recognizer_loop(
                         commit_capture(&attn_tx, &mut session);
                     }
                     _ => {}
-                }
-                // A single tap whose confirmation window elapsed unpaired opens the
-                // menu-bar chat popup — best-effort, and a no-op when no tray is up *or*
-                // when there is no in-process popover to open, which is every platform
-                // but macOS. See this module's header for what that waits on.
-                if tap.poll(t) {
-                    crate::body::capabilities::tray::open_chat();
                 }
             }
         }

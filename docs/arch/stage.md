@@ -923,10 +923,10 @@ way under the finger.
 | The bar | the same six channel controls, laid as the page's head instead of the room's corner. The text control is drawn as the chevron there, because from inside the page that is what it does |
 
 **Width alone cannot say what a phone is, and assuming it could is the defect this closes.**
-The menu-bar popover is ~380×540, so a `max-width: 420px` block written for it — tighten
-everything, the whole face has to fit — was also the block a 393px iPhone matched. It took
+The menu-bar popover (deleted 2026-09-29) was ~380×540, so a `max-width: 420px` block written
+for it — tighten everything, the whole face has to fit — was also the block a 393px iPhone matched. It took
 the channel discs from 38px to 32 on the one host where the pointer is a finger and 44 is
-the floor. The popover hovers and a phone does not; pointer type is the half of the question
+the floor. The popover hovered and a phone does not; pointer type is the half of the question
 that width never answered. On the phone the discs are 44px in both positions.
 
 **One flag, not two.** The shape is on `<html>` rather than left as a media query, because
@@ -1093,8 +1093,7 @@ the panel is 420px in a corner: arriving with it up costs the view nothing and a
 before anyone asks, where what was said is kept. Under 420px it is not that shape at all —
 `.hi-stage` resolves to the window minus its margins and takes the full height
 (`ui/global.css`), because at that size *the panel is the face*. So the same default that
-was a helpful corner on a desktop was the chat covering the room on a phone and in the
-menu-bar popover, on every load.
+was a helpful corner on a desktop was the chat covering the room on a phone, on every load.
 
 *Later the same day, the phone half of that sentence got sharper rather than weaker: there
 the panel is not merely full-width, it is a **page** pushed onto a stack — see* The phone
@@ -1901,7 +1900,7 @@ is *how a view is supposed to find out how big that frame is*, and the answer ev
 agent had built reached for was `@media` and `vw`. Both answer about the browser window.
 
 The window and the slot are the same number often enough to hide it, and then they are not:
-the slot is about 380px in the menu-bar popover, where a view matched the phone's rules —
+the slot was about 380px in the menu-bar popover (since deleted), where a view matched the phone's rules —
 the same collision `lib/shape.ts` records for the host's own controls, arriving a second
 time by a different door. And a phone turned sideways hands every view 852 raw pixels, which
 lands above 33 of the `max-width` breakpoints written across the agent's views and below

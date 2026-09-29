@@ -37,7 +37,7 @@
 //!   (`docs/arch/stage.md` § *A show leaves a page being read alone*).
 //!
 //! **Counts, not identities.** Several surfaces can watch at once — a window, a
-//! popover, a phone — and the only question anyone asks is "is there a speaker
+//! browser tab, a phone — and the only question anyone asks is "is there a speaker
 //! anywhere", never "which client". So this counts live connections per channel and
 //! nothing about who holds them.
 

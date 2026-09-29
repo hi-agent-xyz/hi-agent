@@ -26,9 +26,7 @@
 //!
 //! **Every face that can show a view reports**, each under its own `surface` id: the
 //! desktop window, a browser tab, and the iPhone client's `WKWebView`, which loads
-//! the same page. The one that stays quiet is the menu-bar popover, which says so
-//! with `?chrome=popover` — it is a chat panel, and a review rendered at its 380×540
-//! portrait frame would be a review of a frame nobody reads a view on. The store
+//! the same page. The store
 //! keeps one entry per surface with the most recent reporter at the head, because a
 //! report follows a resize, a skin flip or a load, and all three are someone looking.
 

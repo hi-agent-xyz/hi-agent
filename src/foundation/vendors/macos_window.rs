@@ -1,10 +1,8 @@
 //! macOS window vendor — the dedicated desktop window that hosts the agent **face**.
 //!
-//! A standard titled `NSWindow` hosting a `WKWebView` that loads the face (`/`) — the
-//! same appearance UI the tray popover used to show, but as a free-standing window with
-//! native macOS chrome (titlebar, traffic lights, drag, resize) instead of a menu-bar
-//! popup. Opened by a left-click on the tray icon, the "Open Hi Agent" menu item, or a
-//! single right-⌘ tap ([`crate::body::gesture`]).
+//! A standard titled `NSWindow` hosting a `WKWebView` that loads the face (`/`), with
+//! native macOS chrome (titlebar, traffic lights, drag, resize). Opened by a left-click
+//! on the tray icon or the "Open Hi Agent" menu item.
 //!
 //! **A real interactive window under the Accessory policy.** A titled window becomes key
 //! on its own, but [`KeyWindow`] still overrides `canBecomeKeyWindow` /
@@ -34,7 +32,7 @@
 //! live state-glow — paints under the titlebar too. Bar and content are then literally the
 //! same pixels in every state; nothing to keep in sync. The traffic lights float on top as
 //! usual, and the page keeps its *content* out of that strip: this window (and only this
-//! window — not the popover, not a browser tab) loads the face with `?chrome=titlebar`, which
+//! window — not a browser tab) loads the face with `?chrome=titlebar`, which
 //! the page turns into a [`BAR_H`]-tall top inset every occupant of the stage pads by, agent
 //! views included. Background still paints through it; nothing readable sits in it. Because
 //! the web view
@@ -43,7 +41,7 @@
 //! pre-paint / live-resize fallback, and the centered `NSTextField` title floats over the
 //! page, clearing the traffic lights on the left.
 //!
-//! Media permission mirrors the popover: a [`MediaGrant`] `WKUIDelegate` auto-grants
+//! Media permission: a [`MediaGrant`] `WKUIDelegate` auto-grants
 //! the page's mic/camera so WebKit never shows its per-site *page-level* prompt. That is
 //! only the first of two gates — the macOS *system* prompt (TCC) is separate, and it only
 //! works when the host process is a bundled `.app` (Info.plist usage strings + a code
@@ -189,7 +187,7 @@ fn apply_face_theme(window: &NSWindow, label: &NSTextField, data_dir: &Path) {
 }
 
 // ---------------------------------------------------------------------------
-// File picker — the `<input type="file">` half of a WKUIDelegate, shared with the popover
+// File picker — the `<input type="file">` half of a WKUIDelegate
 // ---------------------------------------------------------------------------
 
 /// `NSModalResponseOK`: the user chose files rather than cancelling.
@@ -558,8 +556,8 @@ pub fn install(mtm: MainThreadMarker, url: &str, data_dir: PathBuf) {
         // Element) — it's the app's own content, so leaving it on lets the UI be debugged.
         webview.setInspectable(true);
 
-        // Tell the page it is being shown under a titlebar. The same URL is also the
-        // popover's and a browser tab's, and neither of those has one — so the flag
+        // Tell the page it is being shown under a titlebar. The same URL is also a
+        // browser tab's, which has none — so the flag
         // rides on this load alone, and the page reserves the strip only here
         // (`lib/chrome.ts` → `--hi-chrome-top`, matching [`BAR_H`]). Without it a
         // full-bleed view lays out to the very top and its header sits under the

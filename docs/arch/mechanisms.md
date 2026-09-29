@@ -15,8 +15,8 @@ existed is the call that crosses between them.
 **This document used to be about eyes and hands, and it is not any more.** Screen capture,
 input synthesis, the accessibility tree and the frontmost-app read were the whole reason to
 want core-originated calls; all four are deleted, and § *Computer use does not cross this
-seam* is why. What is left needing initiative is small and dull — raising a window, a line
-of tray text, a handed screenshot — and the seam is kept for it and for Phase 2, not for
+seam* is why. What is left needing initiative is small and dull — a line of tray text, a
+handed screenshot — and the seam is kept for it and for Phase 2, not for
 perception. Smaller still than it reads: two things once counted here turned out not to
 need it at all. Whether the ear is open is *state several surfaces read*, so it is
 `GET /api/listening` (Open 2). And the key edges only cross when the tap is the shell's,
@@ -71,7 +71,7 @@ because the direction is what Phase 2 needs and because the next mechanism that 
 should not have to re-derive the wire. What it must not become is a general perceive/act
 surface re-entering by the back door: see § *Computer use does not cross this seam*.
 
-**Core → app — state, no reply:** the tray's `flash` and `set_text`, and `open_chat`.
+**Core → app — state, no reply:** the tray's `flash` and `set_text`.
 These are pushes, not questions; nothing waits on them and a dropped one is survivable.
 
 `set_listening` was on that list and is **not a push at all** — see Open 2, now answered.
@@ -247,8 +247,7 @@ and its floor releases; nothing about them needs the app's hands.
    value from before it attached, and a fire-and-forget call leaves a reconnecting app with
    a stale tray until the next change. So the ear is state on the core, read at
    `GET /api/listening`, and every surface that draws it reads the same thing. What stays on
-   this connection is the pushes with exactly one possible recipient: `flash`, `set_text`,
-   and raising a window.
+   this connection is the pushes with exactly one possible recipient: `flash` and `set_text`.
 
 3. **Where the attention gesture's discrimination lives.** The key tap is mechanism and the
    double-tap-versus-hold machine is policy, which puts the two on opposite sides of the

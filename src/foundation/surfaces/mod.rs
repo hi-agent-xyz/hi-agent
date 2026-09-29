@@ -13,7 +13,7 @@
 //! in the relayed shape every request shares the community's source address, so
 //! an allowlist would be inert exactly where it was needed.
 //!
-//! - **loopback** — the loopback listener, `make dev`, curl journeys, the popover,
+//! - **loopback** — the loopback listener, `make dev`, curl journeys, the face window,
 //!   the codex subprocesses calling `/mcp`. Ungated.
 //! - **off-box** — a public bind today, a relayed tunnel stream tomorrow. Gated.
 //!

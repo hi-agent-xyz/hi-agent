@@ -19,8 +19,6 @@ pub mod insightface_face;
 #[cfg(target_os = "macos")]
 pub mod macos_hotkey;
 #[cfg(target_os = "macos")]
-pub mod macos_popover;
-#[cfg(target_os = "macos")]
 pub mod macos_screencast;
 #[cfg(target_os = "macos")]
 pub mod macos_swift_settings;

@@ -20,7 +20,7 @@
 //
 // **And now it shows the file, not just its name.** A row used to be a link with
 // `target="_blank"`, which answered "is it still there" and nothing beyond it. That
-// worked in a browser tab and nowhere else this face is shown: the menu-bar popover is
+// worked in a browser tab and nowhere else this face is shown: the desktop window is
 // a `WKWebView` and the iOS and Android clients are webviews too, none of which have a
 // tab to open — and a `.docx` was a download on every one of them, including the
 // browser. Holding a contract you cannot read is most of the way to not holding it.
@@ -229,7 +229,7 @@ function Preview({ files, index, onClose }) {
           // no arrows to walk it — the `‹ 1 / 1 ›` a PDF shows is pdf.js paging one
           // document, not this. Named field by field rather than `true`, because `true`
           // turns on all six and one of them is wrong here: `print` opens the platform
-          // print dialog, and this view's main homes are a menu-bar popover and two phone
+          // print dialog, and this view's main homes are the desktop window and two phone
           // webviews, where that is at best a dead end. `rotate` earns its place for the
           // opposite reason — a scan arrives sideways more often than not.
           toolbar: { zoom: true, rotate: true, download: true, fullscreen: true, search: true, print: false },

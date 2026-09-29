@@ -145,8 +145,7 @@
      never place anything in it.
 
      `--hi-chrome-top` is that strip's height, and which host we're in decides it
-     rather than the page assuming: 0 by default (a browser tab has no such strip,
-     nor does the menu-bar popover) and the bar's height under
+     rather than the page assuming: 0 by default (a browser tab has no such strip) and the bar's height under
      `<html data-chrome="titlebar">`, which the face window asks for by loading the
      page with `?chrome=titlebar` (lib/chrome.ts). Keep the 28px below matching
      `BAR_H` in macos_window.rs — the same standard titlebar, named twice.
@@ -1363,7 +1362,7 @@ button,
      a slot, which is what this file has always said — and it was still written like a
      page, asking `@media` and measuring `vw`, both of which answer about the *window*.
      Those are the same number only when the slot is the window, and it often is not: a
-     view in the ~380px menu-bar popover matched the phone's rules, and a phone turned
+     view in a ~380px slot matched the phone's rules, and a phone turned
      sideways handed every view 852 raw pixels to guess an arrangement from.
 
      So the slot declares itself a container and the view asks it: `@container hi-view`
@@ -1645,27 +1644,11 @@ button,
   }
 }
 
-/* --- Narrow viewport (the menu-bar popover ~380px, and phones) ---------
-   The face is proportioned for a big window; in a popover it clusters. Pull the
-   captions up, shrink the type, reclaim the reserved bottom band, and tighten the
-   control buttons so the whole face fits ~380x540. Wide windows are unaffected.
-
-   **The tightening is the popover's, not every narrow screen's.** This block once
-   said `.hi-channel { width: 32px }` flat, and the sentence above — "so the whole
-   face fits 380x540" — is the whole argument for it: a menu-bar popover is a fixed
-   little box with no room to spare, and it is pointed at with a mouse, which can
-   hit a 32px target. A phone is the same width and neither of those things. It has
-   the height, and the pointer is a finger with a 44px floor under it. So the
-   controls' half of this block is now excluded on the phone shape, where the block
-   below sets them the other way — see *The phone stacks pages*. The type sizes and
-   the panel height are not excluded: those are about width, which is the one thing
-   the two hosts really do share. */
+/* --- Narrow viewport (phones) ------------------------------------------
+   The face is proportioned for a big window; under 420px the sentences shrink with
+   the width. The controls are not touched here — on a phone they go the other way,
+   see *The phone stacks pages*. */
 @media (max-width: 420px) {
-  /* The menu-bar popover is ~380x540 and is not a phone — it hovers, so it is
-     `wide` and has all three stops (`lib/shape.ts`). What it does not have is room
-     for two columns, so its middle stop resolves to the whole window: the token
-     already gives way to `100vw - 40px` here, and the inset the view plane takes
-     is then the whole of it. Still one axis; the measure simply ran out. */
   .hi-sentence {
     font-size: clamp(15px, 5vw, 24px);
   }
@@ -1674,17 +1657,6 @@ button,
   }
   .hi-captions .hi-sentence {
     font-size: clamp(14px, 4.4vw, 22px);
-  }
-  :root:not([data-shape="phone"]) .hi-channels {
-    gap: 6px;
-  }
-  :root:not([data-shape="phone"]) .hi-channel {
-    width: 32px;
-    height: 32px;
-  }
-  :root:not([data-shape="phone"]) .hi-status-button {
-    width: 44px;
-    height: 44px;
   }
 }
 
@@ -2378,8 +2350,7 @@ button,
    `<html data-shape="phone">`. */
 
 /* The discs, at a finger's size. 44px is the platform's own floor for a touch
-   target and the reason the menu-bar popover's 32px was wrong here: same width,
-   different pointer. The glyphs go up with the disc — an 18px mark on a 44px face
+   target, and a phone's pointer is a finger. The glyphs go up with the disc — an 18px mark on a 44px face
    reads as a small button someone enlarged. */
 :root[data-shape="phone"] .hi-channel {
   width: 44px;

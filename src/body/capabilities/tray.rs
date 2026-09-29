@@ -60,9 +60,8 @@ pub fn flash() {
 
 /// Enter (`true`) / leave (`false`) the sustained "listening" tray state — the
 /// menu-bar icon holds at its full colour while the user holds the attention key
-/// ([`crate::body::gesture`]), then settles back. Note that it settles back *later*
-/// than the ear closes, because the icon holds while the reply is still being read
-/// beside it; `GET /api/listening` is the microphone's own clock.
+/// ([`crate::body::gesture`]), then settles back the moment the key comes up — the
+/// same clock as the microphone, which `GET /api/listening` reports.
 /// Best-effort: a no-op off macOS or before the status item is up.
 pub fn set_listening(on: bool) {
     #[cfg(target_os = "macos")]
@@ -71,23 +70,12 @@ pub fn set_listening(on: bool) {
     let _ = on;
 }
 
-/// Set the menu-bar item's text beside the icon — the live attention transcript,
-/// then the reply. Empty string collapses back to icon-only. Best-effort: a no-op
+/// Set the menu-bar item's text beside the icon — a startup failure the person has to
+/// act on (`⚠ needs setup`). Empty string collapses back to icon-only. Best-effort: a no-op
 /// off macOS or before the status item is up.
 pub fn set_text(text: &str) {
     #[cfg(target_os = "macos")]
     crate::foundation::vendors::macos_tray::set_text(text);
     #[cfg(not(target_os = "macos"))]
     let _ = text;
-}
-
-/// Open the menu-bar conversation popup — the iMessage-style chat surface anchored
-/// to the tray icon ([`crate::foundation::vendors::macos_popover`]). Driven by the
-/// single right-⌘ tap ([`crate::body::gesture`]). (The tray's left-click and the "Open
-/// Hi Agent" menu item open the larger face *window* instead — see
-/// [`crate::foundation::vendors::macos_window`].) Idempotent (showing an already-open
-/// popup is a no-op) and best-effort: a no-op off macOS or before the tray is up.
-pub fn open_chat() {
-    #[cfg(target_os = "macos")]
-    crate::foundation::vendors::macos_popover::open();
 }
