@@ -24,10 +24,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSApplication, NSPopover, NSPopoverBehavior, NSStatusBarButton, NSViewController};
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest};
+use objc2_foundation::{MainThreadMarker, NSArray, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest};
 use objc2_web_kit::{
-    WKFrameInfo, WKMediaCaptureType, WKNavigationAction, WKPermissionDecision, WKSecurityOrigin,
-    WKUIDelegate, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
+    WKFrameInfo, WKMediaCaptureType, WKNavigationAction, WKOpenPanelParameters,
+    WKPermissionDecision, WKSecurityOrigin, WKUIDelegate, WKWebView, WKWebViewConfiguration,
+    WKWindowFeatures,
 };
 
 /// The popover's content size in points — a compact column for the face.
@@ -86,6 +87,18 @@ define_class!(
             }
             // nil — do not create an in-app child web view (the URL went to the browser).
             std::ptr::null_mut()
+        }
+
+        /// `<input type="file">` — the same `NSOpenPanel` the face window shows.
+        #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
+        fn run_open_panel(
+            &self,
+            web_view: &WKWebView,
+            parameters: &WKOpenPanelParameters,
+            _frame: &WKFrameInfo,
+            completion_handler: &block2::DynBlock<dyn Fn(*mut NSArray<NSURL>)>,
+        ) {
+            super::macos_window::run_open_panel(web_view, parameters, completion_handler);
         }
     }
 );

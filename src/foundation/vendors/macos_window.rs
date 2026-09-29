@@ -66,17 +66,18 @@ use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel}
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSEvent, NSEventType,
-    NSWindowCollectionBehavior, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowDelegate,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSEvent, NSEventType, NSModalResponse,
+    NSOpenPanel, NSWindowCollectionBehavior, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowDelegate,
     NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest,
+    MainThreadMarker, NSArray, NSNotification, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest,
     NSUserDefaults,
 };
 use objc2_web_kit::{
-    WKFrameInfo, WKMediaCaptureType, WKNavigationAction, WKPermissionDecision, WKSecurityOrigin,
-    WKUIDelegate, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
+    WKFrameInfo, WKMediaCaptureType, WKNavigationAction, WKOpenPanelParameters,
+    WKPermissionDecision, WKSecurityOrigin, WKUIDelegate, WKWebView, WKWebViewConfiguration,
+    WKWindowFeatures,
 };
 
 use crate::foundation::config::KEY_THEME;
@@ -188,6 +189,45 @@ fn apply_face_theme(window: &NSWindow, label: &NSTextField, data_dir: &Path) {
 }
 
 // ---------------------------------------------------------------------------
+// File picker — the `<input type="file">` half of a WKUIDelegate, shared with the popover
+// ---------------------------------------------------------------------------
+
+/// `NSModalResponseOK`: the user chose files rather than cancelling.
+const MODAL_RESPONSE_OK: NSModalResponse = 1;
+
+/// Answer `webView:runOpenPanelWithParameters:…` with an `NSOpenPanel`: a sheet on the web
+/// view's window when it has one, a free-standing panel otherwise. WebKit hands the
+/// completion block over borrowed, so it is copied to outlive this call, and it is called
+/// exactly once either way — with the chosen URLs, or with nil on cancel, which is what
+/// lets the page's input take another click.
+pub(crate) fn run_open_panel(
+    web_view: &WKWebView,
+    parameters: &WKOpenPanelParameters,
+    completion_handler: &block2::DynBlock<dyn Fn(*mut NSArray<NSURL>)>,
+) {
+    let mtm = MainThreadMarker::from(web_view);
+    let panel = NSOpenPanel::openPanel(mtm);
+    panel.setCanChooseFiles(true);
+    panel.setCanChooseDirectories(unsafe { parameters.allowsDirectories() });
+    panel.setAllowsMultipleSelection(unsafe { parameters.allowsMultipleSelection() });
+
+    let completion = completion_handler.copy();
+    let chosen = panel.clone();
+    let on_close = block2::RcBlock::new(move |response: NSModalResponse| {
+        if response == MODAL_RESPONSE_OK {
+            let urls = chosen.URLs();
+            completion.call((Retained::as_ptr(&urls) as *mut NSArray<NSURL>,));
+        } else {
+            completion.call((std::ptr::null_mut(),));
+        }
+    });
+    match web_view.window() {
+        Some(window) => panel.beginSheetModalForWindow_completionHandler(&window, &on_close),
+        None => panel.beginWithCompletionHandler(&on_close),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Media-permission delegate — auto-grant so WebKit never prompts per-site
 // ---------------------------------------------------------------------------
 
@@ -237,6 +277,19 @@ define_class!(
             }
             // nil — do not create an in-app child web view (the URL went to the browser).
             std::ptr::null_mut()
+        }
+
+        /// The page's `<input type="file">` was clicked. WebKit on macOS has no picker of
+        /// its own — without this method the click does nothing at all.
+        #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
+        fn run_open_panel(
+            &self,
+            web_view: &WKWebView,
+            parameters: &WKOpenPanelParameters,
+            _frame: &WKFrameInfo,
+            completion_handler: &block2::DynBlock<dyn Fn(*mut NSArray<NSURL>)>,
+        ) {
+            run_open_panel(web_view, parameters, completion_handler);
         }
     }
 );

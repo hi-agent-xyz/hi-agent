@@ -186,6 +186,10 @@ objc2-app-kit = { version = "0.3", features = [
     # themselves are SwiftUI now (`app/apple/macos/HiSettings.swift`), which is why no table,
     # tab, popup-button or alert class appears in this list.
     "NSAppearance",
+    # `<input type="file">` in either web view (`macos_window::run_open_panel`).
+    "NSOpenPanel",
+    "NSSavePanel",
+    "NSPanel",
 ] }
 # WebKit for the face popover (`crate::vendors::macos_popover`): a WKWebView renders the
 # face inside the NSPopover, with a WKUIDelegate that auto-grants mic/camera (the
@@ -196,6 +200,7 @@ objc2-web-kit = { version = "0.3", features = [
     "WKUIDelegate",
     "WKSecurityOrigin",
     "WKFrameInfo",
+    "WKOpenPanelParameters",
     "block2",
 ] }
 block2 = "0.6"
