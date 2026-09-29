@@ -64,22 +64,23 @@ one-shot that an empty intermediate tree could use up; it is redone until the pe
 window. **A zoom, a drag or a plain scroll takes it**, and from then an update keeps their
 scroll, until they take another centre — a new chart, which opens whole again.
 
-**What is drawn follows the window: its scale, and where it is.** A card outside the window is
-not seen, and one cut by its edge reads badly, so once a zoom or a pan rests the cut is made again
-for what the window is now looking at, by the same rules and in the same order — the next hottest
-cards, and only as many as fit — with the cards that stay gliding from where they were. It is
-still a part: the groups' counts shrink by what was drawn, and pressing a group is still the way
-to the whole of its branch.
+**What is drawn follows the scale, and only the scale.** Once a zoom rests, the cut is made again
+at the scale zoomed to, by the same rules and in the same order — the next hottest cards, and only
+as many as fit the window at that scale — and put in the window's middle, the cards that stay
+gliding from where they were. Zooming out buys cards all the way down to the zoom's floor of 0.25;
+zooming back in gives them back, until the cut is the overview's again at 0.8, and past 0.8 it
+stays the overview's. It is still a part: the groups' counts shrink by what was drawn, and
+pressing a group is still the way to the whole of its branch.
 
-- **At 0.8 and below, the window holds the whole chart**, so the whole is cut at the scale zoomed
-  to and put in the window's middle. Zooming out buys cards all the way down to the zoom's floor
-  of 0.25; zooming back in gives them back, until the cut is the overview's again at 0.8.
-- **Past 0.8, the window holds one group**, the one drawn nearest its middle. That group is filled,
-  hottest first, until it alone is the window's shape at that scale, and it is put in the window's
-  middle. The rest of the chart is off screen and keeps the overview's cut: taking cards out there
-  would move the branch being read. A pan that leaves the group recuts for the one it lands on;
-  one that stays inside it changes nothing. On the core, or on work with no group, there is no
-  group to fill and the cut is the overview's.
+**Where the window is looking never changes what is drawn.** One scale is one chart, and a pan
+only moves the window over it. A cut that followed the window's middle was built and deleted
+(2026-09-29): the group nearest the middle was filled to the window, and a pan that left it recut
+for the next. "The middle" had no clear meaning — the window's, the pointer's, or where the
+person was looking — so it took a nearest-group guess and a stay-put rule the person could
+neither see nor predict; a pan that recut moved the cards they had just found, which is the
+spatial memory this surface exists to keep; and measured on a live day it changed nothing: at
+0.3 the group was already the window's height, and at 1.2 it was already taller than the
+window. **Asking to see one part is pressing that group**, which is explicit and has a way back.
 
 Pinch or ⌘/Ctrl-wheel zooms at the pointer, from 0.25 to 2, and dragging pans from anywhere a tap
 would not open. Two fingers pan it too, except the one roll that is the host's: from the room,
@@ -96,26 +97,23 @@ label and a count, *3 more* / *还有 3 项*, 56px tall, still holding its rank 
 the way to them. Only cards are cut, and only until the drawing is the window's shape at the
 overview scale.
 
-**Width the window has to spare is spent on columns, on a tray.** Width is bought by depth, so a
-chart zoomed out past its own depth drew a tall column in a wide window: on a live day at 0.25 it
-was 2436 wide in a room of 6048, and the in-hand cards it put away were all in the one tall group.
-So when the drawing is narrower than the window and cards are still put away, a group's cards
-that have nothing under them stand in columns on a tray — filling a column top to bottom before
-the next, the first column nearest the group — and a column is added to whichever group lowers the
-drawing most, until the width runs out or nothing is left. The core's own such cards stand on a
-tray of their own, one to a side. On that live day at 0.25 it drew 188 of 206 cards, every one in
-hand, in 4904 of the 6048.
+**Below 0.6 a zoomed-out chart leaves width empty, and that is accepted.** Width is bought by
+depth, and the deepest path is drawn already, so at 0.3 a live day's chart was 2436 wide in a room
+of 5040 while its height was full. Choosing cards cannot make a tree wider. Two ways of filling it
+were tried and rejected, both because they changed what the chart says rather than how much of it
+fits:
 
-Packing siblings in blocks was tried once before and rejected: a block's second column lands
-exactly where the next rank sits, and position across the chart is how it says depth, so a sibling
-beside a card read as one level below it. **The tray is the answer to that**, and it is why the
-columns are not simply rows of cards: the cards stand on one box, the group's wire goes to the box
-rather than to each card, and the gap between columns is the tray's 12px rather than a rank's
-gutter — so the block reads as one thing hanging off the group. A card with a picture or a session
-under it keeps its place in the tree, where its depth is. **At the overview, pictures have the
-width first** — it is the scale they were fitted for, and a 0.8 chart has no width left over for
-columns; zoomed out, a picture is a thumbnail and the person asked for more of the day, so the
-columns have it first and the pictures what remains.
+- **Packing siblings into blocks.** A run of cards with nothing under them was laid out two to a
+  row, which took one day from 0.39 to 0.57 at whole-chart scale. But a block's second column
+  lands exactly where the next rank sits, and position across the chart is how it says depth: a
+  sibling beside a card reads as one level below it. It was built again on 2026-09-28 with the
+  cards standing in columns on a tray, the group's wire going to the tray, and rejected on sight:
+  a box around a heap of cards was ugly and did not read as the tree.
+- **Drawing first-level groups alone.** It narrowed the chart to the 1348 it was meant to grow out
+  of, and hung inner groups' cards straight off their parent, which is a different tree.
+
+What would add width without changing the chart's shape is a deeper rank; § *Open* has the one
+the record already holds.
 
 **Each branch's side is the split that leaves the two closest in height**, weighed on everything
 the branch holds in hand rather than on what one cut draws, so a zoom never moves a branch across
@@ -123,12 +121,6 @@ the core. A branch with nothing in hand weighs nothing in that split and is deal
 shorter side. Taking branches alternately in the record's order, as before, left a large group that
 came late on the side already holding two others — 1100px taller than the other, seven cards not
 drawn.
-
-One other way of using the width was tried and rejected, because it changed what the chart says
-rather than how much of it fits:
-
-- **Drawing first-level groups alone.** It narrowed the chart to the 1348 it was meant to grow out
-  of, and hung inner groups' cards straight off their parent, which is a different tree.
 
 Cards are offered hottest first, each tried against the whole chart laid out afresh:
 
@@ -148,12 +140,10 @@ Cards are offered hottest first, each tried against the whole chart laid out afr
    passed over and the next is tried, so the shorter side fills. **History is the tail of this
    pass**: a branch's finished work is drawn in whatever room its live work leaves, which on a
    full day is none, and in a group taken as the centre is most of the window.
-4. **Pictures, in the width that is left.** A picture spends a rank of width, and the width is
+4. **Pictures last, in the width that is left.** A picture spends a rank of width, and the width is
    both sides' at once. Offered with its card, one picture on the right kept a card still in
    progress out of its inner group on the left, and the branch drew one closed eight hours
    before.
-5. **Columns, in whatever width is left after that**, and the cards passed over are offered again
-   into the height they free. Zoomed out, this comes before the pictures (above).
 
 **Heat is a tier and then a time**: waiting on the person, then anybody running on it, then
 open, then closed and in hand, then history — and within a tier, how lately it moved. **The tier
@@ -175,8 +165,8 @@ the candidates are everything in hand — always, however much of it there is �
 room's area when zoomed out. On a 211-row instance the whole pass costs 19ms against the 16ms it
 cost when the model held 80 nodes. Cards are offered in runs that double while they fit and halve
 when not, and once one card under a parent is passed over the rest under it are too — they cost
-the same height in the same place. With columns, a 206-row instance costs about 30ms at the
-overview and 315ms at 0.25, once, when the zoom rests.
+the same height in the same place. A 209-row instance costs 15ms at the overview and 24ms at
+0.3, once, when the zoom rests.
 
 **The overview scale is 0.8**, measured against one day's record (22 open cards, nine pictures,
 eight groups, two of them inner) in a 1512×855 window:
@@ -963,6 +953,13 @@ Narrow views use a connected, recursively expandable flow of the same nodes and 
   where they are read. Whether the chart should keep a way into a finished group — a heading
   with no card under it — is undecided, and the reason it does not today is the same one that
   refuses an empty heading anywhere else.
+- **A task's timeline is a deeper rank the chart does not draw.** The card shows only `latest`;
+  the whole record is `GET /api/tasks/<subject>`'s `timeline` — on a 237-row instance a median of
+  5 entries, 22 at the 90th percentile, 245 at most. Drawn as a chain outward from its task,
+  newest nearest, it would spend width and no height, which is exactly what a chart zoomed out
+  below 0.6 has spare. Undecided: whether it is wanted at a scale where its text cannot be read,
+  how it shares a task's rank with pictures, and fetching it per drawn task, since `/api/tasks`
+  does not carry it.
 - **The order within a side is the record's, but which side is not.** Groups and ungrouped
   tasks are fed to the layout in the order the record gives, and the side each lands on is the
   split that balances the work in hand, so "first in the file" means near the core rather

@@ -769,25 +769,6 @@ const FOCUS_W = 240, FOCUS_H = 80;
 function dimensions(node) {
   return node?.kind === "group" ? { w: GROUP_W, h: GROUP_H } : { w: CARD_W, h: CARD_H };
 }
-/**
- * **A group's cards can stand in columns, on a tray, when the window has width to spare.** Width
- * is bought by depth, so a chart zoomed out past its own depth left most of a wide window empty
- * while one tall group stopped every other card being drawn: on a live day at 0.25 the drawing
- * was 2436 wide in a room of 6048 and the in-hand cards it put away were all in that group.
- *
- * Columns were tried once before, as siblings packed two to a row, and lost because a second
- * column lands where the next rank sits and reads as one level below. The tray is what answers
- * that: the cards stand on one box, the group's wire goes to the box rather than to each card,
- * and the gap between columns is a tray's, far tighter than any rank's gutter — so the block
- * reads as one thing hanging off the group, not as a rank. Only cards with nothing under them go
- * on it; a card with a picture or a session keeps its place in the tree, where its depth is.
- * Cards fill a column top to bottom before the next, the first column nearest the group.
- */
-const TRAY_GAP = 12, TRAY_PAD = 12;
-function trayBox(count, cols) {
-  const rows = Math.ceil(count / cols);
-  return { w: cols * CARD_W + (cols - 1) * TRAY_GAP + 2 * TRAY_PAD, h: rows * CARD_H + (rows - 1) * TRAY_GAP + 2 * TRAY_PAD };
-}
 
 /**
  * **Home opens whole, and the scale that takes is chosen, not left to the day.** It opened fitted
@@ -871,18 +852,8 @@ function arrange(model, tones = branchTones(model)) {
   const root = model.nodes.find((n) => n.id === model.rootId);
   const rootBox = root.kind === "core" ? { w: CORE_W, h: CORE_H } : { w: FOCUS_W, h: FOCUS_H };
   const branches = children.get(model.rootId).filter((n) => n.kind !== "overview");
-  const columns = model.layout?.columns || new Map(), trays = new Map();
-  const tree = (node) => {
-    const kids = children.get(node.id) || [];
-    const cols = node.kind === "group" ? columns.get(node.id) || 1 : 1;
-    const loose = cols > 1 ? kids.filter((k) => k.kind !== "group" && !(children.get(k.id) || []).length) : [];
-    if (loose.length < 2) return { node, ...dimensions(node), children: kids.map(tree) };
-    const tray = { id: `tray:${node.id}`, kind: "tray", title: "", data: { group: node.id }, sourceRefs: [] };
-    trays.set(tray.id, { group: node.id, cards: loose, cols: Math.min(cols, loose.length) });
-    return { node, ...dimensions(node), children: [
-      { node: tray, ...trayBox(loose.length, Math.min(cols, loose.length)), children: [] },
-      ...kids.filter((k) => !loose.includes(k)).map(tree)] };
-  };
+  const tree = (node) => ({ node, ...dimensions(node),
+    children: (children.get(node.id) || []).map(tree) });
   const weight = (t, rank = 1) => Math.max(t.h,
     t.children.reduce((n, c) => n + weight(c, rank + 1) + gapAt(rank + 1), 0));
   const sides = [[], []], load = [0, 0];
@@ -904,18 +875,6 @@ function arrange(model, tones = branchTones(model)) {
     const t = tree(branch), side = chosen?.has(branch.id) ? chosen.get(branch.id) : load[0] <= load[1] ? 0 : 1;
     sides[side].push(t); load[side] += weight(t);
   }
-  // Work on the core with nothing under it stands on a tray of its own, one to a side, keyed
-  // `<root>:<side>` in `columns`, where the first of its cards stood.
-  for (let side = 0; side < 2; side++) {
-    const key = `${model.rootId}:${side}`, cols = columns.get(key) || 1;
-    const loose = cols > 1 ? sides[side].filter((t) => t.node.kind !== "group" && !t.children.length) : [];
-    if (loose.length < 2) continue;
-    const tray = { id: `tray:${key}`, kind: "tray", title: "", data: { group: model.rootId }, sourceRefs: [] };
-    trays.set(tray.id, { group: model.rootId, cards: loose.map((t) => t.node), cols: Math.min(cols, loose.length) });
-    const first = sides[side].indexOf(loose[0]);
-    sides[side] = sides[side].filter((t) => !loose.includes(t));
-    sides[side].splice(first, 0, { node: tray, ...trayBox(loose.length, Math.min(cols, loose.length)), children: [] });
-  }
   const placed = [{ node: root, x: -rootBox.w / 2, y: -rootBox.h / 2, ...rootBox, dir: 0 }];
   for (let side = 0; side < 2; side++) {
     if (!sides[side].length) continue;
@@ -930,18 +889,8 @@ function arrange(model, tones = branchTones(model)) {
     layout(hub);
     const dir = side === 0 ? 1 : -1;
     for (const n of hub.descendants().slice(1)) {
-      const row = { node: n.data.node, w: n.data.w, h: n.data.h, dir,
-        x: dir > 0 ? n.y : -n.y - n.data.w, y: n.x - n.data.h / 2 };
-      placed.push(row);
-      const tray = trays.get(row.node.id);
-      if (!tray) continue;
-      const rows = Math.ceil(tray.cards.length / tray.cols);
-      tray.cards.forEach((card, i) => {
-        const col = Math.floor(i / rows), line = i % rows;
-        const near = TRAY_PAD + col * (CARD_W + TRAY_GAP);
-        placed.push({ node: card, w: CARD_W, h: CARD_H, dir,
-          x: dir > 0 ? row.x + near : row.x + row.w - near - CARD_W, y: row.y + TRAY_PAD + line * (CARD_H + TRAY_GAP) });
-      });
+      placed.push({ node: n.data.node, w: n.data.w, h: n.data.h, dir,
+        x: dir > 0 ? n.y : -n.y - n.data.w, y: n.x - n.data.h / 2 });
     }
   }
   const x0 = Math.min(...placed.map((n) => n.x)) - MARGIN;
@@ -950,12 +899,8 @@ function arrange(model, tones = branchTones(model)) {
   const height = Math.max(...placed.map((n) => n.y + n.h)) - y0 + MARGIN;
   for (const row of placed) { row.x -= x0; row.y -= y0; }
   const byId = new Map(placed.map((p) => [p.node.id, p]));
-  const onTray = new Set([...trays.values()].flatMap((t) => t.cards.map((c) => c.id)));
-  const edges = [...model.edges.filter((e) => e.primary && !onTray.has(e.to)),
-    ...[...trays].map(([id, t]) => ({ id: `${t.group}/contains/${id}`, from: t.group, to: id, relation: "contains", primary: true }))];
-  const tone = (id) => tones.get(trays.get(id)?.group ?? id);
-  const wires = edges.filter((e) => byId.has(e.from) && byId.has(e.to)).map((edge) =>
-    ({ ...edge, paint: branchPaint(tone(edge.to)), d: wirePath(byId.get(edge.from), byId.get(edge.to)) }));
+  const wires = model.edges.filter((e) => e.primary && byId.has(e.from) && byId.has(e.to)).map((edge) =>
+    ({ ...edge, paint: branchPaint(tones.get(edge.to)), d: wirePath(byId.get(edge.from), byId.get(edge.to)) }));
   return { placed, wires, width, height };
 }
 
@@ -1026,9 +971,7 @@ const inHand = (node) => heat(node)[0] >= 1;
 /**
  * **The model is the whole graph; this picks what the window draws of it**, in `frame` at
  * `scale` — `OVERVIEW`, or whatever the person has zoomed out to — and counts what a group holds in
- * hand that did not fit. **Zoomed in past `OVERVIEW` the window holds a part of the chart, and
- * `around` is the group it is on**: the chart is cut at `OVERVIEW` as usual, and then that group
- * is filled until it alone is the window's shape at `scale` (step 5).
+ * hand that did not fit.
  *
  * Nothing but a spent cancellation is kept out of the model (`onHome`), so this is the only
  * place any other card is ever left off the chart. Cards are offered hottest first — the tier
@@ -1053,10 +996,6 @@ const inHand = (node) => heat(node)[0] >= 1;
  * 4. **Pictures last, in what width is left.** A picture spends a rank of width and the width is
  *    both sides' at once, so offered with its card, one picture on the right kept a card still in
  *    progress out of its inner group on the left, and the branch showed one closed eight hours before.
- * 5. **Then the group the window is on, if it is zoomed in on one.** Its cards that did not fit,
- *    hottest first and their pictures after, each while the group's own drawing still fits the
- *    window at `scale`. What the rest of the chart does meanwhile is off screen, and it keeps the
- *    overview's cut: taking cards out there would move the branch being read.
  *
  * What is drawn keeps the order the record gives it: heat decides whether a card is on the chart,
  * never where, so an update moves only the cards it changes.
@@ -1065,7 +1004,7 @@ const inHand = (node) => heat(node)[0] >= 1;
  * that finished" is not one, and the number would be the ledger's depth rather than anything
  * about the work. History that did not fit is simply not drawn.
  */
-function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
+function budgeted(model, frame, tones, scale = OVERVIEW) {
   const children = childIndex(model);
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
   const room = { w: frame.w / Math.min(scale, OVERVIEW), h: frame.h / Math.min(scale, OVERVIEW) };
@@ -1091,7 +1030,7 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
   // its content used to be is what this surface refuses.
   const standing = new Set();
   for (const card of all) if (inHand(card)) for (const id of groupsAbove(card.id)) standing.add(id);
-  const layout = { sides: sideOf(model, all), columns: new Map() };
+  const layout = { sides: sideOf(model, all) };
   const cut = () => {
     const reached = new Set();
     for (const id of shown) for (const above of groupsAbove(id)) reached.add(above);
@@ -1144,45 +1083,7 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
       if (tiles.length && !offer(tiles, fits)) offer(tiles.slice(0, 1), fits);
     }
   };
-  // At the overview the pictures have the width first — it is the scale they were fitted for.
-  // Zoomed out, a picture is a thumbnail and the person asked for more of the day, so the cards'
-  // columns do.
-  if (scale >= OVERVIEW) pictures(cards);
-  // 3b. **Width the window has and the chart does not use is spent on columns** (`TRAY_GAP`): a
-  // column is added to whichever group lowers the drawing most, and the cards that did not fit
-  // are offered again into the height it freed, until the width runs out or nothing is left.
-  for (let widened = 0; widened < WIDEN_MAX && cards.some((c) => !shown.has(c.id)); widened++) {
-    const now = cut(), drawn = arrange(now, tones);
-    if (drawn.width >= room.w) break;
-    // Only a group with more cards that could stand on a tray than it has columns can be widened.
-    const kids = childIndex(now);
-    const bare = (k) => k.kind !== "group" && k.kind !== "overview" && !(kids.get(k.id) || []).length;
-    const loose = (id) => (id.startsWith(`${model.rootId}:`)
-      ? (kids.get(model.rootId) || []).filter((k) => bare(k) && `${model.rootId}:${layout.sides.get(k.id)}` === id)
-      : (kids.get(id) || []).filter(bare)).length;
-    const hosts = [`${model.rootId}:0`, `${model.rootId}:1`, ...now.nodes.filter((n) => n.kind === "group" && n.id !== model.rootId).map((n) => n.id)];
-    let best = null;
-    for (const id of hosts.filter((h) => loose(h) > (layout.columns.get(h) || 1))) {
-      const was = layout.columns.get(id) || 1;
-      layout.columns.set(id, was + 1);
-      const tried = arrange(cut(), tones);
-      if (whole(tried) && tried.height < drawn.height && (!best || tried.height < best.height)) best = { id, height: tried.height };
-      if (was === 1) layout.columns.delete(id); else layout.columns.set(id, was);
-    }
-    if (!best) break;
-    layout.columns.set(best.id, (layout.columns.get(best.id) || 1) + 1);
-    fill(cards);
-  }
   pictures(cards);
-  const lens = around && scale > OVERVIEW && model.nodes.find((n) => n.id === around)?.kind === "group"
-    ? subtree(model, around) : null;
-  if (lens) {
-    const view = { w: frame.w / scale, h: frame.h / scale };
-    const fits = (drawn) => { const box = extent(drawn, lens); return !box || (box.w <= view.w && box.h <= view.h); };
-    const inside = all.filter((n) => lens.has(n.id)).filter((n, i) => inHand(n) || i < CANDIDATES);
-    fill(inside, fits);
-    pictures(inside, fits);
-  }
   const hidden = new Map();
   for (const card of all) {
     if (shown.has(card.id) || !inHand(card)) continue;
@@ -1190,9 +1091,6 @@ function budgeted(model, frame, tones, scale = OVERVIEW, around = null) {
   }
   return { model: cut(), hidden };
 }
-
-/** The most columns the fitting loop adds in one cut: each costs a pass over the cards. */
-const WIDEN_MAX = 32;
 
 /**
  * **Which side of the core each branch is drawn on**, as the partition that leaves the two sides
@@ -1232,41 +1130,6 @@ function sideOf(model, cards) {
     const side = sum[0] <= sum[1] ? 0 : 1; sides.set(b.id, side); sum[side] += b.kind === "group" ? GROUP_H : CARD_H;
   }
   return sides;
-}
-
-/** A node and everything under it on the chart. */
-function subtree(model, id) {
-  const children = childIndex(model), out = new Set();
-  const walk = (at) => { out.add(at); for (const kid of children.get(at) || []) walk(kid.id); };
-  walk(id);
-  return out;
-}
-
-/** Where the rows in `ids` sit in a drawing, as one box; null when none of them is drawn. */
-function extent(chart, ids) {
-  const rows = chart.placed.filter((row) => ids.has(row.node.id));
-  if (!rows.length) return null;
-  const x = Math.min(...rows.map((r) => r.x)), y = Math.min(...rows.map((r) => r.y));
-  return { x, y, w: Math.max(...rows.map((r) => r.x + r.w)) - x, h: Math.max(...rows.map((r) => r.y + r.h)) - y };
-}
-
-/**
- * **The group a zoomed-in window is on**: the group of whatever is drawn nearest the window's
- * middle (`point`, in chart units), or that thing itself when it is a group. Null on the core
- * and on work that has no group, which the overview's cut already draws. The group it was on
- * already is kept while the middle is still inside it, so a pan that stays in a branch never
- * recuts it, and a recut that moves a neighbour's label near the middle cannot flip it back.
- */
-function subjectAt(chart, model, point, was) {
-  const inside = (box) => box && point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h;
-  if (was && inside(extent(chart, subtree(model, was)))) return was;
-  const gap = (r) => Math.hypot(Math.max(r.x - point.x, 0, point.x - r.x - r.w), Math.max(r.y - point.y, 0, point.y - r.y - r.h));
-  const nearest = [...chart.placed].sort((a, b) => gap(a) - gap(b))[0];
-  const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
-  const kinds = new Map(model.nodes.map((n) => [n.id, n.kind]));
-  const start = nearest?.node.kind === "tray" ? nearest.node.data.group : nearest?.node.id;
-  for (let at = start; at && at !== model.rootId; at = parent.get(at)) if (kinds.get(at) === "group") return at;
-  return null;
 }
 
 /**
@@ -1515,11 +1378,12 @@ export default function Home() {
   const shown = focused || model;
   const mobile = frame.w < 760;
   // **The cut follows the window, both ways.** Its scale is `OVERVIEW` or anything the person
-  // zooms out to, down to `ZOOM_MIN`; past `OVERVIEW` it is the overview's cut, and `around` is
-  // the group the window is on, filled to the window. Another centre starts over.
-  const [reach, setReach] = useState({ scale: OVERVIEW, around: null });
+  // zooms out to, down to `ZOOM_MIN`; past `OVERVIEW` it is the overview's cut. It is the scale
+  // and nothing else: where the window is looking moves the window, never what is drawn — a
+  // pan that recut the chart moved the cards the person had just found. Another centre starts over.
+  const [reach, setReach] = useState(OVERVIEW);
   // The narrow flow is a list the page scrolls, so only the chart has a window to fill.
-  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones, reach.scale, reach.around)),
+  const overview = useMemo(() => (mobile ? { model: shown, hidden: new Map() } : budgeted(shown, frame, tones, reach)),
     [shown, frame, tones, mobile, reach]);
   const chart = useMemo(() => arrange(overview.model, tones), [overview, tones]);
   const path = useMemo(() => (focused ? trail(model, focus) : []), [model, focused, focus]);
@@ -1577,58 +1441,29 @@ export default function Home() {
     if (held !== null || mobile || !frameMeasured || !viewport.current) return;
     scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
   }, [held, mobile, frameMeasured, chart, frame, scale, offset.x, offset.y]);
-  // Once a zoom or a pan rests, the cut follows it. At `OVERVIEW` and below, a cut made at the
-  // scale they are looking at is the window's shape at that scale, so it is put in the window's
-  // middle: left where the pointer happened to be, the cards a zoom out came for would land half
-  // outside it. Past `OVERVIEW` the window holds one group filled to its shape, and it is that
-  // group that is put in the middle. When neither fits, the card nearest the window's middle is
-  // kept where it was on screen. The glide carries every card that stays from where it was, so
-  // the move reads as the chart opening out or closing in, not as a jump. A recut that changes
-  // nothing moves nothing.
-  const [rested, setRested] = useState(0);
-  const resting = useRef(null);
-  const onScroll = (event) => {
-    glides.onScroll(event);
-    clearTimeout(resting.current);
-    resting.current = setTimeout(() => setRested((n) => n + 1), REACH_SETTLE_MS);
-  };
-  useEffect(() => () => clearTimeout(resting.current), []);
+  // Once a zoom rests, the cut follows it. A cut made at the scale they are looking at is the
+  // window's shape at that scale, so the drawing is put in the window's middle: left where the
+  // pointer happened to be, the cards a zoom out came for would land half outside it. Past
+  // `OVERVIEW` the drawing is larger than the window and the scroll is left where the zoom put
+  // it. The glide carries every card that stays from where it was on screen, so the move reads
+  // as the chart opening out or closing in, not as a jump. A recut that changes nothing moves nothing.
   const recut = useRef(null);
   useEffect(() => {
     if (held === null || mobile) return undefined;
     const timer = setTimeout(() => {
-      const el = viewport.current;
-      if (!el) return;
-      const middle = { x: (el.scrollLeft + frame.w / 2 - offset.x) / scale, y: (el.scrollTop + frame.h / 2 - offset.y) / scale };
-      const next = { scale: Math.min(OVERVIEW, held),
-        around: held > OVERVIEW ? subjectAt(chart, overview.model, middle, reach.around) : null };
-      if (next.scale === reach.scale && next.around === reach.around) return;
-      const onScreen = (row) => ({ x: offset.x + (row.x + row.w / 2) * scale - el.scrollLeft,
-        y: offset.y + (row.y + row.h / 2) * scale - el.scrollTop });
-      recut.current = { around: next.around, was: new Map(chart.placed.map((row) => [row.node.id, onScreen(row)])) };
+      const next = Math.min(OVERVIEW, held);
+      if (next === reach) return;
+      recut.current = new Set(chart.placed.map((row) => row.node.id));
       setReach(next);
     }, REACH_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [held, mobile, reach, chart, overview, scale, frame, offset.x, offset.y, rested]);
+  }, [held, mobile, reach, chart]);
   useLayoutEffect(() => {
     const before = recut.current;
     if (!before || !viewport.current) return;
     recut.current = null;
-    const { was, around } = before;
-    if (chart.placed.length === was.size && chart.placed.every((row) => was.has(row.node.id))) return;
-    const fits = (box) => box.w * scale <= frame.w && box.h * scale <= frame.h;
-    const group = around ? extent(chart, subtree(overview.model, around)) : null;
-    const whole = { x: 0, y: 0, w: chart.width, h: chart.height };
-    const box = group && fits(group) ? group : fits(whole) ? whole : null;
-    if (box) { scrollToPoint({ x: box.x + box.w / 2, y: box.y + box.h / 2 }); return; }
-    const middle = { x: frame.w / 2, y: frame.h / 2 };
-    const gap = (p) => Math.hypot(p.x - middle.x, p.y - middle.y);
-    const anchor = chart.placed.filter((row) => was.has(row.node.id))
-      .sort((a, b) => gap(was.get(a.node.id)) - gap(was.get(b.node.id)))[0];
-    if (!anchor) { scrollToPoint({ x: chart.width / 2, y: chart.height / 2 }); return; }
-    const at = was.get(anchor.node.id);
-    viewport.current.scrollTo({ left: offset.x + (anchor.x + anchor.w / 2) * scale - at.x,
-      top: offset.y + (anchor.y + anchor.h / 2) * scale - at.y, behavior: "instant" });
+    if (chart.placed.length === before.size && chart.placed.every((row) => before.has(row.node.id))) return;
+    if (chart.width * scale <= frame.w && chart.height * scale <= frame.h) scrollToPoint({ x: chart.width / 2, y: chart.height / 2 });
   }, [chart]);
   // After the centring above, never before it: a glide starts from where a card was on screen,
   // and needs the scroll this drawing ends up at to say where that is now.
@@ -1640,7 +1475,7 @@ export default function Home() {
     if (next === live.current.focus) return;
     setFocus(next);
     setHeld(null);
-    setReach({ scale: OVERVIEW, around: null });
+    setReach(OVERVIEW);
     writePlace({ focus: next });
   }, []);
   const pointers = useRef(new Map()), gesture = useRef(null), dragged = useRef(false);
@@ -1711,7 +1546,7 @@ export default function Home() {
         </span>)}
       </nav>}
       <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
-        onScroll={onScroll} onPointerDown={(e) => {
+        onScroll={glides.onScroll} onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
         const el = e.currentTarget;
         pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1763,12 +1598,10 @@ export default function Home() {
                 A row on its way out is still a row, so its card keeps its element and its
                 picture while it fades; it just cannot be pressed. */}
             {glides.rows.map(({ row, leaving, delay }) => <div key={row.node.id} className="hi-work__position"
-              data-row={row.node.id} data-dir={row.dir} data-tray={row.node.kind === "tray" ? "" : undefined} data-leaving={leaving ? "" : undefined} inert={leaving}
+              data-row={row.node.id} data-dir={row.dir} data-leaving={leaving ? "" : undefined} inert={leaving}
               style={{ left: row.x, top: row.y, width: row.w, height: row.h,
                 "--enter-delay": `${delay}ms` }}>
-              {row.node.kind === "tray" ? <div className="hi-work__tray"
-                style={{ "--group-tone": branchPaint(tones.get(row.node.data.group), "label") }} />
-                : row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now}
+              {row.node.kind === "core" ? <Core node={model.nodes[0]} model={model} now={now}
                 more={overview.hidden.get(row.node.id)} openRef={openRef} />
                 : <Node node={row.node} root={row.node.id === shown.rootId} up={up}
                   more={overview.hidden.get(row.node.id)} {...common} />}
@@ -2130,10 +1963,6 @@ const CSS = `
 .hi-work__wires path { fill:none; stroke-width:2.6; stroke-linecap:round; opacity:0.95; animation:hi-work-wire-enter 380ms ease var(--enter-delay, 0ms) backwards; }
 /* A glide is a transform on the row, from its top-left corner — see useGlide. */
 .hi-work__position { position:absolute; transform-origin:0 0; }
-.hi-work__position[data-tray] { z-index:-1; }
-.hi-work__tray { width:100%; height:100%; box-sizing:border-box; border-radius:18px;
-  background:color-mix(in srgb, var(--group-tone) 7%, transparent);
-  border:1px solid color-mix(in srgb, var(--group-tone) 22%, transparent); }
 /* The core is the same glass one step more solid and one step warmer: it holds the most text
    of anything on the chart, so it is the one pane where the wash behind is a cost. */
 .hi-work__core { height:100%; display:flex; flex-direction:column; padding:16px 22px; background:linear-gradient(145deg, color-mix(in srgb, var(--work-warm) 7%, var(--work-pane-top)), var(--work-pane-top) 45%, color-mix(in srgb, var(--work-cool) 6%, var(--work-pane-top))); backdrop-filter:var(--work-frost); -webkit-backdrop-filter:var(--work-frost); border:1px solid var(--work-line); border-radius:14px; }

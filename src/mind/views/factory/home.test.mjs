@@ -844,45 +844,6 @@ test("the cut follows the zoom all the way down, drawing more at each smaller sc
   assert.ok(counts[3] > counts[1], `below 0.6 still buys cards (${counts})`);
 });
 
-test("zoomed in on a group, that group is filled to the window and the rest keeps the overview's cut", () => {
-  const tasks = [], groups = [];
-  for (const g of ["A", "B", "C", "D"]) {
-    const members = [];
-    for (let i = 0; i < 12; i++) { tasks.push(task(`${g}${i}`, "doing", 1 + i * 4 + groups.length)); members.push(`${g}${i}`); }
-    groups.push({ label: g, members });
-  }
-  const model = project({ tasks, groups });
-  const overview = budgeted(model, LAPTOP), zoomed = budgeted(model, LAPTOP, undefined, 1.2, "group:A");
-  const of = (cut, g) => ids(cut.model, "task").filter((id) => id.startsWith(`task:${g}`));
-  assert.ok(of(zoomed, "A").length > of(overview, "A").length, `the group the window is on draws more (${of(overview, "A").length} -> ${of(zoomed, "A").length})`);
-  for (const g of ["B", "C", "D"]) assert.deepEqual(of(zoomed, g), of(overview, g), `${g}, off screen, is left as it was`);
-  const chart = arrange(zoomed.model), rows = chart.placed.filter((r) => r.node.id === "group:A" || r.node.id.startsWith("task:A"));
-  const h = Math.max(...rows.map((r) => r.y + r.h)) - Math.min(...rows.map((r) => r.y));
-  assert.ok(h <= LAPTOP.h / 1.2, "and the group alone fits the window at the scale zoomed in to");
-  assert.equal(zoomed.hidden.get("group:A"), 12 - of(zoomed, "A").length, "its count shrinks by what it drew");
-  assert.deepEqual(ids(budgeted(model, LAPTOP, undefined, 0.8, "group:A").model, "task"), ids(overview.model, "task"),
-    "at the overview scale and below the whole window is the chart, and no group is favoured");
-});
-
-test("zoomed out past its depth, a tall group's cards stand in columns on a tray, hung off one wire", () => {
-  const tasks = [], big = [], small = [];
-  for (let i = 0; i < 30; i++) { tasks.push(task(`big${i}`, "doing", 1 + i)); big.push(`big${i}`); }
-  for (let i = 0; i < 3; i++) { tasks.push(task(`small${i}`, "doing", 40 + i)); small.push(`small${i}`); }
-  const model = project({ tasks, groups: [{ label: "Big", members: big }, { label: "Small", members: small }] });
-  const narrow = budgeted(model, LAPTOP, undefined, 0.8), wide = budgeted(model, LAPTOP, undefined, 0.3);
-  const chart = arrange(wide.model), tray = chart.placed.find((r) => r.node.id === "tray:group:Big");
-  assert.ok(tray, "the tall group stands on a tray");
-  assert.ok(ids(wide.model, "task").length > ids(narrow.model, "task").length + 10,
-    `and draws much more of itself (${ids(narrow.model, "task").length} -> ${ids(wide.model, "task").length})`);
-  assert.ok(chart.width <= LAPTOP.w / 0.3 && chart.height <= LAPTOP.h / 0.3, "still inside the window");
-  const onTray = chart.placed.filter((r) => r.node.id.startsWith("task:big"));
-  for (const r of onTray) assert.ok(r.x >= tray.x && r.x + r.w <= tray.x + tray.w && r.y >= tray.y && r.y + r.h <= tray.y + tray.h, `${r.node.id} is on the tray`);
-  for (const a of onTray) for (const b of onTray) if (a !== b)
-    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, `${a.node.id} and ${b.node.id} do not overlap`);
-  assert.ok(chart.wires.some((w) => w.from === "group:Big" && w.to === "tray:group:Big"), "the group's wire goes to the tray");
-  assert.ok(!chart.wires.some((w) => w.to.startsWith("task:big")), "and not to each card on it");
-});
-
 test("each branch's side is the split that balances the work in hand, and a zoom never moves it", () => {
   // Record order puts the large group last: taken alternately it landed beside two others.
   const tasks = [], groups = [];
