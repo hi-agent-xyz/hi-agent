@@ -955,9 +955,9 @@ function heat(node) {
  * tried against the whole chart laid out afresh:
  *
  * 1. **In a group taken as the centre, everything it holds in hand is drawn**, at any depth
- *    below it, inner groups included: the person pressed in to see this thread. It is the one
- *    thing here that may overflow the window, which is what the overview scale and a scroll
- *    are for. On the whole chart the core's own cards — ungrouped work — get no such pass.
+ *    below it, inner groups and pictures included: the person pressed in to see this thread.
+ *    It is the one thing here that may overflow the window, which is what the overview scale
+ *    and a scroll are for. On the whole chart the core's own cards — ungrouped work — get no such pass.
  *    Exempting them was watched failing: a render with no transcript held nineteen closed,
  *    ungrouped notices, they took the whole window, and every group was left a bare label. And
  *    for someone who has never grouped anything, every card is ungrouped, so nothing would ever
@@ -1021,21 +1021,21 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
     }
   };
   const branchOf = (id) => { let at = id; while (parent.get(at) !== model.rootId) at = parent.get(at); return at; };
+  // Pictures included. Offered against the window like the whole chart's, they never fit a
+  // branch that already overflows it — and a refused offer takes back what it was given — so a
+  // group taken as the centre drew none at all.
   const pressedInto = model.nodes.find((n) => n.id === model.rootId)?.kind === "group";
-  if (pressedInto) for (const card of cards) shown.add(card.id);
+  if (pressedInto) for (const n of model.nodes) if (n.kind === "task" || n.kind === "activity" || n.kind === "result") shown.add(n.id);
   const floored = new Set();
   for (const card of cards) {
     const branch = branchOf(card.id);
     if (!shown.has(card.id) && !floored.has(branch) && offer([card.id])) floored.add(branch);
   }
   fill(cards);
-  const pictures = (list, fits) => {
-    for (const card of list) {
-      const tiles = shown.has(card.id) ? (children.get(card.id) || []).filter((k) => k.kind === "result").map((k) => k.id) : [];
-      if (tiles.length && !offer(tiles, fits)) offer(tiles.slice(0, 1), fits);
-    }
-  };
-  pictures(cards);
+  if (!pressedInto) for (const card of cards) {
+    const tiles = shown.has(card.id) ? (children.get(card.id) || []).filter((k) => k.kind === "result").map((k) => k.id) : [];
+    if (tiles.length && !offer(tiles)) offer(tiles.slice(0, 1));
+  }
   const hidden = new Map();
   for (const card of cards) {
     if (shown.has(card.id)) continue;

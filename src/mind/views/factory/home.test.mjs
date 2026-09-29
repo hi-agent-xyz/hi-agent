@@ -922,11 +922,14 @@ test("a group taken as the centre draws everything it holds in hand, at any dept
   // Not only the cards hanging off the centre: an inner group's are the branch's too, and they
   // used to have to win room against the window like any other.
   const t = (from, to) => Array.from({ length: to - from }, (_, i) => `t${from + i}`);
-  const nested = project({ tasks: Array.from({ length: 24 }, (_, i) => task(`t${i}`, "doing", 1 + i)),
+  const nested = project({ tasks: Array.from({ length: 24 }, (_, i) => ({ ...task(`t${i}`, "doing", 1 + i),
+      attached: i % 6 ? [] : [made(`views/p${i}`, `P${i}`, `/p${i}.png`)] })),
     groups: [{ label: "A", members: t(0, 12), groups: [{ label: "Inner", members: t(12, 24) }] }] });
   const branch = budgeted(focusOn(nested, "group:A"), LAPTOP);
   assert.equal(ids(branch.model, "task").length, 24);
   assert.equal(branch.hidden.size, 0);
+  // Pictures too: offered against the window, they never fit a branch already taller than it.
+  assert.equal(ids(branch.model, "result").length, 4);
   // It is the one thing here that may overflow, which is what the overview scale and a scroll
   // are for: the window opens at 0.8 rather than shrinking to whatever the day forces.
   assert.ok(arrange(branch.model).height > LAPTOP.h / 0.8);
