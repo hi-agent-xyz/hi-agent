@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { held } from "../core/trail";
 import { useViews } from "../core/views";
 import { listViews, setBookmark, type ListedView } from "../channels/out/view";
 
@@ -57,10 +58,16 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * reads as part of the screenshot. The show time is not printed at all — the row is
  * already ordered by it, and nobody asks for a view by when it was put up.
  *
+ * **The history holds still while the tab is open.** The server orders it by when each
+ * place was last in front of them, so the card just tapped is the newest — but at the
+ * stops where the tab stays up, moving it to the head would slide the whole row under
+ * the finger that tapped. So the cards keep the places they had when the tab opened,
+ * and the next opening reads the new order (`core/trail.ts` § `held`).
+ *
  * **It opens on where you are.** Both rows can be a dozen items long and the cursor is
- * not always at the head of either — a show lands there, but a card gone back to keeps
- * its place, and a bookmark can sit anywhere in the lower row — so opening the tab
- * scrolls whichever item is marked *here* into view, in the row that holds it. Once, on
+ * not always at the head of either — a bookmark can sit anywhere in the lower row, and
+ * the trail was ordered before the latest move — so opening the tab scrolls whichever
+ * item is marked *here* into view, in the row that holds it. Once, on
  * opening: a show arriving afterwards must not drag a row out from under someone
  * reading it. The stage does follow a show; the row someone is reading does not.
  * Each row is its own scroller, so *in the row that holds it* is now literal — placing
@@ -88,7 +95,13 @@ import { listViews, setBookmark, type ListedView } from "../channels/out/view";
  * that; it is worth knowing here only because it is why each row scrolls on its own.
  */
 export function Views({ onChose }: { onChose: () => void }) {
-  const { trail, live, parked, goTo, openRef } = useViews();
+  const { trail: latest, live, parked, goTo, openRef } = useViews();
+  /** The trail's order as last drawn, so the open tab holds still. See `held`. */
+  const drawn = useRef<string[] | null>(null);
+  const trail = held(drawn.current, latest);
+  useEffect(() => {
+    drawn.current = trail.map((entry) => entry.view_ref);
+  });
   const [inventory, setInventory] = useState<ListedView[]>([]);
   /** Shots whose `<img>` failed after the state said one existed — a shot pruned out
    * of the cache between the snapshot and the render. Falls back to the mark. */

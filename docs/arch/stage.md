@@ -78,7 +78,13 @@ section, which reverses its own paragraph. **Amended the same day — a stop is 
 the settle starts:** the board was being told to give up its width only once the panel had
 finished moving, and on a trackpad only once the momentum had finished too, which measured
 1.9 seconds of the panel sitting at its stop over a board that had not moved. Argued in
-*The settle is where the stop is committed*.
+*The settle is where the stop is committed*. **Amended September 29, 2026 — the history is
+ordered by when each place was last looked at, and the appearance is one file:** a card gone
+back to becomes the newest instead of keeping its place, the open tab holds its order so
+nothing slides under the finger that tapped, and the appearance stops appending a snapshot
+per change under `raw/appearance/`. Argued in *Going back to a view the agent has moved
+past* and *The appearance is kept as one file*, which replaces *An arrival is archived;
+walking the row is not*.
 Everything else stands. Defines what may be on screen at once, and how the conversation, the agent's views
 and the host's own surfaces share it. Supersedes the placement half of `core/layout.ts`'s
 doc comment and the "every view owns the whole frame" rule in `ui/ViewSlot.tsx`.
@@ -1255,7 +1261,7 @@ never reported.
 `replace` destroys what was up, and until now the only way back was asking the agent to
 show it again — asking someone to redraw a whiteboard they just erased. The screen keeps
 a **history**: the shows, oldest first, carried in the same `GET /api/out/view` state and
-persisted in the same snapshots. The newest entry is what is on the stage, which is what
+persisted with it. The newest entry is what is on the stage, which is what
 makes *the person is at the end* mean *the person is live*.
 
 **The row reads newest first, and it is the window's trail, not the server's list** —
@@ -1273,13 +1279,26 @@ somewhere, but it left no card, so a surface the person went to had no timestamp
 picture, and no position — while the card for the *last show* of that same view sat in
 the row wearing a time from three days ago and lighting up as *here*. So the row is the
 **trail**: the server's shows and this window's own opens, one card per destination,
-whichever fact about it is later. Going back to a card is a cursor move and does not
-re-time it — the row must not reshuffle under a finger that is browsing it.
+whichever fact about it is later.
+
+**The row is ordered by when each place was last in front of them** — amended September
+29, 2026. Going back to a card makes it the newest, dated now, and going live does the
+same for the live card. *It read "going back to a card is a cursor move and does not
+re-time it — the row must not reshuffle under a finger that is browsing it."* The concern
+was right and the answer to it was in the wrong place. The row is headed **history**, and
+read as one it says the page just looked at is first — that is what a browser's history
+says — so a card tapped and left where it was read as a history that had not noticed.
+Meanwhile the reshuffle is a question of *when* the order changes, not of what it is, and
+the tab can answer that on its own: **while the tab is open it holds its order** — the
+cards it is showing keep their places, a card that was not there when it opened goes in at
+the head, and one trimmed off the end goes away — and the next opening reads the new
+order. A card keeps the hand that first put it there; being looked at again does not turn
+a show into the person's move.
 
 **The band opens on where you are — in whichever row you are in.** Both rows are longer
-than they are wide and the cursor is not always at the head of either: a show lands at
-the head of the trail, but a card gone back to keeps its place, and the surface someone
-is on can be any chip in the bookmarks row. So opening the band scrolls the item marked
+than they are wide and the cursor is not always at the head of either: a show that left
+the page they were reading alone lands at the head of the trail above it, and the surface
+someone is on can be any chip in the bookmarks row. So opening the band scrolls the item marked
 *here* into view, in the row that holds it, and one that is already whole on screen is
 left alone. Only on opening: a show arriving while the band is up must not drag a row
 out from under someone reading it. The stage does follow a show — *A show takes the window
@@ -1482,7 +1501,7 @@ and the page someone is reading does not move under them.
 **The mark goes where they already look.** A kept card wears a red dot in the band, and so do
 the tile it hangs and the task card on Home whose `made` refs include it. The dot goes the
 moment the screen is on that card, whoever's hand put it there. It is durable (`unopened` on
-the history entry, carried in the snapshot), so a restart neither puts it back on something
+the history entry, persisted with the appearance), so a restart neither puts it back on something
 opened nor takes it off something that wasn't.
 
 **What reversed "a raise never yanks" does not come back.** That was reversed on August 21
@@ -1580,22 +1599,27 @@ into the next turn's context at the moment the person speaks. Same shape as the 
 the stage lane — the window tells the backend something true, and nothing happens until
 something else asks.
 
-**An arrival is archived; walking the row is not.** The snapshots under `raw/appearance/`
-are the record of what has been on screen, so adding a card belongs in it and sliding the
-cursor between cards already there does not — that would put a state in the appearance
-history identical to its predecessor and dated later, which is exactly the noise
-reflection has to read past. This is `note_shot`'s rule, applied to the half of the
-person's move it is true of.
+**The appearance is kept as one file** — `<data_dir>/appearance.json`, the whole state,
+overwritten on every change and read back on boot. Every change is written, the cursor
+included, so a restart comes back on the card and in the order the person left.
 
-*Both halves went unwritten in the first draft, on the argument that the archive is the
-record of what the **agent** expressed — and that was caught by running it rather than by
-reading it.* On a core where the agent has never shown anything, nothing had ever been
-persisted, so a restart took away not an approximate cursor but **the entire row**: every
-place the person had been, gone, on a screen the amendment above promises is one. A
-person's arrival is a fact about where the screen has been, and the list stopped being the
-agent's alone at the top of this section. What stays approximate is only the cursor's
-position *within* a row that survives whole — and it is approximate towards the last card
-anyone arrived at, which is the safe end.
+*Replaces "an arrival is archived; walking the row is not", September 29, 2026.* Every
+change used to append a dated whole-state snapshot under `raw/appearance/<date>/`, on the
+argument that the snapshots were the record of what had been on screen and reflection
+would read them — so a cursor move was left unwritten, to keep states identical to their
+predecessor out of that record. Nothing read them. The journal reader skipped the
+directory by design, no prompt named it, and the boot restore wanted only the newest one.
+The record that *is* read already exists: the view channel's journal gets one line per
+show and one per move (`raw/view/<date>/view.jsonl`). What the snapshots did produce was
+measured — on one install a condition layer flapping every six seconds wrote 2,588 of them,
+20 MB, in one day. So the state is one file and the record is the journal; an install that
+still has the directory is moved over from its newest snapshot on first boot, and the
+directory is deleted.
+
+*The half of the old rule that stands:* on a core where the agent has never shown
+anything, the person's own moves must still survive a restart — caught by running it,
+September 1, 2026, when a restart took away the entire row. Writing every change keeps
+that true without a line between which moves count.
 
 **What this deletes**, all of it machinery for reconciling a fact the server could not
 observe:
@@ -1689,9 +1713,8 @@ not", which was the whole of the difference until the cursor moved.* A bookmark 
 the person decided once and must find again on the phone, so kept refs live in the config
 store rather than the views tree, which is disposable and re-seeded on every boot — an
 upgrade replaces `factory/` wholesale and must not take the person's row with it. The
-cursor is where they are right now, so it lives in the appearance and comes back from its
-snapshot; a version that came back on the wrong card is wrong only until the next thing
-anybody does.
+cursor is where they are right now, so it lives in the appearance and comes back with it
+on a restart.
 
 ## The tile is a picture
 
@@ -1719,9 +1742,8 @@ Three properties keep it affordable, and each is load-bearing:
   — which is the whole of the old design, still there as the floor.
 
 The capture bumps the appearance version when it lands, so the picture reaches the
-windows already watching, but **writes no snapshot**: a picture of something already
-shown changes nothing about what was on screen, and a state identical to its
-predecessor and dated later is exactly the noise reflection has to read past.
+windows already watching, but **writes nothing**: the picture is looked up when the
+state is served, so nothing in the persisted state has changed.
 
 The window reports its **skin** on the stage lane beside its frame, for the same reason
 it reports the frame: the page is the only thing that knows, and a light picture of a

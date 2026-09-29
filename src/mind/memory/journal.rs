@@ -561,9 +561,7 @@ fn marker_value<'a>(body: &'a str, prefix: &str) -> Option<&'a str> {
 /// Walk every channel folder under `raw/`, appending parsed entries. Each
 /// immediate sub-directory is a channel (`text/`, `audio/`, …); `files/` is
 /// skipped (artifacts, not signals), `sessions/` is skipped (frame logs, not
-/// signals — [`layout::is_signal_dir`]) and `appearance/` self-skips (its
-/// day-folders hold state snapshots, not an `appearance.jsonl`). A missing
-/// `raw/` yields nothing.
+/// signals — [`layout::is_signal_dir`]). A missing `raw/` yields nothing.
 async fn read_signal_dirs(
     data_dir: &Path,
     since: DateTime<Utc>,
@@ -592,8 +590,8 @@ async fn read_signal_dirs(
 }
 
 /// Read one channel folder's day-shards whose day is `since`'s or later, parsing
-/// the `<channel>.jsonl` in each. A channel with no log for a day (e.g.
-/// `appearance/`) simply contributes nothing.
+/// the `<channel>.jsonl` in each. A channel with no log for a day simply
+/// contributes nothing.
 async fn read_channel_dir(
     channel_dir: &Path,
     channel_name: &str,

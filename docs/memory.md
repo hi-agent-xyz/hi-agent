@@ -72,9 +72,6 @@ memory/
 │   │   └── 2026-06-11/
 │   │       ├── vision.jsonl          ← surface log (captions)
 │   │       └── 10/15.mp4             ← camera; output/ holds generated frames
-│   ├── appearance/                    ← the one STATE channel: screen-state history
-│   │   └── 2026-06-11/                ← whole-state snapshots; newest = current screen
-│   │       └── appearance-101502Z.json
 │   └── files/                         ← exchanged/produced artifacts (kept verbatim)
 │       └── 2026-06-11-trip-plan.pdf
 │
@@ -89,7 +86,7 @@ memory/
     └── culture/<topic>.md            ← what it absorbed from the world
 ```
 
-**Truth vs. projection.** Everything under `raw/` is append-only lossless truth — the channel streams (including the `appearance/` state-snapshot history) and imported artifacts. `episodes/`, `facets/`, the current screen and the interleaved by channel timeline the mind reads are **projections**: regenerable from `raw/`, never a second source of truth, safe to delete and rebuild.
+**Truth vs. projection.** Everything under `raw/` is append-only lossless truth — the channel streams and imported artifacts. `episodes/`, `facets/`, the current screen and the interleaved by channel timeline the mind reads are **projections**: regenerable from `raw/`, never a second source of truth, safe to delete and rebuild.
 
 **And one thing that is neither.** `tasks/` is written by judgment, not derived — nothing can re-derive a duty, so it is precious and belongs in a backup: losing a task loses a promise outright. A **seed** is written by judgment too but is *not* precious, and it does not live here: it is a digest over this record, rebuildable by the agent, with the [log tail](arch/data.md#prompts) as its floor, so its absence degrades the window to uncurated rather than empty.
 
@@ -105,7 +102,7 @@ partitions it.
 Every directory name here is a code-supplied constant, which is why no path in this tree
 percent-encodes a user string any more.
 
-Each **channel is its own folder** (`text/`, `audio/`, `vision/`, `appearance/`), sharded by UTC day. A channel is that sense's complete record; the day-folder keeps reads bounded and makes per-channel fading/archival a single subtree. Each channel-day carries a **surface log named for the channel** — `text.jsonl`, `audio.jsonl`, `vision.jsonl` — one JSON object per line, both directions interleaved. (The filename is self-describing even detached from its folder — the old generic `log.jsonl` was not.)
+Each **channel is its own folder** (`text/`, `audio/`, `vision/`, `view/`, …), sharded by UTC day. A channel is that sense's complete record; the day-folder keeps reads bounded and makes per-channel fading/archival a single subtree. Each channel-day carries a **surface log named for the channel** — `text.jsonl`, `audio.jsonl`, `vision.jsonl` — one JSON object per line, both directions interleaved. (The filename is self-describing even detached from its folder — the old generic `log.jsonl` was not.)
 
 The conversation is **one timeline**, but it is *stored* per channel. The interleaved timeline the mind reads (and the recent-window snapshot) is a **derived merge** over the channel logs, ordered by the uuidv7 `id` — built on read, never persisted. Splitting storage by channel costs only a cheap merge; persisting the merge would create a second, driftable copy.
 
@@ -158,9 +155,11 @@ Exemptions and mechanics:
 - Forgetting only ever rewrites or removes *blobs* — never a `.jsonl` line (§8 holds). The line keeps naming its original byte path; a reader resolves **best-available** — original, else the kept keepsake, else caption-only.
 - One consequence is accepted: once full bytes are gone, a kept keepsake is itself small permanent evidence, no longer regenerable — while the episode *gist* stays regenerable from the permanent text beneath it.
 
-### `appearance` — the one state channel
+### The screen is state, not a channel
 
-Every other channel is an **event stream** (utterances). `appearance` is **retained state**: the screen persists until changed, so it is recorded not as deltas but as **timestamped whole-state snapshots** — `appearance/<date>/appearance-<hhmmssZ>.json`, each the full screen as of that moment, valid until the next (a same-second collision bumps to the next free second). The **current** screen is simply the newest snapshot — there is no separate current-state file; the live bus holds it in memory and restores from the newest snapshot on boot. A view persists until the agent dismisses or replaces it: **there is no auto-expiry — view lifetime is the reaction's decision**, not a server-side timer. Showing a view is expression the agent can later cite ("I showed them the itinerary"), so the history feeds reflection like any other channel.
+Every channel is an **event stream**. The screen is **retained state** — it persists until changed — so it is not kept under `raw/` at all: the current appearance (both slots, the history row, the cursor) is one file, `<data_dir>/appearance.json`, overwritten on every change and read back on boot. What happened to it is recorded where every other event is: the `view` channel's journal gets a line per show and per move, and that is what reflection reads and the agent can later cite ("I showed them the itinerary"). A view persists until the agent dismisses or replaces it: **there is no auto-expiry — view lifetime is the reaction's decision**, not a server-side timer.
+
+*Until September 29, 2026 the screen was kept as a dated whole-state snapshot appended under `raw/appearance/` on every change, on the theory that the snapshots were its history. Nothing but the boot restore read them, and it read only the newest; one install wrote 20 MB of them in a day. See [`arch/stage.md`](arch/stage.md) § *The appearance is kept as one file*.*
 
 ### Files and workers
 
@@ -248,7 +247,7 @@ Reflection also **tends the old store**, not just the frontier: alongside consol
 
 **Implemented:**
 - **Raw — channel-first layout** (`src/memory/{layout,journal,media}.rs`, `src/types.rs`): by channel, per-channel, per-day folders with a `<channel>.jsonl` surface log; a uuidv7 `id` per signal; media bytes on the wall-clock grid with `media.file` relative to the channel-day folder. `append` routes by channel; `recent` merges channels by `(ts, id)`. Posted audio clips journal as `channel: Audio`; vision stills journal as `channel: Vision`. `origin` is captured; `turn` is still deferred.
-- **Appearance state channel** (`src/server/view_bus.rs`): each screen mutation appends a whole-state snapshot to `raw/appearance/<date>/appearance-<HHMMSSZ>.json`; the newest restores the live screen on boot. No server-side TTL — view lifetime is the reaction's call (the `ttl_ms` envelope field and client/server expiry were removed).
+- **Appearance state** (`src/foundation/server/view_bus.rs`): each screen mutation overwrites `<data_dir>/appearance.json`, which restores the live screen on boot. No server-side TTL — view lifetime is the reaction's call (the `ttl_ms` envelope field and client/server expiry were removed).
 - **Live mic capture** (`src/foundation/server/audio.rs`): the streaming mic's PCM is persisted as `audio/<date>/<HH>/stream/<MM>-<SS>.wav` (raw 16 kHz mono + a WAV header), named by where the stretch starts and flushed at each minute rollover and at close. The bytes are an un-journaled tape; utterance lines correlate to a stretch by ts. It was one file per wall-clock minute until 2026-09-10, and a mic reconnect inside a minute overwrote what the minute already held — ~30% of one day's audio, gone (gaps #33).
 - **Recognizer frames** (`audio/<date>/frames.jsonl`): every partial and final the STT returned, stamped, before anything decided what to do with it. The settled message says what was decided; only these say what it was decided *from*. Fades with the day's bytes.
 - **Vision capture + placeholder perception** (`src/server/vision.rs`): camera WebM is persisted per minute (`vision/<date>/<HH>/<MM>.webm`, init segment prefixed so each file decodes standalone); stills persist as one-offs. Each is **perceived** — `capabilities::vision::understand` captions it (Image for a still, Video for a camera minute), or a placeholder caption when no `VISION_PROVIDER` is set — and the caption is journaled as the vision signal's `body`. Perception runs detached so capture never blocks.

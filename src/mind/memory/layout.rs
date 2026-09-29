@@ -198,9 +198,9 @@ pub fn session_frames_path(data_dir: &Path, run: &str, session: &SessionSlug) ->
 }
 
 /// The child of `raw/` that is **not** a channel: foundation's own per-session frame
-/// log ([`session_frames_path`]). Every other child is [`Channel::as_str`] or
-/// `appearance`, and all of those are code-supplied constants — so a walker can tell
-/// them apart by name with no ambiguity and no sidecar to consult.
+/// log ([`session_frames_path`]). Every other child is [`Channel::as_str`], and all
+/// of those are code-supplied constants — so a walker can tell them apart by name
+/// with no ambiguity and no sidecar to consult.
 pub const SESSIONS_DIR: &str = "sessions";
 
 /// Whether a directory name directly under `raw/` holds journalled signals — i.e.
@@ -221,15 +221,6 @@ pub fn channel_day_dir(data_dir: &Path, channel: Channel, ts: DateTime<Utc>) -> 
 /// folder.
 pub fn channel_log_path(data_dir: &Path, channel: Channel, ts: DateTime<Utc>) -> PathBuf {
     channel_day_dir(data_dir, channel, ts).join(format!("{}.jsonl", channel.as_str()))
-}
-
-/// `<raw>/appearance/<YYYY-MM-DD>` — the day-folder for the screen-state history.
-/// Appearance is a state channel, not an event stream: it holds timestamped
-/// whole-state snapshots (`appearance-<HHMMSSZ>.json`), not a `<channel>.jsonl`, so
-/// it is reached through this helper rather than [`channel_day_dir`] (there is no
-/// `Channel::Appearance`).
-pub fn appearance_day_dir(data_dir: &Path, ts: DateTime<Utc>) -> PathBuf {
-    raw_root(data_dir).join("appearance").join(day_key(ts))
 }
 
 /// The byte path for a signal's media **relative to its channel-day folder**, by

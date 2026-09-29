@@ -18,14 +18,15 @@
 //! A view persists until the agent dismisses or replaces it: there is no
 //! auto-expiry, lifetime is the reaction's decision.
 //!
-//! The state also survives restarts: every mutation appends a whole-state
-//! snapshot to the memory store at
-//! `raw/appearance/<date>/appearance-<HHMMSSZ>.json`, and
-//! [`ViewBus::load`] restores from the newest snapshot on boot. The
-//! snapshots double as the appearance history (the screen as
-//! expression, for later reflection). Module URLs stay valid across restarts
-//! because compiled views are content-addressed on disk and never collected
-//! (see [`crate::mind::views`]).
+//! The state also survives restarts: every change to it overwrites one file,
+//! `<data_dir>/appearance.json`, and [`ViewBus::load`] reads it back on boot.
+//! **It is the current state and nothing else.** What was shown and where the person
+//! went is already recorded as it happens, one line each, in the view channel's
+//! journal (`raw/view/<date>/view.jsonl`), which is what reflection reads. The
+//! whole-state snapshots this used to append under `raw/appearance/` were read by
+//! nothing but the boot restore, which only ever wanted the newest one — see
+//! [`migrate_legacy`]. Module URLs stay valid across restarts because compiled views
+//! are content-addressed on disk and never collected (see [`crate::mind::views`]).
 //!
 //! The state also carries `history` — where the screen has been, oldest first — and
 //! `cursor`, which entry of it the screen is on. Both hands write the list: the agent
@@ -50,7 +51,7 @@ use crate::types::{ViewEnvelope, ViewOp};
 #[derive(Clone)]
 pub struct ViewBus {
     inner: Arc<Mutex<Appearance>>,
-    /// The memory data dir; snapshots live under `raw/appearance/`.
+    /// The data dir; the state lives at [`state_path`] under it.
     data_dir: PathBuf,
 }
 
@@ -191,9 +192,9 @@ struct Appearance {
 
 /// How many shows the history keeps. Bounded because the point of it is reaching
 /// something the agent has moved past within a working stretch, not archiving the
-/// day — the snapshots under `raw/appearance/` are the archive, and a fuller browser
-/// over them can be its own view. Bounded also keeps the state small enough that
-/// resending it whole on every version bump stays the right design.
+/// day — the view channel's journal is the record, and a fuller browser over it can be
+/// its own view. Bounded also keeps the state small enough that resending it whole on
+/// every version bump, and rewriting it whole on every change, stays the right design.
 const HISTORY_MAX: usize = 24;
 
 /// One place the screen went, when, and by whose hand.
@@ -234,24 +235,19 @@ struct ConditionView {
     module_url: String,
 }
 
-/// On-disk whole-state snapshot of the appearance at a moment, with `as_of` so
-/// the history reads as a step-function of what was on screen. Written by
-/// [`persist`]; read back as a [`StoredSnapshot`], which also accepts what older
-/// versions wrote.
+/// The appearance as it is on disk: [`state_path`], overwritten on every change by
+/// [`persist`]; read back as a [`StoredSnapshot`], which also accepts what older versions
+/// wrote.
 #[derive(Serialize)]
 struct Snapshot<'a> {
     version: u64,
-    as_of: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<&'a RetainedView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     condition: Option<&'a ConditionView>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     history: &'a [HistoryEntry],
-    /// Where the screen was parked. Rides in the snapshot so a restart comes back where
-    /// the person left it — but a *move* never writes one (see [`ViewBus::go_to`]), so
-    /// what comes back is the cursor as of the last thing the agent did. Approximate,
-    /// and approximate towards the agent's own last show, which is the safe end.
+    /// Where the screen was parked, so a restart comes back where the person left it.
     #[serde(skip_serializing_if = "Option::is_none")]
     cursor: Option<&'a str>,
     /// Whether that cursor is where a show left the screen. See [`Appearance::kept`].
@@ -259,8 +255,10 @@ struct Snapshot<'a> {
     kept: bool,
 }
 
-/// A snapshot as read off disk, by any version that wrote one. Every field is as loose
-/// as the oldest file needs; [`ViewBus::load`] turns it into an [`Appearance`].
+/// A snapshot as read off disk, by any version that wrote one — [`state_path`], or a
+/// legacy `raw/appearance/` file (whose `as_of` is skipped as an unknown field). Every
+/// field is as loose as the oldest file needs; [`ViewBus::load`] turns it into an
+/// [`Appearance`].
 ///
 /// `legacy_views` reads the flat z-ordered list snapshots carried before the two
 /// slots existed. Those states are exactly the pile-ups the slots abolished, so
@@ -419,11 +417,13 @@ pub struct ViewState {
 }
 
 impl ViewBus {
-    /// Open the bus, restoring the appearance from the newest snapshot under
-    /// `raw/appearance/`.
+    /// Open the bus, restoring the appearance from [`state_path`].
     pub fn load(data_dir: &Path) -> Self {
-        let app_dir = layout::raw_root(data_dir).join("appearance");
-        let state = match newest_snapshot(&app_dir) {
+        let saved = std::fs::read(state_path(data_dir))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<StoredSnapshot>(&bytes).ok())
+            .or_else(|| migrate_legacy(data_dir));
+        let state = match saved {
             Some(snap) => {
                 // A legacy flat list restores as its top-most view only; see
                 // `StoredSnapshot::legacy_views`.
@@ -466,29 +466,23 @@ impl ViewBus {
     /// that is not the agent's.
     ///
     /// `None` is going live: the cursor drops and every window falls back to the content
-    /// slot. Otherwise the destination is parked on, and **appended to the history only if
-    /// it is not already there**. That asymmetry is the row's rule, not an optimization:
-    /// going back to a card must not re-time it and reshuffle the strip under a finger
-    /// that is browsing it, while going somewhere the screen has never been is arriving
-    /// somewhere and earns a card.
+    /// slot. Otherwise the destination is parked on.
+    ///
+    /// **Whatever the screen lands on becomes the newest card**, dated now — somewhere it
+    /// has never been earns one, a card gone back to is moved to the head, and going live
+    /// re-times the live card. The row is ordered by when each place was last in front of
+    /// them, because that is what a history reads as: the page just looked at is first in
+    /// the row, as it is in a browser's. A card keeps the hand that first put it there —
+    /// being looked at again does not make a show the person's move. *It used to leave a
+    /// card gone back to where it was, so the row would not reshuffle under a finger
+    /// browsing it (reversed September 29, 2026). That is the tab's to answer, and it
+    /// does: the tab holds its order while it is open (`core/trail.ts` § `held`).*
+    ///
+    /// Every change is persisted, the cursor included, so a restart comes back exactly
+    /// where the screen was.
     ///
     /// Returns whether this actually moved the screen, so the caller can journal a move
     /// and stay quiet about a re-tap of the tile they are already on.
-    ///
-    /// **An arrival persists; a cursor move does not**, and the line between them is the
-    /// same one above. Adding a card changes where the screen has *been*, which is a
-    /// durable fact and belongs in the archive under `raw/appearance/`. Sliding the
-    /// cursor between cards already in the row does not: writing for that would put a
-    /// state in the appearance history identical to its predecessor and dated later,
-    /// which is exactly the noise reflection has to read past — [`note_shot`](Self::note_shot)'s
-    /// reason, and it still holds for the half it was written about.
-    ///
-    /// *Split on September 1, 2026, after watching it.* Neither half wrote a snapshot at
-    /// first, on the argument that the archive is the record of what the *agent*
-    /// expressed. That is true of the cursor and false of the row: on a core where the
-    /// agent has not yet shown anything, nothing had ever been persisted, so a restart
-    /// took away every place the person had been — the whole row, not an approximate
-    /// cursor. A promise of one screen that a restart quietly empties is not one.
     pub async fn go_to(&self, dest: Option<RetainedView>) -> bool {
         let mut map = self.inner.lock().await;
         let entry = &mut *map;
@@ -502,7 +496,6 @@ impl ViewBus {
         }
         let moved = entry.cursor != next;
         let mut changed = moved;
-        let mut arrived = false;
         let known = next
             .as_ref()
             .and_then(|key| entry.history.iter().position(|h| &h.view.view_ref == key));
@@ -510,8 +503,7 @@ impl ViewBus {
             match known {
                 // Already a card in the row: take the freshly compiled module — opening
                 // `factory/tasks` has to land on today's board, including when it is the
-                // board they are already on — and leave its time and its place alone,
-                // which is what keeps going back from reshuffling the row.
+                // board they are already on.
                 Some(at) => {
                     changed |= entry.history[at].view.module_url != view.module_url;
                     entry.history[at].view.module_url = view.module_url;
@@ -519,7 +511,6 @@ impl ViewBus {
                 None => {
                     record_entry(entry, view, Utc::now(), Hand::Move);
                     changed = true;
-                    arrived = true;
                 }
             }
         }
@@ -531,15 +522,14 @@ impl ViewBus {
             entry.kept = false;
             entry.took = None;
             entry.front_since = in_front(entry).map(|_| Utc::now());
+            revisit(entry, Utc::now());
         }
         // Being on a card is having opened it, whichever way the screen got there — a tile
         // on Home, the card in the band, or going live on what a show left waiting.
-        let opened = mark_opened(entry);
+        mark_opened(entry);
         entry.version += 1;
         entry.notify.notify_waiters();
-        if arrived || opened {
-            persist(&self.data_dir, entry).await;
-        }
+        persist(&self.data_dir, entry).await;
         moved
     }
 
@@ -796,12 +786,6 @@ impl ViewBus {
     /// history that nobody is looking at is left alone; opening it re-resolves it, which
     /// is what opening a named view means.
     ///
-    /// **It persists only when the content slot moved**, the same split
-    /// [`go_to`](Self::go_to) makes: what the agent has up is a durable fact about the
-    /// screen and rides in the snapshot, while the module a card in the row resolves to
-    /// is disposable — it is recompiled on the next open, and writing for it would put a
-    /// state in the archive that says nothing new about what was on screen.
-    ///
     /// Returns whether anything changed.
     pub async fn follow_source(&self, view_ref: &str, module_url: &str) -> bool {
         let mut map = self.inner.lock().await;
@@ -830,9 +814,7 @@ impl ViewBus {
         }
         entry.version += 1;
         entry.notify.notify_waiters();
-        if content_moved {
-            persist(&self.data_dir, entry).await;
-        }
+        persist(&self.data_dir, entry).await;
         true
     }
 
@@ -871,10 +853,9 @@ impl ViewBus {
 
     /// Clear the content — back to the default empty room. A user control:
     /// the screen is the agent's presentation, but the user can reclaim it. Bumps
-    /// the version and persists the empty snapshot so every device + a refresh
-    /// converge on the cleared screen (and the appearance history records it).
-    /// No-op when already empty, so it doesn't churn the version or write a
-    /// redundant snapshot.
+    /// the version and persists the empty state so every device + a refresh
+    /// converge on the cleared screen. No-op when already empty, so it doesn't churn
+    /// the version or rewrite the state for nothing.
     ///
     /// The condition layer is deliberately left alone: it reflects a live process
     /// state rather than anything the person put there, so clearing it would only
@@ -907,13 +888,10 @@ impl ViewBus {
     /// A thumbnail finished rendering: wake the long-polls so they collect the
     /// `shot_url` the response before them was built without.
     ///
-    /// **Bumps the version without persisting a snapshot.** The snapshots under
-    /// `raw/appearance/` are the record of what was on screen, and a picture taken of
-    /// a show that already happened changes nothing about that — writing one would
-    /// put a state in the appearance history identical to its predecessor and dated
-    /// later, which is exactly the noise reflection has to read past. The version is
-    /// only the long-poll's comparator, so it is free to run ahead of the newest
-    /// snapshot; a restart resyncs every client from `since: None` regardless.
+    /// **Bumps the version without persisting.** Nothing in the state changed — the
+    /// picture is looked up when the state is served — and the version is only the
+    /// long-poll's comparator, so it is free to run ahead of what is on disk; a restart
+    /// resyncs every client from `since: None` regardless.
     pub(super) async fn note_shot(&self) {
         let mut map = self.inner.lock().await;
         map.version += 1;
@@ -1096,6 +1074,21 @@ fn record_entry(entry: &mut Appearance, view: RetainedView, at: DateTime<Utc>, b
     drop_dangling_cursor(entry);
 }
 
+/// Move the card the screen is now on to the end of `history`, dated `at` — the page just
+/// looked at is the newest place in the row. Keeps the card's hand and its opened mark;
+/// [`mark_opened`] clears the latter. See [`ViewBus::go_to`].
+fn revisit(entry: &mut Appearance, at: DateTime<Utc>) {
+    let Some(dest) = in_front(entry).map(|v| v.view_ref.clone()) else {
+        return;
+    };
+    let Some(pos) = entry.history.iter().position(|h| h.view.view_ref == dest) else {
+        return;
+    };
+    let mut card = entry.history.remove(pos);
+    card.at = at;
+    entry.history.push(card);
+}
+
 /// The picture to hang on one past show.
 ///
 /// A view's tile is its **surface** picture, not a picture of the moment it went up:
@@ -1117,17 +1110,13 @@ fn in_front(entry: &Appearance) -> Option<&RetainedView> {
     }
 }
 
-/// Clear the unopened mark on the card the screen is now on. Returns whether one was set.
-fn mark_opened(entry: &mut Appearance) -> bool {
+/// Clear the unopened mark on the card the screen is now on.
+fn mark_opened(entry: &mut Appearance) {
     let Some(dest) = in_front(entry).map(|v| v.view_ref.clone()) else {
-        return false;
+        return;
     };
-    match entry.history.iter_mut().find(|h| h.view.view_ref == dest && h.unopened) {
-        Some(card) => {
-            card.unopened = false;
-            true
-        }
-        None => false,
+    if let Some(card) = entry.history.iter_mut().find(|h| h.view.view_ref == dest) {
+        card.unopened = false;
     }
 }
 
@@ -1223,86 +1212,91 @@ pub(crate) fn humanize_ref(view_ref: &str) -> String {
     }
 }
 
-/// The newest parseable snapshot under the `appearance/` dir, or `None`.
-/// Walks day-folders newest-first, then `appearance-*.json` newest-first, so a
-/// torn final write falls back to the prior snapshot.
-fn newest_snapshot(appearance_dir: &Path) -> Option<StoredSnapshot> {
-    let mut days: Vec<String> = std::fs::read_dir(appearance_dir)
+/// `<data_dir>/appearance.json` — the one file the appearance is kept in.
+fn state_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("appearance.json")
+}
+
+/// Bring an install that kept the appearance as snapshots under `raw/appearance/` over to
+/// [`state_path`]: copy the newest parseable one there, and delete the directory.
+///
+/// Those snapshots were a whole copy of the state appended on every change and never read
+/// except for the newest one at boot — the journal reader skipped the directory by design,
+/// and nothing else opened it. What they cost was measured: on one install a condition
+/// layer flapping every six seconds wrote 2,588 of them, 20 MB, in a single day. Deleting
+/// them loses nothing any reader had.
+///
+/// **A migration, and it goes once every install has run it.** The directory is removed
+/// only after the state file is written, so a failure leaves both and the next boot tries
+/// again.
+fn migrate_legacy(data_dir: &Path) -> Option<StoredSnapshot> {
+    let legacy = layout::raw_root(data_dir).join("appearance");
+    let mut days: Vec<PathBuf> = std::fs::read_dir(&legacy)
         .ok()?
         .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().into_string().ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
         .collect();
     days.sort();
-    for day in days.iter().rev() {
-        let day_dir = appearance_dir.join(day);
-        let mut files: Vec<String> = std::fs::read_dir(&day_dir)
+    let newest = days.iter().rev().find_map(|day| {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(day)
             .into_iter()
             .flatten()
             .flatten()
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| n.starts_with("appearance-") && n.ends_with(".json"))
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
             .collect();
         files.sort();
-        for f in files.iter().rev() {
-            if let Ok(bytes) = std::fs::read(day_dir.join(f)) {
-                if let Ok(snap) = serde_json::from_slice::<StoredSnapshot>(&bytes) {
-                    return Some(snap);
-                }
-            }
-        }
+        files.iter().rev().find_map(|f| {
+            let bytes = std::fs::read(f).ok()?;
+            let snap = serde_json::from_slice::<StoredSnapshot>(&bytes).ok()?;
+            Some((bytes, snap))
+        })
+    });
+    let written = match &newest {
+        Some((bytes, _)) => write_atomically(&state_path(data_dir), bytes),
+        None => Ok(()),
+    };
+    match written.and_then(|()| std::fs::remove_dir_all(&legacy)) {
+        Ok(()) => tracing::info!(
+            restored = newest.is_some(),
+            "moved the appearance off raw/appearance/ snapshots onto appearance.json",
+        ),
+        Err(err) => tracing::warn!(error = %err, "migrating the appearance snapshots failed"),
     }
-    None
+    newest.map(|(_, snap)| snap)
 }
 
-/// Append a whole-state snapshot to `raw/appearance/<date>/`. The file
-/// is named for the wall-clock second; on the rare same-second collision the
-/// second is bumped until free, so no snapshot in the history is overwritten.
-/// Tempfile + rename so a crash mid-write never leaves a torn snapshot at a real
-/// name. Failures are logged, not fatal — the live state stays authoritative.
+/// Write `bytes` to `path` through a temp file and a rename, so a crash mid-write never
+/// leaves a torn state at the real name.
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Overwrite [`state_path`] with the whole state. Called under the bus's lock, so two
+/// writes never race. Failures are logged, not fatal — the live state stays authoritative.
 async fn persist(data_dir: &Path, entry: &Appearance) {
-    let now = Utc::now();
     let snap = Snapshot {
         version: entry.version,
-        as_of: now,
         content: entry.content.as_ref(),
         condition: entry.condition.as_ref(),
         history: &entry.history,
         cursor: entry.cursor.as_deref(),
         kept: entry.kept,
     };
-    let bytes = match serde_json::to_vec_pretty(&snap) {
+    let bytes = match serde_json::to_vec(&snap) {
         Ok(bytes) => bytes,
         Err(err) => {
-            tracing::warn!(error = %err, "encoding appearance snapshot failed");
+            tracing::warn!(error = %err, "encoding the appearance failed");
             return;
         }
     };
-    let dir = layout::appearance_day_dir(data_dir, now);
-    if let Err(err) = tokio::fs::create_dir_all(&dir).await {
-        tracing::warn!(error = %err, "creating appearance dir failed");
-        return;
-    }
-    let mut slot = now;
-    let path = loop {
-        let p = dir.join(format!("appearance-{}.json", slot.format("%H%M%SZ")));
-        if !tokio::fs::try_exists(&p).await.unwrap_or(false) {
-            break p;
-        }
-        slot += Duration::seconds(1);
-    };
-    let tmp = dir.join(format!(
-        ".tmp.{}.{}",
-        std::process::id(),
-        slot.format("%H%M%S")
-    ));
-    let result = async {
-        tokio::fs::write(&tmp, &bytes).await?;
-        tokio::fs::rename(&tmp, &path).await
-    }
-    .await;
-    if let Err(err) = result {
-        tracing::warn!(path = %path.display(), error = %err, "persisting appearance snapshot failed");
+    let path = state_path(data_dir);
+    let written = tokio::task::spawn_blocking(move || write_atomically(&path, &bytes)).await;
+    if let Err(err) = written.map_err(std::io::Error::other).and_then(|r| r) {
+        tracing::warn!(error = %err, "persisting the appearance failed");
     }
 }
 
@@ -1372,16 +1366,12 @@ mod tests {
         RetainedView { id: id.into(), module_url: url.into(), view_ref: view_ref.into() }
     }
 
-    /// How many whole-state snapshots are on disk — the archive a move must not grow.
-    fn snapshot_count(data_dir: &Path) -> usize {
-        let root = layout::raw_root(data_dir).join("appearance");
-        std::fs::read_dir(&root)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|day| day.path().is_dir())
-            .map(|day| std::fs::read_dir(day.path()).into_iter().flatten().flatten().count())
-            .sum()
+    /// A day-folder of the `raw/appearance/` snapshots an older install kept, for the
+    /// tests of what [`migrate_legacy`] reads.
+    fn legacy_day(data_dir: &Path) -> PathBuf {
+        let dir = layout::raw_root(data_dir).join("appearance").join("2026-09-01");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     /// The person going somewhere *is* a change to the appearance — that is the whole of
@@ -1402,10 +1392,10 @@ mod tests {
         assert_eq!(ids(&after), vec!["a"], "and what it holds is unchanged");
     }
 
-    /// Somewhere the screen has never been earns a card; going back to one it already has
-    /// does not re-time it, because the row must not reshuffle under a finger browsing it.
+    /// Whatever the screen lands on is the newest card: somewhere it has never been earns
+    /// one, and a card gone back to moves to the head, dated now.
     #[tokio::test]
-    async fn arriving_somewhere_new_appends_and_going_back_does_not() {
+    async fn the_row_is_ordered_by_when_each_place_was_last_in_front_of_them() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
         bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
@@ -1417,42 +1407,93 @@ mod tests {
         assert_eq!(history_ids(&state), vec!["tasks", "drive", "mem"]);
         assert_eq!(state.cursor.as_deref(), Some("factory/memories"));
 
-        // Back to a card already in the row: the cursor moves, the row does not.
+        // Back to a card already in the row: it is the page just looked at.
+        let before = state.history[0].at;
         bus.go_to(Some(dest("tasks", "/m/tasks.mjs", "factory/tasks"))).await;
         let state = bus.wait_state(None).await;
-        assert_eq!(
-            history_ids(&state),
-            vec!["tasks", "drive", "mem"],
-            "going back is a cursor move, not an arrival",
-        );
+        assert_eq!(history_ids(&state), vec!["drive", "mem", "tasks"]);
+        assert!(state.history[2].at > before, "and it is dated when it was looked at");
+        assert_eq!(state.cursor.as_deref(), Some("factory/tasks"));
+
+        // Going live is looking at the live card.
+        bus.go_to(None).await;
+        assert_eq!(history_ids(&bus.wait_state(None).await), vec!["mem", "tasks", "drive"]);
+    }
+
+    /// Being looked at again does not change whose hand first put a card in the row — a
+    /// show the person went back to is still something the agent showed.
+    #[tokio::test]
+    async fn going_back_keeps_the_hand_that_put_the_card_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bus = ViewBus::load(tmp.path());
+        bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+        bus.apply(show_ref("drive", "/m/drive.mjs", "factory/drive")).await;
+
+        bus.go_to(Some(dest("tasks", "/m/tasks.mjs", "factory/tasks"))).await;
+
+        let shown = bus.shown().await;
+        assert_eq!(shown[0].view_ref, "factory/tasks");
+        assert_eq!(shown[0].by, Hand::Show);
+    }
+
+    /// Every move is persisted, so a restart comes back on the card and in the order the
+    /// person left.
+    #[tokio::test]
+    async fn a_move_survives_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let bus = ViewBus::load(tmp.path());
+            bus.apply(show_ref("tasks", "/m/tasks.mjs", "factory/tasks")).await;
+            bus.apply(show_ref("drive", "/m/drive.mjs", "factory/drive")).await;
+            bus.go_to(Some(dest("tasks", "/m/tasks.mjs", "factory/tasks"))).await;
+        }
+
+        let state = ViewBus::load(tmp.path()).wait_state(None).await;
+        assert_eq!(history_ids(&state), vec!["drive", "tasks"]);
         assert_eq!(state.cursor.as_deref(), Some("factory/tasks"));
     }
 
-    /// An arrival is a durable fact about where the screen has been, so it is archived.
-    /// Sliding the cursor between cards already in the row is not, so it is not — it
-    /// only wakes the windows. Both halves matter: the first is what survives a restart,
-    /// the second is what keeps the appearance history from filling with states
-    /// identical to their predecessor and dated later.
+    /// The state is one file, overwritten — however many changes, nothing accumulates.
     #[tokio::test]
-    async fn arriving_is_archived_and_going_back_is_not() {
+    async fn the_state_is_one_file() {
         let tmp = tempfile::tempdir().unwrap();
         let bus = ViewBus::load(tmp.path());
-        bus.apply(show("a", "/m/a.mjs")).await;
+        for n in 0..5 {
+            bus.apply(show(&format!("v{n}"), &format!("/m/v{n}.mjs"))).await;
+            bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
+        }
+        let files: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(state_path(tmp.path()).is_file());
+    }
 
-        let before = snapshot_count(tmp.path());
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
-        assert!(snapshot_count(tmp.path()) > before, "a new card changed the row");
+    /// An install that kept snapshots under `raw/appearance/` comes back on the newest one,
+    /// and the directory is gone afterwards.
+    #[tokio::test]
+    async fn legacy_snapshots_migrate_to_the_one_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = layout::raw_root(tmp.path()).join("appearance");
+        for (day, file, id) in [
+            ("2026-09-22", "appearance-230000Z.json", "old"),
+            ("2026-09-23", "appearance-010000Z.json", "older-that-day"),
+            ("2026-09-23", "appearance-020000Z.json", "newest"),
+        ] {
+            std::fs::create_dir_all(legacy.join(day)).unwrap();
+            let snap = format!(
+                r#"{{"version":9,"as_of":"2026-09-23T02:00:00Z","content":{{"id":"{id}","module_url":"/m/{id}.mjs","view_ref":"{id}"}}}}"#
+            );
+            std::fs::write(legacy.join(day).join(file), snap).unwrap();
+        }
+        // A torn final write falls back to the one before it.
+        std::fs::write(legacy.join("2026-09-23").join("appearance-030000Z.json"), "{").unwrap();
 
-        let after_arrival = snapshot_count(tmp.path());
-        let version = bus.wait_state(None).await.version;
-        bus.go_to(None).await;
-        bus.go_to(Some(dest("drive", "/m/drive.mjs", "factory/drive"))).await;
-        assert!(bus.wait_state(None).await.version > version, "parked readers still wake");
-        assert_eq!(
-            snapshot_count(tmp.path()),
-            after_arrival,
-            "walking the row is not a state worth archiving",
-        );
+        let state = ViewBus::load(tmp.path()).wait_state(None).await;
+        assert_eq!(ids(&state), vec!["newest"]);
+        assert_eq!(state.version, 9);
+        assert!(!legacy.exists(), "the snapshots are gone");
+
+        let again = ViewBus::load(tmp.path()).wait_state(None).await;
+        assert_eq!(ids(&again), vec!["newest"], "and the state is in the one file");
     }
 
     /// The hole this closed, watched on a live instance: on a core the agent has never
@@ -1612,10 +1653,7 @@ mod tests {
         assert!(bus.wait_state(None).await.cursor.is_none());
     }
 
-    /// The cursor is part of the appearance, so it rides in the snapshot and comes back
-    /// with it. A move writes no snapshot of its own, so what is restored is the cursor as
-    /// of the last state change that did — here an outage landing over it. That is the
-    /// stated approximation, tested rather than assumed.
+    /// The cursor is part of the appearance, so it is persisted and comes back with it.
     #[tokio::test]
     async fn the_cursor_rides_in_the_snapshot() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1641,13 +1679,8 @@ mod tests {
     #[tokio::test]
     async fn a_restored_cursor_with_no_card_goes_live() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("appearance-000000Z.json"),
-            br#"{"version":7,"as_of":"2026-09-01T00:00:00Z","cursor":"factory/gone"}"#,
-        )
-        .unwrap();
+        std::fs::write(state_path(tmp.path()), br#"{"version":7,"cursor":"factory/gone"}"#)
+            .unwrap();
 
         let bus = ViewBus::load(tmp.path());
         assert!(bus.wait_state(None).await.cursor.is_none());
@@ -2090,8 +2123,7 @@ mod tests {
     async fn loads_legacy_stacked_snapshot_as_its_topmost_view() {
         let tmp = tempfile::tempdir().unwrap();
         seed_view(tmp.path(), "factory/tasks", "export default () => 'tasks'").await;
-        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = legacy_day(tmp.path());
         let old = r#"{"version":3423,"as_of":"2026-08-07T09:05:30Z","views":[
             {"id":"bj01","module_url":"/m/bj01.mjs","geometry":{"region":"center","size":"auto"}},
             {"id":"tasks","module_url":"/m/tasks.mjs","geometry":{"region":"center","size":"wide"}}
@@ -2115,8 +2147,7 @@ mod tests {
     async fn a_snapshot_with_views_shown_without_a_name_loads_without_them() {
         let tmp = tempfile::tempdir().unwrap();
         seed_view(tmp.path(), "factory/tasks", "export default () => 'tasks'").await;
-        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = legacy_day(tmp.path());
         let old = r#"{"version":40,"as_of":"2026-09-20T09:05:30Z",
             "content":{"id":"sketch","module_url":"/m/sketch.mjs"},
             "history":[
@@ -2270,8 +2301,7 @@ mod tests {
     async fn refresh_adopts_the_builtin_ref_for_a_snapshot_written_without_one() {
         let tmp = tempfile::tempdir().unwrap();
         seed_view(tmp.path(), "factory/tasks", "export default () => 'old'").await;
-        let dir = layout::appearance_day_dir(tmp.path(), Utc::now());
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = legacy_day(tmp.path());
         // No ref — exactly what a pre-`view_ref` snapshot holds.
         std::fs::write(
             dir.join("appearance-000000Z.json"),

@@ -28,3 +28,31 @@ import type { WireHistoryEntry } from "../channels/out/view";
 export function trailOf(history: WireHistoryEntry[]): WireHistoryEntry[] {
   return [...history].reverse();
 }
+
+/**
+ * The trail as the open tab draws it: in the order it had when the tab opened.
+ *
+ * The server orders the row by when each place was last in front of them, so tapping a
+ * card makes it the newest — and at the stops where the tab stays up beside the room,
+ * that card would jump to the head under the finger that tapped it, and every card
+ * before it would slide one along. So while the tab is open the cards it is already
+ * showing keep their places; a card that was not there when it opened (the agent showed
+ * something new) goes in at the head, and one trimmed off the end goes away. The next
+ * time the tab opens, it reads the server's order again.
+ *
+ * `order` is the refs as last drawn, `null` on the tab's first draw.
+ */
+export function held(
+  order: readonly string[] | null,
+  trail: readonly WireHistoryEntry[],
+): WireHistoryEntry[] {
+  if (order === null) return [...trail];
+  const drawn = new Set(order);
+  const byKey = new Map(trail.map((entry) => [entry.view_ref, entry]));
+  const arrived = trail.filter((entry) => !drawn.has(entry.view_ref));
+  const kept = order.flatMap((key) => {
+    const entry = byKey.get(key);
+    return entry ? [entry] : [];
+  });
+  return [...arrived, ...kept];
+}

@@ -52,7 +52,7 @@ interface ViewsValue {
   /** Take the screen to one past destination. */
   goTo: (entry: WireHistoryEntry) => void;
   /** Take the screen to a named view from the inventory, which puts it at the head of
-   * the trail if it has never been there: going somewhere is arriving somewhere,
+   * the trail: the row is ordered by when each place was last in front of them,
    * whether the agent took you or you went. */
   openRef: (viewRef: string) => void;
 }
