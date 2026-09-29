@@ -6,6 +6,7 @@ import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -98,6 +99,14 @@ fun CoreWebView(
     ) {}
     state.onNeedsPermissions = { permissions -> permissionLauncher.launch(permissions) }
 
+    // `<input type="file">`. Android's WebView, unlike WebKit on iOS, has no
+    // picker of its own: it hands the click to `onShowFileChooser` and does
+    // nothing if the app does not answer, so the page's file input was dead.
+    val fileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result -> state.deliverChosenFiles(result.resultCode, result.data) }
+    state.onChooseFiles = { intent -> fileLauncher.launch(intent) }
+
     AndroidView(
         modifier = modifier,
         factory = {
@@ -162,6 +171,30 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
 
     /** Ask the OS for capture permissions this app does not hold yet. */
     var onNeedsPermissions: (Array<String>) -> Unit = {}
+
+    /** Show the system picker for a page's file input. */
+    var onChooseFiles: (Intent) -> Unit = {}
+
+    /**
+     * The file input waiting on the picker. WebView allows one open chooser and
+     * expects its callback answered exactly once — null on cancel — or the input
+     * never takes another click.
+     */
+    private var pendingFiles: ValueCallback<Array<Uri>>? = null
+
+    fun deliverChosenFiles(resultCode: Int, data: Intent?) {
+        val callback = pendingFiles ?: return
+        pendingFiles = null
+        // `parseResult` reads only `data.data`, so a multi-select, which arrives
+        // as `clipData`, would come back empty without reading `clipData` first.
+        val clip = data?.clipData
+        val uris = if (resultCode == android.app.Activity.RESULT_OK && clip != null) {
+            Array(clip.itemCount) { clip.getItemAt(it).uri }
+        } else {
+            WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+        }
+        callback.onReceiveValue(uris)
+    }
 
     /** What the face last said about how much it has open. */
     var onBackDepth: (Int) -> Unit = {}
@@ -403,6 +436,27 @@ private class CoreWebViewState(private val appContext: android.content.Context) 
     }
 
     val webChromeClient = object : WebChromeClient() {
+        override fun onShowFileChooser(
+            webView: WebView,
+            filePathCallback: ValueCallback<Array<Uri>>,
+            fileChooserParams: FileChooserParams,
+        ): Boolean {
+            pendingFiles?.onReceiveValue(null)
+            pendingFiles = filePathCallback
+            val intent = fileChooserParams.createIntent()
+            if (fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+            try {
+                onChooseFiles(intent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                // A television may have no document picker installed at all.
+                pendingFiles = null
+                filePathCallback.onReceiveValue(null)
+            }
+            return true
+        }
+
         /**
          * Camera and microphone, granted only to the paired core's exact origin.
          *
