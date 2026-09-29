@@ -33,6 +33,9 @@ interface ComposerProps {
    * conversation says so until the file lands in it — and still opens: batches are
    * independent, so a second pick is simply sent too. */
   filesSending: boolean;
+  /** Whether the line holds anything. The shell reads it for Escape, which puts the
+   * panel away only while the line is empty and does nothing at all while it is not. */
+  onDraft: (hasDraft: boolean) => void;
 }
 
 /**
@@ -49,8 +52,9 @@ interface ComposerProps {
  * leaves it open: it is a channel, not a one-shot.
  *
  * **Enter belongs to the input method first.** Half of what is written here is
- * written through one, where Enter confirms the candidate under the cursor and
- * Escape throws the composition away — see the composition pair below.
+ * written through one, where Enter confirms the candidate under the cursor — see the
+ * composition pair below. **Escape is not the line's at all**: it never clears what
+ * was typed. The shell answers it, and only while this line is empty (`onDraft`).
  *
  * **The picker at its head is the only way to hand over a file that is not a
  * gesture.** A drop and a paste both reach `hooks/useHandoff`, and both are
@@ -75,8 +79,13 @@ export function Composer({
   onOpen,
   onPickFiles,
   filesSending,
+  onDraft,
 }: ComposerProps) {
   const [text, setText] = useState("");
+  const hasDraft = text.length > 0;
+  useEffect(() => {
+    onDraft(hasDraft);
+  }, [hasDraft, onDraft]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const filesRef = useRef<HTMLInputElement | null>(null);
   const lastPasteIdRef = useRef(0);
@@ -264,12 +273,6 @@ export function Composer({
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               submit();
-            } else if (e.key === "Escape" && text) {
-              // Clear the draft, and stop there: the press is spent. An empty line
-              // lets Escape through to the shell, which is what closes a popover —
-              // so the ladder is "throw away what I typed", then "put it away".
-              e.preventDefault();
-              setText("");
             }
           }}
           placeholder="type to the agent…"

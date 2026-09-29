@@ -46,8 +46,7 @@ const hostHandlers = new Set<HostKeyHandler>();
  * Handlers run in registration order and *after* React's own delegated handlers
  * (React attaches at the root container, which is a descendant of the document),
  * so one can still read `defaultPrevented` to defer to the surface that already
- * acted. That ordering is the Escape ladder: the line clears a half-written
- * draft, and only an empty line lets Escape through to close the popover.
+ * acted.
  */
 export function onHostKey(handler: HostKeyHandler): () => void {
   hostHandlers.add(handler);

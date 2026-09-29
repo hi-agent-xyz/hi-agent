@@ -7,7 +7,7 @@ import { useCondition } from "../core/session";
 import { useViews } from "../core/views";
 import { stage as composeStage } from "../core/layout";
 import { useHandoff } from "../hooks/useHandoff";
-import { onHostKey } from "../lib/keyboard";
+import { inputMethodHasKey, onHostKey } from "../lib/keyboard";
 import { useShape } from "../lib/shape";
 import { advance, depth, initial, opened, retreat, type Stop } from "../lib/panel";
 import { focusInViewPlane, leaveViewPlane } from "../lib/spatial";
@@ -55,7 +55,7 @@ import { PanelButton } from "./PanelButton";
  * **The room keeps one button.** With the panel away, what is on screen is what
  * the agent put there, edge to edge, with the caption, the camera pip and
  * `<PanelButton>` over it. The button is the way in on every shape but the
- * television, whose remote has `→`; typing, `Escape` and a trackpad's swipe are
+ * television, whose remote has `→`; typing, `Escape` on an empty line and a trackpad's swipe are
  * still ways along the axis, and are listed in `<PanelGesture>` and the key
  * ladders below. The panel's way out is drawn too — a close button in its head, and
  * on Android the system's Back, which the ladder below is reported to.
@@ -92,6 +92,12 @@ export function Shell() {
   const [tab, setTab] = useState<Tab>("messages");
   const [pastedInputText, setPastedInputText] = useState<{ id: number; text: string } | null>(null);
   const pasteIdRef = useRef(0);
+  // Whether the line holds anything, as the composer last reported it. Read by
+  // Escape and by nothing else.
+  const hasDraftRef = useRef(false);
+  const onDraft = useCallback((hasDraft: boolean) => {
+    hasDraftRef.current = hasDraft;
+  }, []);
   // The face's root box, handed to `<PanelGesture>`. It carries the stop, and the
   // panel and the strip that moves it are found under it as the edge's riders.
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -129,9 +135,12 @@ export function Shell() {
 
   const handoff = useHandoff({ openConversation, pasteIntoTextInput });
 
-  // Escape retreats a stop, in every stop the panel is out in. It defers to
-  // whoever already handled it, so clearing a half-typed line closes the line and
-  // leaves the panel where it is.
+  // **Escape has one meaning: put the panel away, and only while the line is
+  // empty.** With something typed it does nothing — it neither clears the draft nor
+  // closes the panel, so a stray press never costs what was written. It goes
+  // straight to the room from either stop rather than stepping back one; a ladder
+  // of presses was a thing to count. An input method mid-composition owns its own
+  // Escape and is left alone.
   //
   // **The arrows are not the host's on a keyboard.** They used to step this axis
   // as well, and that was the host taking a key agent views have every reason to
@@ -157,11 +166,8 @@ export function Shell() {
     return onHostKey((event) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
 
-      // Escape is not excluded while a line is being written: the composer clears
-      // its own draft and marks the key handled, and only an empty line lets it
-      // through to this.
       if (event.key === "Escape") {
-        setStop((at) => retreat(shape, at));
+        if (!hasDraftRef.current && !inputMethodHasKey(event, false)) setStop("room");
         return;
       }
       if (shape !== "tv") return;
@@ -349,6 +355,7 @@ export function Shell() {
               pastedText={pastedInputText}
               onOpen={openConversation}
               onPickFiles={(files) => void handoff.sendFiles(files)}
+              onDraft={onDraft}
               filesSending={handoff.sending}
             />
           </Chat>

@@ -174,6 +174,7 @@ describe("the line being written", () => {
           onOpen={() => {}}
           onPickFiles={() => {}}
           filesSending={false}
+          onDraft={() => {}}
         />
       </Chat>,
     );
@@ -207,6 +208,7 @@ describe("the line being written", () => {
           onOpen={() => {}}
           onPickFiles={() => {}}
           filesSending={false}
+          onDraft={() => {}}
         />
       </Chat>,
     );
@@ -235,6 +237,7 @@ describe("the line being written", () => {
             onOpen={() => {}}
             onPickFiles={() => {}}
             filesSending={filesSending}
+            onDraft={() => {}}
           />
         </Chat>,
       );

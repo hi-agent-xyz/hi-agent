@@ -690,7 +690,7 @@ the axis.*
 |---|---|
 | any pointer | **the button in the room's bottom-right corner** opens the panel; the **close button** in the panel's head puts it away. On Android, **Back** puts it away as well |
 | a thumb | on a wide screen, drag the seam once the panel is beside the view, or its left edge at `full`. The panel tracks the finger and settles on distance or a flick, the existing rule. **A phone has no strip** — both of its side edges are the system's |
-| a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `Escape` retreats a stop. **Not the arrows** — see *The arrows are the view's* |
+| a keyboard | any printable key opens to Messages with the key in the line — [`Composer`](../../src/appearance/web/src/ui/Composer.tsx) already does this. `Escape` on an empty line puts the panel away, from either stop; with anything typed it does nothing. **Not the arrows** — see *The arrows are the view's* |
 | a D-pad | `→` opens. [`installSpatialNav`](../../src/appearance/web/src/lib/spatial.ts) calls `preventDefault()` only when it actually moved the focus, so with nothing focusable in the room a right-press finds nothing, falls through, and the shell takes it. Back closes — the depth ladder already exists |
 | a trackpad | two fingers sideways, **anywhere on the screen**. The panel follows them the way it follows a thumb, and one run reaches the neighbouring stop and no further. See *The trackpad's swipe* |
 | a mouse | the button; and the seam takes a **click** as well as a drag, and shows a hairline on hover within it. A click steps toward the room |
@@ -1192,10 +1192,11 @@ half to do it. The messages run into the space the line stands in.
 under all of this — the way in never depends on finding the control, so putting the
 conversation away is never a corner someone is stuck in.
 
-**Escape is still the popover's, not the line's.** In the line it clears a half-written
-draft and stops there; on an empty line it passes through to the shell, which puts the
-popover away. Dismissal is what makes a popover a popover, and clearing what you typed is
-not dismissal.
+**Escape is the panel's, not the line's.** *September 29:* it has one meaning — on an empty
+line it puts the panel away, straight to the room from either stop; with anything typed it
+does nothing at all. It used to clear the draft first and close on a second press, and step
+back one stop at a time — a ladder of presses to count, where a stray one threw away what was
+written. Nothing clears the line but sending it or deleting it.
 
 **A view that owns the conversation owns the writing of it too.** `owns_conversation` used
 to leave the host's line floating over the view; a view rendering the words and a host line
@@ -2237,8 +2238,7 @@ document or the window sees it.
 - **Host chrome's own global keys go through the same guard**, not through `window`: an
   `onHostKey` registry the guard runs itself. Escape closing the popover and
   start-typing-to-open are the two. Registration order is preserved and `defaultPrevented`
-  still reads true from a surface below, so the Escape ladder — clear the half-written
-  line, and only an empty line closes the panel — is untouched.
+  still reads true from a surface below.
 - **`keyup` and `keypress` are routed with `keydown`**, so a view counting a key down and
   up is never handed half a press whose start it never saw.
 - **A sensor is not a handler.** The one listener that wants every interaction regardless
