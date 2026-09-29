@@ -30,14 +30,9 @@ const ofKind = (model, kind) => model.nodes.filter((n) => n.kind === kind);
 // refuses them. Every comparison below is made against a copy built on this side.
 const list = (values) => [...values];
 const titles = (model, kind) => list(ofKind(model, kind).map((n) => n.title)).sort();
-/**
- * The rows this model calls **in hand** — what is going on now, as against what a branch has
- * been through. Every row in the ledger but a spent cancellation is a node whatever its answer
- * here (`titles` is the whole of them); this is the tier that decides which ones fill the
- * window first, which ones a group counts as *N more*, and which closures are news on the core.
- */
-const handed = (model) => list(ofKind(model, "task").filter((n) => n.data.inHand).map((n) => n.title)).sort();
-const handCount = (model) => ofKind(model, "task").filter((n) => n.data.inHand).length;
+/** The rows on Home, which are the rows in hand: a row that is not is not a node (`onHome`). */
+const handed = (model) => titles(model, "task");
+const handCount = (model) => ofKind(model, "task").length;
 
 function assertConnected(model) {
   const ids = new Set(model.nodes.map((n) => n.id));
@@ -84,11 +79,6 @@ test("what is open is in hand however old it is; what is closed answers to the w
     task("just-closed", "done", 3), task("closed-last-week", "done", 200),
   ], messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(150) }] });
   assert.deepEqual(handed(model), ["just-closed", "serving", "stale-but-open"]);
-  // **And the one that is not in hand is still a node.** The model is the whole ledger with
-  // the whole of its structure; what the clock decides is rank, so a lens — a group taken as
-  // the centre, or simply a window with room left — can still reach it.
-  assert.deepEqual(titles(model, "task"),
-    ["closed-last-week", "just-closed", "serving", "stale-but-open"]);
   assertConnected(model);
 });
 
@@ -96,7 +86,6 @@ test("the ceiling is inclusive and uses closure time, not creation or last rewri
   const at = (h) => project({ tasks: [{ ...task("a", "done", 0), completedAt: hoursAgo(h), statusSince: hoursAgo(0) }] });
   assert.equal(handCount(at(167)), 1);
   assert.equal(handCount(at(169)), 0);
-  assert.equal(ofKind(at(169), "task").length, 1, "past the ceiling is history, not gone");
 });
 
 test("a closed row is kept until the person has been back, and then not long", () => {
@@ -195,7 +184,7 @@ test("a live session does not re-admit its own expired task", () => {
   // The single biggest leak in the surface this replaced: any recent session naming a task
   // kept that task drawn as a peer of the work in hand, however long ago it had closed.
   const model = project({ tasks: [task("old", "done", 900)], workers: [worker("w", "worker", { subject: "old" })] });
-  assert.equal(handCount(model), 0, "the row is history, and a live hand does not change that");
+  assert.equal(handCount(model), 0, "the row is off Home, and a live hand does not change that");
   const activity = ofKind(model, "activity")[0];
   assert.equal(activity.title, "Work w");
   assert.equal(activity.data.taskId, null);
@@ -461,16 +450,15 @@ test("inner groups keep the record's order, whichever of their tasks is drawn fi
   assert.deepEqual(list(childIndex(model).get("group:Work").map((n) => n.title)), ["First", "Second"]);
 });
 
-test("the model carries a finished branch whole, and a member naming no row is nothing anywhere", () => {
+test("a finished branch is not on Home, and a member naming no row is nothing anywhere", () => {
   const model = project({
     tasks: [task("a"), task("closed-long-ago", "done", 900)],
     groups: [{ label: "Kept", members: ["a"] },
       { label: "Outer", groups: [{ label: "Inner", members: ["closed-long-ago", "never-existed"] }] }] });
-  // The row is history and its two groups are still structure: the whole relationship is here,
-  // and whether any of it is drawn is the window's question, below.
-  assert.deepEqual(titles(model, "group"), ["Inner", "Kept", "Outer"]);
-  assert.deepEqual(titles(model, "task"), ["a", "closed-long-ago"]);
-  // The ledger says what exists; a member naming no row is nothing, here or anywhere.
+  // The row is not in hand, so neither it nor the two groups that held only it are nodes: a
+  // heading standing where its content used to be is what this surface refuses.
+  assert.deepEqual(titles(model, "group"), ["Kept"]);
+  assert.deepEqual(titles(model, "task"), ["a"]);
   assertConnected(model);
 });
 
@@ -916,25 +904,13 @@ test("the window opens on the whole drawing, never above 1x and never below the 
   assert.equal(opening({ width: 1512 / 0.3, height: 855 }, frame), 0.8);
 });
 
-test("a group is a heading on the way to a drawn card, or because it holds work in hand", () => {
-  const finished = { label: "Outer", groups: [{ label: "Inner", members: ["closed-long-ago"] }] };
-  const quiet = project({ tasks: [task("a"), task("closed-long-ago", "done", 900)],
-    groups: [{ label: "Kept", members: ["a"] }, finished] });
-  // A window with the room for it draws the history, and then the headings on the way to it.
-  assert.deepEqual(ids(budgeted(quiet, LAPTOP).model, "group").sort(),
-    ["group:Inner", "group:Kept", "group:Outer"]);
-  // A window with no room for it draws neither the row nor the two headings above it. An empty
-  // heading is structure standing where its content used to be, which is what this refuses.
+test("a group that lost the fit is still a heading, and counts what it holds", () => {
   const busy = project({
-    tasks: [...Array.from({ length: 16 }, (_, i) => task(`w${i}`, "doing", 1 + i)),
-      task("closed-long-ago", "done", 900)],
-    groups: [{ label: "Busy", members: Array.from({ length: 16 }, (_, i) => `w${i}`) }, finished] });
+    tasks: Array.from({ length: 16 }, (_, i) => task(`w${i}`, "doing", 1 + i)),
+    groups: [{ label: "Busy", members: Array.from({ length: 16 }, (_, i) => `w${i}`) }] });
   const drawn = budgeted(busy, { w: 900, h: 420 });
   assert.deepEqual(ids(drawn.model, "group"), ["group:Busy"]);
-  assert.ok(!ids(drawn.model, "task").includes("task:closed-long-ago"));
-  // And what a group counts is what it holds in hand, never the depth of the ledger behind it.
   assert.equal(drawn.hidden.get("group:Busy"), 16 - ids(drawn.model, "task").length);
-  assert.equal(drawn.hidden.get("group:Inner"), undefined, "history is not counted");
 });
 
 test("a group taken as the centre draws everything it holds in hand, at any depth", () => {
@@ -957,50 +933,52 @@ test("a group taken as the centre draws everything it holds in hand, at any dept
   assert.equal(opening(arrange(branch.model), LAPTOP), 0.8);
 });
 
-test("the tier is what keeps history from crowding the work in hand", () => {
+test("the tier is what keeps a notice from crowding the work in hand", () => {
   const model = project({ tasks: [task("stale-open", "todo", 400),
-    { ...task("just-done", "done", 0.2), completedAt: hoursAgo(0.2) },
-    { ...task("long-done", "done", 300), completedAt: hoursAgo(300) }] });
+    { ...task("just-done", "done", 0.2), completedAt: hoursAgo(0.2) }] });
   const at = (id) => model.nodes.find((n) => n.id === id);
   assert.ok(heat(at("task:stale-open"))[0] > heat(at("task:just-done"))[0],
     "a week-old to-do is in hand; an hour-old closure is a notice");
-  assert.ok(heat(at("task:just-done"))[0] > heat(at("task:long-done"))[0],
-    "and a notice comes before history");
   // Which is the whole reason the tier exists: on time alone, the freshest thing on a busy
   // instance is almost always something that just finished.
   assert.ok(heat(at("task:just-done"))[1] > heat(at("task:stale-open"))[1]);
 });
 
-test("history fills the room a branch's live work leaves, and no more", () => {
-  const groups = [{ label: "Shoes", members: ["compare", "research", "pick"],
-    groups: [{ label: "Fit", members: ["insoles"] }] }];
-  const model = project({ groups, messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(0.5) }],
-    tasks: [task("compare", "doing", 1), task("insoles", "doing", 2),
-      { ...task("research", "done", 300), completedAt: hoursAgo(300) },
-      { ...task("pick", "done", 400), completedAt: hoursAgo(400) }] });
-  assert.deepEqual(handed(model), ["compare", "insoles"], "the finished pair is history");
-  // Pressed in, with the window to itself: both hands, at both depths, and the history after.
-  assert.deepEqual(ids(budgeted(focusOn(model, "group:Shoes"), LAPTOP).model, "task").sort(),
-    ["task:compare", "task:insoles", "task:pick", "task:research"]);
-  // In a window with room for the hands alone, the history is what gives way — and is not
-  // counted, because *2 more* is an invitation to press in and history is not one.
-  const tight = budgeted(focusOn(model, "group:Shoes"), { w: 760, h: 360 });
-  assert.deepEqual(ids(tight.model, "task").sort(), ["task:compare", "task:insoles"]);
-  assert.equal(tight.hidden.size, 0);
+test("finished work is on Home as a live thread's progress or as news, and not as history", () => {
+  // Drawn wherever a branch had room, a finished card two days closed was, in the person's
+  // word, interference: showing it costs more than anything it can still say.
+  const groups = [{ label: "Shoes", members: ["compare", "research"], groups: [{ label: "Fit", members: ["insoles"] }] },
+    { label: "Done", members: ["archived"] }];
+  const model = project({ groups, messages: [{ id: "m", role: "user", text: "ok", ts: hoursAgo(20) }],
+    tasks: [task("compare", "doing", 1), task("insoles", "done", 30),
+      { ...task("research", "done", 30), completedAt: hoursAgo(30) },
+      { ...task("archived", "done", 30), completedAt: hoursAgo(30) },
+      { ...task("docker-paused", "done", 30), completedAt: hoursAgo(30) }] });
+  // `research` is the progress of a thread still open; `insoles` is in a finished inner group,
+  // `archived` in a finished group and `docker-paused` in none — each already collected.
+  assert.deepEqual(handed(model), ["compare", "research"]);
+  assert.deepEqual(titles(model, "group"), ["Shoes"]);
+  // And a window with all the room in the world draws nothing more.
+  assert.deepEqual(ids(budgeted(model, { w: 4000, h: 3000 }).model, "task").sort(),
+    ["task:compare", "task:research"]);
 });
 
-test("a ledger of hundreds costs the window's work, not the ledger's", () => {
-  // Every row is a node now, and every offer lays the whole chart out again. What bounds the
-  // loop is the candidate list, not the record: everything in hand, then history CANDIDATES deep.
+test("a row the person closed themselves is no notice; a live thread still keeps it", () => {
+  const closed = (status, extra = {}) => ({ ...task("mine", status, 0.1),
+    ...(status === "done" ? { completedAt: hoursAgo(0.1) } : { cancelledAt: hoursAgo(0.1) }), ...extra });
+  assert.equal(handCount(project({ tasks: [closed("done")] })), 1, "nobody back yet: news");
+  assert.equal(handCount(project({ tasks: [closed("done", { byHand: true })] })), 0, "they closed it");
+  assert.equal(handCount(project({ tasks: [closed("cancelled", { byHand: true })] })), 0, "they cancelled it");
+  const groups = [{ label: "g", members: ["mine", "open-work"] }];
+  assert.deepEqual(handed(project({ groups, tasks: [closed("done", { byHand: true }), task("open-work")] })),
+    ["mine", "open-work"], "it is the thread's progress, whoever closed it");
+});
+
+test("a ledger of hundreds is not the model", () => {
   const model = project({ tasks: [task("open", "doing", 1),
     ...Array.from({ length: 400 }, (_, i) => ({ ...task(`old${i}`, "done", 200 + i), completedAt: hoursAgo(200 + i) }))] });
-  assert.equal(ofKind(model, "task").length, 401, "the model is the whole ledger");
-  assert.equal(handCount(model), 1);
-  const started = Date.now();
-  const cut = budgeted(model, LAPTOP);
-  assert.ok(Date.now() - started < 2000, "the fitting loop does not grow with the ledger");
-  assert.ok(ids(cut.model, "task").includes("task:open"), "the work in hand is drawn first");
-  assert.ok(ids(cut.model, "task").length <= 65);
+  assert.deepEqual(handed(model), ["open"]);
+  assert.deepEqual(ids(budgeted(model, LAPTOP).model, "task"), ["task:open"]);
 });
 
 test("finished nodes gradually lose emphasis without making their text invisible", () => {

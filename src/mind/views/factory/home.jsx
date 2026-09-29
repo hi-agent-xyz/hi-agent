@@ -55,16 +55,16 @@ const L = typeof document !== "undefined" && /^zh/i.test(document.documentElemen
   ? COPY.zh : COPY.en;
 /**
  * How long a closed card takes to fade to its dimmest, which is no longer how long it is kept
- * — see `keepsClosed`. The two were one constant when retention was one clock, and a card that
+ * — see `onHome`. The two were one constant when retention was one clock, and a card that
  * is kept because the work it serves is still open should not read as a day-old leftover for
  * the six days the ceiling allows it.
  */
 const FADE_MS = 24 * 3600000;
 /** How long a collected notice is kept past its collection, and the hard bound on any closed
- *  row. Both belong to `keepsClosed`, which is where what they mean is written down. */
+ *  row. Both belong to `onHome`, which is where what they mean is written down. */
 const GRACE_MS = 1 * 3600000;
 const CEILING_MS = 7 * 24 * 3600000;
-/** How long a cancellation is on Home at all. It belongs to `onHome`. */
+/** How long a cancellation is a notice. It belongs to `onHome`. */
 const CANCELLED_MS = 1 * 3600000;
 const CORE_ROLES = new Set(["reaction", "cognition"]);
 const OPEN = new Set(["todo", "doing", "serving"]);
@@ -105,7 +105,7 @@ const TONE = { todo: "var(--fg-mute)",
  *   wire of exactly the work nobody had filed yet could not be seen.
  * - **Groups are handed their hues first**, in the record's order, so a group appended later
  *   moves no group already drawn, and a card coming or going moves none. Ungrouped cards take
- *   what is left, work in hand before history, so the free hues go to what the window draws.
+ *   what is left.
  * - **Everything below a branch is that one colour, at any depth** — its tasks, the groups
  *   inside it, their tasks, sessions and pictures. Shades of the group per sibling and per rank
  *   were tried and lost: on a real nested arrangement they read as a scatter of near-colours
@@ -138,7 +138,7 @@ function branchTones(model) {
   const first = (children.get("core") || []).filter((n) => n.kind !== "overview");
   const groups = first.filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
   const loose = first.filter((n) => n.kind !== "group")
-    .sort((a, b) => Number(inHand(b)) - Number(inHand(a)) || a.id.localeCompare(b.id));
+    .sort((a, b) => a.id.localeCompare(b.id));
   // A group by label, a card by id, which is what holds each still between updates.
   const hues = branchHues([...groups.map((g) => g.data.label), ...loose.map((n) => n.id)]);
   const tones = new Map();
@@ -183,10 +183,9 @@ function groupIcon(ref) {
  * object without duplicating it. Nodes have no x/y or selected properties.
  *
  * Internal mappings:
- * 1. TaskDto (/api/tasks) -> task:<subject>, EVERY row whatever its age, and whatever its
- *    status but one: a cancellation is a node for an hour (`onHome`). Status and time are
- *    copied, not inferred from sessions. For everything else what the clock decides is
- *    `inHand` — a tier, read by the window's cut — never whether the node exists.
+ * 1. TaskDto (/api/tasks) -> task:<subject>, for every row in hand: open, or closed and still
+ *    in hand (`onHome`). Status and time are copied, not inferred from sessions. A row that is
+ *    not in hand is `factory/tasks`' alone.
  * 2. Registry Status (/api/workers) -> session:<run>:<id>. running means busy; waiting
  *    means QUEUED WORK, not waiting for the user; idle is still a LIVE session. Only live
  *    sessions are here at all — a session that has ended is `factory/workers`' subject.
@@ -267,45 +266,40 @@ const collectedAt = (end, inbound) => {
   return null;
 };
 /**
- * Whether a closed row is still **in hand**, given its innermost group's own open work.
+ * **A task is on Home while it is in hand, and not otherwise.** Open work always is. A closed
+ * row is, for one of the two reasons above — and nothing else puts it here: not room to spare,
+ * not a live session naming it, not a picture it made.
  *
- * **This decides rank, never existence.** Every row the ledger has is a node with its whole
- * branch — its groups, its pictures, its sessions — but a spent cancellation, which `onHome`
- * takes out before this is asked; and what this answers is whether the row
- * is part of what is going on right now or part of what the thread has been through. `heat`
- * turns that into a tier, `budgeted` fills the window from the top, and what is left over
- * is drawn where there is room for it. It used to be an admission gate in `buildHome`: a row
- * that failed it was never a node, so no lens downstream could reach it, and pressing into a
- * group could only ever take away. The rules below are unchanged; only what they decide is.
+ * Finished work used to stay in the model as *history*, a tier below everything in hand that
+ * the window drew wherever a branch had room. On a quiet day that was most of the chart, and
+ * the person's word for a finished card two days closed was that showing it at all is
+ * interference: the cost of the glance outweighs anything the card can still say. A closed row
+ * earns the window only while the person may still care — the progress of a thread still
+ * open, or news they have not had yet. Past that it is `factory/tasks`' alone.
  *
- * `threadLive` is "an open task shares this row's innermost group" — the person's words for it
- * were *the parent has not disappeared*, and the innermost group is that parent. The first-level
- * branch is not: the merged-video row sat in `北控视频` with nothing else open while `KNQ` above
- * it was busy, and testing the branch would have kept it.
- *
- * **A cancellation is never kept by a thread**, and only ever reaches here inside its hour —
- * see `onHome` — where it is a notice whatever else is running beside it.
+ * - `threadLive` is "an open task shares this row's innermost group" — the person's words for
+ *   it were *the parent has not disappeared*, and the innermost group is that parent. The
+ *   first-level branch is not: the merged-video row sat in `北控视频` with nothing else open
+ *   while `KNQ` above it was busy, and testing the branch would have kept it. It keeps a `done`
+ *   row only: **a cancellation is never kept by a thread**. What it made on the way is process,
+ *   and the row's own word says the work is not happening.
+ * - **A row the person closed themselves is no notice**, done or cancelled: `byHand` says they
+ *   moved it there on the board, and a notice is for news they may not have had.
+ * - Everything else closed is a notice. A `done` one lasts until the person has been back
+ *   (`collectedAt`) and an hour past that. **A cancellation's hour runs from the closure**
+ *   instead: long enough to see the ask landed, and nothing after it is worth the window.
+ * - The ceiling bounds all of it, and an unknown closure time reads as past it (`recent`).
  */
-function keepsClosed(task, end, { threadLive, inbound }, now) {
+function onHome(task, { threadLive, inbound }, now) {
+  if (OPEN.has(task.status)) return true;
+  const end = taskEnd(task);
   if (!recent(end, now)) return false;
-  if (task.status === "done" && threadLive) return true;
+  if (task.status === "cancelled") return !task.byHand && instant(end) >= now - CANCELLED_MS;
+  if (threadLive) return true;
+  if (task.byHand) return false;
   const collected = collectedAt(end, inbound);
   return collected === null || now - collected < GRACE_MS;
 }
-/**
- * **A cancellation is on Home for an hour, and then it is not on Home at all.** This is the one
- * rule here that decides existence rather than rank, and it goes by what the row is, not by how
- * full the window is. Ranking it as history is what failed: a group of five duties drew two
- * cancellations three days closed because the window had room, and the person's word for them
- * was *pure interference — even with few nodes, nobody wants to see them*. It has nothing to
- * come back to — what it made on the way is process, and the row's own word says the work is
- * not happening — so neither a live sibling, nor nobody being back yet, nor room to spare keeps
- * it. The hour runs from the closure, not from the person's next message the way a notice's
- * grace does: it is long enough to see the ask landed, and nothing after it is worth the window.
- * After it the row is `factory/tasks`' alone, and a missing closure time reads as past it.
- */
-const onHome = (task, now) => task.status !== "cancelled"
-  || (instant(taskEnd(task)) ?? -Infinity) >= now - CANCELLED_MS;
 const taskKey = (subject) => `task:${subject}`;
 const sessionKey = (s) => `session:${s.run}:${s.id || s.session}`;
 const plain = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -451,7 +445,7 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
     }
     return parent;
   };
-  // The person's own presence, oldest first, for `keepsClosed`. The transcript is already a
+  // The person's own presence, oldest first, for `onHome`. The transcript is already a
   // parameter here — the overview below reads the same list — so a closed card's fate costs no
   // record, no endpoint and no client identity that the text channel has refused to carry.
   const inbound = messages.filter((m) => m.role === "user" && instant(m.ts) !== null)
@@ -466,25 +460,14 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
     if (chain?.length) liveGroups.add(chain[chain.length - 1].label);
   }
   for (const task of tasks) {
-    // **Every row in the ledger is a node, with the whole of its branch.** What the clock and
-    // the person's presence decide is `inHand` — whether this row is what is going on now —
-    // and that is a tier in `heat`, not a gate here. A row that is not in hand is history: it
-    // is drawn where a branch has room for it, and pressing into a group is how somebody asks
-    // for it. As a gate this dropped the row before it was ever a node, which is why the lens
-    // downstream could only ever take away.
-    //
-    // It is still the one thing that separates the work in hand from the record of it, so it
-    // is also what the core's updates are built from and what a group's *N more* counts.
-    //
-    // The one row that is not a node is a cancellation past its hour, and it takes its
-    // pictures with it: a group left holding nothing else is never added.
-    if (!onHome(task, now)) continue;
+    // **Only what is in hand is a node** (`onHome`), and it takes its pictures with it: a group
+    // left holding nothing else is never added. What is here is what the window draws first,
+    // what the core's updates are built from, and what a group's *N more* counts.
     const chain = grouped.get(task.subject);
     const threadLive = !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
-    const inHand = OPEN.has(task.status)
-      || keepsClosed(task, taskEnd(task), { threadLive, inbound }, now);
+    if (!onHome(task, { threadLive, inbound }, now)) continue;
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
-      sourceRefs: [ref("task", task.subject)], data: { task, status: task.status, inHand,
+      sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
         endedAt: taskEnd(task), results: taskResults(task), sessions: [] } });
     // A task hangs off its group when the arrangement puts it in one, and off the core when
     // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
@@ -503,15 +486,14 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
     }
   }
   for (const session of activities) {
-    // **A live session still does not re-admit its own expired task.** The row is in the model
-    // now — everything is — but a session hangs off a task only while that task is in hand;
-    // otherwise it connects to the core and keeps its own title, exactly as before. Hanging it
-    // under a row that is history would make the row drawable through its child, which is the
-    // leak this rule was written for: fifteen of twenty-five closed tasks on the old canvas
-    // arrived that way, the oldest closed twenty-six days earlier. The join itself is not lost
-    // — the session's `subject` still names it, and `factory/workers` has both ends.
+    // **A live session does not re-admit its own expired task.** A session hangs off a task
+    // only while that task is on Home; otherwise it connects to the core and keeps its own
+    // title. Admitting the row through its child is the leak this was written for: fifteen of
+    // twenty-five closed tasks on the old canvas arrived that way, the oldest closed twenty-six
+    // days earlier. The join itself is not lost — the session's `subject` still names it, and
+    // `factory/workers` has both ends.
     const host = session.subject ? byId.get(taskKey(session.subject)) : null;
-    const taskId = host?.data.inHand ? host.id : null;
+    const taskId = host ? host.id : null;
     // A session working on a drawn task belongs to that task. Whether it is a word on the row
     // or a card below it is decided once the count is known — see the pass after this loop.
     if (taskId) {
@@ -571,12 +553,10 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
   }
   // Factual transitions are safe to summarize without promoting worker prose into a
   // public statement. They remain individually addressable and link to the original task.
-  // These now report only genuinely recent closures — which is the honest count, and on the
+  // These report only closures still in hand — which is the honest count, and on the
   // instance this was written against took the list from ten entries to one.
-  // The model now holds every closed row ever, so what makes one an update is the same fact
-  // that used to make it a node at all: it closed and the person may not have seen it yet.
   for (const node of [...nodes]) {
-    if (node.kind !== "task" || OPEN.has(node.data.status) || !node.data.inHand) continue;
+    if (node.kind !== "task" || OPEN.has(node.data.status)) continue;
     const id = `overview:task:${node.id}`;
     add({ id, kind: "overview", title: node.title,
       summary: L.status[node.data.status], sourceRefs: node.sourceRefs,
@@ -933,7 +913,6 @@ function wirePath(from, to) {
  * is drawn, and at 0.7 a title is back to the 12px that fitting was rejected for before.
  */
 const OVERVIEW = 0.8;
-const CANDIDATES = 64;
 /** How long a zoom rests before the cut follows it: a recut in mid-pinch moves what is being pinched. */
 const REACH_SETTLE_MS = 250;
 
@@ -949,7 +928,7 @@ const REACH_SETTLE_MS = 250;
  * hour ago outrank a to-do nobody has touched in a week — the thing that is actually in hand.
  * Waiting on the person is still first, because it is the one status that asks them to act.
  *
- *   4 waiting on the person · 3 somebody running on it · 2 open · 1 closed and in hand · 0 history
+ *   3 waiting on the person · 2 somebody running on it · 1 open · 0 closed
  *
  * Within a tier, how lately it moved. Heat decides whether a card is on the chart and never
  * where: what is drawn keeps the record's order, so an update moves only the cards it changes.
@@ -958,25 +937,22 @@ function heat(node) {
   const task = node.data.task;
   const sessions = node.kind === "activity" ? [node.data.session] : node.data.sessions || [];
   const open = node.kind === "activity" || (!!task && OPEN.has(task.status));
-  const tier = task && waitsOnPerson(task) ? 4
-    : sessions.some((s) => s.state === "running") ? 3
-    : open ? 2 : node.data.inHand ? 1 : 0;
+  const tier = task && waitsOnPerson(task) ? 3
+    : sessions.some((s) => s.state === "running") ? 2
+    : open ? 1 : 0;
   return [tier,
     Math.max(instant(task?.latest?.at) ?? 0, instant(task?.statusSince) ?? 0,
       ...sessions.map((s) => instant(s.stateSince) ?? 0))];
 }
-/** A card that is part of what is going on now, rather than what a branch has been through. */
-const inHand = (node) => heat(node)[0] >= 1;
 
 /**
  * **The model is the whole graph; this picks what the window draws of it**, in `frame` at
  * `scale` — `OVERVIEW`, or whatever the person has zoomed out to — and counts what a group holds in
  * hand that did not fit.
  *
- * Nothing but a spent cancellation is kept out of the model (`onHome`), so this is the only
- * place any other card is ever left off the chart. Cards are offered hottest first — the tier
- * in `heat`, so every card in hand is offered before any history — and each is tried against
- * the whole chart laid out afresh:
+ * Everything in the model is in hand (`onHome`), so this is the only place a card in hand is
+ * ever left off the chart. Cards are offered hottest first — the tier in `heat` — and each is
+ * tried against the whole chart laid out afresh:
  *
  * 1. **In a group taken as the centre, everything it holds in hand is drawn**, at any depth
  *    below it, inner groups included: the person pressed in to see this thread. It is the one
@@ -986,13 +962,10 @@ const inHand = (node) => heat(node)[0] >= 1;
  *    ungrouped notices, they took the whole window, and every group was left a bare label. And
  *    for someone who has never grouped anything, every card is ungrouped, so nothing would ever
  *    be cut. What the core puts away it counts, and that count opens the task board.
- * 2. **Every branch with work in hand draws its hottest card that fits**, so no branch reads as
- *    empty when it is only quiet. An ungrouped card is a branch of its own. A branch holding
- *    nothing but history gets no such floor — it is drawn if there is room and not otherwise.
+ * 2. **Every branch draws its hottest card that fits**, so no branch reads as empty when it is
+ *    only quiet. An ungrouped card is a branch of its own.
  * 3. **Then the rest, hottest first, each while the whole still fits.** A card that would not is
- *    passed over and the next is tried, so the shorter side fills. **History is the tail of this
- *    pass**: a branch's finished work is drawn in whatever room its thread's live work leaves,
- *    which on a full day is none and in a group taken as the centre is most of the window.
+ *    passed over and the next is tried, so the shorter side fills.
  * 4. **Pictures last, in what width is left.** A picture spends a rank of width and the width is
  *    both sides' at once, so offered with its card, one picture on the right kept a card still in
  *    progress out of its inner group on the left, and the branch showed one closed eight hours before.
@@ -1000,42 +973,21 @@ const inHand = (node) => heat(node)[0] >= 1;
  * What is drawn keeps the order the record gives it: heat decides whether a card is on the chart,
  * never where, so an update moves only the cards it changes.
  *
- * **Only in-hand cards are counted.** *3 more* is an invitation to press in; "and 47 things
- * that finished" is not one, and the number would be the ledger's depth rather than anything
- * about the work. History that did not fit is simply not drawn.
+ * What did not fit is counted under its parent, *3 more*: an invitation to press in.
  */
 function budgeted(model, frame, tones, scale = OVERVIEW) {
   const children = childIndex(model);
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
   const room = { w: frame.w / Math.min(scale, OVERVIEW), h: frame.h / Math.min(scale, OVERVIEW) };
-  const all = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
+  const cards = model.nodes.filter((n) => n.kind === "task" || n.kind === "activity")
     .sort((a, b) => { const x = heat(a), y = heat(b); return y[0] - x[0] || y[1] - x[1]; });
-  // **What the fitting loop costs is bounded by the window, not by the ledger.** Every offer
-  // lays the whole chart out again, and a complete model can hold hundreds of rows against a
-  // window that draws a dozen. Everything in hand is always a candidate — the sort puts it
-  // first — and history is offered `CANDIDATES` deep at the overview scale, which is several
-  // times what that window has ever drawn, and deeper by the room's area when zoomed out.
-  const depth = Math.ceil(CANDIDATES * (OVERVIEW / Math.min(scale, OVERVIEW)) ** 2);
-  const cards = all.filter((n, i) => inHand(n) || i < depth);
   const shown = new Set();
-  const groupsAbove = (id) => {
-    const out = [];
-    for (let at = parent.get(id); at && at !== model.rootId; at = parent.get(at)) out.push(at);
-    return out;
-  };
-  // **A group is drawn on the way to a card, or because it holds work in hand.** The second
-  // half is what keeps a busy group that lost the fit from vanishing: it is a label and its
-  // count, still holding its rank. The first is what draws a finished group when a branch has
-  // the room for its history. A group with neither is not a node — structure standing where
-  // its content used to be is what this surface refuses.
-  const standing = new Set();
-  for (const card of all) if (inHand(card)) for (const id of groupsAbove(card.id)) standing.add(id);
-  const layout = { sides: sideOf(model, all) };
+  // **Every group is drawn.** A group is in the model only because it holds work in hand, so one
+  // that lost the fit is a label and its count, still holding its rank — never structure
+  // standing where its content used to be, which is what this surface refuses.
+  const layout = { sides: sideOf(model, cards) };
   const cut = () => {
-    const reached = new Set();
-    for (const id of shown) for (const above of groupsAbove(id)) reached.add(above);
-    const keep = (n) => n.id === model.rootId || n.kind === "overview" || shown.has(n.id)
-      || (n.kind === "group" && (standing.has(n.id) || reached.has(n.id)));
+    const keep = (n) => n.id === model.rootId || n.kind === "overview" || n.kind === "group" || shown.has(n.id);
     const ids = new Set(model.nodes.filter(keep).map((n) => n.id));
     return { ...model, nodes: model.nodes.filter((n) => ids.has(n.id)),
       edges: model.edges.filter((e) => ids.has(e.from) && ids.has(e.to)), layout };
@@ -1070,11 +1022,11 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
   };
   const branchOf = (id) => { let at = id; while (parent.get(at) !== model.rootId) at = parent.get(at); return at; };
   const pressedInto = model.nodes.find((n) => n.id === model.rootId)?.kind === "group";
-  if (pressedInto) for (const card of cards) if (inHand(card)) shown.add(card.id);
+  if (pressedInto) for (const card of cards) shown.add(card.id);
   const floored = new Set();
   for (const card of cards) {
     const branch = branchOf(card.id);
-    if (!shown.has(card.id) && inHand(card) && !floored.has(branch) && offer([card.id])) floored.add(branch);
+    if (!shown.has(card.id) && !floored.has(branch) && offer([card.id])) floored.add(branch);
   }
   fill(cards);
   const pictures = (list, fits) => {
@@ -1085,8 +1037,8 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
   };
   pictures(cards);
   const hidden = new Map();
-  for (const card of all) {
-    if (shown.has(card.id) || !inHand(card)) continue;
+  for (const card of cards) {
+    if (shown.has(card.id)) continue;
     hidden.set(parent.get(card.id), (hidden.get(parent.get(card.id)) || 0) + 1);
   }
   return { model: cut(), hidden };
@@ -1106,7 +1058,7 @@ function sideOf(model, cards) {
   const parent = new Map(model.edges.filter((e) => e.primary).map((e) => [e.to, e.from]));
   const branchOf = (id) => { let at = id; while (parent.get(at) && parent.get(at) !== model.rootId) at = parent.get(at); return at; };
   const load = new Map();
-  for (const card of cards.filter(inHand)) { const b = branchOf(card.id); load.set(b, (load.get(b) || 0) + CARD_H + gapAt(2)); }
+  for (const card of cards) { const b = branchOf(card.id); load.set(b, (load.get(b) || 0) + CARD_H + gapAt(2)); }
   const held = branches.filter((b) => load.has(b.id));
   const weights = held.map((b) => load.get(b.id) + (b.kind === "group" ? GROUP_H : 0));
   const sides = new Map(), sum = [0, 0];
@@ -1122,12 +1074,6 @@ function sideOf(model, cards) {
     [...held.keys()].sort((a, b) => weights[b] - weights[a]).forEach((i) => {
       const side = sum[0] <= sum[1] ? 0 : 1; sides.set(held[i].id, side); sum[side] += weights[i];
     });
-  }
-  // A branch with nothing in hand is drawn only in room the work left, so it weighs nothing in
-  // the split above and is then dealt to whichever side is shorter, in the record's order.
-  for (const b of branches) {
-    if (sides.has(b.id)) continue;
-    const side = sum[0] <= sum[1] ? 0 : 1; sides.set(b.id, side); sum[side] += b.kind === "group" ? GROUP_H : CARD_H;
   }
   return sides;
 }

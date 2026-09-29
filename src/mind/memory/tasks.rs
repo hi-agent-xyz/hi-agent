@@ -291,6 +291,9 @@ pub enum Hand {
     Mind,
 }
 
+/// The tail the store puts on a [`Hand::Board`] transition — see [`TimelineEntry::moved`].
+const BOARD_MARK: &str = " (on the board)";
+
 impl TimelineEntry {
     pub fn new(kind: TimelineKind, at: DateTime<Utc>, text: impl Into<String>) -> Self {
         Self { at: Some(at), kind, text: text.into() }
@@ -305,7 +308,7 @@ impl TimelineEntry {
     fn moved(before: TaskStatus, after: TaskStatus, at: DateTime<Utc>, hand: Hand) -> Self {
         let mut text = format!("{} \u{2192} {}", before.as_str(), after.as_str());
         if hand == Hand::Board {
-            text.push_str(" (on the board)");
+            text.push_str(BOARD_MARK);
         }
         Self::new(TimelineKind::Moved, at, text)
     }
@@ -448,6 +451,17 @@ const SCHEMA_KEYS: [&str; 16] = [
 ];
 
 impl Task {
+    /// Whether the person put this row where it stands, on the board: the newest `moved`
+    /// line — the one that reached the current status — carries the store's board mark. A row
+    /// the person closed and a mind reopened and closed again answers for the second close.
+    pub fn moved_by_board(&self) -> bool {
+        self.timeline
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == TimelineKind::Moved)
+            .is_some_and(|entry| entry.text.ends_with(BOARD_MARK))
+    }
+
     pub fn new(title: &str, status: TaskStatus) -> Self {
         let now = Utc::now();
         Self {
@@ -3074,6 +3088,17 @@ mod tests {
         let mut found = task("kt8-111", TaskStatus::Done);
         found.stamp_transition(TaskStatus::Doing, at(1, 2), Hand::Witnessed);
         assert_eq!(found.timeline.last().unwrap().text, "doing \u{2192} done");
+        assert!(from_the_board.moved_by_board());
+        assert!(!found.moved_by_board());
+    }
+
+    #[test]
+    fn moved_by_board_answers_for_the_move_that_reached_the_current_status() {
+        let mut row = task("kt8-111", TaskStatus::Doing);
+        row.set_status(TaskStatus::Done, at(1, 2), Hand::Board);
+        row.set_status(TaskStatus::Doing, at(1, 3), Hand::Mind);
+        row.set_status(TaskStatus::Done, at(1, 4), Hand::Mind);
+        assert!(!row.moved_by_board(), "the second close was a mind's");
     }
 
     #[tokio::test]

@@ -108,6 +108,9 @@ struct RowDto {
     /// The newest line anybody *said* on the row — see [`latest_moment`]. This is the one line
     /// a card prints and the only thing that answers whether a person is being waited on.
     latest: Option<MomentDto>,
+    /// Whether the person put the row in its current status on the board
+    /// ([`Task::moved_by_board`]). Home reads it: a row the person closed is not news to them.
+    by_hand: bool,
     /// What the row's lines placed, newest first and at most [`ROW_SHOWN`]: the views it made
     /// and the attachments its lines carried — see [`shown`]. Home draws its tiles from this
     /// and reads nothing else for them.
@@ -467,6 +470,7 @@ fn row(task: &Task, malformed: bool, showing: &Showing<'_>) -> RowDto {
         cancelled_at: task.cancelled_at.map(rfc3339),
         liveness: liveness_dto(task),
         latest: latest_moment(task, showing),
+        by_hand: task.moved_by_board(),
         attached: shown(task, showing),
         malformed,
         extra,
