@@ -4,10 +4,9 @@
 //! native macOS chrome (titlebar, traffic lights, drag, resize). Opened by a left-click
 //! on the tray icon or the "Open Hi Agent" menu item.
 //!
-//! **A real interactive window under the Accessory policy.** A titled window becomes key
-//! on its own, but [`KeyWindow`] still overrides `canBecomeKeyWindow` /
-//! `canBecomeMainWindow` as a belt-and-braces guarantee that the web view's text input
-//! takes keystrokes even though the app runs Accessory (no Dock icon). The mask carries
+//! **A real interactive window.** A titled window becomes key on its own, but
+//! [`KeyWindow`] still overrides `canBecomeKeyWindow` / `canBecomeMainWindow` as a
+//! belt-and-braces guarantee that the web view's text input takes keystrokes. The mask carries
 //! `Titled | Closable | Miniaturizable | Resizable`, so the window is movable
 //! and resizable and the traffic lights close/minimize the window. The window opts into
 //! `FullScreenPrimary` collection behavior so the green button enters native full-screen
@@ -299,7 +298,7 @@ define_class!(
 define_class!(
     // A titled NSWindow that can still become key/main. Titled windows do so by default;
     // these overrides are a belt-and-braces guarantee that the web view's text input
-    // keeps taking keystrokes under the Accessory activation policy.
+    // keeps taking keystrokes.
     #[unsafe(super(NSWindow))]
     #[thread_kind = MainThreadOnly]
     #[name = "HiAgentFaceWindow"]
@@ -461,8 +460,8 @@ define_class!(
 );
 
 impl Host {
-    /// Bring the app forward (so the face's input can take keys under the Accessory
-    /// policy) and show the window key + front — at whatever frame it already has.
+    /// Bring the app forward and show the window key + front — at whatever frame it
+    /// already has.
     /// Deliberately does *not* center or resize: a reopen finds the window where the
     /// user left it (see [`FRAME_AUTOSAVE_NAME`]); only the very first open of a fresh
     /// install is centered, once, at install.
@@ -475,7 +474,7 @@ impl Host {
         apply_face_theme(&iv.window, &iv.label, &iv.data_dir);
         // SAFETY: main-thread AppKit calls. `activateIgnoringOtherApps:` is the pre-Sonoma
         // activation call but still works; the window then becomes key so its web view's
-        // input can take keystrokes despite the Accessory activation policy.
+        // input can take keystrokes.
         unsafe {
             // If the load fired at install never committed — the server thread hadn't
             // bound its listener yet, so the page is still about:blank — re-issue it now.

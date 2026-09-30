@@ -4,11 +4,17 @@
 //! AppKit (`NSApplication`, `NSStatusItem`, `NSMenu`) **must run on the process
 //! main thread**, which must own the AppKit event loop — so [`run`] takes a
 //! [`MainThreadMarker`] and blocks on `NSApplication::run` for the process life.
-//! The activation policy is set to *Accessory*, so there is no Dock icon or visible
-//! app menu — just the menu-bar item (the programmatic equivalent of `LSUIElement`, so
-//! no `.app`/Info.plist is needed). We still install an `NSApplication.mainMenu` with
-//! the standard Edit commands: AppKit uses its key equivalents to route ⌘V/⌘C/⌘X and
-//! friends into the key window's first responder, including the face's `WKWebView`.
+//! The app is an ordinary *Regular* one — Dock icon, ⌘-Tab, its own menu bar — with the
+//! status item beside it. It used to be *Accessory* (menu bar only), which stopped
+//! being free on macOS 27: a press on an Accessory app's status item hands activation
+//! to whichever app owns the menu bar for ~20 ms, and that app raises its windows over
+//! the face in the gap, so every tray click on an open window flashed the browser
+//! behind it. An app that owns the menu bar has nothing to hand activation to. Being
+//! Regular means the Dock speaks to us too: [`TrayTarget`] is the app delegate, so a
+//! Dock-icon click reopens the face and the Dock's Quit takes the same graceful path as
+//! the menu's. The `NSApplication.mainMenu` carries the standard Edit commands, whose
+//! key equivalents route ⌘V/⌘C/⌘X and friends into the key window's first responder,
+//! including the face's `WKWebView`.
 //!
 //! Unlike the cocoa-rs FFI the other macOS vendors use, the tray needs an
 //! Objective-C action target for the menu clicks; this uses the `objc2` family,
@@ -48,11 +54,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::anyhow;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, sel, AnyThread, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSCellImagePosition, NSEventModifierFlags,
-    NSEventType, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusBarButton, NSStatusItem,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
+    NSApplicationTerminateReply, NSCellImagePosition, NSEventModifierFlags, NSEventType, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusBarButton, NSStatusItem,
     NSVariableStatusItemLength,
 };
 use objc2_foundation::{MainThreadMarker, NSData, NSSize, NSString};
@@ -65,7 +71,8 @@ struct Ivars {
 }
 
 define_class!(
-    // A plain NSObject that serves as the menu items' target/action receiver.
+    // A plain NSObject that serves as the menu items' target/action receiver, and as the
+    // application delegate (the Dock's reopen and Quit).
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "HiAgentTrayTarget"]
@@ -92,9 +99,7 @@ define_class!(
         /// not stop AppKit here — the process exit does it.
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: Option<&AnyObject>) {
-            super::macos_window::hide();
-            hide_status_item();
-            self.ivars().shutdown.notify_waiters();
+            self.quit_now();
         }
 
         /// "Settings…" → open the native SwiftUI preferences window (General / Account /
@@ -106,12 +111,40 @@ define_class!(
         }
 
     }
+
+    unsafe impl NSApplicationDelegate for TrayTarget {
+        /// A Dock-icon click (or a relaunch from Finder) while the process is running.
+        /// Closing the face only hides it, so with no window visible AppKit would do
+        /// nothing — raise the face, exactly as the tray's left-click does.
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn should_handle_reopen(&self, _sender: &NSApplication, _has_visible: bool) -> bool {
+            super::macos_window::open();
+            false
+        }
+
+        /// The Dock's Quit (and a logout's) arrives as `terminate:`, which would end the
+        /// process on the spot and skip the drain + codex reap. Take the menu's Quit path
+        /// instead and cancel AppKit's own termination — the server thread exits the
+        /// process once it has cleaned up.
+        #[unsafe(method(applicationShouldTerminate:))]
+        fn should_terminate(&self, _sender: &NSApplication) -> NSApplicationTerminateReply {
+            self.quit_now();
+            NSApplicationTerminateReply::TerminateCancel
+        }
+    }
 );
 
 impl TrayTarget {
     fn new(mtm: MainThreadMarker, shutdown: Arc<Notify>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(Ivars { shutdown });
         unsafe { msg_send![super(this), init] }
+    }
+
+    /// Hide the window and the icon now, then let the server thread drain and exit.
+    fn quit_now(&self) {
+        super::macos_window::hide();
+        hide_status_item();
+        self.ivars().shutdown.notify_waiters();
     }
 }
 
@@ -484,8 +517,8 @@ fn command_item(
 }
 
 /// Install the responder-chain command menu that a nib-less AppKit application
-/// does not get automatically. The app remains an Accessory (no Dock icon or
-/// visible menu bar), but `NSApplication` can now resolve standard editing key
+/// does not get automatically. It is the app's menu bar, and through it `NSApplication`
+/// resolves standard editing key
 /// equivalents against the key window's first responder. This is what lets a
 /// focused `WKWebView` turn ⌘V into a DOM paste event instead of the system beep.
 fn install_main_menu(
@@ -551,8 +584,8 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
         .ok_or_else(|| anyhow!("the menu bar must be set up on the main thread"))?;
 
     let app = NSApplication::sharedApplication(mtm);
-    // Accessory: live in the menu bar only — no Dock icon or visible app menu.
-    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    // Regular, not Accessory — see the module doc for the flash that decided it.
+    app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
     // Force the app-wide appearance from the stored theme before any window installs, so
     // the face window's pre-paint bar color reads the right light/dark from the start
@@ -565,6 +598,8 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
 
     let target = TrayTarget::new(mtm, shutdown);
     install_main_menu(&app, mtm, &target);
+    // The delegate is held weakly; `target` is leaked below, so it outlives the app.
+    app.setDelegate(Some(ProtocolObject::from_ref(&*target)));
 
     // SAFETY: all of these are standard AppKit setup calls made on the main thread
     // (guaranteed by `mtm`); the objects are kept alive by the locals below, which

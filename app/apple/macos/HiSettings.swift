@@ -35,7 +35,6 @@ final class SettingsWindowController {
     private var window: NSWindow?
 
     func show(port: UInt16) {
-        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
         if let window = window {

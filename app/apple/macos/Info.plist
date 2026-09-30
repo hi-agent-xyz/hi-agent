@@ -12,8 +12,6 @@
     <key>CFBundleVersion</key><string>0.2.0</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <!-- Menu-bar (status item) app, no Dock icon — matches run_with_tray. -->
-    <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Hi Agent listens when you hold the attention gesture so it can hear you.</string>
     <key>NSCameraUsageDescription</key>
