@@ -63,6 +63,133 @@ async fn loopback_is_ungated_and_off_box_is_not() {
 }
 
 #[tokio::test]
+async fn a_share_grants_declared_attachments_even_when_loaded_after_the_page() {
+    use hi_agent::foundation::{attachments, credentials};
+
+    let (_loopback, off_box, dir, _seams) = spawn().await;
+    let source = dir.path().join("picture.png");
+    image::RgbImage::from_pixel(32, 32, image::Rgb([20, 130, 80]))
+        .save(&source)
+        .unwrap();
+    let placed = attachments::place(dir.path(), &source).await.unwrap();
+    let private_source = dir.path().join("private.png");
+    image::RgbImage::from_pixel(32, 32, image::Rgb([130, 20, 80]))
+        .save(&private_source)
+        .unwrap();
+    let private = attachments::place(dir.path(), &private_source).await.unwrap();
+
+    let share = server::share::Share {
+        of: "view:court/review".into(),
+        module_url: "/views/_compiled/ab12.mjs".into(),
+        key_hash: None,
+        created_at: chrono::Utc::now(),
+        description: String::new(),
+        attachments: vec![placed.id.clone()],
+        resources: vec![],
+    };
+    credentials::set_setting(dir.path(), "view_shares", &serde_json::to_string(&vec![share]).unwrap())
+        .unwrap();
+    let page = dir.path().join("views/_shares/court/review.html");
+    std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+    std::fs::write(&page, "<html><head></head><body>Review</body></html>").unwrap();
+    let resource = dir.path().join("views/court/review.assets/late.png");
+    std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
+    std::fs::write(&resource, b"published image").unwrap();
+    std::fs::write(dir.path().join("views/court/other.jsx"), "private view").unwrap();
+    std::fs::write(dir.path().join("views/court/review.share.json"), "[]").unwrap();
+    let other_resource = dir.path().join("views/court/other.assets/private.png");
+    std::fs::create_dir_all(other_resource.parent().unwrap()).unwrap();
+    std::fs::write(&other_resource, b"private image").unwrap();
+
+    let client = reqwest::Client::new();
+    let response = client.get(format!("{off_box}/court/review")).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-security-policy"], "connect-src 'self'");
+    assert_eq!(client.get(format!("{off_box}/views/court/review.assets/late.png")).send().await.unwrap().status(), 200);
+    for path in ["court/other.jsx", "court/review.share.json", "court/other.assets/private.png"] {
+        assert_eq!(
+            client.get(format!("{off_box}/views/{path}")).send().await.unwrap().status(),
+            401,
+            "private view file: {path}",
+        );
+    }
+    for suffix in ["about.v1", "preview.v1"] {
+        let response = client
+            .get(format!("{off_box}/api/attachments/{}/{suffix}", placed.id))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "declared attachment: {suffix}");
+    }
+    let response = client
+        .get(format!("{off_box}/api/attachments/{}/preview.v1", private.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401, "another private attachment remains gated");
+    assert_eq!(client.get(format!("{off_box}/api/tools")).send().await.unwrap().status(), 401);
+    #[cfg(unix)]
+    {
+        let outside = dir.path().join("private.txt");
+        std::fs::write(&outside, "not public").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.path().join("views/court/review.assets/linked.txt")).unwrap();
+        assert_eq!(client.get(format!("{off_box}/views/court/review.assets/linked.txt")).send().await.unwrap().status(), 404);
+    }
+
+    credentials::set_setting(dir.path(), "view_shares", "[]").unwrap();
+    assert_eq!(
+        client
+            .get(format!("{off_box}/api/attachments/{}/preview.v1", placed.id))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401,
+        "withdrawing the share withdraws its attachments",
+    );
+}
+
+#[tokio::test]
+async fn named_view_resource_is_read_through_its_view_without_global_attachment_access() {
+    use hi_agent::foundation::{attachments, credentials};
+    let (_loopback, off_box, dir, _seams) = spawn().await;
+    let source = dir.path().join("image.png");
+    image::RgbImage::from_pixel(32, 32, image::Rgb([30, 100, 60])).save(&source).unwrap();
+    let image = attachments::place(dir.path(), &source).await.unwrap();
+    let bindings = dir.path().join("views/court/review.resources.json");
+    std::fs::create_dir_all(bindings.parent().unwrap()).unwrap();
+    std::fs::write(&bindings, format!("{{\"hero\":\"att:{}\"}}", image.id)).unwrap();
+    let share = server::share::Share {
+        of: "view:court/review".into(),
+        module_url: "/views/_compiled/ab12.mjs".into(),
+        key_hash: None,
+        created_at: chrono::Utc::now(),
+        description: String::new(),
+        attachments: vec![],
+        resources: vec!["hero".into()],
+    };
+    credentials::set_setting(dir.path(), "view_shares", &serde_json::to_string(&vec![share]).unwrap()).unwrap();
+    let client = reqwest::Client::new();
+    let url = format!("{off_box}/views/court/review.assets/_resources/hero");
+    let about: serde_json::Value = client.get(format!("{url}/about.v1")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(about["preview"], "/views/court/review.assets/_resources/hero/preview.v1");
+    assert_eq!(client.get(format!("{url}/preview.v1")).send().await.unwrap().status(), 200);
+    assert_eq!(client.get(format!("{url}/original")).send().await.unwrap().status(), 200);
+    assert_eq!(client.get(format!("{url}/missing")).send().await.unwrap().status(), 401);
+    let next = dir.path().join("new-image.png");
+    image::RgbImage::from_pixel(32, 32, image::Rgb([160, 35, 100])).save(&next).unwrap();
+    let replaced = attachments::place(dir.path(), &next).await.unwrap();
+    std::fs::write(&bindings, format!("{{\"hero\":\"att:{}\",\"extra\":\"att:{}\"}}", replaced.id, image.id)).unwrap();
+    let updated: serde_json::Value = client.get(format!("{url}/about.v1")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(updated["ref"], format!("att:{}", replaced.id));
+    assert_eq!(client.get(format!("{off_box}/views/court/review.assets/_resources/extra/preview.v1")).send().await.unwrap().status(), 401);
+    assert_eq!(client.get(format!("{off_box}/api/attachments/{}/preview.v1", image.id)).send().await.unwrap().status(), 401);
+    assert_eq!(client.get(format!("{off_box}/views/court/other.assets/_resources/hero/preview.v1")).send().await.unwrap().status(), 401);
+    credentials::set_setting(dir.path(), "view_shares", "[]").unwrap();
+    assert_eq!(client.get(format!("{url}/preview.v1")).send().await.unwrap().status(), 401);
+}
+
+#[tokio::test]
 async fn the_open_routes_answer_before_anything_is_paired() {
     let (_loopback, off_box, _dir, _seams) = spawn().await;
     let client = reqwest::Client::new();

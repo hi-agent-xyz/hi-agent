@@ -61,6 +61,7 @@ pub mod tools;
 pub mod view;
 pub mod view_bus;
 pub mod share;
+pub mod view_resources;
 pub mod view_shots;
 pub mod view_watch;
 pub mod vision;

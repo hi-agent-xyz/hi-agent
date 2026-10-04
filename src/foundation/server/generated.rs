@@ -36,8 +36,25 @@ pub async fn views_file(
     if !safe_views_path(&path) {
         return (StatusCode::NOT_FOUND, "not found\n").into_response();
     }
-    let full = state.data_dir.join("views").join(&path);
-    super::disk_file::serve(req, &full, crate::mind::memory::media::content_type(&path), cache_control(&path), "not found\n")
+    if let Some((view_ref, resource)) = path.split_once(".assets/_resources/") {
+        let Some((name, spec)) = resource.split_once('/') else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        if spec.contains('/') {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        return super::view_resources::serve(state, view_ref, name, spec, req).await;
+    }
+    let root = state.data_dir.join("views");
+    let full = root.join(&path);
+    // A symlink inside a shared resource directory must not publish files outside views.
+    let (Ok(root_real), Ok(full_real)) = (tokio::fs::canonicalize(&root).await, tokio::fs::canonicalize(&full).await) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !full_real.starts_with(root_real) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    super::disk_file::serve(req, &full_real, crate::mind::memory::media::content_type(&path), cache_control(&path), "not found\n")
         .await
 }
 

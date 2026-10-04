@@ -600,7 +600,7 @@ what you need as bare modules:
 
 - `@hi/core` — the live session as hooks: `usePresence()`, `useSpeech()`,
   `useChannels()`, `useSendText()`. Read or drive the conversation from inside a view
-  with these. And `<Attachment id="att:…" />`, which draws a picture or a clip the work
+  with these. And `<Attachment view="<ref>" resource="hero" />`, which draws a picture or a clip the work
   made — see *What the work made* below.
 - `motion/react` — Motion, when (and only when) a moment earns movement.
 - `@open-file-viewer/core` — show a file *as itself*: `createViewer({ container, files,
@@ -772,7 +772,8 @@ discs hold. A poster ignores both. A board or a table wants the second one as
 **What the work made is an attachment, not a file of yours.** A figure, a frame, a clip —
 the result a task produced, the evidence this view lays out — is placed once with
 `hi_add_attachment`, which answers with its `att:` id, and drawn with
-`<Attachment id="att:…" />` from `@hi/core`. It is the component the host draws the same
+`<Attachment view="<ref>" resource="hero" />` from `@hi/core`, after registering
+`hero` in `<ref>.resources.json`. It is the component the host draws the same
 thing with on the person's board, on the stage and in the conversation: a picture takes the width you
 give it at its own shape and opens whole when pressed; a clip plays and seeks in every
 browser this product runs in, one no browser decodes included, because the host makes it a
@@ -780,6 +781,14 @@ copy that plays. So never copy one into your folder, and never write a player ar
 `fetch`, a blob URL and a `<video>` of your own is what this replaces, and it is what used
 to come back broken. Give it a box and a `caption` saying what it shows; lay the page out
 around it like any other element.
+
+Register each attachment the view uses in `views/<ref>.resources.json`, beside its JSX.
+This is a JSON object mapping stable names to `att:` refs, for example
+`{"hero":"att:3f9a0c11d2e4b5a6"}`. Draw it using
+`<Attachment view="<ref>" resource="hero" />` from `@hi/core` (use the actual view
+ref). This same path works locally and on a shared page, even when a picture appears
+after a click. Keep all names the view can use in the binding file; changing a picture
+only changes its binding. Never embed an `att:` id directly in a shareable view.
 
 **A view is for composition, never a frame for one thing.** When the whole of what you
 would build is one picture or one clip in the middle of the screen, the host already draws
@@ -789,13 +798,14 @@ is something to compose around it: things side by side, words laid over a pictur
 comparison, a report.
 
 **Images: never hotlink.** A remote URL can fail CORS, be hotlink-blocked, or 404 —
-leaving an ugly broken box. Instead — for the view's own material, a photograph found for
-a poster or a portrait for a card — **download the image into your project folder** with
-your own tools (find it via web/image search, then `curl`/fetch it to a file next to your
-view), and reference it by its served path: anything you save in the
-views tree is served at `/views/<the same relative path>`, so a file you write to
-`badminton-top10/leader.jpg` is `<img src="/views/badminton-top10/leader.jpg">`.
-That path always loads and keeps your source small.
+leaving an ugly broken box. For a view's own material, such as a poster photograph,
+**download it into `views/<ref>.assets/`** (beside `<ref>.jsx`) and reference its
+served path. For `badminton-top10/leader.jsx`, save the picture to
+`views/badminton-top10/leader.assets/cup.jpg` and use
+`<img src="/views/badminton-top10/leader.assets/cup.jpg">`. This entire folder is
+available to visitors when the view is shared, even for images loaded after a click;
+keep only material intended for that view's visitors in it. Other project files are
+not shared. A single-segment ref uses the same convention (`views/poster.assets/`).
 
 **A picture that fills the frame fills it — however you write it.** Nothing is
 reserved, so a photograph reaches all four edges whether you set it as the root's
@@ -805,7 +815,7 @@ reserved, so a photograph reaches all four edges whether you set it as the root'
 export default function AutumnTea() {
   return (
     <main style={{
-      background: `url("/views/autumn-milk-tea/cup.jpg") center / cover no-repeat`,
+      background: `url("/views/autumn-milk-tea.assets/cup.jpg") center / cover no-repeat`,
     }}>
       … your words over it …
     </main>

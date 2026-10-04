@@ -4,15 +4,13 @@
 //!
 //! **A view is checked; an attachment is not.** A shared view is served to somebody with no
 //! session, so it is rendered here the way that person will see it — **with `/api/*` refused**,
-//! the attachment routes excepted — and the run is read for answers that would otherwise each
+//! with view-owned resources excepted — and the run is read for answers that would otherwise each
 //! need a mechanism of their own:
 //!
 //! | Question | Read from |
 //! |---|---|
 //! | may this be shared at all? | the page's own verdict, plus a blank frame |
 //! | what is the page's HTML? | the settled DOM |
-//! | what may it connect to? | what it actually asked for |
-//! | which attachments does it draw? | the attachment routes it asked for |
 //!
 //! The first is the one that earns the check. A view that fetches its own data renders
 //! half-empty under a share's scope and **looks fine in its source**; without this, the owner
@@ -46,7 +44,7 @@ fn asked(url: &str, origin: &str) -> Asked {
         return Asked::Inert;
     }
     match url.strip_prefix(origin.trim_end_matches('/')).filter(|rest| rest.starts_with('/')) {
-        // The query is dropped: a share's scope is paths, and so is a `connect-src` source.
+        // The query is dropped: share grants are written in terms of paths.
         Some(path) => Asked::Here(path.split(['?', '#']).next().unwrap_or(path).to_string()),
         None => Asked::Elsewhere(url.chars().take(120).collect()),
     }
@@ -62,7 +60,7 @@ fn attachment_in(path: &str) -> Option<&str> {
 /// Whether a URL the page asked for is one of a view's own files.
 ///
 /// The list is derived from the ref rather than stored, so it cannot drift from what
-/// the view is: this view's own compiled module, this view's own folder, and the
+/// the view is: this view's own compiled module, its `<ref>.assets/` folder, and the
 /// build's shared assets. **Never `/views/` at large** — that is one wildcard route
 /// with every view's source and every build artifact behind it, and opening it would
 /// hand over every view the agent has built to share one poster.
@@ -80,13 +78,10 @@ fn in_scope(path: &str, view_ref: &str, module_url: &str) -> bool {
     if path == format!("/views/_shots/ref/{view_ref}.png") {
         return true;
     }
-    // The view's own folder: `badminton-top10/leader` owns `/views/badminton-top10/`.
-    // A single-segment ref owns nothing under `/views/`, because it has no folder of
-    // its own to own — its files would be siblings of every other view's.
-    match view_ref.rsplit_once('/') {
-        Some((project, _)) => path.starts_with(&format!("/views/{project}/")),
-        None => false,
-    }
+    // A ref owns only its explicitly named resource directory, at any nesting depth.
+    // A project's directory may also contain other views, manifests and private data.
+    path.starts_with(&format!("/views/{view_ref}.assets/"))
+        && !path.starts_with(&format!("/views/{view_ref}.assets/_resources/"))
 }
 
 /// What one check found.
@@ -101,12 +96,7 @@ pub struct ShareCheck {
     /// The settled DOM: what an agent reading the URL gets, and what a link preview
     /// scrapes. `None` only when the render itself failed.
     pub html: Option<String>,
-    /// What the page may connect to, as paths — the `connect-src` this share should
-    /// carry. Empty means `'none'`, which is the ordinary case for a view that holds
-    /// its own data.
-    pub connect_src: Vec<String>,
-    /// The attachments the view drew, by id — what the share's scope grows by, and
-    /// nothing else of the store.
+    /// Legacy field retained for callers of the render check; grants never use requests.
     pub attachments: Vec<String>,
     /// The picture, for the owner to look at before publishing. The check renders it
     /// anyway, and *"this is what you are about to publish"* is worth more than a
@@ -145,8 +135,6 @@ pub async fn check(view_ref: &str, module_url: &str) -> anyhow::Result<ShareChec
     // Then what it reached for. A refused request is not a defect in the view — it is
     // a view that cannot be shared *as it is*, which is a different sentence and the
     // one the owner needs.
-    let mut connect_src = Vec::new();
-    let mut drawn: Vec<String> = Vec::new();
     for url in &rendered.requested {
         let path = match asked(url, &ctx.base_url) {
             Asked::Inert => continue,
@@ -165,22 +153,17 @@ pub async fn check(view_ref: &str, module_url: &str) -> anyhow::Result<ShareChec
         if path == "/render/view" {
             continue; // the host page itself
         }
-        // An attachment it embeds. Let through by the render and granted by the share, one
-        // id at a time: an `<Attachment>` whose id this core does not hold 404s, and the
-        // render's problems above already refuse that.
+        // A global attachment ID has no view ownership. The view must use its
+        // registered resource path, which also works for delayed requests.
         if let Some(id) = attachment_in(&path) {
-            if !drawn.iter().any(|seen| seen == id) {
-                drawn.push(id.to_string());
-            }
-            if !connect_src.contains(&path) {
-                connect_src.push(path);
-            }
+            refusals.push(format!("attachment att:{id} is global; register a view resource and use its view path"));
             continue;
         }
-        if in_scope(&path, view_ref, module_url) {
-            if !connect_src.contains(&path) {
-                connect_src.push(path);
-            }
+        // The route itself rejects unknown names; publication separately validates
+        // all bindings before this render becomes a share.
+        if path.starts_with(&format!("/views/{view_ref}.assets/_resources/"))
+            || in_scope(&path, view_ref, module_url)
+        {
             continue;
         }
         let refusal = if path.starts_with("/api/") {
@@ -197,8 +180,7 @@ pub async fn check(view_ref: &str, module_url: &str) -> anyhow::Result<ShareChec
         ok: refusals.is_empty(),
         refusals,
         html: rendered.html,
-        connect_src,
-        attachments: drawn,
+        attachments: Vec::new(),
         png: rendered.png,
     })
 }
@@ -292,13 +274,13 @@ pub struct Share {
     /// the page a reader sees before deciding to open it.
     #[serde(default)]
     pub description: String,
-    /// What the page may connect to, read off the check rather than declared.
-    #[serde(default)]
-    pub connect_src: Vec<String>,
-    /// The attachments this share serves, by id: the one it is of, or the ones its view's
-    /// check saw it draw. Nothing else of the store is reachable through it.
+    /// The attachments this share serves, by id: the one it is of, or those fixed at
+    /// publication from earlier share records. New views use named resources.
     #[serde(default)]
     pub attachments: Vec<String>,
+    /// Names authorized at publication; each name resolves to its current attachment.
+    #[serde(default)]
+    pub resources: Vec<String>,
 }
 
 impl Share {
@@ -330,7 +312,16 @@ impl Share {
             return true;
         }
         match &shared {
-            Shared::View(view_ref) => in_scope(path, view_ref, &self.module_url),
+            Shared::View(view_ref) => {
+                let prefix = format!("/views/{view_ref}.assets/_resources/");
+                if let Some(rest) = path.strip_prefix(&prefix) {
+                    return rest.split_once('/').is_some_and(|(name, spec)| {
+                        self.resources.iter().any(|allowed| allowed == name)
+                            && matches!(spec, "about.v1" | "preview.v1" | "original" | "playable" | "proxy.v1")
+                    });
+                }
+                in_scope(path, view_ref, &self.module_url)
+            }
             Shared::Attachment(_) => path == self.module_url || path.starts_with("/assets/"),
         }
     }
@@ -474,20 +465,20 @@ pub async fn open(
                 key_hash: None,
                 created_at: chrono::Utc::now(),
                 description: description.trim().to_string(),
-                connect_src: Vec::new(),
                 attachments: vec![id.clone()],
+                resources: Vec::new(),
             }
         }
         Shared::View(view_ref) => {
-            let (module_url, checked) = check_view(data_dir, view_ref).await?;
+            let (module_url, checked, resources) = check_view(data_dir, view_ref).await?;
             Share {
                 of: shared.of(),
                 module_url,
                 key_hash: None,
                 created_at: chrono::Utc::now(),
                 description: description.trim().to_string(),
-                connect_src: checked.connect_src,
                 attachments: checked.attachments,
+                resources,
             }
         }
     };
@@ -508,7 +499,7 @@ pub async fn open(
 async fn check_view(
     data_dir: &std::path::Path,
     view_ref: &str,
-) -> Result<(String, ShareCheck), Refused> {
+) -> Result<(String, ShareCheck, Vec<String>), Refused> {
     if let Some(why) = name_collision(view_ref) {
         return Err(Refused::Name(why));
     }
@@ -532,6 +523,9 @@ async fn check_view(
         .compile(&source)
         .await
         .map_err(|e| Refused::Broken(format!("the view did not compile: {e}")))?;
+    let resources = super::view_resources::bindings(data_dir, view_ref)
+        .await.map_err(|e| Refused::Check(vec![e]))?
+        .into_keys().collect();
 
     let checked =
         check(view_ref, &module_url).await.map_err(|e| Refused::Broken(format!("{e:#}")))?;
@@ -560,7 +554,7 @@ async fn check_view(
     if super::view_shots::url_for_ref(data_dir, view_ref).is_none() {
         super::view_shots::take_ref(data_dir, view_ref, &module_url).await;
     }
-    Ok((module_url, checked))
+    Ok((module_url, checked, resources))
 }
 
 /// Stop publishing what `named` names. Idempotent, and it takes a view's page with it — a
@@ -608,8 +602,8 @@ fn presented_key(uri: &axum::http::Uri, headers: &axum::http::HeaderMap) -> Opti
 ///
 /// Read by the gate, so it answers for the page *and* everything the page pulls: a
 /// shared view whose pictures 401 is not shared. The scope is still the derived one —
-/// the page's module, a view's own folder, `/assets/*`, and the attachments it draws —
-/// so a share opens exactly what the check watched it use and nothing else.
+/// the page's module, its own resource folder and registered names, `/assets/*`, and
+/// attachments retained by legacy share records.
 pub fn grants(
     data_dir: &std::path::Path,
     uri: &axum::http::Uri,
@@ -739,17 +733,6 @@ async fn origin(
     format!("{scheme}://{host}")
 }
 
-/// `connect-src` for a share: each path it was seen to use, **absolute**. A source that is
-/// only a path is not a source at all — a browser ignores it and the directive falls back to
-/// `'none'` — so a shared view that read its own data file was refused it by the very list
-/// that named it.
-fn connect_src(origin: &str, paths: &[String]) -> String {
-    if paths.is_empty() {
-        return "'none'".to_string();
-    }
-    paths.iter().map(|p| format!("{origin}{p}")).collect::<Vec<_>>().join(" ")
-}
-
 /// `GET /<name>` — a shared view or attachment, to somebody who is not the owner.
 ///
 /// Reached from the router's fallback rather than a route of its own, so a share can
@@ -820,15 +803,13 @@ pub async fn serve(
         axum::http::header::CONTENT_TYPE,
         axum::http::HeaderValue::from_static("text/html; charset=utf-8"),
     );
-    // The same list the gate enforces, said again to the browser. One allow-list, two
-    // places it is applied, so a view that grows an appetite fails visibly rather than
-    // reaching further.
-    if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
-        "connect-src {}",
-        connect_src(&origin, &share.connect_src)
-    )) {
-        headers_out.insert(axum::http::header::CONTENT_SECURITY_POLICY, v);
-    }
+    // CSP limits requests to this core; the share gate makes the per-path decision.
+    // A request made after the check (e.g. a lazy picture's about.v1) must not be
+    // refused merely because Chrome never happened to ask for it during publication.
+    headers_out.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static("connect-src 'self'"),
+    );
     // An unlisted page is not for a shared cache to keep; a public one may be, and the
     // short life is the whole of what withdrawing it can promise.
     let cache = if share.key_hash.is_some() { "private, max-age=60" } else { "public, max-age=60" };
@@ -975,8 +956,8 @@ mod tests {
             key_hash: None,
             created_at: chrono::Utc::now(),
             description: String::new(),
-            connect_src: Vec::new(),
             attachments: Vec::new(),
+            resources: Vec::new(),
         }
     }
 
@@ -1008,20 +989,25 @@ mod tests {
         assert!(matches!(asked(&long, here), Asked::Elsewhere(u) if u.chars().count() == 120));
     }
 
-    /// The scope is the view's own module, the build's assets, and the view's own
-    /// folder — and the folder half is why a two-segment ref can carry pictures.
+    /// A view owns only its own resource folder, independent of its nesting depth.
     #[test]
-    fn a_view_owns_its_module_its_folder_and_the_shared_assets() {
+    fn a_view_owns_its_module_and_its_resource_folder() {
         let r = "badminton-top10/leader";
         let m = "/views/_compiled/ab12.mjs";
         assert!(in_scope(m, r, m));
         assert!(in_scope("/assets/share-react.js", r, m));
-        assert!(in_scope("/views/badminton-top10/leader.jpg", r, m));
+        assert!(in_scope("/views/badminton-top10/leader.assets/photo.jpg", r, m));
+        assert!(in_scope("/views/badminton-top10/leader.assets/figures/one.png", r, m));
         // Its own picture, for the link preview.
         assert!(in_scope("/views/_shots/ref/badminton-top10/leader.png", r, m));
 
         // Another view's folder, another view's module, and `/views/` at large.
         assert!(!in_scope("/views/autumn-milk-tea/cup.jpg", r, m));
+        assert!(!in_scope("/views/badminton-top10/leader.jsx", r, m));
+        assert!(!in_scope("/views/badminton-top10/leader.share.json", r, m));
+        assert!(!in_scope("/views/badminton-top10/other.jsx", r, m));
+        assert!(!in_scope("/views/badminton-top10/other.assets/photo.jpg", r, m));
+        assert!(!in_scope("/views/badminton-top10/leader.assets-private/photo.jpg", r, m));
         assert!(!in_scope("/views/_compiled/ff99.mjs", r, m));
         // Somebody else's picture is somebody else's.
         assert!(!in_scope("/views/_shots/ref/autumn-milk-tea/cup.png", r, m));
@@ -1034,11 +1020,10 @@ mod tests {
         assert!(!in_scope("/favicon.ico", r, m));
     }
 
-    /// **A share's scope grows by exactly the attachments it draws.** A shared view opens the
-    /// ones its check saw it ask for — every route under each — and no other object in the
-    /// store, however it is asked for.
+    /// A view can request declared attachments after the check has finished. Every route
+    /// under an authorized id works then, and no other object in the store does.
     #[test]
-    fn a_share_serves_the_attachments_it_draws_and_no_others() {
+    fn a_share_serves_declared_attachments_and_no_others() {
         let other = "0000000000000000";
         let share = Share { attachments: vec![ID.into()], ..view_share("court/review") };
         for path in [
@@ -1056,7 +1041,8 @@ mod tests {
         assert!(!view_share("court/review").serves(&format!("/api/attachments/{ID}")));
         // Its own page and its own files, as before.
         assert!(share.serves("/court/review"));
-        assert!(share.serves("/views/court/x.png"));
+        assert!(share.serves("/views/court/review.assets/x.png"));
+        assert!(!share.serves("/views/court/other.jsx"));
         assert!(!share.serves("/api/tools"));
     }
 
@@ -1240,25 +1226,44 @@ mod tests {
         assert!(page.contains(&format!("<video src=\"/api/attachments/{ID}/playable\" poster=\"/api/attachments/{ID}/preview.v1\"")), "{page}");
     }
 
-    /// A source that is only a path is ignored by every browser, so the list the gate
-    /// enforces reaches the browser absolute, or as `'none'`.
-    #[test]
-    fn connect_sources_are_absolute() {
-        assert_eq!(connect_src("https://ana.hi-agent.xyz", &[]), "'none'");
-        assert_eq!(
-            connect_src("https://ana.hi-agent.xyz", &["/views/x/data.json".into(), format!("/api/attachments/{ID}/about.v1")]),
-            format!("https://ana.hi-agent.xyz/views/x/data.json https://ana.hi-agent.xyz/api/attachments/{ID}/about.v1"),
-        );
+    #[tokio::test]
+    async fn view_resources_validate_names_and_existing_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("views/court")).unwrap();
+        assert!(super::super::view_resources::bindings(dir.path(), "court/review").await.unwrap().is_empty());
+        std::fs::write(dir.path().join("views/court/review.resources.json"), format!("{{\"hero\":\"att:{ID}\"}}"))
+            .unwrap();
+        assert!(super::super::view_resources::bindings(dir.path(), "court/review").await.is_err());
+        std::fs::write(dir.path().join("views/court/review.resources.json"), "{\"hero\":\"att:bad\"}")
+            .unwrap();
+        assert!(super::super::view_resources::bindings(dir.path(), "court/review").await.is_err());
+
+        let picture = dir.path().join("picture.png");
+        image::RgbImage::from_pixel(4, 4, image::Rgb([20, 130, 80]))
+            .save(&picture)
+            .unwrap();
+        let placed = attachments::place(dir.path(), &picture).await.unwrap();
+        std::fs::write(
+            dir.path().join("views/court/review.resources.json"),
+            format!("{{\"hero\":\"att:{}\"}}", placed.id),
+        )
+        .unwrap();
+        let refs = super::super::view_resources::bindings(dir.path(), "court/review").await.unwrap();
+        assert_eq!(refs.get("hero"), Some(&format!("att:{}", placed.id)));
+        let share = Share { resources: vec!["hero".into()], ..view_share("court/review") };
+        assert!(share.serves("/views/court/review.assets/_resources/hero/about.v1"));
+        assert!(!share.serves(&format!("/api/attachments/{}/preview.v1", placed.id)));
+        assert!(!share.serves("/api/attachments/1111111111111111/about.v1"));
     }
 
-    /// A single-segment ref has no folder of its own, so it owns nothing under
-    /// `/views/` — its neighbours there are every other view's files.
+    /// Single-segment refs also have a resource folder, without exposing siblings.
     #[test]
-    fn a_ref_with_no_folder_owns_nothing_under_views() {
+    fn a_root_ref_owns_only_its_resource_folder_under_views() {
         let m = "/views/_compiled/ab12.mjs";
         assert!(in_scope(m, "agent-arch", m));
         assert!(in_scope("/assets/x.css", "agent-arch", m));
         assert!(in_scope("/views/_shots/ref/agent-arch.png", "agent-arch", m));
+        assert!(in_scope("/views/agent-arch.assets/photo.jpg", "agent-arch", m));
         assert!(!in_scope("/views/agent-arch.jpg", "agent-arch", m));
         assert!(!in_scope("/views/anything.jpg", "agent-arch", m));
     }

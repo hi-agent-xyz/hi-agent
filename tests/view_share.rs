@@ -29,12 +29,22 @@ export default function Probe() {
 }
 "#;
 
-/// A view that draws an attachment: the picture is fetched from the attachment route, which a
-/// share check lets through and records, where it refuses the rest of `/api/*`.
+/// A registered picture is served below this view's own resource path.
 const DRAWING: &str = r#"
 import { jsx } from "react/jsx-runtime";
 export default function Drawing() {
-  return jsx("img", { src: "/api/attachments/__ID__/preview.v1", alt: "" });
+  return jsx("img", { src: "/views/court/review.assets/_resources/hero/preview.v1", alt: "" });
+}
+"#;
+
+/// The picture is only requested after a visitor clicks.
+const LAZY_DRAWING: &str = r#"
+import { jsx } from "react/jsx-runtime";
+export default function LazyDrawing() {
+  return jsx("button", {
+    onClick: (event) => { event.currentTarget.innerHTML = '<img src="/views/court/review.assets/_resources/hero/preview.v1">'; },
+    children: "Open picture"
+  });
 }
 "#;
 
@@ -117,7 +127,7 @@ async fn a_share_check_passes_a_view_and_still_refuses_one_that_reads_outside_it
          for /favicon.ico — a request this scope refuses and no view made"
     );
 
-    // An attachment it draws passes, and is what the share's scope grows by.
+    // The check observes an attachment that publication must declare.
     let work = tempdir().expect("tempdir");
     let figure = work.path().join("pose_899.png");
     // Two colours, not one: the render page fills the frame with a lone picture, and one flat
@@ -126,13 +136,21 @@ async fn a_share_check_passes_a_view_and_still_refuses_one_that_reads_outside_it
         .save(&figure)
         .expect("figure");
     let placed = hi_agent::foundation::attachments::place(dir.path(), &figure).await.expect("placed");
-    std::fs::write(compiled.join("drawing.mjs"), DRAWING.replace("__ID__", &placed.id)).expect("drawing");
+    let bindings = dir.path().join("views/court/review.resources.json");
+    std::fs::create_dir_all(bindings.parent().unwrap()).unwrap();
+    std::fs::write(bindings, format!("{{\"hero\":\"att:{}\"}}", placed.id)).unwrap();
+    std::fs::write(compiled.join("drawing.mjs"), DRAWING).expect("drawing");
+    std::fs::write(compiled.join("lazy.mjs"), LAZY_DRAWING).expect("lazy drawing");
     std::fs::write(compiled.join("reading.mjs"), READING.replace("__ID__", &placed.id)).expect("reading");
     let drawn = server::share::check("court/review", "/views/_compiled/drawing.mjs")
         .await
         .expect("the check runs");
-    assert!(drawn.ok, "a view drawing an attachment was refused: {:?}", drawn.refusals);
-    assert_eq!(drawn.attachments, vec![placed.id.clone()]);
+    assert!(drawn.ok, "a view drawing a registered resource was refused: {:?}", drawn.refusals);
+    let lazy = server::share::check("court/review", "/views/_compiled/lazy.mjs")
+        .await
+        .expect("the lazy view check runs");
+    assert!(lazy.ok, "a view with a delayed picture was refused: {:?}", lazy.refusals);
+    assert!(lazy.attachments.is_empty(), "requests never define the resource grants");
     let reading = server::share::check("court/review", "/views/_compiled/reading.mjs")
         .await
         .expect("the check runs");

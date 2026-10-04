@@ -21,9 +21,10 @@ receives is a page, not a guest seat.
 |---|---|
 | **A shared view is an ordinary web page** | It has to be readable by a person on a phone, by an agent with `curl`, by a link preview in a chat app, and by a crawler if the owner made it public. Every one of those reads HTML. A thing that is only a page for a logged-in browser is not shareable, it is visitable |
 | **The page carries its content as HTML, and the live view mounts over it** | A compiled view is an ESM module: `curl` on a React mount point returns an empty `<div>`, which fails the audience above by more than half. The rendered DOM is already produced by the check every share has to pass, so serving it costs nothing and is thrown away otherwise |
-| **A share grants reading one view, never the API** | The allow-list is computable from the ref without running anything, because the builder is already told to keep a view's files in its own folder. `/api/*` is the whole of the core; nothing about "look at this chart" needs it. The one part of it a view draws rather than reads — the attachments it embeds — is granted one id at a time, as the check saw them requested |
+| **A share grants reading one view, never the API** | Its `<ref>.assets/` folder, registered resource names, and compiled module define its files. The server resolves names to attachment bytes without opening `/api/*` to the visitor. A browser's first render cannot define this grant: lazy images may load later |
 | **A view is checked before it may be shared, with the API blocked** | A view that fetches its data renders half-empty under that scope, and the owner does not find out — the person they sent it to does. The check is the only thing standing between "share" and a silent bad impression |
-| **An attachment may be shared too, and needs no check** | A picture or a clip is its bytes and a page that is the host's own viewer, with its preview as `og:image`. It fetches nothing, so there is nothing to render half-empty; a view's scope grows by exactly the attachments its check saw it request ([showing.md](showing.md#on-a-share)) |
+| **Only a named view may be shared** | The same rule bookmarks already keep. An inline view is the disposable artifact a turn compiled; it has no name to put in a URL and nothing to come back to |
+| **An attachment may be shared too, and needs no check** | A picture or a clip is its bytes and a page that is the host's own viewer, with its preview as `og:image`. A view uses its registered resource names regardless of when they load ([showing.md](showing.md#on-a-share)) |
 | **Sharing is per-view and opt-in, and the default is unshared** | A share is a decision about one artifact, so it is stored beside the view and made once. Nothing becomes shareable by being shown |
 | **Revocation is not instant** | A shared page is served to callers with no credential, so it is cacheable, and an edge holds it. Short `max-age` and honesty in the UI beat a mechanism that pretends otherwise |
 | **No interaction, no live data, in the first shape** | Both are real wants and both cost the isolation this design does not currently need. A still, self-contained page is what the default view already is ([`overlay-presentation-model`](stage.md)) |
@@ -106,36 +107,48 @@ A share grants exactly:
 
 ```
 /views/_compiled/<the one hash>.mjs     this view's compiled module
-/views/<project>/**                     the view's own folder — its images, its data files
-/api/attachments/<id>/**                each attachment it draws, as its check saw them requested
+/views/<ref>.assets/**                  the view's resource folder — including delayed images
+/views/<ref>.assets/_resources/<name>/*  names registered when the view is published
 /assets/*                               React, the stylesheet: the same build every install ships
 ```
 
 and nothing else. A shared attachment's scope is its own `/api/attachments/<id>/**` — the
-bytes, the preview, the playable copy and the module the viewer mounts from — and `/assets/*`. Never `/api/*`, never another project's folder, never the `views/` root —
+bytes, the preview, the playable copy and the module the viewer mounts from — and `/assets/*`. Never `/api/*`, never another view's folder or JSX, never the `views/` root —
 `/views/{*path}` is one wildcard route with every view's source and every build artifact behind
 it, and opening that would hand over every view the agent has built to share one poster.
 
-The list is derived from the ref, so it needs no bookkeeping and cannot drift from what the
-view actually is. It is enforced in the gate, and stated again to the browser as
-`Content-Security-Policy: connect-src` — one list, two enforcement points, so a view that
-learns a new appetite fails visibly instead of quietly reaching further. The sources are
-absolute, on the origin the visitor reached the core by: a source that is only a path is not a
-source, and a browser that ignores it falls back to refusing everything the list named.
+For local files, save only visitor-visible resources in `views/<ref>.assets/` and use
+`/views/<ref>.assets/<filename>` URLs. The directory is a deliberate publication
+boundary: adding a file to it makes that file readable while the share exists. A
+project folder may hold multiple views and private sources, so it is never granted whole.
+Older shared views that reference files directly under `/views/<project>/` must move
+those files into their own `.assets/` directory, update the JSX and republish.
 
-## The check, and the three things it produces
+`views/<ref>.resources.json` maps stable names to `att:<id>` references. A view uses
+`<Attachment view="<ref>" resource="hero" />`, locally and when shared. The server
+reads the named binding and streams the object or its preview from the existing
+attachment store; publishing never copies the bytes. The share record fixes the set
+of allowed names when published, including names used only after a click. Updating
+the attachment behind an allowed name changes what every version using that name
+displays; adding a new name requires republishing. These mutable paths must not be
+cached as immutable. A view must not reference the global attachment API directly.
+Existing share records retain their recorded legacy attachment grants.
+
+The gate enforces these paths. The browser gets `Content-Security-Policy: connect-src 'self'`:
+same-origin requests may reach the gate, including requests made after the initial render;
+the gate alone decides which paths a visitor may read. External origins remain blocked.
+
+## The check, and the two things it produces
 
 Before a view may be shared it is rendered once through the headless browser already used for
 review and for the band's tiles — same harness, one difference: **`/api/*` is refused for the
-duration**, so the render sees exactly what a visitor will. The attachment routes are the one
-exception, let through ahead of the refusal: what they serve is drawn, not read, and every id
-the view asks for becomes part of the share's scope. An id this core does not hold 404s, which
-refuses the view like any other failed load.
+duration**, so the render sees exactly what a visitor will. Registered resources are
+served under the view path. The check does not infer grants from observed requests.
 
 An attachment is not checked. It fetches nothing, so there is nothing that could render
 half-empty.
 
-That single run answers three questions that would otherwise need three mechanisms:
+That run answers two questions:
 
 1. **May this be shared at all?** A view that renders blank, throws, or fails to load its module
    is refused. `window.__hiRender` already collects failed loads and console errors, and *a
@@ -143,11 +156,9 @@ That single run answers three questions that would otherwise need three mechanis
    the case that most needs catching, because it is the one that looks fine in source.
 2. **What is the page's HTML?** `document.documentElement.outerHTML` after settle. This is what
    an agent reads without running anything, and what a link preview scrapes. The pictures stay
-   as paths rather than being inlined: the view's own folder is in the share's scope, and the
+   as paths rather than being inlined: the view's resource folder is in the share's scope, and the
    whole views tree is already served `no-store` or `private`, so there is no gated asset for an
    edge to hold and nothing a data URI would buy but weight.
-3. **What does it legitimately request?** Whatever it asked for during the run *is* the
-   `connect-src` list. Nothing has to be guessed, and a view needing nothing gets `'none'`.
 
 **The owner sees the result before it goes out.** The picture `view_shots` already renders is
 the confirmation: *this is what you are about to publish*. That matters more than it sounds,
@@ -199,7 +210,7 @@ Named here so they are decisions rather than omissions:
 
 1. **A share reads one view or one attachment, never the API.** No path outside the derived
    list is served under a share grant, whatever the caller presents — and the only attachments
-   in that list are the ones the share is of or its check saw drawn.
+   in that list are the one the share is of, legacy grants, or the view's registered names at publication.
 2. **No view is shared that has not rendered.** The check is the only path to a view's share
    record.
 3. **A view is shared by its ref, an attachment by its id**, and a view's name never collides

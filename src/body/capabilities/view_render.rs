@@ -247,8 +247,8 @@ impl RenderRequest {
         Self {
             viewport: Viewport::default(),
             blocked: vec!["*://*:*/api/*".to_string()],
-            // What a view embeds with `<Attachment>` is drawn, not read, and the share grants
-            // exactly the ones asked for here (`foundation::server::share`).
+            // What a view embeds with `<Attachment>` is drawn, not read. Publication
+            // validates these requests against the view's declared attachments.
             allowed: vec!["*://*:*/api/attachments/*".to_string()],
             want_html: true,
             ..Self::new(base_url, module_url)

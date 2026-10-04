@@ -252,13 +252,18 @@ export function AttachmentStage({ item }: { item: AttachmentItem }) {
  * answer is `immutable` at the route, so the browser keeps it too. */
 const described = new Map<string, Promise<AttachmentItem | null>>();
 
-function describe(id: string): Promise<AttachmentItem | null> {
-  let known = described.get(id);
-  if (!known) {
-    known = fetch(`/api/attachments/${id}/about.v1`)
+function describe(url: string, cache = true): Promise<AttachmentItem | null> {
+  if (!cache) {
+    return fetch(url)
       .then((r) => (r.ok ? (r.json() as Promise<AttachmentItem>) : null))
       .catch(() => null);
-    described.set(id, known);
+  }
+  let known = described.get(url);
+  if (!known) {
+    known = fetch(url)
+      .then((r) => (r.ok ? (r.json() as Promise<AttachmentItem>) : null))
+      .catch(() => null);
+    described.set(url, known);
   }
   return known;
 }
@@ -293,19 +298,26 @@ export function pictureSource(item: AttachmentItem, cssWidth: number, density: n
  */
 export function Attachment({
   id,
+  view,
+  resource,
   caption,
   className,
   style,
 }: {
-  /** `att:<id>`, as the host answered when it was placed. */
-  id: string;
+  /** Local-only legacy reference. Shared views use `view` and `resource`. */
+  id?: string;
+  /** Named view and its registered resource name. */
+  view?: string;
+  resource?: string;
   /** What it shows, for the viewer and for anyone who cannot see it. */
   caption?: string;
   className?: string;
   style?: CSSProperties;
 }) {
-  const hex = id.trim().replace(/^att:/, "");
-  const valid = /^[0-9a-f]{16}$/.test(hex);
+  const hex = id?.trim().replace(/^att:/, "") ?? "";
+  const named = !!view && !!resource && /^[a-zA-Z0-9_/-]+$/.test(view) && /^[a-zA-Z0-9_-]+$/.test(resource);
+  const valid = named || /^[0-9a-f]{16}$/.test(hex);
+  const base = named ? `/views/${view}.assets/_resources/${resource}` : `/api/attachments/${hex}`;
   const [item, setItem] = useState<AttachmentItem | null | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [width, setWidth] = useState(0);
@@ -313,20 +325,25 @@ export function Attachment({
 
   useEffect(() => {
     if (!valid) {
-      console.error(`<Attachment id="${id}"> — that is not an attachment id; use the att: id the host answered with`);
+      console.error(`Invalid attachment resource: ${resource ?? id}`);
       setItem(null);
       return;
     }
     let alive = true;
-    describe(hex).then((found) => {
-      if (!alive) return;
-      if (!found) console.error(`<Attachment id="${id}"> — no such attachment on this agent`);
-      setItem(found);
-    });
+    const refresh = () => {
+      void describe(`${base}/about.v1`, !named).then((found) => {
+        if (!alive) return;
+        if (!found) console.error(`No such attachment resource: ${resource ?? id}`);
+        setItem(found);
+      });
+    };
+    refresh();
+    if (named) window.addEventListener("focus", refresh);
     return () => {
       alive = false;
+      if (named) window.removeEventListener("focus", refresh);
     };
-  }, [hex, valid, id]);
+  }, [base, valid, id, resource, named]);
 
   // Only ever grows: a picture that has loaded its original never goes back to the tile.
   useEffect(() => {
@@ -347,13 +364,13 @@ export function Attachment({
   if (item === null) {
     body = (
       <span className="flex aspect-video w-full items-center justify-center rounded-md bg-muted p-3 text-center text-xs text-muted-foreground">
-        {valid ? `${id} is not on this agent` : `${id} is not an attachment id`}
+        {valid ? `${resource ?? id} is not on this agent` : `${resource ?? id} is not a valid resource`}
       </span>
     );
   } else if (item?.kind === "clip") {
     body = <AttachmentClip item={item} autoPlay={false} fill />;
   } else {
-    const src = item ? pictureSource(item, width, density) : `/api/attachments/${hex}/preview.v1`;
+    const src = item ? pictureSource(item, width, density) : `${base}/preview.v1`;
     body = (
       <img
         src={src}
@@ -372,7 +389,7 @@ export function Attachment({
       ref={box}
       className={["m-0", className].filter(Boolean).join(" ")}
       style={style}
-      data-attachment={valid ? `att:${hex}` : undefined}
+      data-attachment={valid ? (named ? `${view}/${resource}` : `att:${hex}`) : undefined}
     >
       {body}
       {open && item && <AttachmentViewer item={item} caption={caption} onClose={() => setOpen(false)} />}
