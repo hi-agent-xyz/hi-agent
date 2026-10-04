@@ -120,7 +120,8 @@ pub enum NotTrashed {
 /// the folder goes into the trash entry whole; when siblings remain, only the source
 /// moves, because the folder's files may be theirs too. A `_`-led folder is never
 /// moved: that is tooling, and a view dropped into it by hand does not make it a
-/// project.
+/// project. In a shared folder, the view's named resources and assets move with its
+/// source; neither belongs to its siblings.
 pub async fn trash(data_dir: &Path, view_ref: &str) -> Result<Trashed, NotTrashed> {
     let views = data_dir.join("views");
     let source = views.join(format!("{view_ref}.jsx"));
@@ -154,6 +155,13 @@ pub async fn trash(data_dir: &Path, view_ref: &str) -> Result<Trashed, NotTrashe
             tokio::fs::rename(dir, entry.join(name)).await
         }
         _ => {
+            for suffix in ["resources.json", "assets"] {
+                let companion = views.join(format!("{view_ref}.{suffix}"));
+                if tokio::fs::try_exists(&companion).await.map_err(NotTrashed::Io)? {
+                    let name = companion.file_name().map(PathBuf::from).unwrap_or_default();
+                    tokio::fs::rename(companion, entry.join(name)).await.map_err(NotTrashed::Io)?;
+                }
+            }
             let name = source.file_name().map(PathBuf::from).unwrap_or_default();
             tokio::fs::rename(&source, entry.join(name)).await
         }
@@ -451,15 +459,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let views = dir.path().join("views");
         write(&views.join("trip/plan.jsx"));
+        write(&views.join("trip/plan.resources.json"));
+        write(&views.join("trip/plan.assets/photo.png"));
         write(&views.join("trip/budget.jsx"));
+        write(&views.join("trip/budget.resources.json"));
         write(&views.join("trip/map.png"));
 
         let trashed = trash(dir.path(), "trip/plan").await.unwrap();
         assert!(!trashed.with_folder);
         assert!(!views.join("trip/plan.jsx").exists());
+        assert!(!views.join("trip/plan.resources.json").exists());
+        assert!(!views.join("trip/plan.assets").exists());
         assert!(views.join("trip/budget.jsx").is_file());
+        assert!(views.join("trip/budget.resources.json").is_file());
         assert!(views.join("trip/map.png").is_file());
         assert!(trashed.entry.join("plan.jsx").is_file());
+        assert!(trashed.entry.join("plan.resources.json").is_file());
+        assert!(trashed.entry.join("plan.assets/photo.png").is_file());
     }
 
     #[tokio::test]
