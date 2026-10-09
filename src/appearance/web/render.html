@@ -18,6 +18,53 @@
          lands must still not screenshot a default-white page and call it a view. */
       html, body { background: #ffffff; margin: 0; height: 100%; }
     </style>
+    <script>
+      // A review is a picture, not a speaker. The same HTML also serves shared
+      // pages, so silence only the private /render/view preview.
+      if (location.pathname === "/render/view") {
+        const muted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "muted");
+        Object.defineProperty(HTMLMediaElement.prototype, "muted", {
+          configurable: true,
+          get() { return true; },
+          set(_) { muted.set.call(this, true); },
+        });
+        const play = HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play = function () {
+          this.muted = true;
+          return play.call(this);
+        };
+        const silenceMedia = (root) => {
+          if (root instanceof HTMLMediaElement) root.muted = true;
+          root.querySelectorAll?.("audio, video").forEach((media) => { media.muted = true; });
+        };
+        new MutationObserver((records) => {
+          for (const record of records) {
+            for (const node of record.addedNodes) {
+              if (node instanceof Element) silenceMedia(node);
+            }
+          }
+        }).observe(document, { childList: true, subtree: true });
+
+        // Muting media elements does not cover a view using Web Audio directly.
+        // Route connections to each context's output through a zero-gain node.
+        const connect = AudioNode.prototype.connect;
+        const sinks = new WeakMap();
+        AudioNode.prototype.connect = function (target, ...args) {
+          if (target instanceof AudioDestinationNode) {
+            let sink = sinks.get(this.context);
+            if (!sink) {
+              sink = this.context.createGain();
+              sink.gain.value = 0;
+              connect.call(sink, target);
+              sinks.set(this.context, sink);
+            }
+            connect.call(this, sink, ...args);
+            return target;
+          }
+          return connect.call(this, target, ...args);
+        };
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
