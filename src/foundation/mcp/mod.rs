@@ -14,6 +14,8 @@
 //! HTTP glue lives in `crate::foundation::server::mcp`. Tool calls are forwarded to the right
 //! reaction loop through the [`ToolRegistry`]; see [`crate::body::reaction::tools`].
 
+mod arguments;
+
 use serde_json::{Value, json};
 
 use base64::Engine as _;
@@ -1614,6 +1616,20 @@ async fn dispatch_tool(
             role.unwrap_or("<none>")
         ));
     }
+
+    let normalized = match tools_for_role(role).into_iter().find(|tool| tool["name"] == name) {
+        Some(tool) => match arguments::normalize(args, &tool["inputSchema"]) {
+            Ok((args, paths)) => {
+                if !paths.is_empty() {
+                    tracing::warn!(tool = name, fields = ?paths, "decoded JSON-string tool arguments");
+                }
+                Some(args)
+            }
+            Err(why) => return tool_error(&format!("`{name}` arguments: {why}. Nothing was executed.")),
+        },
+        None => None,
+    };
+    let args = normalized.as_ref().unwrap_or(args);
 
     // Reflection tools are pure derived-memory IO over `data_dir`; they don't touch
     // a loop sink, so handle them before the sink lookup.
@@ -3868,6 +3884,28 @@ mod surface_tests {
         let mut got = names(Some("reaction"));
         got.sort();
         assert_eq!(got, vec!["hi_prepare".to_string(), "hi_send_message".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn dispatch_normalizes_arguments_before_the_existing_tool_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
+        let partial = Mutex::new(None);
+        let observatory = Observatory::new(None);
+        for (name, role, args, expected) in [
+            ("hi_prepare", "reaction", json!({"matter": "test", "branches": "[broken"}), "$/branches"),
+            ("hi_system_one", "worker", json!({"state": "{}", "questions": "{broken"}), "$/questions"),
+            ("hi_system_one", "worker", json!({"state": "{}", "questions": "{}"}), "questions"),
+        ] {
+            let got = dispatch_tool(&registry, dir.path(), &privacy, &partial, &observatory,
+                None, Some(role), name, &args).await;
+            assert!(refusal(&got).contains(expected), "{got}");
+            assert!(!refusal(&got).contains("unknown tool"));
+        }
+        let got = dispatch_tool(&registry, dir.path(), &privacy, &partial, &observatory,
+            None, Some("worker"), "hi_prepare", &json!({"branches": "[broken"})).await;
+        assert!(refusal(&got).contains("reaction-only"), "authorization precedes repair: {got}");
     }
 
     /// The other half of "and nothing else": a worker must not be able to speak.
