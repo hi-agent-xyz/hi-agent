@@ -575,6 +575,11 @@ fn install_main_menu(
     app.setMainMenu(Some(&main_menu));
 }
 
+fn dock_icon() -> Option<Retained<NSImage>> {
+    let data = NSData::with_bytes(include_bytes!("../../../app/apple/macos/HiAgent.icns"));
+    NSImage::initWithData(NSImage::alloc(), &data)
+}
+
 /// Build the status item + menu and run the AppKit loop on the current (main)
 /// thread. **Blocks for the process lifetime.** Errors only if we are not on the
 /// main thread; a missing window-server session surfaces as the item simply not
@@ -584,6 +589,12 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
         .ok_or_else(|| anyhow!("the menu bar must be set up on the main thread"))?;
 
     let app = NSApplication::sharedApplication(mtm);
+    // Dev bundles omit Resources to keep bundle::resources_dir() = None (and ./data).
+    // Set the packaged brand icon explicitly so dev and bare launches have it too.
+    if let Some(icon) = dock_icon() {
+        // SAFETY: AppKit is being initialized on the main thread, guaranteed by mtm.
+        unsafe { app.setApplicationIconImage(Some(&icon)) };
+    }
     // Regular, not Accessory — see the module doc for the flash that decided it.
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
@@ -765,4 +776,16 @@ pub fn run(url: String, data_dir: PathBuf, shutdown: Arc<Notify>) -> anyhow::Res
     // (not our path — we exit the process instead).
     app.run();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dock_icon_decodes() {
+        let icon = dock_icon().expect("the embedded macOS app icon must decode");
+        let size = icon.size();
+        assert!(size.width > 0.0 && size.height > 0.0);
+    }
 }
