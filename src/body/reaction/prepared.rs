@@ -293,11 +293,22 @@ pub async fn parse(args: &Value, data_dir: &Path, say_max: usize) -> Result<(Str
                     it again replaces it"
             .into());
     }
-    let Some(list) = args.get("branches").and_then(Value::as_array) else {
+    // Some tool adapters pass structured arguments as JSON strings. Decode only
+    // this field once, then apply exactly the same branch and action checks.
+    let decoded = match args.get("branches") {
+        Some(Value::String(text)) => Some(serde_json::from_str::<Value>(text).map_err(|err| {
+            format!("hi_prepare `branches` is not valid JSON: {err}. Nothing was prepared.")
+        })?),
+        _ => None,
+    };
+    let Some(list) = decoded.as_ref().or_else(|| args.get("branches")).and_then(Value::as_array) else {
         return Err("hi_prepare needs `branches`: a list of {when, actions} — an empty list clears \
                     what is prepared for the matter"
             .into());
     };
+    if decoded.is_some() {
+        tracing::warn!("hi_prepare decoded JSON-string branches; caller should send an array");
+    }
     let mut branches: Vec<Branch> = Vec::with_capacity(list.len());
     for (i, b) in list.iter().enumerate() {
         let n = i + 1;
@@ -2183,6 +2194,73 @@ mod tests {
         assert!(st.contains("(nothing new — they have stopped)"));
         s.heard = 3;
         assert!(state(&[s], &[], &lines, &[], &standing).contains("(written after everything the person has said)"));
+    }
+
+    #[tokio::test]
+    async fn json_string_branches_match_native_arrays() {
+        let dir = std::env::temp_dir();
+        let branches = json!([
+            {"when": "finished", "actions": [{"do": "say", "text": "Ready."}]},
+            {"when": "agrees", "actions": [{"do": "say", "text": "Starting."}]}
+        ]);
+        let native = json!({"matter": "result", "branches": branches});
+        let encoded = json!({"matter": "result", "branches": branches.to_string()});
+        let (native_matter, native_branches) = parse(&native, &dir, 400).await.unwrap();
+        let (encoded_matter, encoded_branches) = parse(&encoded, &dir, 400).await.unwrap();
+        assert_eq!(native_matter, encoded_matter);
+        assert_eq!(native_branches.len(), encoded_branches.len());
+        for (native, encoded) in native_branches.iter().zip(&encoded_branches) {
+            assert_eq!(native.when, encoded.when);
+            assert_eq!(native.actions, encoded.actions);
+        }
+    }
+
+    #[tokio::test]
+    async fn json_string_empty_branches_clear_the_matter() {
+        for branches in [json!([]), json!(" [] ")] {
+            let (_, parsed) = parse(
+                &json!({"matter": "result", "branches": branches}),
+                &std::env::temp_dir(),
+                400,
+            ).await.unwrap();
+            assert!(parsed.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn json_string_branches_must_decode_once_to_an_array() {
+        let dir = std::env::temp_dir();
+        let invalid = parse(&json!({"matter": "result", "branches": "[1,"}), &dir, 400)
+            .await.unwrap_err();
+        assert!(invalid.contains("not valid JSON") && invalid.contains("Nothing was prepared"));
+        for branches in [json!("{}"), json!("null"), json!("42"), json!("\"[]\""), json!({})] {
+            let err = parse(&json!({"matter": "result", "branches": branches}), &dir, 400)
+                .await.unwrap_err();
+            assert!(err.contains("needs `branches`"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn json_string_branches_preserve_validation() {
+        let dir = std::env::temp_dir();
+        for branches in [
+            json!([{"actions": []}]),
+            json!([{"when": "finished", "actions": []}]),
+            json!([{"when": "finished", "actions": "[]"}]),
+            json!([{"when": "finished", "actions": [{"do": "shell"}]}]),
+            json!([{"when": "finished", "actions": [{"do": "say", "text": "x".repeat(401)}]}]),
+            json!([
+                {"when": "finished", "actions": [{"do": "say", "text": "a"}]},
+                {"when": "finished", "actions": [{"do": "say", "text": "b"}]}
+            ]),
+        ] {
+            let native = json!({"matter": "result", "branches": branches});
+            let encoded = json!({"matter": "result", "branches": branches.to_string()});
+            assert_eq!(
+                parse(&native, &dir, 400).await.unwrap_err(),
+                parse(&encoded, &dir, 400).await.unwrap_err(),
+            );
+        }
     }
 
     #[tokio::test]
