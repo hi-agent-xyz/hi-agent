@@ -444,6 +444,13 @@ the screenshots.
 Watch for the blank render in particular — a view whose bare imports failed to resolve
 comes back as a clean white page, which reads like success if you only skim the verdict.
 
+**A clean local render is not a sharing verdict.** `hi_review_view` also reports sharing
+warnings for resource URLs it observed. Fix them before handing over a self-contained
+view; API-backed dashboards may deliberately stay local. A warning-free first render
+cannot see every branch: check alternate tabs, fallbacks, resources loaded after a click,
+and paths carried inside JSON against the resource rules below. Do not call `hi_share`
+just to test: that publishes the view and requires the person's intent to share it.
+
 **The screenshots come back in the call: don't write them anywhere.** They are in your
 hands already, and the next render replaces what they showed. `views/_shots/` in
 particular is the host's — it is where the agent's own pictures of views are kept, named
@@ -797,10 +804,23 @@ exactly that: place it with `hi_add_attachment` and report the `att:` id instead
 is something to compose around it: things side by side, words laid over a picture, a
 comparison, a report.
 
+**Every local static resource belongs to the view, not its project.** Choose the full
+ref before writing resources. Put visitor-visible JSON, CSV, images, fonts, audio,
+and custom-player video files in `views/<ref>.assets/`, beside `<ref>.jsx`, and use
+`/views/<ref>.assets/<filename>` URLs. Never use `views/<project>/assets/`, even if
+the project currently has only one view. Keep source files, notes, generators, and
+private data outside the publication directory. Task-produced media still uses the
+registered attachment mechanism above; this directory is for the view's own files.
+
+**Resource paths inside data count too.** A JSON file in the right directory is not
+enough if its `src`, `alt`, poster, or other fields still name the project directory
+or `/api/*`. Apply the same rule to every embedded URL, every tab, every video
+fallback, and resources fetched only after interaction. Generators and staging-to-live
+scripts must emit the same view-owned URLs so rebuilding data does not undo the fix.
+
 **Images: never hotlink.** A remote URL can fail CORS, be hotlink-blocked, or 404 —
-leaving an ugly broken box. For a view's own material, such as a poster photograph,
-**download it into `views/<ref>.assets/`** (beside `<ref>.jsx`) and reference its
-served path. For `badminton-top10/leader.jsx`, save the picture to
+leaving an ugly broken box. Download the view's own photographs into its resource
+directory and reference the served path. For `badminton-top10/leader.jsx`, save the picture to
 `views/badminton-top10/leader.assets/cup.jpg` and use
 `<img src="/views/badminton-top10/leader.assets/cup.jpg">`. This entire folder is
 available to visitors when the view is shared, even for images loaded after a click;

@@ -124,6 +124,20 @@ project folder may hold multiple views and private sources, so it is never grant
 Older shared views that reference files directly under `/views/<project>/` must move
 those files into their own `.assets/` directory, update the JSX and republish.
 
+This applies to every static resource, not only pictures: JSON/CSV, fonts, audio,
+and custom-player video files follow the same rule. URLs carried inside JSON must
+also use the view-owned path, including alternate clips and delayed loads. Generators
+must write these paths too; a later data rebuild must not restore project-global URLs.
+Never migrate a whole project folder automatically: it may contain private sources.
+
+Local `hi_review_view` reuses the share scope's request diagnosis and warns builders
+about observed out-of-scope URLs before handoff, without publishing anything or
+adding a second render. System dashboards are exempt from this warning because they
+deliberately read the API. These are warnings, not certification: a local review does
+not block the API, validate all bindings, or exercise every interaction. Publication
+still runs the visitor check. Refusals name both the offending path and the view-owned
+directory to use, including the need to update embedded and delayed URLs.
+
 `views/<ref>.resources.json` maps stable names to `att:<id>` references. A view uses
 `<Attachment view="<ref>" resource="hero" />`, locally and when shared. The server
 reads the named binding and streams the object or its preview from the existing

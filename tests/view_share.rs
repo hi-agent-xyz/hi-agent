@@ -65,6 +65,23 @@ export default function Reaching() {
 }
 "#;
 
+/// Data files need the same view ownership as pictures, including custom-player data.
+const OWNED_DATA: &str = r#"
+import { jsx } from "react/jsx-runtime";
+export default function OwnedData() {
+  fetch("/views/court/review.assets/ids-a.json");
+  return jsx("p", { children: "tracking data probe" });
+}
+"#;
+
+const PROJECT_DATA: &str = r#"
+import { jsx } from "react/jsx-runtime";
+export default function ProjectData() {
+  fetch("/views/court/assets/ids-a.json");
+  return jsx("p", { children: "project tracking data probe" });
+}
+"#;
+
 #[tokio::test]
 async fn a_share_check_passes_a_view_and_still_refuses_one_that_reads_outside_it() {
     if hi_agent::appearance::embed::get("render.html").is_none() {
@@ -151,6 +168,23 @@ async fn a_share_check_passes_a_view_and_still_refuses_one_that_reads_outside_it
         .expect("the lazy view check runs");
     assert!(lazy.ok, "a view with a delayed picture was refused: {:?}", lazy.refusals);
     assert!(lazy.attachments.is_empty(), "requests never define the resource grants");
+    for folder in ["review.assets", "assets"] {
+        let path = dir.path().join("views/court").join(folder);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("ids-a.json"), "{\"ids\":[]}").unwrap();
+    }
+    std::fs::write(compiled.join("owned-data.mjs"), OWNED_DATA).unwrap();
+    std::fs::write(compiled.join("project-data.mjs"), PROJECT_DATA).unwrap();
+    let owned = server::share::check("court/review", "/views/_compiled/owned-data.mjs")
+        .await.expect("owned data check");
+    assert!(owned.ok, "owned JSON must pass: {:?}", owned.refusals);
+    let project = server::share::check("court/review", "/views/_compiled/project-data.mjs")
+        .await.expect("project data check");
+    assert!(!project.ok, "project-global JSON must not pass");
+    assert!(project.refusals.iter().any(|why|
+        why.contains("/views/court/assets/ids-a.json")
+            && why.contains("views/court/review.assets/")
+            && why.contains("paths inside JSON")), "{:?}", project.refusals);
     let reading = server::share::check("court/review", "/views/_compiled/reading.mjs")
         .await
         .expect("the check runs");

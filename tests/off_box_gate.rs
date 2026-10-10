@@ -190,6 +190,56 @@ async fn named_view_resource_is_read_through_its_view_without_global_attachment_
 }
 
 #[tokio::test]
+async fn view_owned_json_and_delayed_video_ranges_work_without_opening_the_project() {
+    use hi_agent::foundation::credentials;
+    let (_loopback, off_box, dir, _seams) = spawn().await;
+    let share = server::share::Share {
+        of: "view:court/review".into(),
+        module_url: "/views/_compiled/ab12.mjs".into(),
+        key_hash: None,
+        created_at: chrono::Utc::now(),
+        description: String::new(),
+        attachments: vec![],
+        resources: vec![],
+    };
+    credentials::set_setting(dir.path(), "view_shares", &serde_json::to_string(&vec![share]).unwrap()).unwrap();
+    let assets = dir.path().join("views/court/review.assets");
+    std::fs::create_dir_all(&assets).unwrap();
+    let data = serde_json::json!({"clip": {
+        "src": "/views/court/review.assets/clip-b.MOV",
+        "alt": "/views/court/review.assets/clip-b.mp4"
+    }});
+    std::fs::write(assets.join("ids-b.json"), data.to_string()).unwrap();
+    for name in ["clip-b.MOV", "clip-b.mp4"] {
+        std::fs::write(assets.join(name), b"video range probe").unwrap();
+    }
+    let private = dir.path().join("views/court/assets");
+    std::fs::create_dir_all(&private).unwrap();
+    std::fs::write(private.join("ids-b.json"), data.to_string()).unwrap();
+
+    // No owner credential and no observed-request grant: B can load after a click.
+    let client = reqwest::Client::new();
+    let response = client.get(format!("{off_box}/views/court/review.assets/ids-b.json"))
+        .send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let received: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(received, data);
+    for field in ["src", "alt"] {
+        let path = received["clip"][field].as_str().unwrap();
+        let response = client.get(format!("{off_box}{path}"))
+            .header("Range", "bytes=0-4").send().await.unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(response.headers()["content-range"], "bytes 0-4/17");
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"video");
+    }
+    assert_eq!(client.get(format!("{off_box}/views/court/assets/ids-b.json"))
+        .send().await.unwrap().status(), 401);
+    credentials::set_setting(dir.path(), "view_shares", "[]").unwrap();
+    assert_eq!(client.get(format!("{off_box}/views/court/review.assets/clip-b.mp4"))
+        .header("Range", "bytes=0-4").send().await.unwrap().status(), 401);
+}
+
+#[tokio::test]
 async fn the_open_routes_answer_before_anything_is_paired() {
     let (_loopback, off_box, _dir, _seams) = spawn().await;
     let client = reqwest::Client::new();

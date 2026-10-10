@@ -84,6 +84,59 @@ fn in_scope(path: &str, view_ref: &str, module_url: &str) -> bool {
         && !path.starts_with(&format!("/views/{view_ref}.assets/_resources/"))
 }
 
+/// Diagnose observed requests without publishing or re-rendering. A local review uses
+/// this too, so the builder learns about private paths before handing the view over.
+/// This is not a share check: delayed requests and resource bindings still need review.
+pub fn resource_refusals(
+    view_ref: &str,
+    module_url: &str,
+    origin: &str,
+    requested: &[String],
+) -> Vec<String> {
+    let mut refusals = Vec::new();
+    for url in requested {
+        let path = match asked(url, origin) {
+            Asked::Inert => continue,
+            Asked::Here(path) => path,
+            Asked::Elsewhere(url) => {
+                let refusal = format!(
+                    "it asks for {url}, which is on somebody else's machine — a shared page \
+                     carries its own files"
+                );
+                if !refusals.contains(&refusal) {
+                    refusals.push(refusal);
+                }
+                continue;
+            }
+        };
+        if path == "/render/view" {
+            continue; // the host page itself
+        }
+        let refusal = if let Some(id) = attachment_in(&path) {
+            format!("attachment att:{id} is global; register a view resource and use its view path")
+        } else if path.starts_with(&format!("/views/{view_ref}.assets/_resources/"))
+            || in_scope(&path, view_ref, module_url)
+        {
+            continue;
+        } else if path.starts_with("/api/") {
+            format!("it reads {path} while it renders, and a shared view is never given the API")
+        } else if path.starts_with("/views/") {
+            format!(
+                "it asks for {path}, which is outside this view's own files; move only \
+                 visitor-visible resources into views/{view_ref}.assets/ and use \
+                 /views/{view_ref}.assets/<filename> URLs, including paths inside JSON \
+                 and resources loaded after a click. Do not publish the whole project folder"
+            )
+        } else {
+            format!("it asks for {path}, which is outside this view's own files")
+        };
+        if !refusals.contains(&refusal) {
+            refusals.push(refusal);
+        }
+    }
+    refusals
+}
+
 /// What one check found.
 #[derive(Debug, Clone)]
 pub struct ShareCheck {
@@ -135,46 +188,7 @@ pub async fn check(view_ref: &str, module_url: &str) -> anyhow::Result<ShareChec
     // Then what it reached for. A refused request is not a defect in the view — it is
     // a view that cannot be shared *as it is*, which is a different sentence and the
     // one the owner needs.
-    for url in &rendered.requested {
-        let path = match asked(url, &ctx.base_url) {
-            Asked::Inert => continue,
-            Asked::Here(path) => path,
-            Asked::Elsewhere(url) => {
-                let refusal = format!(
-                    "it asks for {url}, which is on somebody else's machine — a shared page \
-                     carries its own files"
-                );
-                if !refusals.contains(&refusal) {
-                    refusals.push(refusal);
-                }
-                continue;
-            }
-        };
-        if path == "/render/view" {
-            continue; // the host page itself
-        }
-        // A global attachment ID has no view ownership. The view must use its
-        // registered resource path, which also works for delayed requests.
-        if let Some(id) = attachment_in(&path) {
-            refusals.push(format!("attachment att:{id} is global; register a view resource and use its view path"));
-            continue;
-        }
-        // The route itself rejects unknown names; publication separately validates
-        // all bindings before this render becomes a share.
-        if path.starts_with(&format!("/views/{view_ref}.assets/_resources/"))
-            || in_scope(&path, view_ref, module_url)
-        {
-            continue;
-        }
-        let refusal = if path.starts_with("/api/") {
-            format!("it reads {path} while it renders, and a shared view is never given the API")
-        } else {
-            format!("it asks for {path}, which is outside this view's own files")
-        };
-        if !refusals.contains(&refusal) {
-            refusals.push(refusal);
-        }
-    }
+    refusals.extend(resource_refusals(view_ref, module_url, &ctx.base_url, &rendered.requested));
 
     Ok(ShareCheck {
         ok: refusals.is_empty(),
@@ -962,6 +976,50 @@ mod tests {
     }
 
     const ID: &str = "3f9a0c11d2e4b5a6";
+
+    #[test]
+    fn resource_warnings_explain_how_to_fix_project_global_json_and_video() {
+        let origin = "http://127.0.0.1:12358";
+        let module = "/views/_compiled/ab12.mjs";
+        let requests = [
+            "/render/view?module=probe",
+            module,
+            "/assets/react.js",
+            "/views/court/review.assets/ids-a.json",
+            "/views/court/review.assets/clip-b.mp4",
+            "/views/court/review.assets/_resources/hero/preview.v1",
+            "/views/court/assets/ids-a.json",
+            "/views/court/assets/clip-b.mp4",
+            "/views/court/assets/ids-a.json?v=2",
+            "/api/tasks",
+        ].map(|path| format!("{origin}{path}"));
+        let warnings = resource_refusals("court/review", module, origin, &requests);
+        assert_eq!(warnings.len(), 3, "owned paths pass and repeated paths deduplicate");
+        for (warning, filename) in warnings.iter().zip(["ids-a.json", "clip-b.mp4"]) {
+            assert!(warning.contains(&format!("/views/court/assets/{filename}")));
+            assert!(warning.contains("views/court/review.assets/"));
+            assert!(warning.contains("paths inside JSON"));
+            assert!(warning.contains("after a click"));
+            assert!(warning.contains("Do not publish the whole project folder"));
+        }
+        assert!(warnings[2].contains("never given the API"));
+    }
+
+    #[test]
+    fn resource_warnings_do_not_accept_external_or_global_attachment_urls() {
+        let requests = vec![
+            "data:image/svg+xml;base64,AAA".into(),
+            "blob:http://127.0.0.1:12358/9d2".into(),
+            "https://elsewhere.example/views/court/review.assets/clip.mp4".into(),
+            format!("http://127.0.0.1:12358/api/attachments/{ID}/original"),
+        ];
+        let warnings = resource_refusals(
+            "court/review", "/views/_compiled/ab12.mjs", "http://127.0.0.1:12358", &requests,
+        );
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].contains("somebody else's machine"));
+        assert!(warnings[1].contains("register a view resource"));
+    }
 
     /// The three things a request can be, and why each matters: the page's own `data:` URLs
     /// reach nothing (a `<video>`'s controls are six of them, and refusing those refused every

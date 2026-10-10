@@ -377,7 +377,9 @@ fn review_view_tool() -> Value {
          tab, or their phone, whichever spoke last — so the screenshot is the frame they \
          have. Use it on anything you are about to hand over as a view, and again after a \
          fix. Compare the light and dark frames: anything that vanishes or turns \
-         unreadable in one of them is a colour that only works in the other.",
+         unreadable in one of them is a colour that only works in the other. Also reports \
+         sharing warnings for observed resource paths; this does not publish the view \
+         or certify delayed requests as shareable.",
         json!({
             "type": "object",
             "properties": {
@@ -2353,6 +2355,7 @@ async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args:
 
     let mut shots: Vec<(String, Vec<u8>)> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
+    let mut sharing_warnings = Vec::new();
     for theme in &themes {
         req.theme = Some(theme.clone());
         let rendered = match view_render::render(&req).await {
@@ -2361,6 +2364,19 @@ async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args:
         };
         if let view_render::Verdict::Failed(why) = rendered.verdict() {
             failures.push(format!("{theme}: {why}"));
+        }
+        // System dashboards intentionally read the API and are never shareable.
+        if !view_ref.starts_with(crate::mind::views::factory::PREFIX) {
+            for warning in crate::foundation::server::share::resource_refusals(
+                &view_ref,
+                &module_url,
+                &ctx.base_url,
+                &rendered.requested,
+            ) {
+                if !sharing_warnings.contains(&warning) {
+                    sharing_warnings.push(warning);
+                }
+            }
         }
         shots.push((theme.clone(), rendered.png));
     }
@@ -2406,6 +2422,17 @@ async fn do_review_view(data_dir: &std::path::Path, subject: Option<&str>, args:
         "{summary}\n\nCompiled to `{module_url}` on this core — the module to load if you \
          measure it in a browser of your own. Nothing here moved anyone's screen."
     );
+    let summary = if sharing_warnings.is_empty() {
+        summary
+    } else {
+        format!(
+            "{summary}\n\nSharing warnings (observed requests only, not a publication check):\n- {}\n\
+             If this view is meant to be shareable, fix these paths before handing it over. \
+             Also check every branch, paths inside JSON, and resources loaded after a click. \
+             No share was created.",
+            sharing_warnings.join("\n- ")
+        )
+    };
     let mut content = vec![json!({ "type": "text", "text": summary })];
     for (theme, png) in &shots {
         if shots.len() > 1 {
