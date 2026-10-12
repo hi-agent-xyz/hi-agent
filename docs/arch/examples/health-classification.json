@@ -1,0 +1,20 @@
+[
+  {
+    "subject": "anti-inflammation-20261012",
+    "expected_revision": 0,
+    "classification": {
+      "placement": { "state": "category", "path": ["生活类", "健康"] },
+      "source": "user",
+      "basis": "用户在 Home review 中明确要求抗炎和补剂节点归入生活，并同意生活类下健康分支的修复；本记录只修正分类，不改变项目关系。"
+    }
+  },
+  {
+    "subject": "supplement-research-20261012",
+    "expected_revision": 0,
+    "classification": {
+      "placement": { "state": "category", "path": ["生活类", "健康"] },
+      "source": "user",
+      "basis": "用户在 Home review 中明确要求抗炎和补剂节点归入生活，并同意生活类下健康分支的修复；本记录只修正分类，不改变项目关系。"
+    }
+  }
+]

@@ -1,9 +1,9 @@
 //! `factory/home`'s own state: the grouping the work in hand is arranged into.
 //!
 //! A group is a name, an ordered list of task subjects and the groups inside it, and it
-//! belongs to this one surface (`docs/arch/home.md#grouping`). Deliberately **not** a field on the task record:
-//! that would commit every reader of the ledger to one axis — project, or kind, or state —
-//! for the sake of one view, and the axis is the person's to change.
+//! belongs to this one surface (`docs/arch/home.md#grouping`). Durable project membership
+//! and discovery classification live separately on tasks. This record supplies display
+//! anchors, labels, icons, order and backwards-compatible placement.
 //!
 //! **Code never infers a group.** The rank that once did was deleted for being inferred:
 //! `systems` names the operational records a task touches, so a birthday deck whose photos
@@ -422,7 +422,9 @@ async fn ungrouped_open_tasks(
 ) -> Vec<String> {
     match tasks::active_tasks(data_dir).await {
         Ok(open) => {
-            open.into_iter().filter(|task| task.work.is_none() && !taken.contains(&task.subject)).map(|task| task.subject).collect()
+            open.into_iter().filter(|task| task.classification.is_none()
+                && task.work.as_ref().and_then(|w| w.project()).is_none()
+                && !taken.contains(&task.subject)).map(|task| task.subject).collect()
         }
         Err(error) => {
             tracing::warn!(%error, "task ledger unreadable; the write cannot say what is ungrouped");

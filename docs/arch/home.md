@@ -472,7 +472,9 @@ theirs.
   categories, project display anchors and optional sublines. A confirmed task enters its
   project's anchor immediately, or a synthesized project heading if no anchor exists.
   Stale group membership elsewhere cannot divert it. Pending has a visible branch;
-  explicitly independent work bypasses grouping. Legacy tasks alone keep the old placement.
+  explicitly independent work still uses discovery categories, never project anchors.
+  The separate task `classification` supplies a category path or visible pending state;
+  legacy tasks without it may use the old category arrangement.
   `systems` still names operational records, never ownership. See [work-membership.md](work-membership.md).
 - **A task's pictures are image nodes one rank below it, and its other results are not on
   Home.** Drawn as sibling cards, results were 60.2% of the canvas on a real instance — 125 of

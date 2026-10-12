@@ -231,6 +231,18 @@ promote all its members to a project. Pending and legacy work are a visible repa
 resolve them when the conversation or project record supplies evidence, without asking
 the person to classify every unrelated request.
 
+Every opening also includes `classification`, separately: `placement:{state:"category",
+path:["生活类","健康"]}` with evidence, or `placement:{state:"pending"}` with the reason.
+Reuse the person's category vocabulary in `home/groups.json` and `home/grouping.md`.
+Independent means no project, NOT no category: health, travel and family requests can be
+independent tasks under life. Do not invent a project just to categorize a request.
+No existing project is evidence about project membership, not a reason to omit discovery
+classification. Choose the category from the actual request; if unclear, mark it pending.
+Correct it with `hi_task_classify`, using `classification.revision` (0 if unrecorded).
+This has its own revision and source, so a user's category correction does not change or
+claim their authority over project membership. `source:user` requires an explicit statement
+about the particular relation; "personal request" alone is your judgment, not theirs.
+
 Some asks aren't a single answer but something now *owed* — "watch this group", "keep
 that backed up". Each one is a **task**: a facet in the `tasks` dimension, in plain
 words — what is owed, where it stands, and any details needed to finish it. One duty,

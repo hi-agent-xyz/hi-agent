@@ -471,11 +471,32 @@ fn task_open_tool() -> Value {
                 "start_key": { "type": "string" },
                 "systems": { "type": "array", "items": { "type": "string" }, "description": "The systems it touches, by the name their record is filed under, e.g. [\"songguo\", \"hi-agent-xyz\"]." },
             },
-            "required": ["subject", "title", "status", "wanted", "work"],
+            "required": ["subject", "title", "status", "wanted", "work", "classification"],
         }),
     );
     definition["inputSchema"]["properties"]["work"] = work_schema();
+    definition["inputSchema"]["properties"]["classification"] = classification_schema();
     definition
+}
+
+fn classification_schema() -> Value {
+    json!({ "type":"object", "description":"Discovery category, separate from work/project membership. Independent work still belongs in life, learning, etc. Reuse the person's category labels; record pending with a reason when unclear. source=user only when the person explicitly chose this category.",
+        "properties": {
+            "placement": { "type":"object", "properties": {
+                "state": { "type":"string", "enum":["category", "pending"] },
+                "path": { "type":"array", "items":{"type":"string"}, "description":"Category labels from outermost to innermost, e.g. [生活类, 健康]. Required for category; never use project names here." }
+            }, "required":["state"] },
+            "source": { "type":"string", "enum":["context", "user"] },
+            "basis": { "type":"string" }
+        }, "required":["placement", "source", "basis"] })
+}
+
+fn task_classify_tool() -> Value {
+    tool("hi_task_classify", "Correct a task's discovery category without changing its project membership. Use expected_revision (0 for unrecorded). User-confirmed categories are protected from context-only cleanup.",
+        json!({"type":"object", "properties": {
+            "subject":{"type":"string"}, "classification":classification_schema(),
+            "expected_revision":{"type":"integer", "minimum":0}
+        }, "required":["subject", "classification", "expected_revision"]}))
 }
 
 fn work_schema() -> Value {
@@ -977,6 +998,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             send_message_tool(),
             task_open_tool(),
             task_relate_tool(),
+            task_classify_tool(),
             create_worker_tool(),
             cancel_worker_tool(),
             close_worker_tool(),
@@ -1650,6 +1672,9 @@ async fn dispatch_tool(
     if name == "hi_task_relate" && role != Some("cognition") {
         return tool_error("work membership is cognition's witnessed context; workers propose corrections to their owner");
     }
+    if name == "hi_task_classify" && role != Some("cognition") {
+        return tool_error("classification is cognition's witnessed context; workers propose corrections to their owner");
+    }
 
     let normalized = match tools_for_role(role).into_iter().find(|tool| tool["name"] == name) {
         Some(tool) => match arguments::normalize(args, &tool["inputSchema"]) {
@@ -1722,6 +1747,7 @@ async fn dispatch_tool(
         "hi_task_relate" => {
             return do_task_relate(data_dir, args).await;
         }
+        "hi_task_classify" => return do_task_classify(data_dir, args).await,
         "hi_task_note" | "hi_task_set" => {
             // The row the caller serves, when it names none: the registry's `subject`, as for
             // `hi_review_view` — never a reading of the session's title.
@@ -2791,6 +2817,10 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
         Some(Ok(work)) => work,
         _ => return tool_error("opening requires `work`: an evidenced project, independent, or pending assignment"),
     };
+    let classification = match args.get("classification").cloned().map(serde_json::from_value::<crate::mind::memory::classification::Input>) {
+        Some(Ok(value)) => value,
+        _ => return tool_error("opening requires `classification`: an evidenced category path or pending reason, separate from project membership"),
+    };
     let (title, wanted) =
         (arg_text(args, "title").unwrap_or_default(), arg_text(args, "wanted").unwrap_or_default());
     let writing = crate::body::legibility::record::Writing::Open { title, wanted };
@@ -2802,6 +2832,7 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
     let opening = Opening {
         subject: subject.to_owned(),
         work,
+        classification,
         title: title.to_owned(),
         status,
         wanted: wanted.to_owned(),
@@ -2816,11 +2847,26 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
     };
     match tasks::open(data_dir, opening).await {
         Ok(Ok(subject)) => {
-            let membership = tasks::read_task(data_dir, &subject).await.ok().flatten().and_then(|t| t.work).map(|w| w.summary()).unwrap_or_default();
-            tool_ok(&format!("opened `{subject}`; {membership}"))
+            let row = tasks::read_task(data_dir, &subject).await.ok().flatten();
+            let membership = row.as_ref().and_then(|t| t.work.as_ref()).map(|w| w.summary()).unwrap_or_default();
+            let classification = row.as_ref().and_then(|t| t.classification.as_ref()).map(|c| c.summary()).unwrap_or_default();
+            tool_ok(&format!("opened `{subject}`; {membership}; category: {classification}"))
         },
         Ok(Err(refused)) => tool_error(&refused.to_string()),
         Err(error) => tool_error(&format!("could not write the row: {error}")),
+    }
+}
+
+async fn do_task_classify(data_dir: &Path, args: &Value) -> Value {
+    let Some(subject) = arg_text(args, "subject") else { return tool_error("name the task subject") };
+    let Some(expected) = args.get("expected_revision").and_then(Value::as_u64) else { return tool_error("expected_revision is required; 0 for unrecorded") };
+    let input = match args.get("classification").cloned().map(serde_json::from_value::<crate::mind::memory::classification::Input>) {
+        Some(Ok(input)) => input,
+        _ => return tool_error("invalid classification"),
+    };
+    match crate::mind::memory::tasks::classify(data_dir, subject, input, expected).await {
+        Ok(revision) => tool_ok(&format!("classification recorded at revision {revision}")),
+        Err(error) => tool_error(&error.to_string()),
     }
 }
 
@@ -4000,6 +4046,12 @@ mod surface_tests {
         })).await;
         assert!(refusal(&got).contains("requires `work`"), "{got}");
         assert!(tasks::read_task(dir.path(), "site").await.unwrap().is_none());
+        let got = do_task_open(dir.path(), "cognition", &json!({
+            "subject":"site", "title":"Build the site", "status":"doing", "wanted":"A working site",
+            "work":{"assignment":{"state":"independent"}, "source":"context", "basis":"Standalone request"}
+        })).await;
+        assert!(refusal(&got).contains("requires `classification`"), "{got}");
+        assert!(tasks::read_task(dir.path(), "site").await.unwrap().is_none());
         tasks::write_task(dir.path(), &tasks::Task::new("site", tasks::TaskStatus::Doing)).await.unwrap();
         let registry = ToolRegistry::new();
         let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
@@ -4018,6 +4070,19 @@ mod surface_tests {
         assert_eq!(row.work.unwrap().source, work::Source::User);
         let stale = do_task_relate(dir.path(), &args).await;
         assert!(refusal(&stale).contains("reread"), "{stale}");
+        let classification = json!({"subject":"site", "expected_revision":0,
+            "classification":{"placement":{"state":"category", "path":["Life","Health"]}, "source":"user", "basis":"User chose this category"}});
+        let denied = dispatch_tool(&registry, dir.path(), &privacy, &partial, &observatory,
+            None, Some("worker"), "hi_task_classify", &classification).await;
+        assert!(refusal(&denied).contains("cognition"), "{denied}");
+        let before = tasks::read_task(dir.path(), "site").await.unwrap().unwrap().work;
+        let got = dispatch_tool(&registry, dir.path(), &privacy, &partial, &observatory,
+            None, Some("cognition"), "hi_task_classify", &classification).await;
+        assert_ne!(got["isError"], true, "{got}");
+        let row = tasks::read_task(dir.path(), "site").await.unwrap().unwrap();
+        assert_eq!(row.work, before);
+        assert_eq!(row.classification.unwrap().revision, 1);
+        assert!(refusal(&do_task_classify(dir.path(), &classification).await).contains("reread"));
     }
 
     /// The other half of "and nothing else": a worker must not be able to speak.
@@ -4511,6 +4576,7 @@ mod surface_tests {
                 "hi_session_messages".to_string(),
                 "hi_session_status".to_string(),
                 "hi_system_one".to_string(),
+                "hi_task_classify".to_string(),
                 "hi_task_open".to_string(),
                 "hi_task_relate".to_string(),
             ],
@@ -4529,7 +4595,7 @@ mod surface_tests {
             got.sort();
             got
         };
-        assert_eq!(task_verbs(Some("cognition")), vec!["hi_task_open", "hi_task_relate"]);
+        assert_eq!(task_verbs(Some("cognition")), vec!["hi_task_classify", "hi_task_open", "hi_task_relate"]);
         assert_eq!(task_verbs(Some("worker")), vec!["hi_task_note", "hi_task_set"]);
         assert!(names(Some("worker")).contains(&"hi_view_verdict".to_string()));
         assert!(task_verbs(Some("reaction")).is_empty());
@@ -4565,6 +4631,7 @@ mod surface_tests {
         let dir = tempfile::tempdir().unwrap();
         let opening = tasks::Opening {
             subject: "court-calibration".into(),
+            classification: crate::mind::memory::classification::Input { placement:crate::mind::memory::classification::Placement::Pending {}, source:crate::mind::memory::work::Source::Context, basis:"test category unresolved".into() },
             work: crate::mind::memory::work::Input { assignment: crate::mind::memory::work::Assignment::Independent {}, source: crate::mind::memory::work::Source::Context, basis: "standalone test task".into() },
             title: "场地标定".into(),
             status: tasks::TaskStatus::Doing,

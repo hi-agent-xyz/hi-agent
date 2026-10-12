@@ -33,6 +33,7 @@ const titles = (model, kind) => list(ofKind(model, kind).map((n) => n.title)).so
 /** The rows on Home, which are the rows in hand: a row that is not is not a node (`onHome`). */
 const handed = (model) => titles(model, "task");
 const assigned = (project, state = "project") => ({ assignment: state === "project" ? { state, project } : { state }, source:"user", basis:"explicit project request", revision:1 });
+const classified = (path) => ({ placement:path ? {state:"category",path} : {state:"pending"}, source:"user",basis:"explicit category",revision:1 });
 const handCount = (model) => ofKind(model, "task").length;
 
 function assertConnected(model) {
@@ -71,9 +72,66 @@ test("unanchored projects appear immediately; pending is not independent or lega
     groups:[{label:"Stale",members:["pending","alone"]}]});
   const parent=id=>m.edges.find(e=>e.primary&&e.to===`task:${id}`).from;
   assert.equal(parent("rally"),"project:open-badminton");
-  assert.equal(parent("pending"),"work:pending");
-  assert.equal(parent("alone"),"core");
+  assert.ok(parent("pending").startsWith("work:pending:"));
+  assert.equal(parent("alone"),"group:Stale");
   assert.equal(m.nodes.find(n=>n.id==="task:legacy").data.membership,"legacy");
+  assertConnected(m);
+});
+
+test("independent health tasks and their sessions are classified on their first projection", () => {
+  const tasks=["anti-inflammation", "supplements"].map(subject => ({...task(subject),
+    work:assigned(null,"independent"),classification:classified(["Life", "Health"])}));
+  const m=project({tasks,groups:[{label:"Life",groups:[{label:"Interview",members:[]}]}],
+    workers:tasks.flatMap(t => [worker(`review-${t.subject}`,"worker",{subject:t.subject}),worker(`write-${t.subject}`,"worker",{subject:t.subject})])});
+  for(const t of tasks) {
+    const parent=m.edges.find(e=>e.primary&&e.to===`task:${t.subject}`).from;
+    assert.equal(m.nodes.find(n=>n.id===parent).title,"Health");
+    assert.equal(m.edges.find(e=>e.primary&&e.to===parent).from,"group:Life");
+    const activity=m.nodes.find(n=>n.kind==="activity"&&n.data.session.subject===t.subject);
+    assert.equal(m.edges.find(e=>e.primary&&e.to===activity.id).from,`task:${t.subject}`);
+  }
+  assertConnected(m);
+});
+
+test("unclassified independent work is visible as pending rather than a loose root card", () => {
+  const m=project({tasks:[{...task("new"),work:assigned(null,"independent")}]});
+  assert.equal(m.edges.find(e=>e.primary&&e.to==="task:new").from,"classification:pending");
+  assertConnected(m);
+});
+
+test("explicit categories override stale layout without inferring project membership", () => {
+  const m=project({tasks:[{...task("health"),work:assigned(null,"independent"),classification:classified(["Life","Health"])}],
+    groups:[{label:"Wrong",project:"p",members:["health"]},{label:"Life",groups:[{label:"Health",members:[]}]}]});
+  assert.equal(m.edges.find(e=>e.primary&&e.to==="task:health").from,"group:Health");
+  assert.ok(!m.nodes.some(n=>n.id==="project:p"));
+  assertConnected(m);
+});
+
+test("legacy independent work can use categories but not a project anchor", () => {
+  const m=project({tasks:[{...task("health"),work:assigned(null,"independent")}],
+    groups:[{label:"Life",groups:[{label:"Wrong project",project:"p",groups:[{label:"Subline",members:["health"]}]}]}]});
+  assert.equal(m.edges.find(e=>e.primary&&e.to==="task:health").from,"group:Life");
+  assert.ok(!m.nodes.some(n=>n.id==="project:p"));
+  assertConnected(m);
+});
+
+test("classified project tasks retain a single project heading and connected category ancestors", () => {
+  const tasks=[{...task("a"),work:assigned("p"),classification:classified(["Life","Health"])},
+    {...task("b"),work:assigned("p"),classification:classified(["Learning"])}];
+  const m=project({tasks});
+  assert.equal(m.nodes.filter(n=>n.id==="project:p").length,1);
+  for(const t of tasks) assert.equal(m.edges.find(e=>e.primary&&e.to===`task:${t.subject}`).from,"project:p");
+  assertConnected(m);
+  assertConnected(budgeted(m,{w:600,h:450}).model);
+  const reverse=project({tasks:[...tasks].reverse()});
+  assert.equal(reverse.edges.find(e=>e.primary&&e.to==="project:p").from,m.edges.find(e=>e.primary&&e.to==="project:p").from);
+});
+
+test("pending project membership can live inside a known discovery category", () => {
+  const m=project({tasks:[{...task("new"),work:assigned(null,"pending"),classification:classified(["Life","Health"])}]});
+  const parent=m.edges.find(e=>e.primary&&e.to==="task:new").from;
+  const category=m.edges.find(e=>e.primary&&e.to===parent).from;
+  assert.equal(m.nodes.find(n=>n.id===category).title,"Health");
   assertConnected(m);
 });
 

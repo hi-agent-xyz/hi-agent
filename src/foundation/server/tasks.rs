@@ -45,6 +45,7 @@ use crate::types::{Content, Message, TaskRef};
 struct TaskDto {
     subject: String,
     work: Option<crate::mind::memory::work::Relation>,
+    classification: Option<crate::mind::memory::classification::Relation>,
     title: String,
     status: &'static str,
     created_at: Option<String>,
@@ -98,6 +99,7 @@ struct TaskDto {
 struct RowDto {
     subject: String,
     work: Option<crate::mind::memory::work::Relation>,
+    classification: Option<crate::mind::memory::classification::Relation>,
     title: String,
     status: &'static str,
     created_at: Option<String>,
@@ -433,6 +435,7 @@ fn dto(task: &Task, malformed: bool, showing: &Showing<'_>) -> TaskDto {
     TaskDto {
         subject: task.subject.clone(),
         work: task.work.clone(),
+        classification: task.classification.clone(),
         title: task.title.clone(),
         status: task.status.as_str(),
         created_at: task.created_at.map(rfc3339),
@@ -464,6 +467,7 @@ fn row(task: &Task, malformed: bool, showing: &Showing<'_>) -> RowDto {
     RowDto {
         subject: task.subject.clone(),
         work: task.work.clone(),
+        classification: task.classification.clone(),
         title: task.title.clone(),
         status: task.status.as_str(),
         created_at: task.created_at.map(rfc3339),
@@ -572,6 +576,7 @@ fn is_malformed(raw: &str, task: &Task) -> bool {
 
     status_bad
         || (field("work").is_some() && task.work.is_none())
+        || (field("classification").is_some() && task.classification.is_none())
         || invalid_timestamp("created_at", None, task.created_at.is_some())
         || invalid_timestamp("due_at", Some("due"), task.due_at.is_some())
         || invalid_timestamp("checked_at", Some("checked"), task.checked_at.is_some())
@@ -705,6 +710,25 @@ pub struct WorkPatch {
     expected_revision: u64,
 }
 
+#[derive(Deserialize)]
+pub struct ClassificationPatch {
+    classification: crate::mind::memory::classification::Input,
+    expected_revision: u64,
+}
+
+pub async fn patch_classification(
+    State(state): State<Arc<AppState>>, Path(subject): Path<String>, Json(mut patch): Json<ClassificationPatch>,
+) -> Response {
+    patch.classification.source = crate::mind::memory::work::Source::User;
+    match tasks::classify(&state.data_dir, &subject, patch.classification, patch.expected_revision).await {
+        Ok(revision) => {
+            state.stores.bump(tasks::DIMENSION).await;
+            Json(serde_json::json!({ "revision":revision })).into_response()
+        },
+        Err(error) => (StatusCode::CONFLICT, Json(serde_json::json!({ "error":error.to_string() }))).into_response(),
+    }
+}
+
 /// A direct UI correction is an explicit user judgment, not an ordinary regrouping pass.
 pub async fn patch_work(
     State(state): State<Arc<AppState>>,
@@ -713,7 +737,10 @@ pub async fn patch_work(
 ) -> Response {
     patch.work.source = crate::mind::memory::work::Source::User;
     match tasks::relate(state.data_dir.as_path(), &subject, patch.work, patch.expected_revision).await {
-        Ok(revision) => Json(serde_json::json!({ "revision": revision })).into_response(),
+        Ok(revision) => {
+            state.stores.bump(tasks::DIMENSION).await;
+            Json(serde_json::json!({ "revision": revision })).into_response()
+        },
         Err(error) => (StatusCode::CONFLICT, Json(serde_json::json!({ "error": error.to_string() }))).into_response(),
     }
 }
@@ -967,6 +994,7 @@ mod tests {
         let mut task = Task::new("Judge the site", TaskStatus::Doing);
         task.timeline.push(TimelineEntry::new(TimelineKind::Waiting, at(1, 9), "judge this site"));
         task.timeline.push(TimelineEntry::new(TimelineKind::Related, at(1, 10), "membership corrected"));
+        task.timeline.push(TimelineEntry::new(TimelineKind::Related, at(1, 11), "classification corrected"));
         let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert_eq!(value["latest"]["kind"], "waiting");
     }
@@ -979,11 +1007,17 @@ mod tests {
             assignment:work::Assignment::Project { project:"p".into(), continues:Some("earlier".into()) },
             source:work::Source::User, basis:"Explicit website follow-up".into(),
         }, 3));
+        task.classification = Some(crate::mind::memory::classification::relation(crate::mind::memory::classification::Input {
+            placement:crate::mind::memory::classification::Placement::Category { path:vec!["Life".into(),"Health".into()] },
+            source:work::Source::User, basis:"Category correction".into(),
+        }, 2));
         let known_views = views(&[]);
         let showing = showing(&known_views);
         let row = serde_json::to_value(row(&task, false, &showing)).unwrap();
         let detail = serde_json::to_value(dto(&task, false, &showing)).unwrap();
         assert_eq!(row["work"], detail["work"]);
+        assert_eq!(row["classification"], detail["classification"]);
+        assert_eq!(row["classification"]["revision"], 2);
         assert_eq!(row["work"]["revision"], 3);
         assert_eq!(row["work"]["assignment"]["continues"], "earlier");
         assert_eq!(row["work"]["basis"], "Explicit website follow-up");

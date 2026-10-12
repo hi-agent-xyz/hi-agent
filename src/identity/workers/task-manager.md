@@ -537,7 +537,13 @@ Read each task's `work` before arranging it. Confirmed project membership overri
 Home's `members`. Place an existing project with `project: <projects/ subject>` on one
 group, and organize sublines beneath that anchor; moving a task to another category
 cannot change its project. Unanchored projects appear immediately. `members` controls
-order and legacy placement, not new task membership.
+order and legacy placement, not new task membership. Read `classification` too: category
+paths are independent of project membership. Independent tasks still enter categories,
+e.g. life / health; do not keep them loose because no project exists. Task creation records
+classification atomically. Request evidence-backed repairs through Cognition's
+`hi_task_classify`; do not bypass the versioned record with a Home members list.
+Use the existing category paths when arranging project anchors. A project is one primary
+branch: do not split its tasks across multiple project headings to satisfy categories.
 
 Report pending or missing membership, contradictory placement and follow-ups missing
 their project to Cognition with evidence. Do not edit work relations by rewriting task

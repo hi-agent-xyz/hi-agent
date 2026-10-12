@@ -521,7 +521,7 @@ function useRecord(subject) {
 // draws from the row alone — every part of it that needs the account already guards for an
 // absent one, so what is missing for that beat is the prose, not the panel.
 function withRecord(row, record) {
-  return row && record ? { ...record, ...row, work: record.work } : row;
+  return row && record ? { ...record, ...row, work: record.work, classification:record.classification } : row;
 }
 
 /**
@@ -923,6 +923,7 @@ function Detail({ task, busy, onStatus, onClose, onReplied, focus = null }) {
         <div className="hi-tasks__detail-scroll">
           {task.malformed && <div className="hi-tasks__bad">{L.malformed}</div>}
           <WorkMembership key={task.subject} task={task} onChanged={onReplied} />
+          <TaskClassification key={`classification:${task.subject}`} task={task} onChanged={onReplied} />
 
           {moments.length === 0 && !live ? (
             <div className="hi-tasks__none">{reading ? L.readingRecord : L.noTimeline}</div>
@@ -1080,6 +1081,39 @@ function WorkMembership({ task, onChanged }) {
       <input hidden={state !== "project"} disabled={busy} required={state === "project"} name="project" list={`projects-${task.subject}`} aria-label={zh ? "项目稳定标识" : "Stable project subject"} defaultValue={assignment?.project || ""} placeholder={zh ? "选择已有项目" : "Choose an existing project"} />
       <datalist id={`projects-${task.subject}`}>{projects.map(project => <option key={project} value={project} />)}</datalist>
       <button disabled={busy} type="submit">{zh ? "保存归属" : "Save membership"}</button>
+    </form>}
+    {error && <p role="alert">{error}</p>}
+  </section>;
+}
+
+function TaskClassification({ task, onChanged }) {
+  const zh = /^zh/i.test(LOCALE), category = task.classification;
+  const [editing, setEditing] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(null);
+  const summary = category?.placement.state === "category" ? category.placement.path.join(" / ")
+    : category ? (zh ? "分类待整理" : "Category pending") : (zh ? "分类未记录" : "Category unrecorded");
+  const save = async event => {
+    event.preventDefault();
+    const fields = new FormData(event.currentTarget);
+    const path = String(fields.get("path")).split("/").map(label => label.trim()).filter(Boolean);
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/tasks/${encodeURIComponent(task.subject)}/classification`, {
+        method:"PATCH", headers:J, body:JSON.stringify({ expected_revision:category?.revision || 0,
+          classification:{ placement:path.length ? {state:"category", path} : {state:"pending"}, source:"user",
+            basis:zh ? "用户在任务详情中修正分类" : "User corrected category in task details" } }) });
+      const answer = await response.json();
+      if (!response.ok) throw new Error(answer.error || response.statusText);
+      setEditing(false); onChanged?.();
+    } catch (e) { setError(e.message); onChanged?.(); } finally { setBusy(false); }
+  };
+  return <section style={{ padding:"12px 0", borderBottom:"1px solid var(--fg-mute)" }}>
+    <p>{zh ? "内容分类" : "Discovery category"}：{summary} <button disabled={busy} type="button"
+      onClick={() => { setError(null); setEditing(!editing); }}>{zh ? "修正分类" : "Correct category"}</button></p>
+    {category?.basis && <small>{category.basis}</small>}
+    {editing && <form key={category?.revision || 0} onSubmit={save} style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8 }}>
+      <input disabled={busy} name="path" aria-label={zh ? "分类路径" : "Category path"}
+        defaultValue={category?.placement.path?.join(" / ") || ""} placeholder={zh ? "生活类 / 健康（留空为待分类）" : "Life / Health (empty means pending)"} />
+      <button disabled={busy} type="submit">{zh ? "保存分类" : "Save category"}</button>
     </form>}
     {error && <p role="alert">{error}</p>}
   </section>;

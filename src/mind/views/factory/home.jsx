@@ -34,6 +34,7 @@ const COPY = {
     more: (n) => `${n} more`,
     onBoard: (n) => `${n} more on the task board`,
     pending: "Membership pending", legacy: "Project membership not recorded",
+    categoryPending: "Category pending", categoryUnrecorded: "Category not recorded",
     projectContent: "All project content", projectFailed: "Could not load project content",
     projectEmpty: "No confirmed tasks match. Legacy tasks need a reviewed membership first.", searchProject: "Search tasks and results", projectDirectory: "Projects",
   },
@@ -53,6 +54,7 @@ const COPY = {
     more: (n) => `还有 ${n} 项`,
     onBoard: (n) => `还有 ${n} 项，在任务板上`,
     pending: "归属待整理", legacy: "项目归属未记录",
+    categoryPending: "分类待整理", categoryUnrecorded: "分类未记录",
     projectContent: "查看项目全部内容", projectFailed: "项目内容未能读取",
     projectEmpty: "暂无匹配的已归属任务；旧任务需要先核实项目归属。", searchProject: "搜索任务与成果", projectDirectory: "项目目录",
   },
@@ -401,7 +403,7 @@ function taskResults(task) {
  */
 function groupIndex(groups) {
   const byTask = new Map();
-  const order = new Map(), projects = new Map();
+  const order = new Map(), projects = new Map(), categories = new Map();
   const labels = new Set();
   let upkeep = null;
   const walk = (list, chain) => (Array.isArray(list) ? list : []).forEach((group, index) => {
@@ -412,6 +414,7 @@ function groupIndex(groups) {
     // Defend the read projection too: old or hand-edited records may predate write validation.
     const prefix = projectParent < 0 ? chain : chain.slice(0, projectParent);
     const here = [...prefix, { label, project: group.project || null, note: plain(group.note), icon: plain(group.icon), index }];
+    if (!here.some(g => g.project)) categories.set(JSON.stringify(here.map(g => g.label)), here);
     if (group.project && !projects.has(group.project)) projects.set(group.project, here);
     for (const [memberIndex, subject] of (group.members || []).entries()) {
       const key = plain(subject);
@@ -421,7 +424,7 @@ function groupIndex(groups) {
     walk(group.groups, here);
   });
   walk(groups, []);
-  return { byTask, upkeep, order, projects };
+  return { byTask, upkeep, order, projects, categories };
 }
 
 function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now = Date.now()) {
@@ -443,19 +446,42 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
   const activities = [...sessions.values()].filter((s) => !CORE_ROLES.has(s.role));
   const core = add({ id: "core", kind: "core", title: L.core,
     sourceRefs: coreSessions.map((s) => ref("session", s.id)), data: { sessions: coreSessions, overviewIds: [] } });
-  const { byTask: grouped, upkeep: upkeepChain, order, projects } = groupIndex(groups);
+  const { byTask: grouped, upkeep: upkeepChain, order, projects, categories } = groupIndex(groups);
+  const categoryChain = (task) => {
+    const placement = task.classification?.placement;
+    if (placement?.state === "pending") return [{ id:"classification:pending", label:L.categoryPending, index:groups.length + 2 }];
+    if (placement?.state === "category") return placement.path.map((label, index) => {
+      const key = JSON.stringify(placement.path.slice(0, index + 1));
+      const existing = categories.get(key);
+      return existing?.[existing.length - 1] || { id:`category:${key}`, label, index:groups.length };
+    });
+    // Old independent records can use display categories, but never a project or its sublines.
+    const legacy = grouped.get(task.subject);
+    const projectAt = legacy?.findIndex(g => g.project);
+    return projectAt === 0 ? null : projectAt > 0 ? legacy.slice(0, projectAt) : legacy;
+  };
+  // One primary heading per unanchored project, even when members have different categories.
+  const projectCategories = new Map();
+  for (const task of [...tasks].sort((a,b) => a.subject.localeCompare(b.subject))) {
+    if (task.work?.assignment.state !== "project" || task.classification?.placement.state !== "category") continue;
+    const project = task.work.assignment.project;
+    if (!projectCategories.has(project)) projectCategories.set(project, categoryChain(task));
+  }
   const chainFor = (task) => {
     const assignment = task.work?.assignment;
-    if (!assignment) return grouped.get(task.subject);
-    if (assignment.state === "independent") return null;
-    if (assignment.state === "pending") return [{ id: "work:pending", label: L.pending, index: groups.length + 1 }];
+    if (!assignment) return task.classification ? categoryChain(task) : grouped.get(task.subject);
+    if (assignment.state === "independent") return categoryChain(task)
+      || [{ id:"classification:pending", label:L.categoryPending, index:groups.length + 2 }];
+    if (assignment.state === "pending") return [...(categoryChain(task) || []),
+      { id:`work:pending:${JSON.stringify(task.classification?.placement || grouped.get(task.subject)?.map(g=>g.label) || [])}`, label:L.pending, index:groups.length + 1 }];
     if (assignment.state === "project") {
       const anchor = projects.get(assignment.project);
       const legacy = grouped.get(task.subject);
       // Keep a display subline only when it is inside this project's explicit anchor.
       if (anchor && legacy?.some((g) => g.project === assignment.project)
         && !legacy.some((g) => g.project && g.project !== assignment.project)) return legacy;
-      return anchor || [{ project: assignment.project, label: assignment.project, index: groups.length }];
+      return anchor || [...(projectCategories.get(assignment.project) || []),
+        { project: assignment.project, label: assignment.project, index: groups.length }];
     }
     return [{ id: "work:pending", label: L.pending, index: groups.length + 1 }];
   };
@@ -498,6 +524,7 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
         memberIndex: order.get(task.subject) ?? Number.MAX_SAFE_INTEGER,
         membership: task.work ? task.work.assignment.state : "legacy",
+        classification: task.classification?.placement.state || "unrecorded",
         endedAt: taskEnd(task), results: taskResults(task), sessions: [] } });
     // Membership decides the project; the arrangement supplies display anchors and sublines.
     // Legacy rows alone retain their previous grouping.
@@ -1952,6 +1979,8 @@ function Node({ node, now, children, openRef, openTask, tones, centreOn, unopene
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
     {node.kind === "task" && ["pending", "legacy"].includes(node.data.membership)
       && <small className="hi-work__membership">{L[node.data.membership]}</small>}
+    {node.kind === "task" && node.data.membership === "independent" && node.data.classification !== "category"
+      && <small className="hi-work__membership">{node.data.classification === "pending" ? L.categoryPending : L.categoryUnrecorded}</small>}
     {node.kind === "task" && more > 0 && <small className="hi-work__membership">{L.more(more)} · {L.source.workers}</small>}
   </>;
   return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}

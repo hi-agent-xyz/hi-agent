@@ -811,6 +811,7 @@ pub fn build(
                 .route("/api/projects/{project}/tasks", get(tasks::get_project_tasks))
                 .route("/api/projects", get(home::get_projects))
                 .route("/api/tasks/{subject}/work", axum::routing::patch(tasks::patch_work))
+                .route("/api/tasks/{subject}/classification", axum::routing::patch(tasks::patch_classification))
                 .route("/api/home/group-icon", get(home::get_default_group_icon))
                 .route("/api/workers", get(workers::get_workers))
                 // Before `/{id}`: axum matches a literal segment ahead of a capture, but

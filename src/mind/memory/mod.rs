@@ -8,6 +8,7 @@
 use std::path::Path;
 
 pub mod conduct;
+pub mod classification;
 pub mod decay;
 pub mod episodes;
 pub mod facets;

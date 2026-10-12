@@ -573,6 +573,9 @@ pub async fn work_record(data_dir: &Path, subject: &str) -> String {
     // `created` line however far back it sits, plus a marker saying how much was left out.
     let record = match tasks::read_task(data_dir, subject).await {
         Ok(Some(row)) => {
+            if let Some(category) = &row.classification {
+                out.push_str(&format!("\n\n## Discovery category\n{}\n", category.summary()));
+            }
             if let Some(work) = &row.work {
                 out.push_str(&format!("\n\n## Work membership\n{}\n", work.summary()));
                 if let Some(project) = work.project()
@@ -1217,10 +1220,15 @@ mod window_tests {
             assignment:work::Assignment::Project { project:"p".into(), continues:None },
             source:work::Source::User, basis:"This is part of the website".into(),
         }, 0).await.unwrap();
+        tasks::classify(dir.path(), "rally", super::super::classification::Input {
+            placement:super::super::classification::Placement::Category { path:vec!["Learning".into(),"Video".into()] },
+            source:work::Source::User, basis:"User chose video learning".into(),
+        }, 0).await.unwrap();
         let text = work_record(dir.path(), "rally").await;
         assert!(text.contains("project: p; revision: 1"), "{text}");
         assert!(text.contains("This is part of the website"), "{text}");
         assert!(text.contains("accepts uploaded match videos"), "{text}");
+        assert!(text.contains("Learning > Video"), "{text}");
     }
 
     /// **The line this whole projection exists for.** A worker used to open with its brief

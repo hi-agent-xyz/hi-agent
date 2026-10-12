@@ -2,7 +2,8 @@
 
 Home is a projection of work relations, not the place where project facts originate.
 This supersedes the claim in `home.md` that every grouping is surface-only. A category
-and its order remain surface preferences; task membership is durable work data.
+and its order are independent of project membership. Task discovery classification is
+also recorded atomically; Home is not responsible for guessing it after work begins.
 
 ## Records
 
@@ -30,6 +31,38 @@ Other assignments are `{"state":"independent"}` and `{"state":"pending"}`. Both
 require a basis. Absent or invalid work on an old record is unresolved legacy data, not
 independent work. Invalid stored bytes are preserved during unrelated task updates.
 
+## Discovery Classification
+
+`independent` means no project membership, not "must sit at the root". Each new task also
+records a separate `classification` frontmatter relation in the same write:
+
+```json
+{
+  "placement": {"state":"category", "path":["生活类", "健康"]},
+  "source":"user",
+  "basis":"The user explicitly confirmed these health topics belong under life.",
+  "revision":1
+}
+```
+
+Unknown categories use `{"state":"pending"}` with a reason. Category and project records
+have independent revisions, evidence and source protection. `hi_task_classify` corrects
+only categories; `hi_task_relate` corrects only project membership. Absence on existing
+records remains unrecorded, not an automatic classification by title or system. Labels
+reuse the user's category vocabulary; this first implementation stores category paths,
+not a second category registry. Renaming a category requires explicitly correcting its
+paths; it does not change stable project IDs.
+
+Home materializes missing category headings on the first projection. Existing matching
+category paths supply icons and order. Explicit paths beat stale membership lists. Old
+independent records can use non-project grouping paths; unclassified independent work
+enters a visible classification-pending branch. Project anchors remain authoritative for
+the project's location. Without an anchor, a deterministic classified member supplies
+the whole project's category location; one project never gains multiple primary parents.
+Conflicting project categories should be reviewed and resolved with an explicit anchor.
+Pending project membership can live within a known category. Classification is not the
+old finished-sibling retention proxy. Sessions continue following their task.
+
 `continues` is optional. It names an existing task with the same confirmed project, and
 must be acyclic. It expresses continuation, not dependency or parent-child display rank.
 A parent cannot change projects while another task still continues it; resolve those
@@ -37,7 +70,7 @@ links explicitly first. Membership does not merge promises or task records.
 
 ## Writers And Consistency
 
-- `hi_task_open` requires a work input. Unknown projects or invalid continuation links
+- `hi_task_open` requires both work and classification inputs. Unknown projects or invalid continuation links
   fail before the task is published. There is no second asynchronous classification call.
 - Cognition owns `hi_task_relate`, because it witnessed the request. Workers report
   contradictory evidence to it rather than rewrite task files.
@@ -65,7 +98,8 @@ tasks exist. Its rendered node ID is `project:<subject>`, independent of its lab
 Confirmed tasks enter that anchor immediately; without one, Home creates a project heading
 at the core. A stale membership list elsewhere cannot divert them. Existing subgroups
 inside their project's explicit anchor may organize tasks into display worklines. A
-pending task enters a visibly pending branch; independent tasks stay independent.
+pending task enters a visibly pending branch; independent tasks stay independent of
+projects but still enter discovery categories.
 Legacy records retain old placement and retention with an unrecorded-membership label.
 They are never promoted to project facts by reading a group, title, system, or keyword.
 
@@ -111,6 +145,11 @@ cargo run --example work-membership -- data docs/arch/examples/open-badminton-me
 # After stopping the core and backing up, use the same command with --apply.
 ```
 
+For category-only corrections, `examples/task-classification.rs` similarly defaults to
+dry run and requires an offline backed-up core for `--apply`. The reviewed
+`docs/arch/examples/health-classification.json` repairs the two health tasks' categories
+only; it does not promote them to projects or rewrite work-membership provenance.
+
 This implementation covers durable membership, propagation, corrections, projection and
 project discovery. It does not automatically rewrite existing instance data, deploy/restart
 the running core, introduce workline identities, or pin every category's canvas position.
@@ -127,3 +166,6 @@ the running core, introduce workline identities, or pin every category's canvas 
 - Shared results remain accessible from every task usage.
 - Every drawn non-root node retains a path to the current root after cutting.
 - Closed project work remains discoverable without resurrecting it on the current chart.
+- Independent health tasks and their sessions enter life / health on their first projection.
+- Category corrections neither change project membership nor its user provenance.
+- Missing categories are visible as pending; absence of a project never means no category.

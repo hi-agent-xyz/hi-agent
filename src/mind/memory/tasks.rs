@@ -374,6 +374,7 @@ pub struct Task {
     pub subject: String,
     /// Absent only on legacy records. Absence is unresolved, never independent work.
     pub work: Option<super::work::Relation>,
+    pub classification: Option<super::classification::Relation>,
     pub status: TaskStatus,
     pub title: String,
     /// Always present on tasks created by current writers. Legacy records may not
@@ -436,7 +437,8 @@ pub struct Task {
 /// Frontmatter keys [`parse`] consumes, current and legacy. These are the only lines
 /// [`render`] may re-author, because it re-emits each one canonically; every other line is
 /// somebody else's and passes through untouched.
-const SCHEMA_KEYS: [&str; 17] = [
+const SCHEMA_KEYS: [&str; 18] = [
+    "classification",
     "work",
     "status",
     "title",
@@ -474,6 +476,7 @@ impl Task {
         Self {
             subject: facets::slug(title),
             work: None,
+            classification: None,
             status,
             title: title.trim().to_owned(),
             created_at: Some(now),
@@ -1139,6 +1142,7 @@ impl Task {
 pub struct Opening {
     pub subject: String,
     pub work: super::work::Input,
+    pub classification: super::classification::Input,
     pub title: String,
     pub status: TaskStatus,
     /// The `created` line — what they want to end up with, in their words.
@@ -1173,6 +1177,7 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
         return Ok(Err(Refused::Closed));
     }
     super::work::validate(data_dir, &opening.work).await?;
+    super::classification::validate(&opening.classification)?;
     let _held = write_lock().lock().await;
     if read_task(data_dir, &subject).await?.is_some() {
         return Ok(Err(Refused::Exists(subject)));
@@ -1181,6 +1186,7 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
     let mut task = Task::new(title, opening.status);
     validate_continuation(data_dir, &subject, &opening.work).await?;
     task.work = Some(super::work::relation(opening.work, 1));
+    task.classification = Some(super::classification::relation(opening.classification, 1));
     task.subject = subject.clone();
     task.due_at = opening.due_at;
     task.liveness = opening.liveness;
@@ -1207,6 +1213,33 @@ async fn validate_continuation(data_dir: &Path, subject: &str, input: &super::wo
         };
     }
     Ok(())
+}
+
+/// Category corrections never change project membership or its revision.
+pub async fn classify(data_dir: &Path, subject: &str, input: super::classification::Input, expected: u64) -> anyhow::Result<u64> {
+    anyhow::ensure!(!subject.is_empty() && facets::slug(subject) == subject, "name the stable task subject");
+    super::classification::validate(&input)?;
+    let _held = write_lock().lock().await;
+    let mut task = read_task(data_dir, subject).await?.ok_or_else(|| anyhow::anyhow!("no task `{subject}`"))?;
+    let revision = task.classification.as_ref().map_or(0, |c| c.revision);
+    anyhow::ensure!(revision == expected, "classification changed: expected revision {expected}, current {revision}; reread before correcting");
+    if let Some(old) = &task.classification {
+        anyhow::ensure!(old.source != super::work::Source::User || old.placement == input.placement || input.source == super::work::Source::User,
+            "a user-confirmed category cannot be overwritten by an ordinary context judgment");
+    }
+    let next_revision = revision.checked_add(1).ok_or_else(|| anyhow::anyhow!("classification revision exhausted"))?;
+    let from_context = input.source == super::work::Source::Context;
+    let mut next = super::classification::relation(input, next_revision);
+    if let Some(old) = &task.classification && old.source == super::work::Source::User {
+        next.source = old.source;
+        if from_context { next.basis = old.basis.clone(); }
+    }
+    let previous = task.classification.as_ref().map(|c| c.summary()).unwrap_or_else(|| "classification unrecorded".into());
+    task.timeline.push(TimelineEntry::new(TimelineKind::Related, Utc::now(), format!("classification: {previous} -> {}", next.summary())));
+    task.classification = Some(next);
+    task.extra.retain(|line| !line.split_once(':').is_some_and(|(key, _)| key.trim() == "classification"));
+    write_task(data_dir, &task).await?;
+    Ok(next_revision)
 }
 
 /// A relation correction is a compare-and-swap on the same record as the task.
@@ -1385,6 +1418,8 @@ pub async fn fold(
         _ => false,
     };
     anyhow::ensure!(same_membership, "cannot fold tasks with different work memberships; correct their membership first");
+    anyhow::ensure!(folded.classification.as_ref().map(|c| &c.placement) == survivor.classification.as_ref().map(|c| &c.placement),
+        "cannot fold tasks with different discovery categories; correct their classification first");
     survivor.absorb(&folded);
     folded.set_status(TaskStatus::Cancelled, at, Hand::Mind);
     folded.timeline.push(TimelineEntry::new(TimelineKind::Update, at, format!("folded into `{into}`")));
@@ -1867,6 +1902,12 @@ fn render_projection(
         } else {
             out.push_str(" · project membership unrecorded (legacy)");
         }
+        if let Some(category) = &task.classification {
+            let _ = write!(out, " · category: {}", match &category.placement {
+                super::classification::Placement::Pending {} => "pending".into(),
+                super::classification::Placement::Category { path } => path.join(" > "),
+            });
+        } else { out.push_str(" · classification unrecorded"); }
         out.push('\n');
     }
 
@@ -2225,6 +2266,7 @@ fn parse(subject: &str, content: &str) -> Task {
     Task {
         subject: subject.to_owned(),
         work: field("work").and_then(|v| super::work::decode(&v)),
+        classification: field("classification").and_then(|v| super::classification::decode(&v)),
         status: coerce_duty(status, &liveness),
         title: field("title").unwrap_or_else(|| subject.replace('-', " ")),
         created_at,
@@ -2295,6 +2337,10 @@ fn foreign_frontmatter(content: &str) -> Vec<String> {
             continue;
         }
         match line.split_once(':') {
+            Some((key, _)) if key.trim() == "classification" && frontmatter_field(content, "classification").and_then(|v| super::classification::decode(&v)).is_none() => {
+                under_schema_key = false;
+                out.push(line.to_owned());
+            }
             Some((key, _)) if key.trim() == "work" && frontmatter_field(content, "work").and_then(|v| super::work::decode(&v)).is_none() => {
                 under_schema_key = false;
                 out.push(line.to_owned());
@@ -2364,6 +2410,9 @@ fn render(task: &Task) -> String {
     field("title", task.title.as_str());
     if let Some(work) = &task.work {
         field("work", &serde_json::to_string(work).expect("work relation serializes"));
+    }
+    if let Some(category) = &task.classification {
+        field("classification", &serde_json::to_string(category).expect("classification serializes"));
     }
     if let Some(created_at) = task.created_at {
         field("created_at", created_at.to_rfc3339().as_str());
@@ -3960,6 +4009,7 @@ mod verb_tests {
     fn opening(subject: &str) -> Opening {
         Opening {
             subject: subject.into(),
+            classification: super::super::classification::Input { placement:super::super::classification::Placement::Pending {}, source:super::super::work::Source::Context, basis:"test category unresolved".into() },
             work: super::super::work::Input { assignment: super::super::work::Assignment::Independent {}, source: super::super::work::Source::Context, basis: "standalone test task".into() },
             title: "导入赵力的简历".into(),
             status: TaskStatus::Doing,
@@ -3972,6 +4022,42 @@ mod verb_tests {
 
     async fn project_record(dir: &Path, subject: &str) {
         facets::update_facet(dir, "projects", subject, &format!("# {subject}\n")).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn categories_are_atomic_at_creation_and_corrected_without_changing_work() {
+        use super::super::{classification, work::Source};
+        let dir = tempfile::tempdir().unwrap();
+        let category = |path: &[&str], source| classification::Input {
+            placement:classification::Placement::Category { path:path.iter().map(|s| (*s).into()).collect() },
+            source, basis:"explicit category correction".into(),
+        };
+        let mut row = opening("health");
+        row.classification = category(&[], Source::Context);
+        assert!(open(dir.path(), row.clone()).await.is_err());
+        assert!(read_task(dir.path(), "health").await.unwrap().is_none());
+        row.classification = category(&["Life", "Health"], Source::User);
+        open(dir.path(), row).await.unwrap().unwrap();
+        let original = read_task(dir.path(), "health").await.unwrap().unwrap();
+        assert_eq!(original.classification.as_ref().unwrap().revision, 1);
+        assert!(classify(dir.path(), "health", category(&["Learning"], Source::Context), 1).await.is_err());
+        assert!(classify(dir.path(), "health", category(&["Life"], Source::User), 0).await.is_err());
+        let (a,b) = tokio::join!(classify(dir.path(), "health", category(&["Life"], Source::User), 1),
+            classify(dir.path(), "health", category(&["Learning"], Source::User), 1));
+        assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+        let changed = read_task(dir.path(), "health").await.unwrap().unwrap();
+        assert_eq!(changed.work, original.work);
+        assert_eq!(changed.status, original.status);
+        assert_eq!(changed.classification.unwrap().revision, 2);
+        assert_eq!(changed.timeline.last().unwrap().kind, TimelineKind::Related);
+    }
+
+    #[test]
+    fn invalid_classification_is_preserved_on_unrelated_edits() {
+        let raw = "---\nstatus: doing\ntitle: health\nclassification: invalid-json\n---\n\n";
+        let task = parse("health", raw);
+        assert!(task.classification.is_none());
+        assert!(render(&task).contains("classification: invalid-json"));
     }
 
     fn membership(project: &str, continues: Option<&str>, source: super::super::work::Source) -> super::super::work::Input {
