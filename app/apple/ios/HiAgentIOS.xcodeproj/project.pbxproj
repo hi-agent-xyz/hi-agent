@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A20000000000000000000005 /* CarPlayPCMEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005; };
+		A20000000000000000000001 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001; };
+		A20000000000000000000002 /* CarPlayVoiceSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002; };
+		A20000000000000000000003 /* CarPlayAudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003; };
+		A20000000000000000000004 /* CarPlaySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004; };
 		A10000000000000000000001 /* HiAgentIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* HiAgentIOSApp.swift */; };
 		A10000000000000000000002 /* CoreModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* CoreModels.swift */; };
 		A10000000000000000000003 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* KeychainStore.swift */; };
@@ -58,6 +63,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B20000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayPCMEncoder.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayVoiceSession.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlayAudioPlayer.swift; sourceTree = "<group>"; };
+		B20000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/CarPlaySetupView.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* HiAgentIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HiAgentIOSApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* CoreModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreModels.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
@@ -119,6 +129,11 @@
 		E10000000000000000000002 /* HiAgentIOS */ = {
 			isa = PBXGroup;
 			children = (
+				B20000000000000000000005,
+				B20000000000000000000001,
+				B20000000000000000000002,
+				B20000000000000000000003,
+				B20000000000000000000004,
 				B10000000000000000000001 /* HiAgentIOSApp.swift */,
 				B10000000000000000000002 /* CoreModels.swift */,
 				B10000000000000000000003 /* KeychainStore.swift */,
@@ -270,6 +285,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000005,
+				A20000000000000000000001,
+				A20000000000000000000002,
+				A20000000000000000000003,
+				A20000000000000000000004,
 				A10000000000000000000001 /* HiAgentIOSApp.swift in Sources */,
 				A10000000000000000000002 /* CoreModels.swift in Sources */,
 				A10000000000000000000003 /* KeychainStore.swift in Sources */,

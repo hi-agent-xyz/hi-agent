@@ -7,6 +7,7 @@ struct RosterView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @State private var showingScreenSetup = false
+    @State private var showingCarPlaySetup = false
 
     var body: some View {
         NavigationStack {
@@ -50,6 +51,11 @@ struct RosterView: View {
                 // The one thing this device can do that the face cannot offer,
                 // because it is set up outside the app entirely.
                 Section {
+                    Button {
+                        showingCarPlaySetup = true
+                    } label: {
+                        Label("CarPlay", systemImage: "car.fill")
+                    }
                     Button {
                         Haptic.tap()
                         showingScreenSetup = true
@@ -119,6 +125,9 @@ struct RosterView: View {
         .presentationCornerRadius(28)
         .sheet(isPresented: $showingScreenSetup) {
             ShowScreenSetupView()
+        }
+        .sheet(isPresented: $showingCarPlaySetup) {
+            CarPlaySetupView()
         }
     }
 

@@ -7,6 +7,7 @@ import SwiftUI
 /// On an iPhone that put a list of one row in front of the only thing anyone
 /// opens the app for, and made "no cores yet" the product's first impression.
 struct ContentView: View {
+    @ObservedObject private var carPlay = CarPlayVoiceSession.shared
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var model: AppModel
     @State private var showingRoster = false
@@ -17,7 +18,9 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            if let current {
+            if carPlay.entryID != nil {
+                CarPlayPhoneView(session: carPlay)
+            } else if let current {
                 CoreStageView(entry: current) {
                     Haptic.tap()
                     showingRoster = true

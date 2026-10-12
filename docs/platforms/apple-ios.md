@@ -38,8 +38,10 @@ iPhone copy sent an iPad owner to a Settings row that does not exist.
 
 ### Decisions
 
-- **No multiple windows.** `UIApplicationSupportsMultipleScenes` stays unset. Not
-  because two windows would conflict — [stage.md](../arch/stage.md) puts the cursor
+- **One phone/tablet window.** CarPlay now declares a separate scene role and
+  enables scene support in the manifest; the phone/tablet UI still provides no
+  multiple-window workflow. Two windows would not conflict —
+  [stage.md](../arch/stage.md) puts the cursor
   on the stage and has *every attached window render it*, so a second window is well
   defined — but because it would then show the same stage as the first, which is not
   worth a scene lifecycle. Split View and Slide Over, where the second app is

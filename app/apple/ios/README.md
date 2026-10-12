@@ -137,3 +137,12 @@ its first three steps into one import tap; that needs a Mac to sign it and somew
 to host it, and is not built.
 
 The app does not host a core on iOS.
+
+## CarPlay
+
+The app includes a dedicated native CarPlay voice client; see
+[CarPlay implementation and validation](../../../docs/platforms/carplay.md).
+It requires iOS 26.4+ and Apple's voice-based conversational entitlement. Enable
+native microphone permission from **Agents → CarPlay** before driving. The
+default signing configuration omits the entitlement until Apple approves it;
+the documentation explains how to opt into `HiAgentIOS/CarPlay.entitlements`.
