@@ -1759,6 +1759,22 @@ mod soul_tests {
         assert!(WORKER_VIEW_REVIEWER_BASE.contains("You judge; you do not fix"));
     }
 
+    #[test]
+    fn view_guidance_preserves_the_readers_report_structure() {
+        for prompt in [READING, WORKER_VIEW_BUILDER_BASE, WORKER_VIEW_REVIEWER_BASE] {
+            assert!(prompt.contains("This week / Next week / Blockers"));
+            assert!(
+                prompt.contains("grouped by project")
+                    || prompt.contains("Group this week's work by project")
+            );
+            assert!(prompt.contains("Not confirmed"));
+        }
+        assert!(WORKER_VIEW_BUILDER_BASE.contains("Clarity comes before impact"));
+        assert!(!WORKER_VIEW_BUILDER_BASE.contains("Impact comes from contrast, not from subtraction"));
+        assert!(WORKER_VIEW_REVIEWER_BASE.contains("Can you see the structure before reading?"));
+        assert!(!WORKER_VIEW_REVIEWER_BASE.contains("Sparseness is not restraint here"));
+    }
+
     /// Reuse rests on the builder reading the toolbox before it authors, and on every
     /// view carrying the one line that makes the toolbox readable. Both are guidance —
     /// the model may skip either — but the *degradation* is what was designed for: a

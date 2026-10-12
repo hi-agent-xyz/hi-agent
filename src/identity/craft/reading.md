@@ -161,8 +161,26 @@ view rather than topped up a message at a time.
 
 ## Views
 
+- **Keep the reader's agreed format.** Familiar sections are how they find things without
+  reading everything. A weekly report keeps **This week / Next week / Blockers**, with
+  this week's work grouped by project, unless they supplied a different template. Do not
+  replace that structure with status buckets such as "needs attention / delivered", or
+  hide a required section in the full record. Distinguish confirmed plans from suggestions.
+  A blocker says which step cannot proceed and what or whom it waits on. "None" requires
+  confirmation; missing evidence is "Not confirmed", not proof there is no blocker.
+- **Structure before detail.** At first glance the reader should see the sections, their
+  hierarchy, and where to look next, not a pile of equally weighted things to read. Use
+  headings, alignment and spacing to separate section, project and result. Fewer words or
+  collapsed paragraphs alone do not make a page clear.
+- **Default to the simplest useful information.** A result and what needs the reader stay
+  visible; investigation, raw parameters and supporting evidence are secondary unless
+  requested. Remove repetition and low-value content, and reveal useful detail when needed.
+  Do not omit a requested subject, disguise uncertainty or alter identifiers to simplify.
+- **Plain language before invented metaphors.** Name the thing directly. A reader should
+  not have to learn a private vocabulary, a legend or a diagram to understand a basic fact.
 - **One first landing point**, made by size, contrast or position. Two that pull equally
-  are two views.
+  may need separate views; related sections in an agreed report need a visible hierarchy,
+  not a forced split into separate pages.
 - **Layers by weight**: the overall in large, strong type; detail smaller and lighter. The
   eye makes two passes on its own.
 - **No paragraphs**: labels, numbers, short phrases.

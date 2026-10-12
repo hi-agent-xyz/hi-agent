@@ -248,8 +248,9 @@ they never asked for, and there is no getting it back.
 
 If both tests came back quick, this is the whole job:
 
-1. Say in one sentence what question this view answers. If the sentence needs an "and",
-   you have two views — that rule binds both paths, and it is the only part of what
+1. Say in one sentence what question this view answers. If it joins unrelated jobs,
+   you have two views; keep related sections in an agreed report together. This rule
+   binds both paths, and it is the only part of what
    follows that binds this one.
 2. Write the JSX. The mechanics are below — authoring, the theme colours, saving,
    refs — and nothing above them applies.
@@ -270,7 +271,35 @@ same file, same ref, and pick the Custom path up from where you are.
 # One view answers one question
 
 Before you choose a layout, say in one sentence what question this view answers. If the
-sentence needs an "and", you have two views.
+sentence joins unrelated jobs, you have two views. An agreed report can have several
+related sections; do not use this rule to break its format.
+
+## Preserve the agreed format; make the structure visible
+
+The reader's brief, established template and corrections outrank presentation flourishes.
+Clarity means they recognise the structure before reading the details, not merely that
+you shortened the text or put it behind expanders.
+
+**Weekly reports: This week / Next week / Blockers.** Keep these three sections visible,
+unless the reader supplied a different template. Group this week's work by project, with
+the project name and its actual work or result aligned. Next week carries confirmed plans;
+inferred suggestions are labelled as such. A blocker says which next step cannot proceed,
+what is missing and who or what it waits on. Risk or unfinished work is not automatically
+a blocker. State "None" only when confirmed; absent evidence is "Not confirmed". Do not
+replace these sections with "needs attention / delivered", or hide plans and blockers in
+a "full record" expander.
+
+Before filling the page, establish three levels: section, project, result. Use meaningful
+heading sizes, alignment and spacing so the eye can skip whole groups. Desktop may put
+this week's work beside plans and blockers; a phone stacks the same sections in order.
+These are layout options, not a mandatory two-column skin.
+
+Default to plain names and the simplest useful facts. Remove repetitions, decorative
+status labels and low-value process counts. Put useful investigation, raw parameters and
+supporting evidence in a secondary surface when needed; do not collapse facts the reader
+needs to compare or sections they requested. Keep decisions, material uncertainty and
+identifiers honest and visible. Do not invent metaphors or relationship diagrams where
+ordinary words and a list already explain the subject.
 
 This is the failure that survives every other check on this page: a view can clear the type
 floors, render in both themes, fill the frame — and still be unreadable, because it is
@@ -293,9 +322,8 @@ everything to find anything. The parts you can check:
   anything else — by size, by contrast, by position. Two things of equal pull is the same
   as none, because the eye has to choose and the frame stops telling it anything. This is
   the *visual* test for the sentence rule above, and it fails the same way: if you find
-  two elements that genuinely both deserve to be first, you are not looking at a
-  composition problem, you are looking at **two views**, and the fix is to split rather
-  than to place them side by side.
+  unrelated elements that genuinely both deserve to be first, split them. For the related
+  sections of an agreed report, establish hierarchy rather than splitting the report.
 - **Rank your elements by importance, then check the visual weight ranks them the same
   way.** The conclusion should be the heaviest thing on the frame and a procedural detail
   the lightest. If a verdict, a command and an open question all land at 16px in identical
@@ -1068,10 +1096,11 @@ it. The cost is real and worth stating to yourself before you take it: a fixed p
 ignores the person's light/dark setting, which is fine for something the agent puts up and
 talks through, and wrong for a surface that sits on screen all day.
 
-**Impact comes from contrast, not from subtraction.** A composition lands through scale
-jumps, a committed palette, a field of colour, real texture, confident asymmetry — none of
-which costs you a single row of data. If the only way you can find to make a view striking
-is to delete content, you have not designed it yet. Three things that reliably fail:
+**Clarity comes before impact.** Deleting repetition and low-value content, and revealing
+secondary detail on demand, are legitimate design work. Preserve requested subjects and
+the agreed format, not every row the investigation produced. Use contrast, colour, texture
+or asymmetry only when they make the subject easier to understand; a plain, well-organised
+report is finished work, not a failed performance piece. Three things that reliably fail:
 
 - **Loud is not striking.** A page of chrome yellow with heavy black rules gets looked at
   and then not read — the noise is doing the opposite of drawing someone in. Spend the

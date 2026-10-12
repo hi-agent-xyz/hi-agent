@@ -137,13 +137,27 @@ because nobody else in the loop is looking for it.
 
 # What to actually look for
 
+- **Is the agreed format intact?** The reader's template and corrections outrank a
+  stylistic preference. Weekly reports keep **This week / Next week / Blockers**, with
+  this week's work grouped by project, unless the reader specified another template.
+  Replacing that with "needs attention / delivered", or hiding plans and blockers in
+  a full-record expander, is a finding even when the text is shorter.
+- **Can you see the structure before reading?** At first glance identify section,
+  project and result. Headings, alignment, position and spacing should do that work.
+  Short paragraphs in identical cards, a status badge on every item and an expander
+  under every row can still look like a pile of things to read. Name which levels look
+  alike and how to distinguish them; "less text" alone is not an actionable fix.
+- **Are report claims honest?** Confirmed plans and inferred suggestions are distinct.
+  A blocker names the next step it prevents and the missing input or dependency; ordinary
+  risk and unfinished work are not automatically blockers. "None" needs confirmation;
+  an unmentioned blocker is "Not confirmed", not proof that none exists.
 - **Does it say the thing?** A person glancing at this for two seconds — do they get
   the point? If the point is buried under chrome, that is the finding.
 - **What did you see first?** Answer it before you analyse anything — your own first
   fixation is the finding. There should be exactly one thing that pulls the eye, and it
   should be the thing the view is about. If two elements pull equally, say so: that is not
-  a styling note, it is the visual form of the next check, and the fix is a split rather
-  than a rebalance. If nothing pulls — everything at one weight, evenly spaced — that is
+  a styling note. Split unrelated jobs; establish hierarchy for related report sections.
+  If nothing pulls — everything at one weight, evenly spaced — that is
   the same finding with the volume down.
 - **Are the labels in the person's language, and the identifiers untouched?** Two separate
   checks that look alike. A heading or legend written in the builder's own coinage
@@ -153,9 +167,10 @@ because nobody else in the loop is looking for it.
   a revision, a size in the units the tool reported are there to be copied and searched,
   and altering one destroys the reason it is on screen.
 - **Does it answer one question?** Say in a sentence what question the view answers. If the
-  sentence needs an "and", it is two views wearing one costume — and that reads as clutter
-  no amount of styling will fix. The usual shape: fields of different *kinds* (what the
-  thing is, how to operate it, how the builder investigated, what is still unknown) all
+  sentence joins unrelated jobs, it is two views wearing one costume. Related sections
+  in an agreed report need visible hierarchy, not a forced split. The usual failure:
+  fields of different *kinds* (what the thing is, how to operate it, how the builder
+  investigated, what is still unknown) all
   given the same cell, the same size, the same label.
 - **Is the biggest thing on screen readable as language?** A bare figure or ratio set huge
   is not leading with the answer — it means nothing until the reader finds the caption
@@ -174,9 +189,10 @@ because nobody else in the loop is looking for it.
   with the data's own framing, a ranking presented as fact — the view talking over the
   person. The agent has a voice for that. Headings should name the axis, not the builder's
   reading of it.
-- **Is it carrying enough?** Sparseness is not restraint here. A screen someone glances at
-  while being talked to holds a lot, and a view whose whole content could be read aloud in
-  one breath is not earning the frame.
+- **Is it carrying what the reader needs?** Missing requested subjects, a decision or
+  material uncertainty are findings. Fewer visible facts are not a failure on their own.
+  Do not ask for more content just to fill the frame; removing repetition and relegating
+  useful secondary detail can be the improvement. Required report sections stay visible.
 - **Does it fill the frame it will appear in?** Every view gets the whole landscape
   screen, and the render uses the size the person's window is showing right now — so the
   screenshot is the thing itself, not an approximation. Clipped text and a scrollbar
