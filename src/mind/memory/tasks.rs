@@ -184,6 +184,8 @@ pub enum TimelineKind {
     /// that stamps `status_since`: a mind that has to remember to record its own
     /// transition is a mind that will sometimes not.
     Moved,
+    /// Store-owned membership correction; does not supersede a waiting or delivered line.
+    Related,
     /// A view this task made, as the ref in backticks. **Written by the store, never by a
     /// mind**, the first time a session serving the task renders the view with
     /// `hi_review_view` — the one moment the host sees a view being made *for* a task,
@@ -219,6 +221,7 @@ impl TimelineKind {
             Self::Delivered => "delivered",
             Self::Waiting => "waiting",
             Self::Moved => "moved",
+            Self::Related => "related",
             Self::Made => "made",
             Self::Replied => "replied",
             Self::Note => "note",
@@ -243,6 +246,7 @@ impl TimelineKind {
             "delivered" | "landed" => Some(Self::Delivered),
             "waiting" | "blocked" => Some(Self::Waiting),
             "moved" => Some(Self::Moved),
+            "related" => Some(Self::Related),
             "made" => Some(Self::Made),
             "replied" => Some(Self::Replied),
             "note" => Some(Self::Note),
@@ -368,6 +372,8 @@ fn split_attached(text: &str) -> (&str, Option<&str>) {
 #[derive(Debug, Clone)]
 pub struct Task {
     pub subject: String,
+    /// Absent only on legacy records. Absence is unresolved, never independent work.
+    pub work: Option<super::work::Relation>,
     pub status: TaskStatus,
     pub title: String,
     /// Always present on tasks created by current writers. Legacy records may not
@@ -430,7 +436,8 @@ pub struct Task {
 /// Frontmatter keys [`parse`] consumes, current and legacy. These are the only lines
 /// [`render`] may re-author, because it re-emits each one canonically; every other line is
 /// somebody else's and passes through untouched.
-const SCHEMA_KEYS: [&str; 16] = [
+const SCHEMA_KEYS: [&str; 17] = [
+    "work",
     "status",
     "title",
     "created_at",
@@ -466,6 +473,7 @@ impl Task {
         let now = Utc::now();
         Self {
             subject: facets::slug(title),
+            work: None,
             status,
             title: title.trim().to_owned(),
             created_at: Some(now),
@@ -1130,6 +1138,7 @@ impl Task {
 #[derive(Debug, Clone)]
 pub struct Opening {
     pub subject: String,
+    pub work: super::work::Input,
     pub title: String,
     pub status: TaskStatus,
     /// The `created` line — what they want to end up with, in their words.
@@ -1163,12 +1172,15 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
     if !opening.status.is_active() {
         return Ok(Err(Refused::Closed));
     }
+    super::work::validate(data_dir, &opening.work).await?;
     let _held = write_lock().lock().await;
     if read_task(data_dir, &subject).await?.is_some() {
         return Ok(Err(Refused::Exists(subject)));
     }
     let now = Utc::now();
     let mut task = Task::new(title, opening.status);
+    validate_continuation(data_dir, &subject, &opening.work).await?;
+    task.work = Some(super::work::relation(opening.work, 1));
     task.subject = subject.clone();
     task.due_at = opening.due_at;
     task.liveness = opening.liveness;
@@ -1178,6 +1190,61 @@ pub async fn open(data_dir: &Path, opening: Opening) -> anyhow::Result<Result<St
     // The folder its work goes in, so "the task's own folder" exists the moment the row does.
     tokio::fs::create_dir_all(facets::subject_dir(data_dir, DIMENSION, &subject)).await?;
     Ok(Ok(subject))
+}
+
+async fn validate_continuation(data_dir: &Path, subject: &str, input: &super::work::Input) -> anyhow::Result<()> {
+    use super::work::Assignment;
+    let Assignment::Project { project, continues: Some(from) } = &input.assignment else { return Ok(()) };
+    let mut at = Some(from.clone());
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = at {
+        anyhow::ensure!(id != subject && seen.insert(id.clone()), "work continuation must be acyclic");
+        let row = read_task(data_dir, &id).await?.ok_or_else(|| anyhow::anyhow!("no continued task `{id}`"))?;
+        anyhow::ensure!(row.work.as_ref().and_then(|w| w.project()) == Some(project.as_str()), "continued task `{id}` does not have the same confirmed project");
+        at = match row.work.map(|w| w.assignment) {
+            Some(Assignment::Project { continues, .. }) => continues,
+            _ => None,
+        };
+    }
+    Ok(())
+}
+
+/// A relation correction is a compare-and-swap on the same record as the task.
+pub async fn relate(data_dir: &Path, subject: &str, input: super::work::Input, expected: u64) -> anyhow::Result<u64> {
+    anyhow::ensure!(!subject.is_empty() && facets::slug(subject) == subject, "name the stable task subject, not a title or path");
+    super::work::validate(data_dir, &input).await?;
+    let _held = write_lock().lock().await;
+    let mut task = read_task(data_dir, subject).await?.ok_or_else(|| anyhow::anyhow!("no task `{subject}`"))?;
+    let revision = task.work.as_ref().map_or(0, |w| w.revision);
+    anyhow::ensure!(revision == expected, "work relation changed: expected revision {expected}, current {revision}; reread before correcting");
+    if let Some(old) = &task.work {
+        anyhow::ensure!(old.source != super::work::Source::User || old.assignment == input.assignment || input.source == super::work::Source::User,
+            "a user-confirmed membership cannot be overwritten by an ordinary context judgment");
+    }
+    validate_continuation(data_dir, subject, &input).await?;
+    let next_revision = revision.checked_add(1).ok_or_else(|| anyhow::anyhow!("work revision exhausted"))?;
+    let from_context = input.source == super::work::Source::Context;
+    let mut next = super::work::relation(input, next_revision);
+    if task.work.as_ref().is_some_and(|w| w.source == super::work::Source::User) {
+        next.source = super::work::Source::User;
+        if from_context { next.basis = task.work.as_ref().unwrap().basis.clone(); }
+    }
+    if task.work.as_ref().and_then(|w| w.project()) != next.project() {
+        for other in subjects(data_dir).await {
+            if let Some(row) = read_task(data_dir, &other).await?
+                && let Some(super::work::Assignment::Project { continues: Some(from), .. }) = row.work.map(|w| w.assignment)
+                && from == subject
+            {
+                anyhow::bail!("task `{other}` continues this task; correct that relationship before moving its project");
+            }
+        }
+    }
+    let previous = task.work.as_ref().map(|w| w.summary()).unwrap_or_else(|| "legacy: membership unresolved".to_owned());
+    task.timeline.push(TimelineEntry::new(TimelineKind::Related, Utc::now(), format!("work membership: {previous} -> {}", next.summary())));
+    task.work = Some(next);
+    task.extra.retain(|line| !line.split_once(':').is_some_and(|(key, _)| key.trim() == "work"));
+    write_task(data_dir, &task).await?;
+    Ok(next_revision)
 }
 
 /// The row's machinery — what is validated rather than judged, because none of it is prose a
@@ -1310,6 +1377,14 @@ pub async fn fold(
     else {
         return Ok(None);
     };
+    use super::work::Assignment;
+    let same_membership = match (folded.work.as_ref().map(|w| &w.assignment), survivor.work.as_ref().map(|w| &w.assignment)) {
+        (None, None) | (Some(Assignment::Pending {}), Some(Assignment::Pending {}))
+        | (Some(Assignment::Independent {}), Some(Assignment::Independent {})) => true,
+        (Some(Assignment::Project { project: a, .. }), Some(Assignment::Project { project: b, .. })) => a == b,
+        _ => false,
+    };
+    anyhow::ensure!(same_membership, "cannot fold tasks with different work memberships; correct their membership first");
     survivor.absorb(&folded);
     folded.set_status(TaskStatus::Cancelled, at, Hand::Mind);
     folded.timeline.push(TimelineEntry::new(TimelineKind::Update, at, format!("folded into `{into}`")));
@@ -1784,6 +1859,14 @@ fn render_projection(
         if let Some(note) = attached_note(task) {
             let _ = write!(out, " · {note}");
         }
+        if let Some(work) = &task.work {
+            let _ = write!(out, " · work: {} (revision {})", work.project().unwrap_or(match work.assignment {
+                super::work::Assignment::Independent {} => "independent",
+                _ => "pending",
+            }), work.revision);
+        } else {
+            out.push_str(" · project membership unrecorded (legacy)");
+        }
         out.push('\n');
     }
 
@@ -2141,6 +2224,7 @@ fn parse(subject: &str, content: &str) -> Task {
     let (retired_account, timeline) = split_timeline(strip_frontmatter(content));
     Task {
         subject: subject.to_owned(),
+        work: field("work").and_then(|v| super::work::decode(&v)),
         status: coerce_duty(status, &liveness),
         title: field("title").unwrap_or_else(|| subject.replace('-', " ")),
         created_at,
@@ -2211,6 +2295,10 @@ fn foreign_frontmatter(content: &str) -> Vec<String> {
             continue;
         }
         match line.split_once(':') {
+            Some((key, _)) if key.trim() == "work" && frontmatter_field(content, "work").and_then(|v| super::work::decode(&v)).is_none() => {
+                under_schema_key = false;
+                out.push(line.to_owned());
+            }
             Some((key, _)) if SCHEMA_KEYS.contains(&key.trim()) => under_schema_key = true,
             _ => {
                 under_schema_key = false;
@@ -2274,6 +2362,9 @@ fn render(task: &Task) -> String {
         let _ = writeln!(out, "{key}: {}", jstr(value.trim()));
     };
     field("title", task.title.as_str());
+    if let Some(work) = &task.work {
+        field("work", &serde_json::to_string(work).expect("work relation serializes"));
+    }
     if let Some(created_at) = task.created_at {
         field("created_at", created_at.to_rfc3339().as_str());
     }
@@ -3869,6 +3960,7 @@ mod verb_tests {
     fn opening(subject: &str) -> Opening {
         Opening {
             subject: subject.into(),
+            work: super::super::work::Input { assignment: super::super::work::Assignment::Independent {}, source: super::super::work::Source::Context, basis: "standalone test task".into() },
             title: "导入赵力的简历".into(),
             status: TaskStatus::Doing,
             wanted: "要能直接改的一份简历".into(),
@@ -3876,6 +3968,98 @@ mod verb_tests {
             liveness: Liveness::default(),
             systems: vec!["songguo".into()],
         }
+    }
+
+    async fn project_record(dir: &Path, subject: &str) {
+        facets::update_facet(dir, "projects", subject, &format!("# {subject}\n")).await.unwrap();
+    }
+
+    fn membership(project: &str, continues: Option<&str>, source: super::super::work::Source) -> super::super::work::Input {
+        super::super::work::Input {
+            assignment: super::super::work::Assignment::Project { project:project.into(), continues:continues.map(str::to_owned) },
+            source, basis:"user asked for this site's next feature".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn membership_is_written_with_open_and_requires_a_real_project() {
+        use super::super::work::Source;
+        let dir = tempfile::tempdir().unwrap();
+        let mut row = opening("site");
+        row.work = membership("badminton", None, Source::User);
+        assert!(open(dir.path(), row.clone()).await.is_err());
+        assert!(read_task(dir.path(), "site").await.unwrap().is_none());
+        project_record(dir.path(), "badminton").await;
+        open(dir.path(), row).await.unwrap().unwrap();
+        let stored = read_task(dir.path(), "site").await.unwrap().unwrap();
+        assert_eq!(stored.work.as_ref().unwrap().project(), Some("badminton"));
+        assert_eq!(stored.work.unwrap().revision, 1);
+        let mut followup = opening("rally");
+        followup.work = membership("badminton", Some("site"), Source::Context);
+        open(dir.path(), followup).await.unwrap().unwrap();
+        assert_eq!(read_task(dir.path(), "rally").await.unwrap().unwrap().work.unwrap().project(), Some("badminton"));
+    }
+
+    #[tokio::test]
+    async fn correction_cas_protects_user_assignment_and_continuation_graph() {
+        use super::super::work::{Source, Assignment};
+        let dir = tempfile::tempdir().unwrap();
+        project_record(dir.path(), "badminton").await;
+        project_record(dir.path(), "other").await;
+        let mut site = opening("site");site.work = membership("badminton", None, Source::User);
+        open(dir.path(), site).await.unwrap().unwrap();
+        note(dir.path(), "site", Note::Waiting, "please judge this", &[], Utc::now()).await.unwrap().unwrap().unwrap();
+        assert!(relate(dir.path(), "site", membership("other", None, Source::Context), 1).await.is_err());
+        assert!(relate(dir.path(), "site", membership("badminton", None, Source::Context), 0).await.is_err());
+        let mut refresh = membership("badminton", None, Source::Context);
+        refresh.basis = "ordinary cleanup guessed the same project".into();
+        assert_eq!(relate(dir.path(), "site", refresh, 1).await.unwrap(), 2);
+        let stored = read_task(dir.path(), "site").await.unwrap().unwrap();
+        assert_eq!(stored.work.as_ref().unwrap().basis, "user asked for this site's next feature");
+        assert_eq!(stored.work.unwrap().source, Source::User, "ordinary refresh cannot remove user protection");
+        assert_eq!(stored.timeline.last().unwrap().kind, TimelineKind::Related);
+        let mut rally = opening("rally");rally.work = membership("badminton", Some("site"), Source::Context);
+        open(dir.path(), rally).await.unwrap().unwrap();
+        assert!(relate(dir.path(), "site", membership("badminton", Some("rally"), Source::User), 2).await.is_err());
+        assert!(relate(dir.path(), "site", membership("other", None, Source::User), 2).await.is_err(), "do not strand a continuation");
+        let mut invalid = opening("missing");invalid.work = membership("badminton", Some("unknown"), Source::Context);
+        assert!(open(dir.path(), invalid).await.is_err());
+        assert!(read_task(dir.path(), "missing").await.unwrap().is_none());
+        let pending = super::super::work::Input { assignment:Assignment::Pending {}, source:Source::Context, basis:"which project is not clear yet".into() };
+        assert_eq!(relate(dir.path(), "rally", pending, 1).await.unwrap(), 2);
+        assert_eq!(relate(dir.path(), "site", membership("other", None, Source::User), 2).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn legacy_membership_is_unresolved_and_migrates_only_explicitly() {
+        use super::super::work::Source;
+        let dir = tempfile::tempdir().unwrap();
+        write_task(dir.path(), &Task::new("legacy", TaskStatus::Doing)).await.unwrap();
+        assert!(read_task(dir.path(), "legacy").await.unwrap().unwrap().work.is_none());
+        project_record(dir.path(), "badminton").await;
+        relate(dir.path(), "legacy", membership("badminton", None, Source::User), 0).await.unwrap();
+        let task = read_task(dir.path(), "legacy").await.unwrap().unwrap();
+        assert_eq!(task.work.unwrap().revision, 1);
+    }
+
+    #[test]
+    fn invalid_work_is_unresolved_but_round_tripped() {
+        let raw = "---\nstatus: doing\ntitle: legacy\nwork: invalid-json\n---\n\n";
+        let task = parse("legacy", raw);
+        assert!(task.work.is_none());
+        assert!(render(&task).contains("work: invalid-json"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_membership_corrections_have_one_winner() {
+        use super::super::work::Source;
+        let dir = tempfile::tempdir().unwrap();
+        project_record(dir.path(), "p").await;
+        open(dir.path(), opening("site")).await.unwrap().unwrap();
+        let (a,b) = tokio::join!(relate(dir.path(), "site", membership("p", None, Source::Context), 1),
+            relate(dir.path(), "site", membership("p", None, Source::User), 1));
+        assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+        assert_eq!(read_task(dir.path(), "site").await.unwrap().unwrap().work.unwrap().revision, 2);
     }
 
     /// **The title and the `created` line land in one call, and the second call is refused.**

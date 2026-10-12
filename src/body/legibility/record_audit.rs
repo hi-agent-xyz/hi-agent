@@ -174,7 +174,7 @@ fn closing_case(
     items.extend(
         task.timeline
             .iter()
-            .filter(|e| !matches!(e.kind, TimelineKind::Moved | TimelineKind::Made))
+            .filter(|e| !matches!(e.kind, TimelineKind::Moved | TimelineKind::Made | TimelineKind::Related))
             .map(|e| format!("{} — {}", e.kind.as_str(), e.text)),
     );
     let mut s = String::new();

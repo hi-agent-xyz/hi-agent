@@ -1,0 +1,38 @@
+[
+  {
+    "subject": "open-badminton-site-v1",
+    "expected_revision": 0,
+    "work": {
+      "assignment": { "state": "project", "project": "open-badminton" },
+      "source": "context",
+      "basis": "The 2026-10-11 creation record asks to build the initial website; the projects/open-badminton record identifies this website as the project."
+    }
+  },
+  {
+    "subject": "open-badminton-data-model-doc",
+    "expected_revision": 0,
+    "work": {
+      "assignment": { "state": "project", "project": "open-badminton" },
+      "source": "context",
+      "basis": "The 2026-10-10 creation record explicitly places the requested data-model document in /Users/iloahz/projects/open-badminton."
+    }
+  },
+  {
+    "subject": "open-badminton-data-model-skeleton",
+    "expected_revision": 0,
+    "work": {
+      "assignment": { "state": "project", "project": "open-badminton" },
+      "source": "context",
+      "basis": "The 2026-10-10 creation record implements the same repository's data-model.md framework, also described in the open-badminton project record."
+    }
+  },
+  {
+    "subject": "open-badminton-rally-split-20261011",
+    "expected_revision": 0,
+    "work": {
+      "assignment": { "state": "project", "project": "open-badminton" },
+      "source": "user",
+      "basis": "The 2026-10-11 creation record quotes the user's explicit instruction that rally splitting is part of the website; the user also explicitly confirmed open-badminton membership during this review."
+    }
+  }
+]

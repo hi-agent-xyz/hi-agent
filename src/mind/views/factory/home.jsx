@@ -33,6 +33,9 @@ const COPY = {
     ago: (n, unit) => `${n}${unit} ago`,
     more: (n) => `${n} more`,
     onBoard: (n) => `${n} more on the task board`,
+    pending: "Membership pending", legacy: "Project membership not recorded",
+    projectContent: "All project content", projectFailed: "Could not load project content",
+    projectEmpty: "No confirmed tasks match. Legacy tasks need a reviewed membership first.", searchProject: "Search tasks and results", projectDirectory: "Projects",
   },
   zh: {
     core: "Hi Agent", context: "我们的交流", update: "最新更新",
@@ -49,6 +52,9 @@ const COPY = {
     ago: (n, unit) => `${n}${{ m: "分钟", h: "小时", d: "天" }[unit]}前`,
     more: (n) => `还有 ${n} 项`,
     onBoard: (n) => `还有 ${n} 项，在任务板上`,
+    pending: "归属待整理", legacy: "项目归属未记录",
+    projectContent: "查看项目全部内容", projectFailed: "项目内容未能读取",
+    projectEmpty: "暂无匹配的已归属任务；旧任务需要先核实项目归属。", searchProject: "搜索任务与成果", projectDirectory: "项目目录",
   },
 };
 const L = typeof document !== "undefined" && /^zh/i.test(document.documentElement.lang || navigator.language)
@@ -139,14 +145,15 @@ function branchTones(model) {
   const groups = first.filter((n) => n.kind === "group").sort((a, b) => a.data.index - b.data.index);
   const loose = first.filter((n) => n.kind !== "group")
     .sort((a, b) => a.id.localeCompare(b.id));
-  // A group by label, a card by id, which is what holds each still between updates.
-  const hues = branchHues([...groups.map((g) => g.data.label), ...loose.map((n) => n.id)]);
+  // Project identity survives a label change; ordinary categories still use their label.
+  const hueKey = (group) => group.data.project ? group.id : group.data.label;
+  const hues = branchHues([...groups.map(hueKey), ...loose.map((n) => n.id)]);
   const tones = new Map();
   const paint = (node, hue) => {
     tones.set(node.id, hue);
     for (const kid of children.get(node.id) || []) paint(kid, hue);
   };
-  for (const group of groups) paint(group, hues.get(group.data.label));
+  for (const group of groups) paint(group, hues.get(hueKey(group)));
   for (const node of loose) paint(node, hues.get(node.id));
   return tones;
 }
@@ -394,22 +401,27 @@ function taskResults(task) {
  */
 function groupIndex(groups) {
   const byTask = new Map();
+  const order = new Map(), projects = new Map();
   const labels = new Set();
   let upkeep = null;
   const walk = (list, chain) => (Array.isArray(list) ? list : []).forEach((group, index) => {
     const label = plain(group?.label);
     if (!label || labels.has(label)) return;
     labels.add(label);
-    const here = [...chain, { label, note: plain(group.note), icon: plain(group.icon), index }];
-    for (const subject of group.members || []) {
+    const projectParent = group.project ? chain.findIndex(g => g.project) : -1;
+    // Defend the read projection too: old or hand-edited records may predate write validation.
+    const prefix = projectParent < 0 ? chain : chain.slice(0, projectParent);
+    const here = [...prefix, { label, project: group.project || null, note: plain(group.note), icon: plain(group.icon), index }];
+    if (group.project && !projects.has(group.project)) projects.set(group.project, here);
+    for (const [memberIndex, subject] of (group.members || []).entries()) {
       const key = plain(subject);
-      if (key && !byTask.has(key)) byTask.set(key, here);
+      if (key && !byTask.has(key)) { byTask.set(key, here); order.set(key, memberIndex); }
     }
     if (group.upkeep === true && !upkeep) upkeep = here;
     walk(group.groups, here);
   });
   walk(groups, []);
-  return { byTask, upkeep };
+  return { byTask, upkeep, order, projects };
 }
 
 function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now = Date.now()) {
@@ -431,15 +443,30 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
   const activities = [...sessions.values()].filter((s) => !CORE_ROLES.has(s.role));
   const core = add({ id: "core", kind: "core", title: L.core,
     sourceRefs: coreSessions.map((s) => ref("session", s.id)), data: { sessions: coreSessions, overviewIds: [] } });
-  const { byTask: grouped, upkeep: upkeepChain } = groupIndex(groups);
+  const { byTask: grouped, upkeep: upkeepChain, order, projects } = groupIndex(groups);
+  const chainFor = (task) => {
+    const assignment = task.work?.assignment;
+    if (!assignment) return grouped.get(task.subject);
+    if (assignment.state === "independent") return null;
+    if (assignment.state === "pending") return [{ id: "work:pending", label: L.pending, index: groups.length + 1 }];
+    if (assignment.state === "project") {
+      const anchor = projects.get(assignment.project);
+      const legacy = grouped.get(task.subject);
+      // Keep a display subline only when it is inside this project's explicit anchor.
+      if (anchor && legacy?.some((g) => g.project === assignment.project)
+        && !legacy.some((g) => g.project && g.project !== assignment.project)) return legacy;
+      return anchor || [{ project: assignment.project, label: assignment.project, index: groups.length }];
+    }
+    return [{ id: "work:pending", label: L.pending, index: groups.length + 1 }];
+  };
   // Every group on the way to a card, each once however many cards pass through it — `add` and
   // `link` both dedupe by id. Answers the innermost, which is the card's parent.
   const hang = (chain) => {
     let parent = "core";
     for (const group of chain || []) {
-      const id = `group:${group.label}`;
+      const id = group.id || (group.project ? `project:${group.project}` : `group:${group.label}`);
       add({ id, kind: "group", title: group.label, sourceRefs: [],
-        data: { label: group.label, note: group.note, icon: group.icon, index: group.index } });
+        data: { label: group.label, project: group.project, note: group.note, icon: group.icon, index: group.index } });
       link(parent, id);
       parent = id;
     }
@@ -456,6 +483,7 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
   const liveGroups = new Set();
   for (const t of tasks) {
     if (!OPEN.has(t.status)) continue;
+    if (t.work) continue;
     const chain = grouped.get(t.subject);
     if (chain?.length) liveGroups.add(chain[chain.length - 1].label);
   }
@@ -463,26 +491,26 @@ function buildHome({ tasks = [], workers = [], messages = [], groups = [] }, now
     // **Only what is in hand is a node** (`onHome`), and it takes its pictures with it: a group
     // left holding nothing else is never added. What is here is what the window draws first,
     // what the core's updates are built from, and what a group's *N more* counts.
-    const chain = grouped.get(task.subject);
-    const threadLive = !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
+    const chain = chainFor(task);
+    const threadLive = !task.work && !!chain?.length && liveGroups.has(chain[chain.length - 1].label);
     if (!onHome(task, { threadLive, inbound }, now)) continue;
     const node = add({ id: taskKey(task.subject), kind: "task", title: task.title || task.subject,
       sourceRefs: [ref("task", task.subject)], data: { task, status: task.status,
+        memberIndex: order.get(task.subject) ?? Number.MAX_SAFE_INTEGER,
+        membership: task.work ? task.work.assignment.state : "legacy",
         endedAt: taskEnd(task), results: taskResults(task), sessions: [] } });
-    // A task hangs off its group when the arrangement puts it in one, and off the core when
-    // it doesn't. Ungrouped is an ordinary place to be — see `groupIndex` for why nothing
-    // here invents a group for a task the person has not placed.
+    // Membership decides the project; the arrangement supplies display anchors and sublines.
+    // Legacy rows alone retain their previous grouping.
     link(hang(chain), node.id);
     // Pictures are second-level, the way a sub-step or a sub-result is — all of them, so that
     // one kind of record has one appearance. A task mid-flight often has process pictures and
     // no deliverable yet, and nothing here claims to know which of them is which.
     for (const result of node.data.results.slice(0, RESULT_TILES)) {
-      const id = `result:${result.id}`;
-      const exists = byId.has(id);
+      const id = `${node.id}/result:${result.id}`;
       add({ id, kind: "result", title: result.title,
         sourceRefs: [ref(result.viewRef ? "view" : "attachment", result.id)],
         data: { ...result, subject: task.subject } });
-      link(node.id, id, "produces", !exists);
+      link(node.id, id, "produces");
     }
   }
   for (const session of activities) {
@@ -583,7 +611,9 @@ function childIndex(model) {
     // builds them, which is results first. Running work reads before its leftovers.
     if (kind === "task") { list.sort((a, b) => (a.kind === "activity" ? 0 : 1) - (b.kind === "activity" ? 0 : 1)); continue; }
     if (kind !== "group") continue;
-    list.sort((a, b) => inner(a) - inner(b) || (inner(a) ? a.data.index - b.data.index : 0));
+    list.sort((a, b) => inner(a) - inner(b) || (inner(a) ? a.data.index - b.data.index
+      : (a.data.memberIndex ?? Number.MAX_SAFE_INTEGER) - (b.data.memberIndex ?? Number.MAX_SAFE_INTEGER)
+        || a.id.localeCompare(b.id)));
   }
   return children;
 }
@@ -998,9 +1028,14 @@ function budgeted(model, frame, tones, scale = OVERVIEW) {
   };
   const whole = (drawn) => drawn.width <= room.w && drawn.height <= room.h;
   const offer = (ids, fits = whole) => {
-    ids.forEach((id) => shown.add(id));
+    const added = new Set();
+    for (const id of ids) {
+      for (let at = id; at && at !== model.rootId; at = parent.get(at)) {
+        if (!shown.has(at)) { shown.add(at); added.add(at); }
+      }
+    }
     if (fits(arrange(cut(), tones))) return true;
-    ids.forEach((id) => shown.delete(id));
+    added.forEach((id) => shown.delete(id));
     return false;
   };
   // **Offering many costs a layout per batch, not per card.** Cards are offered in runs that
@@ -1314,6 +1349,52 @@ export default function Home() {
   // an attachment's tile, absent for a card.
   const [openFocus, setOpenFocus] = useState(null);
   const [TaskPanel, setTaskPanel] = useState(null);
+  const [projectContent, setProjectContent] = useState(null);
+  const [projectDirectory, setProjectDirectory] = useState(null);
+  const [projectError, setProjectError] = useState(null);
+  const [projectQuery, setProjectQuery] = useState("");
+  const projectRequest = useRef(0);
+  const projectDialog = useRef(null);
+  const closeProjects = useCallback(() => {
+    setProjectContent(null); setProjectDirectory(null); setProjectError(null); ++projectRequest.current;
+  }, []);
+  const showProject = useCallback(async (project) => {
+    const request = ++projectRequest.current;
+    setProjectError(null);
+    setProjectContent({ project, tasks: [], loading: true });
+    setProjectQuery("");
+    try {
+      const answer = await getJson(`/api/projects/${encodeURIComponent(project)}/tasks`);
+      if (request === projectRequest.current) setProjectContent(answer);
+    }
+    catch { if (request === projectRequest.current) { setProjectContent({ project, tasks: [], failed: true }); setProjectError(L.projectFailed); } }
+  }, []);
+  const listProjects = useCallback(async () => {
+    const request = ++projectRequest.current;
+    setProjectError(null);
+    setProjectQuery("");
+    setProjectDirectory([]);
+    try { const answer = await getJson("/api/projects"); if (request === projectRequest.current) setProjectDirectory(answer.projects); }
+    catch { if (request === projectRequest.current) setProjectError(L.projectFailed); }
+  }, []);
+  const projectOpen = !!(projectContent || projectDirectory);
+  useEffect(() => {
+    if (!projectOpen) return;
+    const previous = document.activeElement;
+    projectDialog.current?.querySelector("button")?.focus();
+    const close = (event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeProjects(); }
+      if (event.key === "Tab") {
+        const controls = [...(projectDialog.current?.querySelectorAll('button:not([disabled]), input, [tabindex="0"]') || [])];
+        const index = controls.indexOf(document.activeElement);
+        if (controls.length && (index < 0 || (event.shiftKey ? index === 0 : index === controls.length - 1))) {
+          event.preventDefault(); controls[event.shiftKey ? controls.length - 1 : 0].focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", close, true);
+    return () => { document.removeEventListener("keydown", close, true); if (previous?.isConnected) previous.focus(); };
+  }, [projectOpen, closeProjects]);
   // Fetched before anybody presses, so a press does not wait on a compile and a module.
   useEffect(() => { loadTaskPanel().then((panel) => setTaskPanel(() => panel), () => {}); }, []);
   const openTask = useCallback((subject, focus = null) => {
@@ -1498,7 +1579,9 @@ export default function Home() {
           {i < path.length - 1 ? <button onClick={() => centreOn(node.id)}>{node.title}</button>
             : <strong aria-current="location">{node.title}</strong>}
         </span>)}
+        {focused.nodes[0].data.project && <button onClick={() => showProject(focused.nodes[0].data.project)}>{L.projectContent}</button>}
       </nav>}
+      {!focused && <button className="hi-work__project-entry" onClick={listProjects}>{L.projectDirectory}</button>}
       <div className="hi-work__viewport" ref={viewport} data-chart={mobile ? undefined : ""} data-focused={focused ? "" : undefined}
         onScroll={glides.onScroll} onPointerDown={(e) => {
         if (mobile || (e.pointerType === "mouse" && e.button !== 0)) return;
@@ -1568,6 +1651,30 @@ export default function Home() {
           the panel is not one of them. A roster that has not landed is not an empty one. */}
       {openRow && TaskPanel && <TaskPanel task={openRow} onClose={closeTask} focus={openFocus}
         workers={sourcesSettled && !errors.includes("workers") ? source.workers : undefined} />}
+      {projectContent && <div ref={projectDialog} className="hi-work__project-content" role="dialog" aria-modal="true" aria-label={L.projectContent}>
+        <button autoFocus onClick={() => { setProjectContent(null); ++projectRequest.current; }}>{L.back}</button>
+        <h2>{projectContent.project}</h2>
+        <input aria-label={L.searchProject} placeholder={L.searchProject} value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} />
+        {projectError && <p role="alert">{projectError}</p>}
+        {projectContent.loading ? <p>{L.reading}</p> : !projectContent.failed && !projectContent.tasks.length && <p>{L.projectEmpty}</p>}
+        <ul>{(projectContent.tasks || []).filter((task) => `${task.title} ${task.subject} ${(task.attached || []).map(r => r.label || r.ref).join(" ")}`.toLocaleLowerCase().includes(projectQuery.toLocaleLowerCase())).map((task) => <li key={task.subject}>
+          <button onClick={() => { closeProjects(); openTask(task.subject); }}>{task.title} · {L.status[task.status]}</button>
+          <div className="hi-work__project-results">{(task.attached || []).map((item) => <button key={item.ref}
+            title={item.label || item.ref}
+            onClick={() => { closeProjects(); if (item.kind === "view") openRef(item.ref.slice("view:".length)); else openTask(task.subject, { at:item.at, ref:item.ref }); }}>
+            <AttachmentPreview item={item} title={item.label || item.ref} />
+          </button>)}</div>
+        </li>)}</ul>
+      </div>}
+      {projectDirectory && !projectContent && <div ref={projectDialog} className="hi-work__project-content" role="dialog" aria-modal="true" aria-label={L.projectDirectory}>
+        <button autoFocus onClick={closeProjects}>{L.back}</button>
+        <h2>{L.projectDirectory}</h2>
+        <input aria-label={L.projectDirectory} placeholder={L.projectDirectory} value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} />
+        {projectError && <p role="alert">{projectError}</p>}
+        <ul>{projectDirectory.filter((project) => project.toLocaleLowerCase().includes(projectQuery.toLocaleLowerCase())).map((project) => <li key={project}>
+          <button onClick={() => showProject(project)}>{project}</button>
+        </li>)}</ul>
+      </div>}
     </div>
   );
 }
@@ -1843,6 +1950,9 @@ function Node({ node, now, children, openRef, openTask, tones, centreOn, unopene
       {node.kind === "activity" && <i className="hi-work__live" data-live={node.data.session.state === "running"} />}
       {L.status[state] || ""}</span>
       {["task", "activity"].includes(node.kind) && <time>{age(time, now)}</time>}</div>
+    {node.kind === "task" && ["pending", "legacy"].includes(node.data.membership)
+      && <small className="hi-work__membership">{L[node.data.membership]}</small>}
+    {node.kind === "task" && more > 0 && <small className="hi-work__membership">{L.more(more)} · {L.source.workers}</small>}
   </>;
   return <article className="hi-work__node" data-node-id={node.id} data-kind={node.kind}
     style={{ "--node-tone": TONE[state] || TONE.todo, opacity: emphasis(node, now) }}>
@@ -1862,6 +1972,17 @@ function Branch({ nodes, parent, ...props }) {
 }
 
 const CSS = `
+.hi-work__project-content { position:absolute; inset:24px; z-index:5; overflow:auto; padding:24px; border-radius:14px; color:var(--fg); background:var(--bg-0); box-shadow:0 20px 70px #0004; }
+.hi-work__project-content li { padding:10px 0; }
+.hi-work__project-entry { position:absolute; top:12px; right:16px; z-index:3; font-size:12px !important; padding:8px 12px !important; background:var(--work-pane-top) !important; border-radius:8px; }
+.hi-work__project-results { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.hi-work__project-results > button { width:180px; height:102px; overflow:hidden; border-radius:8px; }
+.hi-work__membership { font-size:10px; line-height:1.4; color:var(--fg-dim, var(--fg-mute)); }
+.hi-work__node:has(.hi-work__membership) .hi-work__node-title { -webkit-line-clamp:2; }
+.hi-work__project-content input { width:min(100%, 420px); padding:8px 10px; border:1px solid var(--work-line); border-radius:8px; }
+.hi-work__project-content > button, .hi-work__project-content li > button { min-height:36px; text-align:left; }
+.hi-work__project-content li > button:hover { text-decoration:underline; }
+@media (max-width:759px) { .hi-work__project-content { inset:8px; padding:16px; } }
 /* **The ground is a surface of its own, not the page colour with a hint of tint mixed in.**
    A card is --bg at 84–90% opacity, so a card's lightness is pinned to --bg, and the whole
    job of what lies behind it is therefore to *not be --bg* anywhere a card can land. The wash

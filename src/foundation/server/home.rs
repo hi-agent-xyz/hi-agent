@@ -102,6 +102,9 @@ pub struct Grouping {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     pub label: String,
+    /// Display anchor for an existing project. Task membership is never inferred from members.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     /// One line saying what this grouping was based on. Optional, and **read** — Home hangs
     /// it on the label as hover text, so a person reviewing the arrangement can see why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,6 +195,23 @@ pub struct Written {
 /// cannot be used is refused on its own — the arrangement still lands, and the label keeps
 /// what it had.
 pub async fn write(data_dir: &Path, proposed: Grouping) -> anyhow::Result<Written> {
+    fn check_nesting(groups: &[Group], inside_project: bool) -> anyhow::Result<()> {
+        for group in groups {
+            anyhow::ensure!(!(inside_project && group.project.is_some()), "a project anchor cannot be nested inside another project");
+            check_nesting(&group.groups, inside_project || group.project.is_some())?;
+        }
+        Ok(())
+    }
+    check_nesting(&proposed.groups, false)?;
+    let mut anchored = std::collections::HashSet::new();
+    for group in every_group(&proposed.groups) {
+        if let Some(project) = &group.project {
+            anyhow::ensure!(crate::mind::memory::facets::slug(project) == *project
+                && crate::mind::memory::facets::facet_exists(data_dir, "projects", project).await,
+                "project anchor must name an existing projects/ subject: `{project}`");
+            anyhow::ensure!(anchored.insert(project), "project `{project}` has more than one primary Home anchor");
+        }
+    }
     let known = tasks::subjects(data_dir).await;
     let previous: std::collections::HashMap<String, String> = every_group(&read(data_dir).await.groups)
         .into_iter()
@@ -361,11 +381,11 @@ impl Normalise<'_> {
                 members.push(member);
             }
             let inner = self.groups(group.groups)?;
-            if members.is_empty() && inner.is_empty() && !group.upkeep {
+            if members.is_empty() && inner.is_empty() && !group.upkeep && group.project.is_none() {
                 continue;
             }
             let note = group.note.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
-            groups.push(Group { label, note, icon: group.icon, members, groups: inner, upkeep: group.upkeep });
+            groups.push(Group { label, project: group.project, note, icon: group.icon, members, groups: inner, upkeep: group.upkeep });
         }
         Ok(groups)
     }
@@ -402,7 +422,7 @@ async fn ungrouped_open_tasks(
 ) -> Vec<String> {
     match tasks::active_tasks(data_dir).await {
         Ok(open) => {
-            open.into_iter().map(|task| task.subject).filter(|s| !taken.contains(s)).collect()
+            open.into_iter().filter(|task| task.work.is_none() && !taken.contains(&task.subject)).map(|task| task.subject).collect()
         }
         Err(error) => {
             tracing::warn!(%error, "task ledger unreadable; the write cannot say what is ungrouped");
@@ -418,6 +438,11 @@ async fn ungrouped_open_tasks(
 /// what is open.
 pub async fn get_home_groups(State(state): State<Arc<AppState>>) -> Json<Grouping> {
     Json(read(&state.data_dir).await)
+}
+
+pub async fn get_projects(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let projects = crate::mind::memory::facets::subjects_in(&state.data_dir, "projects").await;
+    Json(serde_json::json!({ "projects":projects }))
 }
 
 /// `GET /api/home/group-icon` — the icon a group wears until its own is drawn.
@@ -441,6 +466,7 @@ mod tests {
     fn group(label: &str, members: &[&str]) -> Group {
         Group {
             label: label.into(),
+            project: None,
             note: None,
             icon: None,
             members: members.iter().map(|m| (*m).into()).collect(),
@@ -451,6 +477,22 @@ mod tests {
 
     fn holding(label: &str, members: &[&str], groups: Vec<Group>) -> Group {
         Group { groups, ..group(label, members) }
+    }
+
+    #[tokio::test]
+    async fn a_project_anchor_can_exist_before_members_but_must_be_unique_and_real() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut anchor = group("A project", &[]);anchor.project = Some("p".into());
+        assert!(write(dir.path(), Grouping { groups:vec![anchor.clone()] }).await.is_err());
+        crate::mind::memory::facets::update_facet(dir.path(), "projects", "p", "# P").await.unwrap();
+        let written = write(dir.path(), Grouping { groups:vec![anchor.clone()] }).await.unwrap();
+        assert_eq!(written.grouping.groups.len(), 1);
+        let mut duplicate=anchor.clone();duplicate.label="Elsewhere".into();
+        assert!(write(dir.path(), Grouping { groups:vec![anchor.clone(),duplicate] }).await.is_err());
+        crate::mind::memory::facets::update_facet(dir.path(), "projects", "q", "# Q").await.unwrap();
+        let mut nested = group("Nested project", &[]); nested.project=Some("q".into());
+        anchor.groups.push(nested);
+        assert!(write(dir.path(), Grouping { groups:vec![anchor] }).await.is_err());
     }
 
     fn with_icon(mut group: Group, icon: &str) -> Group {
@@ -499,6 +541,7 @@ mod tests {
             dir.path(),
             Grouping {
                 groups: vec![Group {
+                    project: None,
                     label: "  KTV  ".into(),
                     note: Some("  9/16 说是一摊事  ".into()),
                     icon: None,

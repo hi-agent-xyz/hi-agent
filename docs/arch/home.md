@@ -1,5 +1,10 @@
 # Home: what is going on right now
 
+**Work membership supersedes surface-only grouping.** Project facts now live on tasks;
+Home categories and project anchors are display preferences. See [work-membership.md](work-membership.md)
+for the new creation/correction contract, compatibility boundary, project discovery and
+retention rules. Innermost-group retention described below applies only to legacy tasks.
+
 Home answers what Hi Agent and the person are discussing and what work is in hand.
 It is a read projection of existing records, not another task ledger or session
 lifecycle store. It remains a normal factory view.
@@ -463,13 +468,12 @@ theirs.
   the mark (§ *What the surface does with it*). Its technical
   `owner` remains inspectable but does not determine semantic
   placement or create a new task grouping.
-- **A task sits in a group when the grouping record puts it in one — under every group that
-  group is inside — and otherwise hangs off the core.** See § *Grouping* below. Nothing about a task's own record decides this: there
-  was a topic rank named by a task's `project` or else its `systems`, and nothing has ever
-  written a `project`, so every topic drawn was a `systems` value — and `systems` names the
-  operational records a task touches, not what it belongs to: a birthday deck whose photos
-  arrived over Feishu was drawn under "feishu" beside a client brief. Similar wording is not
-  evidence of ownership, and neither is a shared system.
+- **A task's durable `work` assignment decides project membership.** Home groups provide
+  categories, project display anchors and optional sublines. A confirmed task enters its
+  project's anchor immediately, or a synthesized project heading if no anchor exists.
+  Stale group membership elsewhere cannot divert it. Pending has a visible branch;
+  explicitly independent work bypasses grouping. Legacy tasks alone keep the old placement.
+  `systems` still names operational records, never ownership. See [work-membership.md](work-membership.md).
 - **A task's pictures are image nodes one rank below it, and its other results are not on
   Home.** Drawn as sibling cards, results were 60.2% of the canvas on a real instance — 125 of
   them, 106 nothing but a filename. So a task hangs its pictures below itself as `result`
@@ -538,7 +542,7 @@ underneath a state: the tail, the retained action, the turn count, the window.
 
 **A group is a name, an ordered list of task subjects and the groups inside it, and it
 belongs to this surface alone.** It is not a field on a task, not a dimension of the memory store, and not a second
-ledger. Nothing else in the system reads it; delete the record and Home is what it was.
+ledger. Delete it and the durable memberships remain; only the preferred display arrangement is lost.
 
 **No axis over the person's work is built in.** A group may be a project, a kind of work, a state, who asked for
 it, or "this week" — the structure is the same name-and-members either way, so the person
@@ -548,12 +552,11 @@ can reorganise along a different axis without anything in the code changing.
 the company's projects as one group, each project a group inside it. So a group can hold
 groups, the same shape at every level, and nothing caps how deep. The depth lives in the
 record's structure, never in a label: a hierarchy spelled into names by a separator is a
-convention only its writer knows, and it splits names that were never meant as two. The alternative
-was a `project:` field on the task record, and it is the wrong shape twice over: it commits
-to one axis, and it puts a claim that only one surface consumes into a record everything
-reads.
+convention only its writer knows, and it splits names that were never meant as two. Project
+membership is a separate semantic axis, consumed by Home, discovery and worker briefs.
+Project anchors may sit inside categories, but cannot nest inside other project anchors.
 
-**The innermost group is one line of work, and a kind of work is the layer above it.** A line
+**For legacy records, the innermost group is one line of work, and a kind of work is the layer above it.** A line
 is one thing being pursued, and its rows are its steps. Home reads the innermost group that
 way: a finished row stays on while an open row shares its innermost group (§ *In hand*). So an
 innermost group that is a category keeps every finished row of that category on while any one
@@ -562,6 +565,8 @@ eight finished concept pages on, an open 金铲铲 assistant kept three more, an
 「视频理解」 kept ten on four. 28 cards, 7 of them open. The person had already said what the
 shape should be: *one parent node and branches*, whenever one thing has several tasks or
 reports. A category they name stays their heading, and its rows go into lines inside it.
+Confirmed membership does not inherit this retention proxy: closed project tasks follow
+the notice policy and remain discoverable through the project directory.
 
 **A heading holds about five things, and past seven it gets a coarser line, not a longer list.**
 The chart is read at a glance, and attention is the bound: three to five lines are taken in
@@ -791,10 +796,10 @@ for being the exception.
    left out on purpose, and a group carries `upkeep: true`. A first arrangement is written
    the first time this happens. The pass costs no turn of its own: the manager is already in
    one, and only a change it finds costs a write.
-3. **A task is filed.** It is **not** grouped then. Placing a row is not part of opening one,
-   and a spun-up session per filing buys a placement nobody is waiting on. A new task sits by
-   itself until the next pass, which is also the honest picture: it is new, and nobody has
-   sorted it yet.
+3. **A task is filed.** Its work assignment is recorded atomically at creation. Home can
+   place it in its project immediately without a manager turn. Categories, heading labels,
+   sublines and display ordering still wait for the next arrangement pass; these preferences
+   cannot replace the semantic assignment.
 
 A read never triggers a write: opening Home must not cost a turn.
 

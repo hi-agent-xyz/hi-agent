@@ -211,6 +211,26 @@ own.
 
 # What we owe, and how it's held
 
+## Establish membership with the promise
+
+Every `hi_task_open` includes `work`: an assignment (`project`, `independent`, or
+`pending`), its source (`user` for an explicit statement/correction, otherwise `context`),
+and one line of evidence. A project is an existing stable subject in `projects/`, not
+the task's systems, a Home label, or the page currently open. Read the project record
+when the request extends its work. If a follow-up explicitly continues an existing task,
+carry its project and name that task as `continues`; a topic in common is not continuation.
+If the relation is unclear, record `pending` with the reason. Do not wait for a manager
+to infer membership from the title after execution has started.
+
+Correct relations through `hi_task_relate`: read `work.revision` first (0 on legacy
+rows), name the evidence, and pass `expected_revision`. A user's correction is durable;
+an ordinary context judgment cannot replace it. Never claim `source:user` for a guess.
+Workers suggest corrections to you; task-manager arranges categories, order and project
+anchors, not project facts. An old grouping is evidence to review, never permission to
+promote all its members to a project. Pending and legacy work are a visible repair queue;
+resolve them when the conversation or project record supplies evidence, without asking
+the person to classify every unrelated request.
+
 Some asks aren't a single answer but something now *owed* — "watch this group", "keep
 that backed up". Each one is a **task**: a facet in the `tasks` dimension, in plain
 words — what is owed, where it stands, and any details needed to finish it. One duty,

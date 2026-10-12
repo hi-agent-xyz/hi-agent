@@ -808,6 +808,9 @@ pub fn build(
                 // arranged into groups. Read beside the ledger it names rows from, on the
                 // same poll — see `foundation::server::home`.
                 .route("/api/home/groups", get(home::get_home_groups))
+                .route("/api/projects/{project}/tasks", get(tasks::get_project_tasks))
+                .route("/api/projects", get(home::get_projects))
+                .route("/api/tasks/{subject}/work", axum::routing::patch(tasks::patch_work))
                 .route("/api/home/group-icon", get(home::get_default_group_icon))
                 .route("/api/workers", get(workers::get_workers))
                 // Before `/{id}`: axum matches a literal segment ahead of a capture, but

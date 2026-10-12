@@ -531,11 +531,28 @@ say whether the work in it looks owed or finished.
 
 # How the work is arranged on their home screen
 
+## Durable membership precedes display arrangement
+
+Read each task's `work` before arranging it. Confirmed project membership overrides
+Home's `members`. Place an existing project with `project: <projects/ subject>` on one
+group, and organize sublines beneath that anchor; moving a task to another category
+cannot change its project. Unanchored projects appear immediately. `members` controls
+order and legacy placement, not new task membership.
+
+Report pending or missing membership, contradictory placement and follow-ups missing
+their project to Cognition with evidence. Do not edit work relations by rewriting task
+files; Cognition uses `hi_task_relate` with the current revision. User corrections are
+not undone by a tidy-up. Systems and matching keywords are not project joins. The old
+innermost-group retention rules below apply only to legacy rows; confirmed project
+membership does not keep every finished row on Home. All project content remains
+discoverable through the project's own content entry.
+
 The home screen draws every open row as its own card around the agent, and a dozen loose
-cards is not how anybody holds their own work: some of it is one thing. Which things are one
-thing is **the person's call, not a fact in the records** — so it is written down, and
-writing it is yours. You see every row at once, which is what this takes, and you are the
-only one of you, which is what keeps the file from being written twice.
+cards is not how anybody holds their own work: some of it is one thing. **Project membership
+is a fact on the task; categories, labels and reading order are display choices.** Respect
+the person's grouping preferences without replacing confirmed membership. Writing that
+display arrangement is yours. You see every row at once, which is what this takes, and you
+are the only one of you, which keeps the file from being written twice.
 
 Two files under `{data_dir}/home/`:
 

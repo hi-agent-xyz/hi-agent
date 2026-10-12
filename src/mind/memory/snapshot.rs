@@ -572,7 +572,17 @@ pub async fn work_record(data_dir: &Path, subject: &str) -> String {
     // the walk the duty brief already takes: newest first within the budget, plus the
     // `created` line however far back it sits, plus a marker saying how much was left out.
     let record = match tasks::read_task(data_dir, subject).await {
-        Ok(Some(row)) => row.recent_record(WORK_RECORD_CHARS),
+        Ok(Some(row)) => {
+            if let Some(work) = &row.work {
+                out.push_str(&format!("\n\n## Work membership\n{}\n", work.summary()));
+                if let Some(project) = work.project()
+                    && let Ok(Some(body)) = super::facets::read_facet(data_dir, "projects", project).await
+                {
+                    out.push_str(&format!("\n### Project: {project}\n{}\n", clip(body.trim())));
+                }
+            }
+            row.recent_record(WORK_RECORD_CHARS)
+        },
         _ => String::new(),
     };
     if !record.is_empty() {
@@ -1195,6 +1205,22 @@ mod window_tests {
         let path = layout::facets_dir(dir).join(dimension).join(subject);
         tokio::fs::create_dir_all(&path).await.unwrap();
         tokio::fs::write(path.join("facet.md"), body).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn work_brief_carries_membership_and_the_referenced_project() {
+        use super::super::work;
+        let dir = tempfile::tempdir().unwrap();
+        write_facet(dir.path(), "projects", "p", "The website accepts uploaded match videos.").await;
+        tasks::write_task(dir.path(), &tasks::Task::new("rally", tasks::TaskStatus::Doing)).await.unwrap();
+        tasks::relate(dir.path(), "rally", work::Input {
+            assignment:work::Assignment::Project { project:"p".into(), continues:None },
+            source:work::Source::User, basis:"This is part of the website".into(),
+        }, 0).await.unwrap();
+        let text = work_record(dir.path(), "rally").await;
+        assert!(text.contains("project: p; revision: 1"), "{text}");
+        assert!(text.contains("This is part of the website"), "{text}");
+        assert!(text.contains("accepts uploaded match videos"), "{text}");
     }
 
     /// **The line this whole projection exists for.** A worker used to open with its brief

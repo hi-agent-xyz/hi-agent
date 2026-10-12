@@ -44,6 +44,7 @@ use crate::types::{Content, Message, TaskRef};
 #[serde(rename_all = "camelCase")]
 struct TaskDto {
     subject: String,
+    work: Option<crate::mind::memory::work::Relation>,
     title: String,
     status: &'static str,
     created_at: Option<String>,
@@ -89,13 +90,14 @@ struct TaskDto {
 /// actually read is the identity, the clocks, and one sentence — so the sentence ([`latest`])
 /// is computed here and the account stays behind the click that asks for it.
 ///
-/// `extra` survives because the chart reads `project:`/`systems:` off it to decide what a row
-/// is about, and it is already capped at [`EXTRA_FIELDS`] × [`EXTRA_VALUE_CHARS`] — 32 KB
+/// `work` carries durable membership; `extra` preserves other readable record fields,
+/// already capped at [`EXTRA_FIELDS`] × [`EXTRA_VALUE_CHARS`] — 32 KB
 /// across one live store's whole ledger, against 1.8 MB for the bodies and timelines beside it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RowDto {
     subject: String,
+    work: Option<crate::mind::memory::work::Relation>,
     title: String,
     status: &'static str,
     created_at: Option<String>,
@@ -277,7 +279,7 @@ fn latest_moment(task: &Task, showing: &Showing<'_>) -> Option<MomentDto> {
     task.timeline
         .iter()
         .rev()
-        .find(|entry| !matches!(entry.kind, TimelineKind::Moved | TimelineKind::Made))
+        .find(|entry| !matches!(entry.kind, TimelineKind::Moved | TimelineKind::Made | TimelineKind::Related))
         .map(|entry| moment(entry, showing))
 }
 
@@ -430,6 +432,7 @@ fn dto(task: &Task, malformed: bool, showing: &Showing<'_>) -> TaskDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     TaskDto {
         subject: task.subject.clone(),
+        work: task.work.clone(),
         title: task.title.clone(),
         status: task.status.as_str(),
         created_at: task.created_at.map(rfc3339),
@@ -460,6 +463,7 @@ fn row(task: &Task, malformed: bool, showing: &Showing<'_>) -> RowDto {
     let (extra, extra_dropped) = extra_fields(&task.extra);
     RowDto {
         subject: task.subject.clone(),
+        work: task.work.clone(),
         title: task.title.clone(),
         status: task.status.as_str(),
         created_at: task.created_at.map(rfc3339),
@@ -567,6 +571,7 @@ fn is_malformed(raw: &str, task: &Task) -> bool {
     };
 
     status_bad
+        || (field("work").is_some() && task.work.is_none())
         || invalid_timestamp("created_at", None, task.created_at.is_some())
         || invalid_timestamp("due_at", Some("due"), task.due_at.is_some())
         || invalid_timestamp("checked_at", Some("checked"), task.checked_at.is_some())
@@ -692,6 +697,46 @@ pub async fn get_task(State(state): State<Arc<AppState>>, Path(subject): Path<St
     let views = super::view::existing_refs(dir).await;
     let showing = Showing::load(dir, &views, &task).await;
     Json(serde_json::json!({ "task": dto(&task, malformed, &showing) })).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct WorkPatch {
+    work: crate::mind::memory::work::Input,
+    expected_revision: u64,
+}
+
+/// A direct UI correction is an explicit user judgment, not an ordinary regrouping pass.
+pub async fn patch_work(
+    State(state): State<Arc<AppState>>,
+    Path(subject): Path<String>,
+    Json(mut patch): Json<WorkPatch>,
+) -> Response {
+    patch.work.source = crate::mind::memory::work::Source::User;
+    match tasks::relate(state.data_dir.as_path(), &subject, patch.work, patch.expected_revision).await {
+        Ok(revision) => Json(serde_json::json!({ "revision": revision })).into_response(),
+        Err(error) => (StatusCode::CONFLICT, Json(serde_json::json!({ "error": error.to_string() }))).into_response(),
+    }
+}
+
+/// Includes closed tasks: discovery is independent of Home's current-work retention.
+pub async fn get_project_tasks(
+    State(state): State<Arc<AppState>>,
+    Path(project): Path<String>,
+) -> Response {
+    let dir = &state.data_dir;
+    if facets::slug(&project) != project || !facets::facet_exists(dir, "projects", &project).await {
+        return not_found("no such project");
+    }
+    let views = super::view::existing_refs(dir).await;
+    let mut rows = Vec::new();
+    for subject in tasks::subjects(dir).await {
+        let (task, malformed) = read_row(dir, &subject).await;
+        if task.work.as_ref().and_then(|w| w.project()) != Some(project.as_str()) { continue; }
+        let showing = Showing::load(dir, &views, &task).await;
+        rows.push((sort_key(&task), row(&task, malformed, &showing)));
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Json(serde_json::json!({ "project":project, "tasks":rows.into_iter().map(|(_, row)| row).collect::<Vec<_>>() })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -915,6 +960,33 @@ mod tests {
         task.timeline.push(entry(TimelineKind::Waiting, "which of the two takes?"));
         let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
         assert_eq!(value["latest"]["kind"], "waiting");
+    }
+
+    #[test]
+    fn a_membership_correction_does_not_answer_a_wait() {
+        let mut task = Task::new("Judge the site", TaskStatus::Doing);
+        task.timeline.push(TimelineEntry::new(TimelineKind::Waiting, at(1, 9), "judge this site"));
+        task.timeline.push(TimelineEntry::new(TimelineKind::Related, at(1, 10), "membership corrected"));
+        let value = serde_json::to_value(row(&task, false, &showing(&views(&[])))).unwrap();
+        assert_eq!(value["latest"]["kind"], "waiting");
+    }
+
+    #[test]
+    fn row_and_detail_carry_the_same_membership_revision_and_evidence() {
+        use crate::mind::memory::work;
+        let mut task = Task::new("Site", TaskStatus::Done);
+        task.work = Some(work::relation(work::Input {
+            assignment:work::Assignment::Project { project:"p".into(), continues:Some("earlier".into()) },
+            source:work::Source::User, basis:"Explicit website follow-up".into(),
+        }, 3));
+        let known_views = views(&[]);
+        let showing = showing(&known_views);
+        let row = serde_json::to_value(row(&task, false, &showing)).unwrap();
+        let detail = serde_json::to_value(dto(&task, false, &showing)).unwrap();
+        assert_eq!(row["work"], detail["work"]);
+        assert_eq!(row["work"]["revision"], 3);
+        assert_eq!(row["work"]["assignment"]["continues"], "earlier");
+        assert_eq!(row["work"]["basis"], "Explicit website follow-up");
     }
 
     fn views(refs: &[&str]) -> std::collections::HashSet<String> {

@@ -433,17 +433,17 @@ fn share_tool() -> Value {
     )
 }
 
-/// **A task's record is written through these three and nothing else**
+/// **A task's record is written through structured store verbs**
 /// (`docs/arch/legibility.md` § L). The record is something a person reads, and a surface
 /// with no verb is one no check can sit on: every writer used to reach `facet.md` with
 /// `apply_patch`, and 41 of the 41 records opened in the four days before 2026-09-18 carried
 /// project vocabulary and machine timestamps against rules written out in three prompts.
 ///
 /// Prose goes through [`task_open_tool`] and [`task_note_tool`]; the machinery through
-/// [`task_set_tool`], which is validated rather than judged because none of it is read as
+/// [`task_set_tool`] and membership through [`task_relate_tool`], validated because neither is read as
 /// sentences. The store writes every instant and every kind word itself.
 fn task_open_tool() -> Value {
-    tool(
+    let mut definition = tool(
         "hi_task_open",
         "Open a row on the ledger — the only way a task comes to exist, and the moment its \
          `created` line is written, once. `subject` is the row's durable name (a slug; its \
@@ -471,9 +471,36 @@ fn task_open_tool() -> Value {
                 "start_key": { "type": "string" },
                 "systems": { "type": "array", "items": { "type": "string" }, "description": "The systems it touches, by the name their record is filed under, e.g. [\"songguo\", \"hi-agent-xyz\"]." },
             },
-            "required": ["subject", "title", "status", "wanted"],
+            "required": ["subject", "title", "status", "wanted", "work"],
         }),
-    )
+    );
+    definition["inputSchema"]["properties"]["work"] = work_schema();
+    definition
+}
+
+fn work_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Durable work membership, written with the task. Existing projects/ subject, explicit independent work, or pending with a reason. Never infer project from systems, keywords or the current page. source=user only for an explicit user statement/correction; context for your evidence-backed judgment.",
+        "properties": {
+            "assignment": { "type":"object", "properties": {
+                "state": { "type":"string", "enum":["project", "independent", "pending"] },
+                "project": { "type":"string", "description":"Stable existing projects/ subject; required for project state." },
+                "continues": { "type":"string", "description":"Optional task being continued; must already have the same confirmed project." }
+            }, "required":["state"] },
+            "source": { "type":"string", "enum":["context", "user"] },
+            "basis": { "type":"string", "description":"One line of evidence for this membership, or why it remains pending." }
+        }, "required":["assignment", "source", "basis"]
+    })
+}
+
+fn task_relate_tool() -> Value {
+    tool("hi_task_relate", "Correct durable work membership, not Home layout. Read the row first and supply expected_revision (0 for legacy). User-confirmed assignments cannot be displaced by an ordinary context judgment. This does not merge task records.",
+        json!({ "type":"object", "properties": {
+            "subject": { "type":"string" },
+            "work": work_schema(),
+            "expected_revision": { "type":"integer", "minimum":0 }
+        }, "required":["subject", "work", "expected_revision"] }))
 }
 
 fn task_note_tool() -> Value {
@@ -747,6 +774,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
                                 "type": "object",
                                 "properties": {
                                     "label": { "type": "string", "description": "What this group is called, in the person's own vocabulary. Unique." },
+                                    "project": { "type": "string", "description": "Optional existing projects/ subject: a display anchor. Confirmed task membership comes from its work relation, not this group's members. One anchor per project." },
                                     "note": { "type": "string", "description": "One line on what this grouping was based on — shown to the person on the label." },
                                     "icon": { "type": "string", "description": "Optional: the att: id of an icon you drew for this group. Omit to keep the one the label already has." },
                                     "members": { "type": "array", "items": { "type": "string" }, "description": "Task subjects, in the order they should read." },
@@ -924,8 +952,8 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
             image_text_to_text_tool(),
         ],
         // The shared brain. It delegates rather than does, so its surface is the
-        // switchboard plus the one write it owns: opening a row. Changing a row is a task
-        // manager's, so it has `hi_task_open` and neither of the other two.
+        // switchboard plus creation and semantic membership. Progress and status belong to
+        // the task's worker; Home layout belongs to the task manager.
         //
         // This read "the ledger it owns needs no tool — a task is a plain facet on disk" until
         // 2026-09-18. A record is something a person reads, and a surface written with the
@@ -948,6 +976,7 @@ pub(crate) fn tools_for_role(role: Option<&str>) -> Vec<Value> {
         Some("cognition") => vec![
             send_message_tool(),
             task_open_tool(),
+            task_relate_tool(),
             create_worker_tool(),
             cancel_worker_tool(),
             close_worker_tool(),
@@ -1618,6 +1647,9 @@ async fn dispatch_tool(
             role.unwrap_or("<none>")
         ));
     }
+    if name == "hi_task_relate" && role != Some("cognition") {
+        return tool_error("work membership is cognition's witnessed context; workers propose corrections to their owner");
+    }
 
     let normalized = match tools_for_role(role).into_iter().find(|tool| tool["name"] == name) {
         Some(tool) => match arguments::normalize(args, &tool["inputSchema"]) {
@@ -1686,6 +1718,9 @@ async fn dispatch_tool(
         "hi_task_open" => {
             let writer = slug.as_ref().map_or_else(|| "cognition".to_owned(), |s| s.to_string());
             return do_task_open(data_dir, &writer, args).await;
+        }
+        "hi_task_relate" => {
+            return do_task_relate(data_dir, args).await;
         }
         "hi_task_note" | "hi_task_set" => {
             // The row the caller serves, when it names none: the registry's `subject`, as for
@@ -2752,6 +2787,10 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
         arg_text(args, key).map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned)
     };
     let subject = arg_text(args, "subject").unwrap_or_default();
+    let work = match args.get("work").cloned().map(serde_json::from_value::<crate::mind::memory::work::Input>) {
+        Some(Ok(work)) => work,
+        _ => return tool_error("opening requires `work`: an evidenced project, independent, or pending assignment"),
+    };
     let (title, wanted) =
         (arg_text(args, "title").unwrap_or_default(), arg_text(args, "wanted").unwrap_or_default());
     let writing = crate::body::legibility::record::Writing::Open { title, wanted };
@@ -2762,6 +2801,7 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
     }
     let opening = Opening {
         subject: subject.to_owned(),
+        work,
         title: title.to_owned(),
         status,
         wanted: wanted.to_owned(),
@@ -2775,9 +2815,25 @@ async fn do_task_open(data_dir: &Path, writer: &str, args: &Value) -> Value {
         systems: string_list(args, "systems").unwrap_or_default(),
     };
     match tasks::open(data_dir, opening).await {
-        Ok(Ok(subject)) => tool_ok(&format!("opened `{subject}`")),
+        Ok(Ok(subject)) => {
+            let membership = tasks::read_task(data_dir, &subject).await.ok().flatten().and_then(|t| t.work).map(|w| w.summary()).unwrap_or_default();
+            tool_ok(&format!("opened `{subject}`; {membership}"))
+        },
         Ok(Err(refused)) => tool_error(&refused.to_string()),
         Err(error) => tool_error(&format!("could not write the row: {error}")),
+    }
+}
+
+async fn do_task_relate(data_dir: &Path, args: &Value) -> Value {
+    let Some(subject) = arg_text(args, "subject") else { return tool_error("name the task subject") };
+    let Some(expected) = args.get("expected_revision").and_then(Value::as_u64) else { return tool_error("expected_revision is required; 0 for legacy") };
+    let work = match args.get("work").cloned().map(serde_json::from_value::<crate::mind::memory::work::Input>) {
+        Some(Ok(work)) => work,
+        _ => return tool_error("invalid work membership"),
+    };
+    match crate::mind::memory::tasks::relate(data_dir, subject, work, expected).await {
+        Ok(revision) => tool_ok(&format!("work membership recorded at revision {revision}")),
+        Err(error) => tool_error(&error.to_string()),
     }
 }
 
@@ -3935,6 +3991,35 @@ mod surface_tests {
         assert!(refusal(&got).contains("reaction-only"), "authorization precedes repair: {got}");
     }
 
+    #[tokio::test]
+    async fn membership_tools_require_creation_evidence_and_authorized_cas() {
+        use crate::mind::memory::{tasks, work};
+        let dir = tempfile::tempdir().unwrap();
+        let got = do_task_open(dir.path(), "cognition", &json!({
+            "subject":"site", "title":"Build the site", "status":"doing", "wanted":"A working site"
+        })).await;
+        assert!(refusal(&got).contains("requires `work`"), "{got}");
+        assert!(tasks::read_task(dir.path(), "site").await.unwrap().is_none());
+        tasks::write_task(dir.path(), &tasks::Task::new("site", tasks::TaskStatus::Doing)).await.unwrap();
+        let registry = ToolRegistry::new();
+        let privacy = crate::foundation::privacy::PrivacyBoundary::open(dir.path()).unwrap();
+        let partial = Mutex::new(None);
+        let observatory = Observatory::new(None);
+        let args = json!({"subject":"site", "expected_revision":0,
+            "work":{"assignment":{"state":"independent"}, "source":"user", "basis":"explicit standalone request"}});
+        let got = dispatch_tool(&registry, dir.path(), &privacy, &partial, &observatory,
+            None, Some("worker"), "hi_task_relate", &args).await;
+        assert!(refusal(&got).contains("cognition"), "{got}");
+        assert!(tasks::read_task(dir.path(), "site").await.unwrap().unwrap().work.is_none());
+        let got = dispatch_tool(&registry, dir.path(), &privacy, &partial, &observatory,
+            None, Some("cognition"), "hi_task_relate", &args).await;
+        assert_ne!(got["isError"], true, "{got}");
+        let row = tasks::read_task(dir.path(), "site").await.unwrap().unwrap();
+        assert_eq!(row.work.unwrap().source, work::Source::User);
+        let stale = do_task_relate(dir.path(), &args).await;
+        assert!(refusal(&stale).contains("reread"), "{stale}");
+    }
+
     /// The other half of "and nothing else": a worker must not be able to speak.
     /// The one verb has to be on every rung, or an agent is unreachable by design.
     #[test]
@@ -4427,6 +4512,7 @@ mod surface_tests {
                 "hi_session_status".to_string(),
                 "hi_system_one".to_string(),
                 "hi_task_open".to_string(),
+                "hi_task_relate".to_string(),
             ],
             "it delegates rather than does, and it has no mouth"
         );
@@ -4443,7 +4529,7 @@ mod surface_tests {
             got.sort();
             got
         };
-        assert_eq!(task_verbs(Some("cognition")), vec!["hi_task_open"]);
+        assert_eq!(task_verbs(Some("cognition")), vec!["hi_task_open", "hi_task_relate"]);
         assert_eq!(task_verbs(Some("worker")), vec!["hi_task_note", "hi_task_set"]);
         assert!(names(Some("worker")).contains(&"hi_view_verdict".to_string()));
         assert!(task_verbs(Some("reaction")).is_empty());
@@ -4479,6 +4565,7 @@ mod surface_tests {
         let dir = tempfile::tempdir().unwrap();
         let opening = tasks::Opening {
             subject: "court-calibration".into(),
+            work: crate::mind::memory::work::Input { assignment: crate::mind::memory::work::Assignment::Independent {}, source: crate::mind::memory::work::Source::Context, basis: "standalone test task".into() },
             title: "场地标定".into(),
             status: tasks::TaskStatus::Doing,
             wanted: "把场地线画回样片".into(),

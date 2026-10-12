@@ -20,6 +20,7 @@ pub mod quality;
 pub mod snapshot;
 pub mod task_history;
 pub mod tasks;
+pub mod work;
 
 pub use journal::Journal;
 pub use snapshot::{Snapshot, build, window};

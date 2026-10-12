@@ -32,6 +32,7 @@ const list = (values) => [...values];
 const titles = (model, kind) => list(ofKind(model, kind).map((n) => n.title)).sort();
 /** The rows on Home, which are the rows in hand: a row that is not is not a node (`onHome`). */
 const handed = (model) => titles(model, "task");
+const assigned = (project, state = "project") => ({ assignment: state === "project" ? { state, project } : { state }, source:"user", basis:"explicit project request", revision:1 });
 const handCount = (model) => ofKind(model, "task").length;
 
 function assertConnected(model) {
@@ -52,6 +53,66 @@ function assertConnected(model) {
     }
   }
 }
+
+test("new work membership overrides stale grouping, with a stable project anchor", () => {
+  const input = { tasks:[{...task("site"), work:assigned("open-badminton")}, {...task("rally"), work:assigned("open-badminton")}],
+    groups:[{label:"Learning", groups:[{label:"Website", project:"open-badminton"}]}, {label:"Wrong",members:["rally"]}] };
+  const m = project(input);
+  assert.equal(m.edges.find(e => e.primary && e.to === "task:rally").from, "project:open-badminton");
+  assert.equal(m.nodes.find(n => n.id === "project:open-badminton").title, "Website");
+  const renamed = project({...input,groups:[{label:"Other category",groups:[{label:"New name",project:"open-badminton"}]}]});
+  assert.ok(renamed.nodes.some(n=>n.id === "project:open-badminton"));
+  assertConnected(m);assertConnected(renamed);
+});
+
+test("unanchored projects appear immediately; pending is not independent or legacy", () => {
+  const m = project({tasks:[{...task("rally"),work:assigned("open-badminton")},
+    {...task("pending"),work:assigned(null,"pending")},{...task("alone"),work:assigned(null,"independent")},task("legacy")],
+    groups:[{label:"Stale",members:["pending","alone"]}]});
+  const parent=id=>m.edges.find(e=>e.primary&&e.to===`task:${id}`).from;
+  assert.equal(parent("rally"),"project:open-badminton");
+  assert.equal(parent("pending"),"work:pending");
+  assert.equal(parent("alone"),"core");
+  assert.equal(m.nodes.find(n=>n.id==="task:legacy").data.membership,"legacy");
+  assertConnected(m);
+});
+
+test("stale nested project anchors cannot turn membership into another project's child", () => {
+  const m = project({tasks:[{...task("rally"), work:assigned("p")}, {...task("other"), work:assigned("q")}],
+    groups:[{label:"Project P",project:"p",groups:[{label:"Project Q",project:"q",members:["rally"]}]}]});
+  assert.equal(m.edges.find(e => e.primary && e.to === "task:rally").from,"project:p");
+  assert.equal(m.edges.find(e => e.primary && e.to === "project:q").from,"core");
+  assert.equal(m.edges.find(e => e.primary && e.to === "task:other").from,"project:q");
+  assertConnected(m);
+});
+
+test("confirmed project membership is not a retention proxy", () => {
+  const m = project({tasks:[{...task("done","done",8),work:assigned("p")},{...task("open"),work:assigned("p")}],
+    messages:[{id:"u",role:"user",text:"hi",ts:hoursAgo(3)}]});
+  assert.deepEqual(handed(m),["open"]);
+});
+
+test("members order is independent of ledger sort and updates", () => {
+  const m=project({tasks:[task("a"),task("b")],groups:[{label:"g",members:["b","a"]}]});
+  assert.deepEqual(list(childIndex(m).get("group:g").map(n=>n.id)),["task:b","task:a"]);
+});
+
+test("a shared result remains accessible in every task's focused branch", () => {
+  const m=project({tasks:["a","b"].map(s=>({...task(s),attached:[pictured("same")]})),groups:[{label:"A",members:["a"]},{label:"B",members:["b"]}]});
+  assert.equal(ofKind(m,"result").length,2);
+  for(const label of ["A","B"]) assert.equal(ofKind(focusOn(m,`group:${label}`),"result").length,1);
+  assertConnected(m);
+});
+
+test("a budgeted tree never admits an activity without its task ancestor", () => {
+  const m=project({tasks:[task("a")],workers:[worker("w1","worker",{subject:"a"}),worker("w2","worker",{subject:"a"})]});
+  for(const w of [480,600,1000]) {
+    const cut=budgeted(m,{w,h:450}).model;
+    assertConnected(cut);
+    const drawn=new Set(arrange(cut).placed.map(r=>r.node.id));
+    for(const n of cut.nodes.filter(n=>n.kind!=="overview")) assert.ok(drawn.has(n.id));
+  }
+});
 
 // Everything above tests the pure section on its own, so a name the component binds over one
 // of its functions passes here and throws in the browser — where the view's error boundary
@@ -147,7 +208,7 @@ test("a cancellation is on Home for an hour, and then not on Home at all", () =>
   assert.ok(model.nodes.some((n) => n.id === "overview:task:task:just-dropped"));
   // Past it, gone — not history. A live sibling, nobody being back yet and a picture of its own
   // keep nothing; a group holding nothing else is not added; a missing time reads as past it.
-  assert.deepEqual(ids(model, "result"), ["result:view:shot-just-dropped"]);
+  assert.deepEqual(ids(model, "result"), ["task:just-dropped/result:view:shot-just-dropped"]);
   assert.ok(!model.nodes.some((n) => n.id === "group:gone"));
   // A live session on it is still live work: it stands on the core under its own title.
   const hand = ofKind(model, "activity")[0];
@@ -531,7 +592,7 @@ test("a wire is its branch's one colour at every depth, a card in no group inclu
 
   // Tasks, inner groups, their tasks and pictures: all of it is KNQ's colour.
   const under = model.nodes.map((n) => n.id).filter((id) => !["core", "group:KNQ", "group:学习类", "task:vocab", "task:loose"].includes(id));
-  assert.ok(under.some((id) => id.startsWith("result:")) && under.some((id) => id.startsWith("group:")));
+  assert.ok(under.some((id) => id.includes("/result:")) && under.some((id) => id.startsWith("group:")));
   for (const id of under) assert.equal(tones.get(id), knq, `${id} wears KNQ's colour`);
   for (const wire of arrange(model).wires.filter((w) => under.includes(w.to))) assert.equal(wire.paint, branchPaint(knq));
 
@@ -572,9 +633,9 @@ test("every picture is an image node below its task, and no card wears one", () 
   // builder only ever reviewed has none, which hid the task's result.
   assert.deepEqual(list(ofKind(shots, "result").map((n) => n.title)), ["Notes", "Slide", "Other"]);
   assert.deepEqual(list(childIndex(shots).get("task:deck").map((n) => n.id)),
-    ["result:view:views/notes", "result:view:views/slide", "result:view:views/other-slide"]);
+    ["task:deck/result:view:views/notes", "task:deck/result:view:views/slide", "task:deck/result:view:views/other-slide"]);
   assert.equal(ofKind(shots, "result")[0].data.preview, null, "the name is its picture until one lands");
-  for (const id of ["result:view:views/slide", "result:view:views/other-slide"]) {
+  for (const id of ["task:deck/result:view:views/slide", "task:deck/result:view:views/other-slide"]) {
     const tile = arrange(shots).placed.find((p) => p.node.id === id);
     // A shot is stored 960x540, so a tile has device pixels to spare at full zoom, and a
     // card is that box too.
@@ -604,9 +665,9 @@ test("a picture a line carried hangs under its task, and opens that task at that
     made("court/lines", "Court lines", "/views/_shots/ref/court/lines.png?v=1"),
     pictured("3f9a0c11d2e4b5a6", hoursAgo(2))] }] });
   const [page, figure] = ofKind(model, "result");
-  assert.equal(page.id, "result:view:court/lines");
+  assert.equal(page.id, "task:court/result:view:court/lines");
   assert.equal(page.data.viewRef, "court/lines", "a page's tile goes to the page");
-  assert.equal(figure.id, "result:att:3f9a0c11d2e4b5a6");
+  assert.equal(figure.id, "task:court/result:att:3f9a0c11d2e4b5a6");
   assert.equal(figure.data.viewRef, null, "a picture's tile is not a page to go to");
   assert.equal(figure.data.subject, "court", "it opens its own task's panel");
   assert.equal(figure.data.at, hoursAgo(2), "at the line that carried it");
@@ -627,7 +688,7 @@ test("the air between two nodes is set by where their branches part, not by how 
   const column = placed.filter((p) => p.node.kind === "result" && p.dir === at("task:a").dir)
     .sort((x, y) => x.y - y.y);
   assert.equal(column.length, 4, "two tasks' pictures stack in one rank on this side");
-  const parent = (p) => p.node.id.startsWith("result:view:views/v0") || p.node.id.startsWith("result:view:views/v1") ? "first" : "second";
+  const parent = (p) => p.node.data.subject === "a" ? "first" : "second";
   const gaps = column.slice(1).map((p, i) => ({ gap: p.y - (column[i].y + column[i].h), same: parent(p) === parent(column[i]) }));
   const within = list(gaps.filter((g) => g.same).map((g) => g.gap));
   const across = list(gaps.filter((g) => !g.same).map((g) => g.gap));
@@ -885,7 +946,7 @@ test("pictures take only the width the cards left, so one cannot keep a card out
   assert.ok(ids(cut.model, "task").includes("task:s0"), "the warm card reaches its inner group");
   assert.deepEqual(ids(cut.model, "result"), [], "and the picture is what gives way");
   // With room for both, both are drawn.
-  assert.deepEqual(ids(budgeted(model, { w: (both.width + 40) * 0.8, h: LAPTOP.h }).model, "result"), ["result:view:views/p"]);
+  assert.deepEqual(ids(budgeted(model, { w: (both.width + 40) * 0.8, h: LAPTOP.h }).model, "result"), ["task:t0/result:view:views/p"]);
 });
 
 test("what is drawn keeps the record's order: heat decides whether a card is on the chart, never where", () => {
@@ -933,7 +994,7 @@ test("a group taken as the centre draws all its own cards, and cuts an inner gro
   assert.deepEqual(ids(branch.model, "group").sort(), ["group:A", "group:Inner"]);
   // The centre's own cards bring their pictures: offered against the window, they never fit a
   // branch already taller than it. t0 and t6 are the centre's own that made one.
-  assert.ok(["result:view:views/p0", "result:view:views/p6"].every((id) => ids(branch.model, "result").includes(id)));
+  assert.ok(["task:t0/result:view:views/p0", "task:t6/result:view:views/p6"].every((id) => ids(branch.model, "result").includes(id)));
   // The centre's own cards may still overflow, which is what the overview scale and a scroll
   // are for: the window opens at 0.8 rather than shrinking to whatever the day forces.
   assert.equal(opening(arrange(branch.model), LAPTOP), 0.8);
