@@ -177,6 +177,10 @@ a view goes up with it.
 
 ### D. Triage — host code, facts only
 
+All speech branches use the independent read in E whenever a conversation model is configured;
+none of the short-message or one-send-back exemptions below applies to that path.
+The remaining triage is the typed path for installs without that reader.
+
 Inside `hi_prepare` ([`tools.rs`](../../src/body/reaction/tools.rs)), for each `say` action,
 after the length — when the set is prepared, not when the floor releases it, so a read that
 can take seconds costs the turn's tail and never a moment somebody is waiting in. It judges
@@ -196,7 +200,74 @@ than present in it. Measured 2026-09-20 on five days of this install: 154 messag
 115 were routed, so a quarter of the surface was outside every number being read off it — and
 on records, where the audit reads only the close, a skip is final.
 
-### E. Pre-send check — typed questions to System One
+### E. Pre-send Check
+
+#### Evidence and Purpose Before Timing
+
+When a conversation model is configured, every speech draft is read independently
+before it is prepared, including short first replies and rewrites. The reviewer reads
+the person's concern and the evidence actually available, then returns accept or specific
+rejection feedback; it does not write the reply. A prior explanation is not evidence for
+itself. Being challenged calls for testing that explanation's premise, not finding a more
+fluent way to repeat it. Completion of an explicitly requested change calls for a brief
+completion acknowledgment, not silence or a repetition of its specification.
+
+The reader uses `speech_review_model` (the configured conversation model when unset).
+A separate claim inventory precedes the evidence-and-purpose decision, each bounded at
+180 seconds, with at most six reviewed drafts per input revision. The inventory's actual
+draft spans receive immutable host ids, all of which must appear in the evidence decision;
+the host, not the reviewer, supplies the original claim text from the id. This avoids
+different sentence splitting being mistaken for missing evidence. An empty claims list cannot silently
+exempt a mechanism explanation. If a quotation is malformed but its source is already
+available, one bounded citation-only repair may copy a contiguous excerpt; it cannot change
+the draft, the source id or the original verdict. Missing evidence still starts actual work.
+A rewrite is checked again; reaching
+the budget does not approve it. Reader failure leaves the draft unapproved rather than
+falling through the previous one-send-back bypass. The typed primary/backup path remains
+for installs without a conversation model. The categorical
+decision, reasons, quoted support for mechanism claims, model, latency and tokens are recorded.
+Mechanism claims must cite host-resolved successful tool results, not report prose or a
+model-supplied "verified" flag. The host checks source identity and exact quotation; the
+independent reader judges whether the surrounding result supports the actual claim and
+scope, including contrary material. A real quote is not automatically proof of its inference.
+
+#### Missing Evidence Starts Work
+
+The check returns three different outcomes: accept, revise wording, or verify a specific
+question. The last is not another rewrite instruction. The host retains the question and
+the original conversation, labels the blocked draft as an unverified proposal, and posts
+the check to Cognition through the existing mailbox. A brief acknowledgment is optional;
+there is no automatic "I am checking" message while no check has been arranged.
+
+Cognition returns `hi_send_message` with the `verification_id` and source references
+(`run`, `session`, completed tool `item_id`, exact output `quote`). The host resolves the
+original frames and supplies the complete bounded result and operation to the reviewer.
+An assistant assertion, failed tool, missing source or messaging receipt cannot be the
+observation. If the material cannot be read, an honest unresolved report with no evidence
+is possible; it never establishes the proposed mechanism.
+
+`memory/speech-verification.json` holds this pending speech protocol, not project tasks or
+a second facts database. It retains blocked questions, results and exact approved answers.
+Preparing an answer, accepting mail, exhausting review attempts and losing a model call do
+not complete it. Only actual text-journal delivery closes an approved answer. At boot and
+subsequent conversation events, undelivered checks are posted when Cognition is available;
+reported but unsent answers return to Reaction. Recovery reconciles actual journal messages
+before resending, including a crash between writing the message and closing the request.
+There is no periodic model wake. Existing project work continues under its existing owner.
+
+A challenge does not prove an answer false. If its source supports the original judgment,
+keep it; if support is missing, check rather than invent the opposite; if it is contradicted,
+correct the specific error. Evaluation starts before the first explanation, not just at
+the eventual apology. The replay's user-known transcript contains actual journaled messages,
+never every draft that was prepared, and excludes deliveries later than the replayed input.
+
+The reviewer may certify an accepted completion or correction with an exact quote from
+the current report. Code verifies that quote and the report provenance, binds it to the
+exact approved message and supplies the limited delivery obligation described in
+[host.md](host.md). New human input steered into generation also reaches this reviewer;
+an in-flight read of older input cannot approve the new draft or certify a notice.
+
+#### Typed Questions for the Remaining Path
 
 **What it is.** One System One call from the host — no session, no memory — through the
 [decision capability](../../src/body/capabilities/decision.rs) `hi_system_one` also uses
@@ -228,8 +299,12 @@ from the table — the standard the writer already holds, not a sentence for it 
 - **one send-back per turn, on `finished` lines** — the ones a person is waiting on; whatever
   Reaction prepares after reading one is set as written. Per turn rather than per line because
   the host cannot tell a rewrite from a new line, and a turn is what bounds the latency;
-- **a timeout, and any error, sets the line** — silence is the worst failure, and a
-  checker must not be able to produce it. Time spent queued behind an earlier message counts.
+- **a timeout, error or unreadable answer asks a second reader** — the configured
+  `speech_check_fallback_model` (the conversation model when unset), within
+  `speech_check_fallback_budget_ms` (45 seconds). It returns one criterion, not invented
+  probabilities. The primary failure is recorded even if this reader succeeds. Only when
+  both fail is the line set unread, with both errors retained; silence must not be the
+  consequence of an unavailable checker. Time queued counts against the primary budget.
   The budget is `speech_check_budget_ms`, **2.5 s**, and the record gate's is 20 s (§ M): nobody
   waits on a line. Both were 2.5 s until 2026-09-20, when five days of recorded checks held
   131 verdicts and not one inside the budget — a reasoning model spends 900–1,500 tokens
@@ -377,6 +452,14 @@ since the person's last message as the journal had it when the turn started. Tha
 thread; codex's compactions are not reproduced. Both sides of the comparison are scored by the
 same audit, which is what the question needs. The set is private conversation, and the report
 stays in the data directory, under `memory/quality/replay/`.
+
+`CASES=<json>` selects exact historical replies and exercises the production speech check,
+its fallback, and the timing eligibility decision. Messages steered into a running turn
+are included only up to the historical call being replayed. Today's memory and later
+corrections are not added. Model drafts, rejected attempts, check failures, timing decisions
+and unexecuted work requests are retained beside that case file under `model-replay/`.
+No worker, file operation, screen update or live chat send is executed in this mode. A
+timing pass demonstrates eligibility, not delivery or completion of the promised work.
 
 **A record is replayed at the moment it was written.** `make eval-records` takes worker turns
 that called `hi_task_note`, puts in front of a model everything that turn had seen up to the
@@ -572,11 +655,11 @@ because an arrangement the person asked for is not held back over its wording.
 
 | Decision | Reasoning |
 |---|---|
-| **A pre-send check, scoped to report turns and long or later messages** | Code triage cannot find paraphrase, so scope follows where failures concentrate. A small-model checker found ≤11% of problems and is not used; mid-size reached 57% / 44%. On report turns a few seconds are affordable, and those turns carried the worst messages on 09-15 |
-| **One send-back per turn, not per message** | The host cannot tell a rewrite from a new message; a turn bounds the latency, and what follows a send-back was written with its note in hand |
+| **Every finished draft gets an evidence-and-purpose read when a model is configured** | Short claims and rewrites can repeat the same unsupported premise. The typed-only path retains factual triage, but it cannot certify adequacy of evidence or an owed completion |
+| **Independently review every finished rewrite** | A prior rejection never establishes that its rewrite is correct. Up to six reads bound cost without approving an unchecked draft; the typed-only path retains its one-send-back limit |
 | **The judges' rubrics are prose in `src/identity/judges/`** | What counts as a failing line is judgment, and judgment lives where it can be read whole; the code only sends it |
 | **The check can send back, never rewrite** | A checker that edits words is a second mouth ([invariant 1](arch.md#invariants)); `hi_prepare` already answers calls with refusals Reaction acts on |
-| **Fail open** | A timeout or error sends the message. The one failure nobody reports is silence |
+| **Reader failure is not approval** | Finished drafts remain unapproved on reader failure. The typed-only path asks a bounded fallback before failing open and records both failures |
 | **A gate is on or off; there is no recording-only stage** | Every gate was built to record what it would have done and send nothing back until its numbers were known. Five days of that on speech kept 187 checks, 162 of them timeouts, and no verdict ever reached anyone. The checks that run are recorded anyway, so a stage that only records is the same numbers plus a second path (2026-09-21) |
 | **Conduct: people present first, never cut** | Name order plus a shared 3,000-character cap delivered 3,023 of 16,425 characters and cut the owner's own section |
 | **Grain lives in the existing per-subject read** | Reflection already learns what the agent's words earn per subject; a second store would be structure with the same job |
@@ -606,8 +689,8 @@ because an arrangement the person asked for is not held back over its wording.
 - **What the check should ask.** § E asks the table's axes one by one, and that is what System
   One reads worst: the person's own reasons on 2026-09-21 were "uncomfortable to read" and
   "wordy — the last sentences add nothing", which the table spreads over `hard`, `known` and
-  `repeat` or does not name at all. Better questions over the same judge are the next work here,
-  not a different judge.
+  `repeat` or does not name at all. The independent reader must be measured against these labels, including both wrong
+  approvals and owed replies lost; a categorical verdict is not calibrated accuracy.
 - **Reading the attachment, not only its caption.** The seam reads the line or the message an
   attachment rides; nothing reads whether the picture is legible or is the one the words
   describe. A vision read at the seam is the obvious shape and its cost is unmeasured

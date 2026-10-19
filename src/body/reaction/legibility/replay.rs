@@ -30,6 +30,8 @@ use crate::mind::memory::{layout, quality};
 use super::check::Brief;
 use crate::body::legibility::judge::Judge;
 
+mod review;
+
 /// One model round's limit. A replayed turn is a whole generation on a long input.
 const ROUND_LIMIT: Duration = Duration::from_secs(240);
 /// Tool rounds before a replayed turn is cut off. A live turn is one generation with a few
@@ -49,6 +51,7 @@ pub struct Options {
     pub limit: usize,
     /// Earlier turns of the same thread that ride along as history.
     pub context: usize,
+    pub cases: Option<PathBuf>,
 }
 
 /// One `hi_*` call as the frame log recorded it.
@@ -60,6 +63,7 @@ struct Call {
     /// What the model reasoned before making it. A thinking upstream refuses a history
     /// whose tool calls arrive without their reasoning.
     reasoning: String,
+    steers: Vec<String>,
 }
 
 /// One Reaction turn off the frame log.
@@ -71,26 +75,34 @@ struct Turn {
     input: String,
     calls: Vec<Call>,
     typed: String,
+    delivered: Vec<(DateTime<Utc>, String)>,
 }
 
 impl Turn {
-    /// What reached the person. For a turn from before `hi_prepare` was the one way out, the
-    /// `hi_say` calls that came back sent. For one since, the `finished` lines of every set it
-    /// prepared — **what it meant to say as its reply, not what the floor let out**: a line
-    /// held or dropped at a stop is on the host's event log, not in the turn, and replay
-    /// compares what two prompts *write*.
+    /// Only actual journaled messages (or a legacy hi_say receipt), never prepared drafts.
     fn said(&self) -> Vec<String> {
+        self.said_before(DateTime::<Utc>::MAX_UTC)
+    }
+
+    fn said_before(&self, before: DateTime<Utc>) -> Vec<String> {
+        if !self.delivered.is_empty() {
+            return self.delivered.iter().filter(|(ts, _)| *ts < before).map(|(_, text)| text.clone()).collect();
+        }
         let mut said = Vec::new();
         for c in &self.calls {
             match c.tool.as_str() {
                 "hi_say" if c.result.starts_with("sent") => {
                     said.extend(c.arguments.get("text").and_then(Value::as_str).map(str::to_string));
                 }
-                "hi_prepare" if c.result.starts_with("prepared") => said.extend(finished(&c.arguments).0),
                 _ => {}
             }
         }
         said
+    }
+
+    fn drafted(&self) -> Vec<String> {
+        self.calls.iter().filter(|c| c.tool == "hi_prepare" && c.result.starts_with("prepared"))
+            .flat_map(|c| finished(&c.arguments).0).chain(self.said()).collect()
     }
 
     /// What it put on screen, as the judges read it — the same reading.
@@ -150,7 +162,31 @@ fn read_turns(data_dir: &Path) -> Vec<Turn> {
         turns.extend(read_file(&file));
     }
     turns.sort_by_key(|t| t.ts);
+    attach_delivered(data_dir, &mut turns);
     turns
+}
+
+fn attach_delivered(data_dir: &Path, turns: &mut [Turn]) {
+    use crate::mind::memory::journal;
+    use crate::types::{Content, JournalEntry};
+    let text_dir = layout::raw_root(data_dir).join("text");
+    let mut messages = Vec::new();
+    for day in std::fs::read_dir(text_dir).into_iter().flatten().flatten() {
+        let Ok(file) = std::fs::File::open(day.path().join("text.jsonl")) else { continue };
+        for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+            if let Some(JournalEntry::Message { message, .. }) = journal::classify_line(&line)
+                && message.from.is_agent()
+                && let Content::Text(text) = message.content {
+                messages.push((message.ts, text));
+            }
+        }
+    }
+    messages.sort_by_key(|(ts, _)| *ts);
+    for (ts, text) in messages {
+        if let Some(turn) = turns.iter_mut().rev().find(|t| t.ts <= ts && t.drafted().contains(&text)) {
+            turn.delivered.push((ts, text));
+        }
+    }
 }
 
 fn read_file(file: &Path) -> Vec<Turn> {
@@ -158,9 +194,11 @@ fn read_file(file: &Path) -> Vec<Turn> {
     let mut out: Vec<Turn> = Vec::new();
     let mut open: Option<Turn> = None;
     let mut reasoning = String::new();
+    let mut steers = Vec::new();
     for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
         // Most of a frame log is streamed reasoning; skip it before parsing anything.
         let wanted = line.contains("\"turn/start\"")
+            || line.contains("\"turn/steer\"")
             || line.contains("\"item/completed\"")
             || line.contains("\"turn/completed\"");
         if !wanted {
@@ -180,6 +218,7 @@ fn read_file(file: &Path) -> Vec<Turn> {
             ("send", "turn/start") => {
                 out.extend(open.take());
                 reasoning.clear();
+                steers.clear();
                 let input = raw["params"]["input"]
                     .as_array()
                     .into_iter()
@@ -199,7 +238,13 @@ fn read_file(file: &Path) -> Vec<Turn> {
                     input,
                     calls: Vec::new(),
                     typed: String::new(),
+                    delivered: Vec::new(),
                 });
+            }
+            ("send", "turn/steer") => {
+                let text = raw["params"]["input"].as_array().into_iter().flatten()
+                    .filter_map(|i| i["text"].as_str()).collect::<Vec<_>>().join("\n");
+                if !text.is_empty() { steers.push(text); }
             }
             ("recv", "item/completed") => {
                 let Some(turn) = open.as_mut() else { continue };
@@ -213,6 +258,7 @@ fn read_file(file: &Path) -> Vec<Turn> {
                         }
                     }
                     Some("mcpToolCall") => turn.calls.push(Call {
+                        steers: steers.clone(),
                         reasoning: std::mem::take(&mut reasoning),
                         tool: item["tool"].as_str().unwrap_or("").to_string(),
                         arguments: item["arguments"].clone(),
@@ -270,7 +316,10 @@ fn brief_for(thread: &[&Turn], at: usize, context: usize) -> Brief {
             recent.push_str(signals.trim_start_matches("## New signals").trim());
             recent.push('\n');
         }
-        for m in t.said() {
+        if let Some(call) = t.calls.last() {
+            for steer in &call.steers { recent.push_str(steer); recent.push('\n'); }
+        }
+        for m in t.said_before(thread[at].ts) {
             recent.push_str(&format!("< {}\n", m.replace('\n', "\n  ")));
         }
     }
@@ -282,6 +331,18 @@ fn brief_for(thread: &[&Turn], at: usize, context: usize) -> Brief {
     let carries_report = signals.contains("(from session") || signals.contains("report");
     let screen = latest_section(thread, at, "On screen now");
     Brief { reader: reader.trim().to_string(), recent, signals, screen, carries_report }
+}
+
+/// Reconstruct only material available when this message was prepared. Used by the
+/// live-check replay, without today's learned memory or later corrections.
+#[cfg(test)]
+pub(super) fn historical_check_case(data_dir: &Path, needle: &str) -> Option<(Brief, String)> {
+    let turns = read_turns(data_dir);
+    let turn = turns.iter().find(|t| t.said().iter().any(|s| s.contains(needle)))?;
+    let members: Vec<&Turn> = turns.iter().filter(|t| t.file == turn.file && t.thread == turn.thread).collect();
+    let at = members.iter().position(|t| std::ptr::eq(*t, turn))?;
+    let message = turn.said().into_iter().find(|s| s.contains(needle))?;
+    Some((brief_for(&members, at, 6), message))
 }
 
 /// The tools a replayed turn may call, spelled the way the runtime spells them.
@@ -309,7 +370,10 @@ fn user(text: &str) -> Value {
 /// answered, and what it typed.
 fn history_items(turn: &Turn, n: usize, out: &mut Vec<Value>) {
     out.push(user(&turn.input));
+    let mut seen_steers = 0;
     for (i, c) in turn.calls.iter().enumerate() {
+        for steer in &c.steers[seen_steers.min(c.steers.len())..] { out.push(user(steer)); }
+        seen_steers = c.steers.len();
         let id = format!("h{n}_{i}");
         let reasoning = if c.reasoning.trim().is_empty() { "(not recorded)" } else { c.reasoning.as_str() };
         out.push(json!({
@@ -372,6 +436,9 @@ async fn replay_turn(
         history_items(t, n + 1, &mut input);
     }
     input.push(user(&thread[at].input));
+    if let Some(call) = thread[at].calls.last() {
+        for steer in &call.steers { input.push(user(steer)); }
+    }
 
     let tools = tools();
     let mut said = Vec::new();
@@ -558,6 +625,9 @@ fn choose(
 /// Replay the set and print what changed. The full report is written under
 /// `memory/quality/replay/`.
 pub async fn run(opts: Options) -> anyhow::Result<()> {
+    if opts.cases.is_some() {
+        return review::run(opts).await;
+    }
     let data_dir = &opts.data_dir;
     let replayer = Judge::resolve(data_dir, "speech_replay_model")
         .ok_or_else(|| anyhow::anyhow!("no model is configured for this data dir"))?;
@@ -762,7 +832,7 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].said(), vec!["好".to_string()], "only what came back sent was said");
 
-        // A turn since `hi_prepare`: its reply is its `finished` lines.
+        // A prepared reply is not speech until the text journal confirms it.
         let prepared = Turn {
             calls: vec![Call {
                 tool: "hi_prepare".into(),
@@ -772,10 +842,12 @@ mod tests {
                 ] }),
                 result: "prepared \"m\" — finished; paused".into(),
                 reasoning: String::new(),
+                steers: vec![],
             }],
             ..turns[0].clone()
         };
-        assert_eq!(prepared.said(), vec!["答".to_string()]);
+        assert!(prepared.said().is_empty());
+        assert_eq!(prepared.drafted(), vec!["答".to_string()]);
         assert_eq!(prepared.shown(), vec!["show p/v".to_string()]);
         assert_eq!(section(&turns[0].input, "New signals"), Some("## New signals\n> 部署一下"));
 
@@ -796,6 +868,54 @@ mod tests {
     }
 
     #[test]
+    fn only_actual_delivery_before_the_next_input_is_user_known() {
+        let dir = tempfile::tempdir().unwrap();
+        let at: DateTime<Utc> = "2026-10-12T10:00:00Z".parse().unwrap();
+        let delivered_at = at + chrono::Duration::seconds(90);
+        let make = |text: &str| Turn { file:"reaction.jsonl".into(), thread:"thread".into(), ts:at,
+            input:String::new(), typed:String::new(), delivered:Vec::new(), calls:vec![Call {
+                tool:"hi_prepare".into(), result:"prepared".into(), reasoning:String::new(), steers:Vec::new(),
+                arguments:json!({"branches":[{"when":"finished","actions":[{"do":"say","text":text}]}]}),
+            }] };
+        let mut turns = vec![make("never sent"), make("delivered later")];
+        let entry = crate::mind::memory::journal::legacy_signal_out("message".into(), delivered_at,
+            crate::types::Channel::Text, "delivered later".into(), None, None);
+        let path = layout::channel_log_path(dir.path(), crate::types::Channel::Text, delivered_at);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_string(&entry).unwrap()+"\n").unwrap();
+        attach_delivered(dir.path(), &mut turns);
+        assert!(turns[0].said().is_empty());
+        assert!(turns[1].said_before(at + chrono::Duration::seconds(60)).is_empty());
+        assert_eq!(turns[1].said_before(at + chrono::Duration::seconds(120)), ["delivered later"]);
+    }
+
+    #[test]
+    fn steering_is_kept_at_the_call_that_had_seen_it_without_future_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("reaction.jsonl");
+        let call = |text: &str| json!({"params":{"item":{"type":"mcpToolCall","tool":"hi_say",
+            "arguments":{"text":text},"result":{"content":[{"text":"sent"}]}}}});
+        let lines = [
+            frame(1,"send","turn/start",json!({"params":{"input":[{"text":"initial"}]}})),
+            frame(2,"send","turn/steer",json!({"params":{"input":[{"text":"new question"}]}})),
+            frame(3,"recv","item/completed",call("first answer")),
+            frame(4,"send","turn/steer",json!({"params":{"input":[{"text":"later fact"}]}})),
+            frame(5,"recv","item/completed",call("second answer")),
+            frame(6,"recv","turn/completed",json!({})),
+        ];
+        std::fs::write(&file,lines.join("\n")).unwrap();
+        let turns = read_file(&file);
+        assert_eq!(turns[0].calls[0].steers,vec!["new question"]);
+        assert_eq!(turns[0].calls[1].steers,vec!["new question","later fact"]);
+        assert_eq!(turns[0].input,"initial");
+        let mut history = vec![];
+        history_items(&turns[0],0,&mut history);
+        let history = serde_json::to_string(&history).unwrap();
+        assert!(history.find("new question").unwrap() < history.find("first answer").unwrap());
+        assert!(history.find("first answer").unwrap() < history.find("later fact").unwrap());
+    }
+
+    #[test]
     fn with_nothing_audited_the_set_is_the_newest_turns_that_spoke() {
         let t = |ts: &str, said: Option<&str>| Turn {
             file: "f".into(),
@@ -808,9 +928,11 @@ mod tests {
                     arguments: json!({ "text": s }),
                     result: "sent".into(),
                     reasoning: String::new(),
+                    steers: vec![],
                 }])
                 .unwrap_or_default(),
             typed: String::new(),
+            delivered: Vec::new(),
         };
         let turns = vec![
             t("2026-09-15T01:00:00Z", Some("一")),

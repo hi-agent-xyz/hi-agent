@@ -184,6 +184,13 @@ impl ToolOwner {
 }
 
 impl ToolSink {
+    pub(crate) async fn verification_report(&self, id: &str, message: &str,
+        references: &[super::legibility::verification::Reference]) -> anyhow::Result<()> {
+        let mouth = self.mouth.as_ref().ok_or_else(|| anyhow::anyhow!("Reaction is not ready"))?;
+        mouth.speech.verification.report(id, message, references).await?;
+        mouth.speech.verification.dispatch().await
+    }
+
     /// Forward one control command to the reaction loop. Returns an error only if
     /// the loop is gone (channel closed).
     pub async fn send(&self, control: LoopControl) -> anyhow::Result<()> {
@@ -199,8 +206,8 @@ impl ToolSink {
     /// does not parse is an error, naming where, and nothing is set.
     ///
     /// **Every line is read by the pre-send check before the call answers**, all at once: a
-    /// `finished` line as the reply it is ([`super::legibility::Speech::review`], which spends
-    /// the turn's one send-back), a `paused` or condition line as the prepared line it is
+    /// `finished` line as the reply it is ([`super::legibility::Speech::review`], including
+    /// independent review of rewrites), a `paused` or condition line as the prepared line it is
     /// ([`super::legibility::Speech::review_prepared`], which holds up nobody and spends
     /// nothing). A branch whose line is sent back is left out whole, and the answer says which
     /// and why. Nothing is said here: what was set goes when the floor releases it.
@@ -254,8 +261,15 @@ impl ToolSink {
         .await;
         let mut sent_back = std::collections::BTreeMap::new();
         for (i, review) in reads {
-            if let super::legibility::check::Review::SendBack(note) = review {
-                sent_back.entry(i).or_insert(note);
+            match review {
+                super::legibility::check::Review::Pass => {},
+                super::legibility::check::Review::SendBack(note) => { sent_back.entry(i).or_insert(note); },
+                super::legibility::check::Review::Verify { id, note } => {
+                    sent_back.entry(i).or_insert(format!("source verification {id} retained: {note}. \
+                        The host arranges the check when Cognition is reachable. Do not rewrite or \
+                        resend this explanation, or send a second task based on it. The result \
+                        returns as mail. A brief acknowledgment is optional, not the answer."));
+                },
             }
         }
         let notes: Vec<String> = sent_back
@@ -269,9 +283,12 @@ impl ToolSink {
             .map(|(_, b)| b)
             .collect();
         let whens: Vec<String> = kept.iter().map(|b| b.when.as_str().to_string()).collect();
+        let required: Vec<String> = kept.iter().filter(|branch| branch.when == When::Finished)
+            .flat_map(|branch| branch.lines()).filter(|text| mouth.speech.required_notice(text))
+            .map(str::to_string).collect();
         let evicted = mouth
             .prepared
-            .set(&matter, kept, mouth.speech.said_since_their_last(), heard, answering)
+            .set_approved(&matter, kept, mouth.speech.said_since_their_last(), heard, answering, &required)
             .await;
         if !whens.is_empty() {
             mouth.prepared.after_set(answering);

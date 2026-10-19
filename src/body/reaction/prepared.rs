@@ -434,6 +434,9 @@ struct Set {
     /// Held `hold` at a stop and already told so — told once, not at every stop after.
     #[serde(default)]
     held_told: bool,
+    /// An evidence-backed, independently reviewed completion/correction owed to the person.
+    #[serde(default)]
+    required_notice: bool,
     /// Which set this is within the run, so a reading changes the sets it read and not ones
     /// prepared again while it ran. Not kept: numbered again on load.
     #[serde(skip)]
@@ -629,6 +632,13 @@ impl Prepared {
         heard: u64,
         answering: bool,
     ) -> Vec<String> {
+        self.set_approved(matter, branches, said, heard, answering, &[]).await
+    }
+
+    pub(super) async fn set_approved(
+        &self, matter: &str, branches: Vec<Branch>, said: Vec<String>, heard: u64,
+        answering: bool, approved: &[String],
+    ) -> Vec<String> {
         let directions: Vec<BranchDirection> = branches.iter().map(Branch::direction).collect();
         let (cleared, evicted) = {
             let mut st = self.lock();
@@ -638,6 +648,12 @@ impl Prepared {
             let mut evicted = Vec::new();
             if !branches.is_empty() {
                 let ours_seen = st.said_seen;
+                let required_notice = branches.iter().find(|b| b.when == When::Finished).is_some_and(|branch| {
+                    !branch.actions.is_empty() && branch.actions.iter().all(|action| match action {
+                        Action::Say { text, .. } => approved.contains(text),
+                        _ => false,
+                    })
+                });
                 let set = st.number(Set {
                     matter: matter.to_string(),
                     branches,
@@ -647,6 +663,7 @@ impl Prepared {
                     ours_seen,
                     answering,
                     held_told: false,
+                    required_notice,
                     id: 0,
                 });
                 st.sets.push(set);
@@ -756,7 +773,8 @@ impl Prepared {
                 return;
             }
         };
-        let gone: Vec<Set> = clear.into_iter().map(|k| sets[k].clone()).collect();
+        let gone: Vec<Set> = clear.into_iter().map(|k| sets[k].clone())
+            .filter(|set| !set.required_notice).collect();
         tracing::info!(ready = sets.len(), cleared = gone.len(), ms = started.elapsed().as_millis() as u64, "prepared: tidied");
         if gone.is_empty() {
             return;
@@ -1318,7 +1336,6 @@ async fn release_floor(
     arrived: Instant,
 ) -> FloorOut {
     let prepared = &reaction.inner.prepared;
-    let said = prepared.lock().said;
     let mut out = FloorOut::default();
     // `finished`, in the order prepared.
     for (n, (k, when)) in floors.iter().enumerate() {
@@ -1326,7 +1343,8 @@ async fn release_floor(
             continue;
         }
         let set = &sets[*k];
-        let verdict = match fits[n] {
+        let said = prepared.lock().said;
+        let verdict = match notice_fit(fits[n], set.required_notice, set.written_with_everything(heard_now, said)) {
             // Unread: what it did before it asked — a set written with everything said on
             // both sides goes if they are done or cannot be read otherwise; one written
             // before a line of theirs, or past one of ours, waits.
@@ -1364,7 +1382,7 @@ async fn release_floor(
             }
             Some(Fits::Drop) | None => {
                 prepared.tell(
-                    format!("- \"{}\" (finished): dropped — what they said after it was written changed what it should be; nothing of it went out", set.matter),
+                    format!("- \"{}\" (finished): dropped by the timing reading; nothing of it went out. The reading supplied no reason.", set.matter),
                     false,
                 );
                 out.gone.push((set.id, vec![When::Finished, When::Paused]));
@@ -1389,6 +1407,40 @@ async fn release_floor(
         }
     }
     out
+}
+
+fn notice_fit(raw: Option<Fits>, required_notice: bool, unchanged: bool) -> Option<Fits> {
+    match raw {
+        Some(Fits::Hold | Fits::Drop) if required_notice && unchanged => Some(Fits::Say),
+        other => other,
+    }
+}
+
+/// A replay asks the same timing questions without a mouth or a live conversation.
+/// It evaluates eligibility only: no text, view or work is sent to the running host.
+pub(crate) async fn replay_fit(data_dir: &Path, conversation: &str, text: &str, required_notice: bool) -> Value {
+    let set = Set {
+        matter: "historical reply".into(),
+        branches: vec![Branch { when: When::Finished, actions: vec![Action::Say { text: text.into(), hands: vec![] }] }],
+        said: vec![], at: Utc::now(), heard: 0, ours_seen: 0, answering: true, held_told: false, required_notice, id: 0,
+    };
+    let qs = Arc::new(questions(&[set], false, true, false));
+    let state = format!("{conversation}\n\nThe assistant prepared the reply after all of this. \
+        No person or assistant has said anything since it was prepared. The person has finished for now.");
+    let answer = match ask(state, qs, Judge::resolve(data_dir, FALLBACK_MODEL_KEY)) {
+        Some(task) => match task.await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(error)) => Err(Unread::Error(format!("{error:#}"))),
+            Err(error) => Err(Unread::Error(error.to_string())),
+        },
+        None => Err(Unread::Timeout),
+    };
+    let raw = fits_of(&answer, 1);
+    let effective = notice_fit(raw, required_notice, true);
+    json!({"raw":format!("{raw:?}"), "effective":format!("{effective:?}"),
+        "required_notice":required_notice,
+        "eligible":matches!(effective, Some(Fits::Say) | None),
+        "error": answer.err().map(|e| format!("{e:?}"))})
 }
 
 fn used_up_names(sets: &[Set], ids: &[u64]) -> Vec<String> {
@@ -1608,6 +1660,7 @@ fn decisions_of(text: &str, questions: &Map<String, Value>) -> anyhow::Result<st
 }
 
 /// Why a reading produced no answer.
+#[derive(Debug)]
 enum Unread {
     Unavailable,
     Timeout,
@@ -1736,7 +1789,10 @@ fn questions(sets: &[Set], conditions: bool, forced: bool, stop: bool) -> Map<St
             When::Paused => part("Fits paused"),
             _ => part("Fits finished"),
         };
-        let lines = set.branch(when).map(|b| b.actions.iter().map(Action::describe).collect::<Vec<_>>().join("; ")).unwrap_or_default();
+        let lines = set.branch(when).map(|b| b.actions.iter().map(|a| match a {
+            Action::Say { text, .. } => format!("say {text:?}"),
+            other => other.describe(),
+        }).collect::<Vec<_>>().join("; ")).unwrap_or_default();
         asked.insert(
             format!("{FITS}{}", n + 1),
             json!({
@@ -2089,6 +2145,7 @@ mod tests {
             ours_seen: 0,
             answering: true,
             held_told: false,
+            required_notice: false,
             id: 0,
         }
     }
@@ -2122,6 +2179,15 @@ mod tests {
         assert_eq!(fits_of(&r, 2), Some(Fits::Say));
         assert_eq!(fits_of(&r, 3), None);
         assert_eq!(fits_of(&Err(Unread::Timeout), 1), None);
+    }
+
+    #[test]
+    fn timing_reads_the_whole_message_not_the_log_preview() {
+        let text = format!("{} This last sentence changes the answer.", "x".repeat(150));
+        let mut s = set("result", &["finished"], &[]);
+        s.branches[0].actions = say(&text);
+        let asked = questions(&[s], false, true, false);
+        assert!(asked["fits1"]["instructions"].as_str().unwrap().contains("This last sentence changes the answer."));
     }
 
     #[test]
@@ -2400,6 +2466,31 @@ mod tests {
         assert_eq!(tidy_answer(r#"{"why":"x","clear":[2, 9, 0, 1, 1]}"#, 2).unwrap().0, vec![0], "not the newest, nothing unshown");
         assert!(tidy_answer(r#"{"why":"x","clear":[]}"#, 2).unwrap().0.is_empty());
         assert!(tidy_answer("", 2).is_err());
+    }
+
+    #[test]
+    fn only_reviewed_owed_notices_override_timing_without_new_conversation() {
+        assert_eq!(notice_fit(Some(Fits::Drop),true,true),Some(Fits::Say));
+        assert_eq!(notice_fit(Some(Fits::Hold),true,true),Some(Fits::Say));
+        assert_eq!(notice_fit(Some(Fits::Drop),false,true),Some(Fits::Drop));
+        assert_eq!(notice_fit(Some(Fits::Hold),false,true),Some(Fits::Hold));
+        assert_eq!(notice_fit(Some(Fits::Drop),true,false),Some(Fits::Drop));
+        assert_eq!(notice_fit(Some(Fits::Hold),true,false),Some(Fits::Hold));
+    }
+
+    #[tokio::test]
+    async fn notice_authority_belongs_only_to_the_exact_approved_reply_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Prepared::new(crate::foundation::observatory::Observatory::new(None), Some(dir.path()));
+        let line = Branch { when:When::Finished, actions:say("改好了") };
+        p.set_approved("page change",vec![line.clone()],vec![],0,false,&["unrelated explanation".into()]).await;
+        assert!(!p.lock().sets[0].required_notice);
+        p.set_approved("page change",vec![line],vec![],0,false,&["改好了".into()]).await;
+        assert!(p.lock().sets[0].required_notice);
+        let reopened = Prepared::new(crate::foundation::observatory::Observatory::new(None), Some(dir.path()));
+        assert!(reopened.lock().sets[0].required_notice);
+        p.set("page change",vec![branch("finished")],vec![],0,false).await;
+        assert!(!p.lock().sets[0].required_notice,"a replacement cannot inherit old approval");
     }
 
 }

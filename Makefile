@@ -14,7 +14,7 @@ VERSIONED_FILES := VERSION Cargo.toml Cargo.lock \
 # Abacad's public `V=x.y.z` interface.
 BUMP_VERSION := $(strip $(if $(V),$(V),$(if $(filter command line,$(origin VERSION)),$(VERSION))))
 
-.PHONY: help check-version check-workflows build dev run test test-live test-views eval-speech eval-records docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
+.PHONY: help check-version check-workflows build dev run test test-live test-views eval-speech eval-checks review-replay eval-records docker dmg app ios android android-apk exe win-app installer linux-app deb manifest bump-version version
 
 # Windows target for the `exe` build check. MSVC (not gnu) because `ort`'s
 # prebuilt ONNX Runtime ships for MSVC only.
@@ -98,7 +98,16 @@ measure: ## report reply latency and reply shape from a data dir's wire log (DAT
 # from the wire log and scored by the same audit as live turns, before it lands.
 # See docs/arch/legibility.md § J and § K.
 eval-speech: ## replay past Reaction turns under this build's prompt and score them (DATA=./data PROMPT= MODEL= LIMIT=40)
-	cargo run --quiet -- --data-dir $(if $(DATA),$(DATA),data) --eval-speech --eval-limit $(if $(LIMIT),$(LIMIT),40) $(if $(PROMPT),--eval-prompt $(PROMPT)) $(if $(MODEL),--eval-model $(MODEL))
+	cargo run --quiet -- --data-dir $(if $(DATA),$(DATA),data) --eval-speech --eval-limit $(if $(LIMIT),$(LIMIT),40) $(if $(PROMPT),--eval-prompt $(PROMPT)) $(if $(MODEL),--eval-model $(MODEL)) $(if $(CASES),--eval-cases $(CASES))
+
+eval-checks: ## probe the primary and fallback speech checks with real providers (DATA=./data)
+	HI_AGENT_EVAL_DATA="$(abspath $(if $(DATA),$(DATA),data))" cargo test --lib speech_checks_live -- --ignored --nocapture
+
+eval-first-replies: ## check first explanations and negative controls with the real reviewer (DATA= OUT=)
+	HI_AGENT_EVAL_DATA="$(abspath $(if $(DATA),$(DATA),data))" HI_AGENT_EVAL_OUT="$(abspath $(if $(OUT),$(OUT),data/output/first-reply-checks))" cargo test --lib first_reply_source_checks_live -- --ignored --nocapture
+
+review-replay: ## render replay and optional separate review edits as offline HTML (TEMPLATE= REPORT= OUT= EDITS=)
+	python3 scripts/build-reply-replay-review.py --template "$(TEMPLATE)" --report "$(REPORT)" --out "$(OUT)" $(if $(EDITS),--edits "$(EDITS)")
 
 eval-records: ## replay past task-record lines under this build's worker prompt and score them (DATA=./data PROMPT= MODEL= LIMIT=40)
 	cargo run --quiet -- --data-dir $(if $(DATA),$(DATA),data) --eval-records --eval-limit $(if $(LIMIT),$(LIMIT),40) $(if $(PROMPT),--eval-prompt $(PROMPT)) $(if $(MODEL),--eval-model $(MODEL))

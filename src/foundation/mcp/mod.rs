@@ -87,6 +87,12 @@ fn send_message_tool() -> Value {
                     "description": "A session slug: `reaction`, `cognition`, `reflection`, or a worker's.",
                 },
                 "message": { "type": "string", "description": "What you want them to know, in plain words." },
+                "verification_id": { "type":"string", "description":"For Cognition answering a host source-check request to reaction: its outstanding verification id." },
+                "evidence": { "type":"array", "maxItems":12, "description":"Source tool results, not assistant assertions. The host reads and validates these before delivering a verification result.",
+                    "items": { "type":"object", "properties": {
+                        "run":{"type":"string"}, "session":{"type":"string"},
+                        "item_id":{"type":"string"}, "quote":{"type":"string"}
+                    }, "required":["run","session","item_id","quote"], "additionalProperties":false } },
             },
             "required": ["to", "message"],
         }),
@@ -1809,6 +1815,27 @@ async fn dispatch_tool(
             // receipt over-warn: the caller stops something already idle and is told "nothing
             // to stop", which costs nothing. The reverse is the silence this exists to end.
             let arrival = registry::global().status(&target);
+            if args.get("verification_id").is_some() || args.get("evidence").is_some() {
+                if registry::global().status(&from).is_none_or(|s| s.role != crate::identity::Role::Cognition)
+                    || target.as_str() != "reaction" {
+                    return tool_error("only Cognition can return a host verification result to reaction");
+                }
+                let Some(id) = args.get("verification_id").and_then(Value::as_str).filter(|id| !id.is_empty()) else {
+                    return tool_error("evidence needs the outstanding verification_id");
+                };
+                let evidence = match serde_json::from_value::<Vec<crate::body::reaction::legibility::verification::Reference>>(
+                    args.get("evidence").cloned().unwrap_or_else(|| json!([]))) {
+                    Ok(evidence) => evidence,
+                    Err(error) => return tool_error(&format!("invalid source evidence: {error}")),
+                };
+                let Some(sink) = registry.get(ToolOwner::Reaction).await else {
+                    return tool_error("Reaction is not ready; the source check remains owed");
+                };
+                return match sink.verification_report(id, &message, &evidence).await {
+                    Ok(()) => tool_ok("verification result retained; the host schedules it for Reaction. This is not delivery to the person."),
+                    Err(error) => tool_error(&format!("verification result not accepted: {error:#}; correct the source reference or report inability to check with evidence=[]")),
+                };
+            }
             let delivery = registry::global().send(&from, &target, message.clone());
 
             // The edge, observed. Attributed to the **sender's** conversation, because that is

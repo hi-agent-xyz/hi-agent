@@ -116,6 +116,10 @@ struct Cli {
     /// With `--eval-speech`: how many earlier turns of the thread ride along as history.
     #[arg(long, hide = true, default_value_t = 6)]
     eval_context: usize,
+
+    /// Exact review cases to replay through the live speech and timing checks.
+    #[arg(long, hide = true, value_name = "FILE")]
+    eval_cases: Option<PathBuf>,
 }
 
 /// Version line including the pinned runtime component versions.
@@ -422,6 +426,7 @@ fn main() -> anyhow::Result<()> {
             model: cli.eval_model,
             limit: cli.eval_limit,
             context: cli.eval_context,
+            cases: cli.eval_cases,
         };
         // The judges read their models off the config store, the way the running host does.
         hi_agent::foundation::config::tunables::init(&data_dir);

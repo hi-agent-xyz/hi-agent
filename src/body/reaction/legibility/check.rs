@@ -1,35 +1,12 @@
-//! The pre-send check: host-code triage (§ D), then one System One call (§ E).
+//! Read drafts before the floor holds them; reject with feedback, never rewrite them.
 //!
-//! **It reads a message when `hi_prepare` sets it, before the floor holds it**, and it can do one of
-//! two things: let it through, or answer `not sent — <note>` so Reaction rewrites or drops
-//! it inside the same turn. It never writes words — a checker that edits is a second mouth
-//! (`docs/arch/arch.md` invariant 1) — and its judge cannot: System One answers typed
-//! questions with probabilities, so a send-back's note is the failing axis's own line from
-//! the reading standard.
-//!
-//! **Why System One and not a model writing a verdict.** The model did not answer in time:
-//! five days of recorded checks on `deepseek-flash` kept 187 and 162 of them timed out, p50 22 s,
-//! because a verdict is ~50 tokens behind ~1,000 of thinking. Asked the same axes as typed
-//! questions, System One answered all 167 audited messages on this install in p50 0.53 s,
-//! p99 2.2 s. **What it reads well is the literal** — a claim of something on screen with no
-//! show this turn, a message that says it repeats — and on the person's own labels of 20 of
-//! those messages it ranked their send-backs no better than chance (AUC 0.44–0.55); the model
-//! it replaces was never measured against them at all. So this is the judge that produces a
-//! number to learn from, taken while the logic above it is still being worked out, not one
-//! shown to judge well. **Measured offline only; never watched on a live turn.**
-//!
-//! Every limit here is about not being able to do harm:
-//!
-//! - **triage is facts only** — the turn carries a report, the message is not the turn's
-//!   first, or it is longer than a short reply — and everything else goes out untouched;
-//! - **one send-back per turn** — what Reaction sends after reading one goes out as written;
-//! - **a timeout or an error sends the message** — silence is the failure nobody reports,
-//!   and a checker must never be able to produce it;
-//! - **serial within a turn** — calls queue on one lock, so order holds, and a message that
-//!   was already waiting when an earlier one was sent back goes back with it, since it may
-//!   lean on the one that did not land;
-//! - **one switch** — `speech_check` = `off` reads nothing; otherwise every message in scope is
-//!   read, and one that fails is sent back.
+//! With a conversation model, every speech draft and rewrite gets an independent
+//! evidence-and-purpose read. Failed or exhausted reviews do not approve a draft.
+//! Only an accepted, current-report-backed notice can acquire a delivery obligation.
+//! The typed triage/check path remains for installs without that model. Its one-send-back
+//! policy is not used by the independent path. Missing source evidence starts a retained
+//! background check rather than merely another rewrite.
+//! `speech_check=off` disables both paths. See `docs/arch/legibility.md`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,13 +19,14 @@ use tokio::time::Instant;
 use crate::body::capabilities::decision;
 use crate::foundation::config::tunables;
 use crate::mind::memory::quality::{self, Outcome, Scope};
+use crate::body::legibility::judge::{self, Judge};
 
 /// Past this many characters a message is more than a short reply, and in scope. A
 /// starting value (`docs/arch/legibility.md` § Open), for the replay set to settle.
 pub(crate) const TRIAGE_CHARS: usize = 120;
 
-/// How long a live check may hold a message, unless `speech_check_budget_ms` says otherwise.
-/// Past it the message goes out.
+/// Primary check budget, unless `speech_check_budget_ms` says otherwise.
+/// Past it the fallback gets its own bounded attempt.
 ///
 /// **Two and a half seconds, which is what it was first meant to be.** Someone is waiting on
 /// this one. It went to ten on 2026-09-20 because a model writing a verdict could not meet
@@ -56,6 +34,7 @@ pub(crate) const TRIAGE_CHARS: usize = 120;
 /// One writes no verdict: measured 2026-09-21 on the full case of every audited message on this
 /// install, p50 0.53 s, p99 2.2 s, one of 167 past two and a half.
 const CHECK_BUDGET_MS: u64 = 2_500;
+const FALLBACK_BUDGET_MS: u64 = 45_000;
 
 /// The `app_settings` keys switching it off, choosing how long a verdict may take, and how little
 /// `pass` may carry before a message is sent back.
@@ -124,6 +103,55 @@ impl Questions {
         tokio::time::timeout(limit, decision::ask(&Value::String(case), &self.asked, None))
             .await
             .map_err(|_| anyhow::anyhow!("timed out"))?
+    }
+
+    async fn checked(&self, dir: &std::path::Path, case: String, limit: Duration) -> (anyhow::Result<decision::Reply>, Option<String>) {
+        let first = self.ask(case.clone(), limit).await.and_then(|r| {
+            anyhow::ensure!(self.verdict(&r, pass_below()).0 != Outcome::Error, "speech check response has no readable axis probabilities");
+            Ok(r)
+        });
+        let error = match first {
+            Ok(reply) => return (Ok(reply), None),
+            Err(error) => format!("{error:#}"),
+        };
+        tracing::warn!(error = %error, "speech check unavailable; asking the fallback model");
+        let fallback = match Judge::resolve(dir, "speech_check_fallback_model") {
+            Some(model) => self.by_model(&model, &case).await,
+            None => Err(anyhow::anyhow!("no speech check fallback model configured")),
+        };
+        (fallback, Some(error))
+    }
+
+    async fn by_model(&self, model: &Judge, case: &str) -> anyhow::Result<decision::Reply> {
+        use anyhow::Context as _;
+        let options = &self.asked[CHOICE]["criteria"];
+        let limit = crate::body::legibility::budget("speech_check_fallback_budget_ms", FALLBACK_BUDGET_MS);
+        let body = json!({
+            "instructions": format!("Read this proposed message against the conversation and material it actually received. \
+                Do not rewrite it. Choose pass unless it plainly fails one criterion. \
+                A prior assistant assertion is not independent evidence for that assertion. \
+                Return JSON only: {{\"axis\":\"pass or one criterion key\",\"reason\":\"one short reason\"}}. \
+                Criteria: {options}"),
+            "input": [{"role":"user","content":[{"type":"input_text","text":case}]}],
+            "text": {"format":{"type":"json_object"}},
+            "store": false,
+        });
+        let raw = model.respond(&body, limit).await?;
+        let text = judge::output_text(&raw).context("speech fallback returned no text")?;
+        let value: Value = judge::json_object(&text).context("speech fallback returned invalid JSON")?;
+        let axis = value["axis"].as_str().context("speech fallback returned no axis")?;
+        anyhow::ensure!(options.get(axis).is_some(), "speech fallback returned an unknown axis");
+        let cost = judge::cost(&raw);
+        // Adapt the categorical verdict for the existing cut; records keep its category,
+        // not these internal 0/1 values as if they were calibrated probabilities.
+        let mut mass = serde_json::Map::new();
+        mass.insert("pass".into(), json!(if axis == "pass" {1.0} else {0.0}));
+        mass.insert(axis.to_string(), json!(1.0));
+        let answer = decision::Answer::Choice {
+            choice: axis.to_string(), probabilities: Some(Value::Object(mass)), confidence: None,
+        };
+        Ok(decision::Reply { model: model.model().to_string(), answers: [(CHOICE.to_string(), answer)].into(),
+            usage: decision::Usage { input_tokens:cost.input, output_tokens:cost.output } })
     }
 
     /// A reply as an outcome, its axis and its note. Sent back when `pass` carries less than
@@ -209,13 +237,17 @@ impl Brief {
 struct Draft {
     key: String,
     brief: Brief,
-    /// `None` when there is nothing to ask with — System One is not configured, or the rubric
-    /// lost a section — and then every message goes out unread.
+    /// `None` when the rubric lost a section; provider availability is checked when asking
+    /// so the model fallback can still run without System One.
     questions: Option<Arc<Questions>>,
     sent: Vec<String>,
     shown: Vec<String>,
     /// When this turn's one send-back was answered.
     sent_back_at: Option<Instant>,
+    purpose_reads: usize,
+    notices: std::collections::BTreeSet<String>,
+    purpose_records: Vec<Value>,
+    revision: u64,
 }
 
 /// What a turn leaves for the audit when it ends.
@@ -229,13 +261,17 @@ pub struct Ended {
 pub enum Review {
     Pass,
     SendBack(String),
+    Verify { id: String, note: String },
 }
 
 /// The check's state, shared by the turn loop (which opens and closes a turn) and the
 /// mouth (which asks about each message).
 pub struct Speech {
     data_dir: PathBuf,
+    record_dir: PathBuf,
     enabled: bool,
+    dispatch_checks: bool,
+    pub(crate) verification: super::verification::Store,
     draft: std::sync::Mutex<Option<Draft>>,
     /// The spoken turns since the person last wrote, waiting to be read against their next
     /// message ([`super::audit::on_reply`]).
@@ -244,12 +280,24 @@ pub struct Speech {
 
 impl Speech {
     pub fn new(data_dir: PathBuf, enabled: bool) -> Self {
+        let verification = super::verification::Store::new(&data_dir);
         Self {
+            record_dir: data_dir.clone(),
             data_dir,
             enabled,
+            dispatch_checks: true,
+            verification,
             draft: std::sync::Mutex::new(None),
             awaiting: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    pub(super) fn for_replay(data_dir: PathBuf, record_dir: PathBuf) -> Self {
+        let mut speech = Self::new(data_dir, true);
+        speech.dispatch_checks = false;
+        speech.verification = super::verification::Store::new(&record_dir);
+        speech.record_dir = record_dir;
+        speech
     }
 
     /// Keep a spoken turn for the reading of the person's next message. Only the latest
@@ -275,14 +323,31 @@ impl Speech {
         Self::new(PathBuf::new(), false)
     }
 
+    pub(crate) async fn recover_checks(&self) {
+        if self.enabled && self.dispatch_checks {
+            if let Err(error) = self.verification.dispatch().await {
+                tracing::error!(error = %error, "pending speech checks could not be recovered");
+            }
+        }
+    }
+
+    pub(crate) async fn pending_checks(&self) -> String {
+        if !self.enabled { return String::new(); }
+        match self.verification.pending().await {
+            Ok(pending) => super::verification::render(&pending),
+            Err(error) => format!("Pending speech checks are unreadable ({error}); do not treat this as no answer owed."),
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         self.enabled
     }
 
     /// Open a turn. Returns its key, which every record about it carries.
     pub async fn begin(&self, brief: Brief) -> String {
+        self.recover_checks().await;
         let key = uuid::Uuid::now_v7().to_string();
-        let questions = if !self.enabled || !decision::available() {
+        let questions = if !self.enabled {
             None
         } else {
             let standard = crate::identity::reading_standard(&self.data_dir).await;
@@ -295,6 +360,10 @@ impl Speech {
             sent: Vec::new(),
             shown: Vec::new(),
             sent_back_at: None,
+            purpose_reads: 0,
+            notices: Default::default(),
+            purpose_records: Vec::new(),
+            revision: 0,
         });
         key
     }
@@ -351,6 +420,11 @@ impl Speech {
         if !self.enabled {
             return Review::Pass;
         }
+        if Judge::resolve(&self.data_dir, "speech_review_model").is_some() {
+            if let Some(review) = self.deliberate(text).await {
+                return review;
+            }
+        }
         let (scope, questions, case, key) = {
             let guard = self.draft.lock().unwrap_or_else(|p| p.into_inner());
             // Outside a turn — the warm-up — nothing reaches anyone anyway.
@@ -368,7 +442,7 @@ impl Speech {
                 // Not read, and said so — a message triage passes goes out exactly as if a
                 // judge had passed it, so it is counted (`legibility::skipped`).
                 crate::body::legibility::skipped(
-                    &self.data_dir,
+                    &self.record_dir,
                     quality::Surface::Speech,
                     &d.key,
                     text,
@@ -383,15 +457,15 @@ impl Speech {
 
         let live = budget();
         let record = CheckRecord {
-            data_dir: self.data_dir.clone(),
+            data_dir: self.record_dir.clone(),
             key,
             message: text.to_string(),
             scope,
             budget: live,
         };
         let started = Instant::now();
-        let answer = questions.ask(case, live.saturating_sub(arrived.elapsed().min(live))).await;
-        match record.write(&questions, answer, started.elapsed()).await {
+        let (answer, primary_error) = questions.checked(&self.data_dir, case, live.saturating_sub(arrived.elapsed().min(live))).await;
+        match record.write(&questions, answer, started.elapsed(), primary_error).await {
             Some((Outcome::Revise, note)) => {
                 if let Some(d) = self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
                     d.sent_back_at = Some(Instant::now());
@@ -399,6 +473,106 @@ impl Speech {
                 Review::SendBack(note)
             }
             _ => Review::Pass,
+        }
+    }
+
+    pub(crate) fn required_notice(&self, text: &str) -> bool {
+        self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_ref()
+            .is_some_and(|draft| draft.notices.contains(text))
+    }
+
+    pub(crate) fn note_incoming(&self, signal: &str) {
+        if let Some(d) = self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+            d.brief.signals.push_str(&format!("\n\n{signal}"));
+            d.revision += 1;
+            d.purpose_reads = 0;
+            d.notices.clear();
+        }
+    }
+
+    pub(super) fn purpose_records(&self) -> Vec<Value> {
+        self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_ref()
+            .map(|draft| draft.purpose_records.clone()).unwrap_or_default()
+    }
+
+    async fn deliberate(&self, text: &str) -> Option<Review> {
+        let (key, revision, brief, sent, shown, exhausted) = {
+            let mut guard = self.draft.lock().unwrap_or_else(|p| p.into_inner());
+            let d = guard.as_mut()?;
+            // Never treat the next rewrite as approved just because a prior draft failed.
+            // Bound paid reviews instead of silently accepting an unreviewed rewrite.
+            let exhausted = d.purpose_reads >= 6;
+            if !exhausted { d.purpose_reads += 1; }
+            (d.key.clone(), d.revision, d.brief.clone(), d.sent.clone(), d.shown.clone(), exhausted)
+        };
+        if exhausted {
+            return Some(self.retain_check(&key, &brief,
+                "No reply passed review. Recover the actual answer owed to the person, verify any project-specific explanation against its source, and return only the necessary result.",
+                text, "Review budget exhausted. The answer remains owed; another unreviewed rewrite cannot pass.").await);
+        }
+        let started = Instant::now();
+        let pending = match self.verification.pending().await {
+            Ok(pending) => pending,
+            Err(error) => return Some(Review::SendBack(format!("Pending verification is unreadable: {error}; nothing is approved."))),
+        };
+        let result = super::deliberate::read(&self.data_dir, &brief, &sent, &shown, text, &pending).await;
+        let (decision, model, cost) = match result {
+            Ok(value) => value,
+            Err(error) => {
+                let diagnostic = json!({"message":text,"error":format!("{error:#}")});
+                if let Some(d) = self.draft.lock().unwrap_or_else(|p| p.into_inner()).as_mut().filter(|d| d.key == key) {
+                    d.purpose_records.push(diagnostic);
+                }
+                tracing::warn!(error = %format!("{error:#}"), "purpose review failed; draft remains unapproved");
+                return Some(self.retain_check(&key, &brief,
+                    "The reply review failed. Determine the actual answer owed from the original conversation and inspect the relevant source before proposing an explanation. The blocked draft is not evidence.",
+                    text, "The review was unavailable; the answer remains owed, not approved.").await);
+            }
+        };
+        {
+            let mut guard = self.draft.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(d) = guard.as_mut().filter(|d| d.key == key) else {
+                return Some(Review::SendBack("The turn ended during review; this approval cannot be used for another turn.".into()));
+            };
+            if d.revision != revision {
+                return Some(Review::SendBack("New input arrived during review. Read it and prepare the reply again; this review is stale.".into()));
+            }
+            if decision.accept && decision.notice != "none" { d.notices.insert(text.to_string()); }
+            d.purpose_records.push(json!({"message":text,"decision":decision}));
+        }
+        let record = quality::Record::Check(quality::Check {
+            ts:Utc::now(), surface:quality::Surface::Speech, turn:key.clone(), message:text.into(),
+            scope:if brief.carries_report { Scope::Report } else { Scope::Later },
+            outcome:if decision.accept { Outcome::Pass } else { Outcome::Revise },
+            axis:if decision.accept { None } else { Some(decision.axis.clone()) },
+            note:Some(format!("{} {}", decision.reason, decision.instruction)),
+            latency_ms:started.elapsed().as_millis() as u64, model, cost, budget_ms:540_000,
+            answers:Some(json!({"purpose":decision})),
+        });
+        if let Err(error) = quality::append(&self.record_dir,&record).await {
+            tracing::warn!(error = %error,"could not record purpose review");
+        }
+        if decision.accept && !decision.answers.is_empty() {
+            if let Err(error) = self.verification.approve(text, &decision.answers).await {
+                return Some(Review::SendBack(format!("The answer could not be retained for delivery: {error}")));
+            }
+        }
+        if !decision.accept && let Some(question) = &decision.verify {
+            return Some(self.retain_check(&key, &brief, question, text, &format!("{} {}", decision.reason, decision.instruction)).await);
+        }
+        Some(if decision.accept { Review::Pass } else {
+            Review::SendBack(format!("{} — {} {}", decision.axis, decision.reason, decision.instruction))
+        })
+    }
+
+    async fn retain_check(&self, key: &str, brief: &Brief, question: &str, text: &str, note: &str) -> Review {
+        let context = format!("{}\n\n{}", brief.recent, brief.signals);
+        match self.verification.request(key, &context, question, text).await {
+            Ok(id) => {
+                self.recover_checks().await;
+                Review::Verify { id, note:note.into() }
+            }
+            Err(error) => Review::SendBack(format!("Verification could not be retained: {error}. Do not send this explanation.")),
         }
     }
 }
@@ -424,6 +598,10 @@ impl Speech {
         if !self.enabled {
             return Review::Pass;
         }
+        if Judge::resolve(&self.data_dir, "speech_review_model").is_some()
+            && let Some(review) = self.deliberate(text).await {
+            return review;
+        }
         let (questions, case, key) = {
             let guard = self.draft.lock().unwrap_or_else(|p| p.into_inner());
             let Some(d) = guard.as_ref() else { return Review::Pass };
@@ -436,15 +614,15 @@ impl Speech {
         };
         let live = budget();
         let record = CheckRecord {
-            data_dir: self.data_dir.clone(),
+            data_dir: self.record_dir.clone(),
             key,
             message: text.to_string(),
             scope: Scope::Later,
             budget: live,
         };
         let started = Instant::now();
-        let answer = questions.ask(case, live).await;
-        match record.write(&questions, answer, started.elapsed()).await {
+        let (answer, primary_error) = questions.checked(&self.data_dir, case, live).await;
+        match record.write(&questions, answer, started.elapsed(), primary_error).await {
             Some((Outcome::Revise, note)) => Review::SendBack(note),
             _ => Review::Pass,
         }
@@ -483,7 +661,11 @@ impl CheckRecord {
         questions: &Questions,
         answer: anyhow::Result<decision::Reply>,
         elapsed: Duration,
+        primary_error: Option<String>,
     ) -> Option<(Outcome, String)> {
+        let allowed = if primary_error.is_some() {
+            self.budget + crate::body::legibility::budget("speech_check_fallback_budget_ms", FALLBACK_BUDGET_MS)
+        } else { self.budget };
         let (outcome, axis, note) = match &answer {
             Ok(reply) => questions.verdict(reply, pass_below()),
             Err(err) if format!("{err:#}").contains("timed out") => (Outcome::Timeout, None, None),
@@ -492,11 +674,21 @@ impl CheckRecord {
                 (Outcome::Error, None, None)
             }
         };
+        let diagnostic = match (&primary_error, &answer) {
+            (Some(first), Err(last)) => Some(format!("primary: {first}; fallback: {last:#}")),
+            (Some(first), Ok(_)) => Some(format!("fallback used; primary: {first}")),
+            (None, Err(error)) => Some(format!("{error:#}")),
+            _ => None,
+        };
         let (model, cost, answers) = match &answer {
             Ok(reply) => (
                 reply.model.clone(),
                 quality::Cost { input: reply.usage.input_tokens, output: reply.usage.output_tokens, ..Default::default() },
-                Some(Value::Object(reply.answers.iter().map(|(k, a)| (k.clone(), a.to_json())).collect())),
+                Some(if primary_error.is_some() {
+                    json!({ "fallback": { "axis": axis.as_deref().unwrap_or("pass"), "kind": "categorical" } })
+                } else {
+                    Value::Object(reply.answers.iter().map(|(k, a)| (k.clone(), a.to_json())).collect())
+                }),
             ),
             Err(_) => (NO_REPLY_MODEL.to_string(), quality::Cost::default(), None),
         };
@@ -505,7 +697,7 @@ impl CheckRecord {
             outcome = ?outcome,
             axis = axis.as_deref().unwrap_or(""),
             latency_ms = elapsed.as_millis() as u64,
-            budget_ms = self.budget.as_millis() as u64,
+            budget_ms = allowed.as_millis() as u64,
             tokens_in = cost.input,
             tokens_out = cost.output,
             model = %model,
@@ -519,19 +711,21 @@ impl CheckRecord {
             scope: self.scope,
             outcome,
             axis,
-            note: note.clone(),
+            note: match (&note, diagnostic) {
+                (Some(note), Some(error)) => Some(format!("{note}; {error}")),
+                (_, Some(error)) => Some(error),
+                _ => note.clone(),
+            },
             latency_ms: elapsed.as_millis() as u64,
             model,
             cost,
-            budget_ms: self.budget.as_millis() as u64,
+            budget_ms: allowed.as_millis() as u64,
             answers,
         });
         let data_dir = self.data_dir;
-        tokio::spawn(async move {
-            if let Err(err) = quality::append(&data_dir, &record).await {
-                tracing::warn!(error = %format!("{err:#}"), "could not record a speech check");
-            }
-        });
+        if let Err(err) = quality::append(&data_dir, &record).await {
+            tracing::warn!(error = %format!("{err:#}"), "could not record a speech check");
+        }
         note.map(|n| (outcome, n))
     }
 }
@@ -539,6 +733,40 @@ impl CheckRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "uses the configured providers and spends model calls; make eval-checks"]
+    async fn speech_checks_live() {
+        let dir = PathBuf::from(std::env::var("HI_AGENT_EVAL_DATA").expect("DATA is required"));
+        tunables::init(&dir);
+        crate::body::capabilities::init(&crate::foundation::credentials::Credentials::try_load(&dir).unwrap()).unwrap();
+        let q = installed_questions(&dir).await;
+        let cases = [
+            "## The conversation\n> 这段结果是怎么来的？\n## The message to judge\n我还没查到生成它的记录。",
+            "## The conversation\n> 请把白色标记换成红色。\n## The message to judge\n你要把白色标记换成红色，因为白色看不清，我知道了。我会认真去检查怎么修改。",
+        ];
+        for case in cases {
+            let started = Instant::now();
+            match q.ask(case.to_string(), Duration::from_secs(15)).await {
+                Ok(reply) => eprintln!("primary {} ms: {:?}", started.elapsed().as_millis(), q.verdict(&reply, pass_below())),
+                Err(error) => eprintln!("primary {} ms: {error:#}", started.elapsed().as_millis()),
+            }
+        }
+        // Force the primary deadline to exercise recovery even while its provider is healthy.
+        let (reply, failure) = q.checked(&dir,cases[1].into(),Duration::ZERO).await;
+        assert!(failure.is_some());
+        let reply = reply.expect("fallback must answer this live probe");
+        eprintln!("forced primary outage -> {}: {:?}",reply.model,q.verdict(&reply,pass_below()));
+        assert_ne!(q.verdict(&reply,pass_below()).0,Outcome::Error);
+        if let Some((brief, message)) = super::super::replay::historical_check_case(&dir, "是我这边早先手工点的一次") {
+            let case = brief.case(&[], &[], &format!("## The message to judge\n{message}"));
+            eprintln!("historical case: {} characters", case.chars().count());
+            match q.ask(case, Duration::from_secs(15)).await {
+                Ok(reply) => eprintln!("historical primary: {:?}", q.verdict(&reply, pass_below())),
+                Err(error) => eprintln!("historical primary: {error:#}"),
+            }
+        }
+    }
 
     #[test]
     fn triage_is_facts_and_a_short_first_reply_goes_straight_out() {
@@ -574,6 +802,40 @@ mod tests {
         assert!(matches!(speech.review(&"x".repeat(500), Instant::now()).await, Review::Pass));
         speech.begin(Brief { carries_report: true, ..Brief::default() }).await;
         assert!(matches!(speech.review("x", Instant::now()).await, Review::Pass));
+    }
+
+    #[tokio::test]
+    async fn replay_triage_records_do_not_enter_the_live_quality_log() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let speech = Speech::for_replay(source.path().to_path_buf(), output.path().to_path_buf());
+        let key = speech.begin(Brief::default()).await;
+        assert!(matches!(speech.review("好，我去查一下", Instant::now()).await, Review::Pass));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let records = quality::read_since(output.path(), chrono::DateTime::<Utc>::MIN_UTC).await;
+                if records.iter().any(|r| matches!(r, quality::Record::Skipped(s) if s.turn == key)) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("the replay skip record must be written");
+        assert!(quality::read_since(source.path(), chrono::DateTime::<Utc>::MIN_UTC).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn review_exhaustion_retains_the_answer_instead_of_approving_or_forgetting_it() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let speech = Speech::for_replay(source.path().into(), output.path().into());
+        speech.begin(Brief { signals:"Where did these lines come from?".into(), ..Brief::default() }).await;
+        speech.draft.lock().unwrap().as_mut().unwrap().purpose_reads = 6;
+        assert!(matches!(speech.deliberate("a human clicked them").await, Some(Review::Verify { .. })));
+        assert!(speech.end().unwrap().sent.is_empty());
+        let retained = super::super::verification::Store::new(output.path()).pending().await.unwrap();
+        assert_eq!(retained.len(), 1);
+        assert!(retained[0].context.contains("Where did these lines come from?"));
+        assert!(!source.path().join("memory/speech-verification.json").exists(), "replay must not mutate live pending answers");
     }
 
     /// With nobody configured the check cannot run, and a check that cannot run passes.
@@ -627,6 +889,31 @@ mod tests {
         assert!(!serde_json::to_string(&q.asked).unwrap().contains("{line}"));
     }
 
+    #[tokio::test]
+    async fn fallback_accepts_only_a_known_axis_and_keeps_the_primary_failure() {
+        use axum::{Router, routing::post};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route("/responses", post(|| async {
+            axum::Json(json!({"output":[{"type":"message","content":[{"type":"output_text","text":"{\"axis\":\"repeat\",\"reason\":\"same information twice\"}"}]}]}))
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener,app).await.unwrap(); });
+        let dir = tempfile::tempdir().unwrap();
+        let q = installed_questions(dir.path()).await;
+        let reply = q.by_model(&Judge::new(&format!("http://{address}"),"test-key","test-model"),"case").await.unwrap();
+        assert_eq!(q.verdict(&reply,pass_below()).0,Outcome::Revise);
+        let record = CheckRecord { data_dir:dir.path().to_path_buf(),key:"fallback-test".into(),message:"m".into(),scope:Scope::Report,budget:budget() };
+        assert!(record.write(&q,Ok(reply),Duration::ZERO,Some("primary request failed".into())).await.is_some());
+        let records = quality::read_since(dir.path(),chrono::DateTime::<Utc>::MIN_UTC).await;
+        let quality::Record::Check(saved) = &records[0] else { panic!("missing check") };
+        assert_eq!(saved.model,"test-model");
+        assert!(saved.note.as_ref().unwrap().contains("primary request failed"));
+        assert_eq!(saved.answers.as_ref().unwrap()["fallback"]["kind"], "categorical");
+        assert_eq!(saved.answers.as_ref().unwrap()["fallback"]["axis"], "repeat");
+        assert!(saved.answers.as_ref().unwrap().get(CHOICE).is_none());
+        server.abort();
+    }
+
     fn reply(mass: Value) -> anyhow::Result<decision::Reply> {
         let mut answers = std::collections::BTreeMap::new();
         answers.insert(
@@ -656,16 +943,16 @@ mod tests {
         };
         let fast = Duration::from_millis(500);
         let leaning = json!({ "pass": 0.08, "unsupported": 0.80, "known": 0.07, "repeat": 0.05 });
-        let (outcome, note) = record().write(&q, reply(leaning), fast).await.expect("sent back");
+        let (outcome, note) = record().write(&q, reply(leaning), fast, None).await.expect("sent back");
         assert_eq!(outcome, Outcome::Revise);
         assert!(note.starts_with("`unsupported` — it claims more than"), "{note}");
 
         let fine = json!({ "pass": 0.84, "known": 0.10, "repeat": 0.06 });
-        assert_eq!(record().write(&q, reply(fine), fast).await, None);
+        assert_eq!(record().write(&q, reply(fine), fast, None).await, None);
         let no_pass = json!({ "known": 0.9, "repeat": 0.1 });
-        assert_eq!(record().write(&q, reply(no_pass), fast).await, None);
-        assert_eq!(record().write(&q, Err(anyhow::anyhow!("timed out")), budget()).await, None);
-        assert_eq!(record().write(&q, Err(anyhow::anyhow!("503 no healthy upstream")), fast).await, None);
+        assert_eq!(record().write(&q, reply(no_pass), fast, None).await, None);
+        assert_eq!(record().write(&q, Err(anyhow::anyhow!("timed out")), budget(), None).await, None);
+        assert_eq!(record().write(&q, Err(anyhow::anyhow!("503 no healthy upstream")), fast, None).await, None);
     }
 
     /// The budget is a setting, read per call, and unset it is the check's own.

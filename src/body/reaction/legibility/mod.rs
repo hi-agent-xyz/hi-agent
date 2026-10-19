@@ -18,5 +18,7 @@
 pub mod audit;
 pub mod check;
 pub mod replay;
+mod deliberate;
+pub(crate) mod verification;
 
 pub use check::{Brief, Speech};

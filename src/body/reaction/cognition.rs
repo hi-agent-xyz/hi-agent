@@ -159,6 +159,8 @@ async fn run(reaction: Reaction, registration: Registration) {
         warm_session(&reaction, &id, &mut session).await;
     }
 
+    reaction.inner.speech.recover_checks().await;
+
     loop {
         // **One wake, and it is restart recovery — not a cadence.** The recurring arm that
         // used to sit beside this was a fixed period standing in for events that now exist:

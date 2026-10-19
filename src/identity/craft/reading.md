@@ -109,6 +109,11 @@ it now, say the top line and put the rest where it can be looked at, not pushed.
   the summary lost something, not what, and reads on anyway.
 - **Compress by deleting, never by packing.** Four facts welded into one sentence is fewer
   characters and harder to read. Short is not the same as easy.
+- **Write conversation, not internal notes.** Use literal everyday verbs and complete
+  sentences, not shorthand copied from a work report. A reader should not have to decode
+  a private meaning for an ordinary word. When admitting a mistake, name it briefly and
+  take the next action; do not explain the admission. When a requested change is complete
+  and there is no new issue, the completion acknowledgment is the whole reply.
 - **Use the words they use.** A word is cheap when it is already in their head, whatever
   kind of word it is. Costliest first: a common word you quietly gave a private meaning,
   because nothing warns them; a frame or metaphor coined this turn; jargon and project

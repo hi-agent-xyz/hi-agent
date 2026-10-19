@@ -2409,9 +2409,10 @@ async fn run_reaction_turn(
         .map(|i| floor::render_interruption(&i))
         .unwrap_or_default();
     let new_signals = format!(
-        "{NEW_SIGNALS}{}{}",
+        "{NEW_SIGNALS}{}{}\n{}",
         render_batch(batch),
-        reaction.inner.prepared.take_told().map(|t| format!("\n{t}")).unwrap_or_default()
+        reaction.inner.prepared.take_told().map(|t| format!("\n{t}")).unwrap_or_default(),
+        reaction.inner.speech.pending_checks().await,
     );
     // What the agent has on screen right now — its own presentation surface. Read
     // fresh every turn (it's a current fact, not durable memory), so a view dismissed
@@ -2518,6 +2519,7 @@ async fn run_reaction_turn(
                 None => break (&mut drive).await,
                 Some(input) => {
                     if steer_in(&session, &input).await {
+                        reaction.inner.speech.note_incoming(&render_batch(std::slice::from_ref(&input)));
                         steered.push(input);
                     } else {
                         arrived.push(input);
@@ -2593,6 +2595,11 @@ async fn run_reaction_turn(
         // Their lines steered into the turn are part of what it answered, so they go down too.
         let task = format!("{}{}", render_human_from_batch(batch), render_human_from_batch(steered));
         if !task.trim().is_empty() {
+            let checks = reaction.inner.speech.pending_checks().await;
+            let task = if checks.is_empty() { task } else {
+                format!("{task}\n\n{checks}\nSource checks above have their own retained requests. \
+                    Continue those checks rather than starting duplicate work or treating the rejected explanation as fact.")
+            };
             // A branch that ran for this message may have handed it on already, seconds ago;
             // saying so is what keeps one request from reading as two.
             let task = match &branch_ran {
@@ -3692,6 +3699,10 @@ async fn emit_message(reaction: &Reaction, text: String) {
     let entry = JournalEntry::Message { channel: Channel::Text, message: message.clone() };
     if let Err(err) = reaction.inner.memory.journal.append(entry).await {
         tracing::error!(error = %format!("{err:#}"), "journal append failed for outbound message");
+    } else if let crate::types::Content::Text(text) = &message.content {
+        if let Err(error) = reaction.inner.speech.verification.delivered(text).await {
+            tracing::error!(error = %error, "could not close the delivered speech check; recovery will reconcile the journal");
+        }
     }
     let _ = reaction.inner.out.send(OutboundSignal::Say { message }).await;
 }

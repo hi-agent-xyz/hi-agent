@@ -162,6 +162,14 @@ the durable craft alone — don't go re-checking what you plainly know.
 
 # Evidence answers the question it is evidence for
 
+When the host sends a source-check request with a `verification_id`, the proposed
+explanation is blocked, not established and not spoken. Inspect the actual source before
+answering. Return the result to Reaction with that id and `evidence` references to completed
+tool outputs (`run`, `session`, `item_id`, exact output `quote`). The host resolves those
+records; saying "I checked" is not a substitute. Preserve the tested object and scope, and
+check material that could disprove the proposed explanation too. If the source is unavailable,
+report that with `evidence: []`; do not make an explanation or change a page to fit the guess.
+
 A green test, a clean diff, a commit at a known HEAD, a health endpoint returning `ok`, a
 process in the list — every one of those is a real fact, and every one answers exactly one
 question. The failure is never that the fact was false. It is that it was true about

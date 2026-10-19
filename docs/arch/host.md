@@ -187,7 +187,20 @@ raises:
 
 `finished` at or above its cut releases `finished` sets; below it, the stop releases a `paused`
 set if one is ready and `fits` says `say`, and otherwise the floor keeps listening. A set judged
-`hold` stays where it is for a later stop; `drop` ends it, with the reason.
+`hold` stays where it is for a later stop; `drop` ends it. A reason is reported only if the
+reading supplied one, never inferred by the host. The timing reader receives the complete
+message, not a log preview. Quiet alone is not permission to bypass a `drop`: a newly
+prepared message can still be irrelevant, repetitive or unsupported.
+
+A completion or correction owed to the person can carry a narrowly scoped delivery
+obligation: the independent speech-purpose read must accept the exact text, identify
+it as owed and not already delivered, and quote supporting evidence in the current
+report. Only a speech-only finished branch composed of those accepted lines carries
+the obligation. It is persisted with the prepared set; a replacement does not inherit
+it and background tidying cannot erase it. With no intervening conversation on either
+side, it overrides `hold` or `drop`, not an unfinished utterance. New conversation
+returns the branch to ordinary timing judgment. This is not a blanket quiet-room
+override, and cannot authorize unrelated explanations, screen changes or work requests.
 
 **The run is read, not capped.** Every message of ours since their last line is one more in
 what they read in one pass on coming back ([legibility.md § F](legibility.md#f-delivery)), so
